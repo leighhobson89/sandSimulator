@@ -63,7 +63,6 @@ function paintCellsWithSand(ctx) {
     const sandState = getSandState();
     const sandColors = getSandColors();
 
-    // Calculate cell width and height, ensure that all cells fit perfectly in the canvas
     const cellWidth = canvasWidth / cols;
     const cellHeight = canvasHeight / rows;
 
@@ -77,7 +76,7 @@ function paintCellsWithSand(ctx) {
 
                 ctx.fillRect(x * cellWidth, y * cellHeight, cellWidth, cellHeight);
             } else {
-                ctx.fillStyle = 'rgba(0, 0, 0, 0)';  // Empty cell (transparent)
+                ctx.fillStyle = 'rgba(0, 0, 0, 0)';
                 ctx.fillRect(Math.floor(x * cellWidth), Math.floor(y * cellHeight), Math.floor(cellWidth), Math.floor(cellHeight));
             }
         }
@@ -89,21 +88,17 @@ export function applyGravity() {
     const cols = getGridCols();
     const rows = getGridRows();
     const sandState = getSandState();
-    const sandColors = getSandColors(); // Get the colors array
+    const sandColors = getSandColors();
 
     for (let x = 0; x < cols; x++) {
-        for (let y = rows - 2; y >= 0; y--) { // Start from the second to last row
-            if (sandState[x][y] === 1) { // If there's sand at (x, y)
-                // Check if the cell below is empty
+        for (let y = rows - 2; y >= 0; y--) {
+            if (sandState[x][y] === 1) {
                 if (sandState[x][y + 1] === 0) {
-                    // Move the sand down
                     sandState[x][y] = 0;
                     sandState[x][y + 1] = 1;
-                    // Move the color down as well
                     sandColors[x][y + 1] = sandColors[x][y];
-                    sandColors[x][y] = null; // Clear the original color
+                    sandColors[x][y] = null;
                 }
-                // If the cell below is occupied, check left and right
                 else if (sandState[x][y + 1] === 1) {
                     const left = x - 1 >= 0 ? sandState[x - 1][y + 1] : 1;
                     const right = x + 1 < cols ? sandState[x + 1][y + 1] : 1;
@@ -111,30 +106,26 @@ export function applyGravity() {
                     if (left === 0 && right === 1) {
                         sandState[x][y] = 0;
                         sandState[x - 1][y] = 1;
-                        // Move the color to the left
                         sandColors[x - 1][y] = sandColors[x][y];
-                        sandColors[x][y] = null; // Clear the original color
+                        sandColors[x][y] = null;
                     }
                     else if (right === 0 && left === 1) {
                         sandState[x][y] = 0;
                         sandState[x + 1][y] = 1;
-                        // Move the color to the right
                         sandColors[x + 1][y] = sandColors[x][y];
-                        sandColors[x][y] = null; // Clear the original color
+                        sandColors[x][y] = null;
                     }
                     else if (left === 0 && right === 0) {
                         if (Math.random() < 0.5) {
                             sandState[x][y] = 0;
                             sandState[x - 1][y] = 1;
-                            // Move the color to the left
                             sandColors[x - 1][y] = sandColors[x][y];
-                            sandColors[x][y] = null; // Clear the original color
+                            sandColors[x][y] = null;
                         } else {
                             sandState[x][y] = 0;
                             sandState[x + 1][y] = 1;
-                            // Move the color to the right
                             sandColors[x + 1][y] = sandColors[x][y];
-                            sandColors[x][y] = null; // Clear the original color
+                            sandColors[x][y] = null;
                         }
                     }
                 }
@@ -142,61 +133,55 @@ export function applyGravity() {
         }
     }
 
-    setSandState(sandState); // Update the sand state
-    setSandColors(sandColors); // Update the colors
+    setSandState(sandState);
+    setSandColors(sandColors);
 }
 
-
-// Initialize the sand grid with colors
 export function initializeSandGrid() {
     const cols = getGridCols();
     const rows = getGridRows();
     const sandState = [];
-    const sandColors = []; // Array to store colors for each sand particle
+    const sandColors = [];
 
     for (let x = 0; x < cols; x++) {
         sandState[x] = [];
-        sandColors[x] = []; // Initialize color array
+        sandColors[x] = [];
         for (let y = 0; y < rows; y++) {
             sandState[x][y] = 0;
-            sandColors[x][y] = null; // Set initial color to null (uncolored)
+            sandColors[x][y] = null;
         }
     }
 
     setSandState(sandState);
-    setSandColors(sandColors); // Store the colors array
+    setSandColors(sandColors);
 }
 
 export function setStateOfCell(x, y) {
     const sandState = getSandState();
-    const sandColors = getSandColors(); // Get the colors array
+    const sandColors = getSandColors();
     const cols = getGridCols();
     const rows = getGridRows();
 
-    // Use the current sand color selected in the UI
     const currentColor = getCurrentSandColor();
 
-    // Function to update the state and color of a single cell
     function updateCellState(i, j) {
         if (i >= 0 && i < cols && j >= 0 && j < rows) {
-            if (Math.random() < 0.1) { // 10% chance to set the cell
+            if (Math.random() < 0.1) {
                 sandState[i][j] = 1;
-                if (!sandColors[i][j]) { // Only set color if it's not already set
-                    sandColors[i][j] = currentColor; // Set the current color from the UI
+                if (!sandColors[i][j]) {
+                    sandColors[i][j] = currentColor;
                 }
             }
         }
     }
 
-    // Update the clicked cell state and color
     if (x >= 0 && x < cols && y >= 0 && y < rows) {
         sandState[x][y] = 1;
-        if (!sandColors[x][y]) { // Only set color if it's not already set
-            sandColors[x][y] = currentColor; // Set the color for the clicked cell
+        if (!sandColors[x][y]) {
+            sandColors[x][y] = currentColor;
         }
     }
 
-    // Update surrounding cells as well
     const surroundingOffsets = [
         [-1, -1], [-1, 0], [-1, 1],
         [0, -1], /*[0, 0],*/ [0, 1],
@@ -208,7 +193,7 @@ export function setStateOfCell(x, y) {
     });
 
     setSandState(sandState);
-    setSandColors(sandColors); // Store the colors array
+    setSandColors(sandColors);
 }
 
 
@@ -223,7 +208,7 @@ function rgbToHsl(r, g, b) {
     let h = 0, s = 0, l = (max + min) / 2;
 
     if (delta !== 0) {
-        s = delta / (1 - Math.abs(2 * l - 1));  // Saturation
+        s = delta / (1 - Math.abs(2 * l - 1));
 
         if (max === r) {
             h = (g - b) / delta;
@@ -233,27 +218,25 @@ function rgbToHsl(r, g, b) {
             h = 4 + (r - g) / delta;
         }
 
-        h *= 60;  // Convert to degrees
+        h *= 60;
 
         if (h < 0) {
             h += 360;
         }
     }
 
-    // Debugging: Log the HSL values
     console.log(`HSL: h=${h}, s=${s}, l=${l}`);
 
     return [h, s, l];
 }
 
 function hslToRgb(h, s, l) {
-    s = Math.max(0, Math.min(s, 1));  // Ensure valid saturation
-    l = Math.max(0, Math.min(l, 1));  // Ensure valid lightness
+    s = Math.max(0, Math.min(s, 1));
+    l = Math.max(0, Math.min(l, 1));
 
-    // Avoid cases where hue doesn't affect color (gray or white)
     if (s === 0) {
-        const gray = Math.round(l * 255); // Gray (no color saturation)
-        return `rgb(${gray}, ${gray}, ${gray})`;  // Return gray value in RGB format
+        const gray = Math.round(l * 255);
+        return `rgb(${gray}, ${gray}, ${gray})`;
     }
 
     const c = (1 - Math.abs(2 * l - 1)) * s;
@@ -292,14 +275,12 @@ function hslToRgb(h, s, l) {
     g = Math.round((g + m) * 255);
     b = Math.round((b + m) * 255);
 
-    // Debugging: Log the final RGB values
     console.log(`RGB: r=${r}, g=${g}, b=${b}`);
 
-    return `rgb(${r}, ${g}, ${b})`;  // Return RGB as a string in the desired format
+    return `rgb(${r}, ${g}, ${b})`;
 }
 
 export function incrementHueInRgb(rgbString, increment) {
-    // Match the RGB values from the input string (e.g., 'rgb(255, 0, 0)')
     const regex = /^rgb\((\d+),\s*(\d+),\s*(\d+)\)$/;
     const match = rgbString.match(regex);
 
@@ -312,14 +293,10 @@ export function incrementHueInRgb(rgbString, increment) {
     let g = parseInt(match[2]);
     let b = parseInt(match[3]);
 
-    // Convert RGB to HSL
     let [h, s, l] = rgbToHsl(r, g, b);
+    h = (h + increment) % 360;
 
-    // Increment the hue by the specified amount and ensure it's within bounds
-    h = (h + increment) % 360;  // Wrap the hue around the 360 degrees
-
-    // Convert HSL back to RGB
-    const newRgbString = hslToRgb(h, s, l);  // This returns RGB in the desired string format
+    const newRgbString = hslToRgb(h, s, l);
     return newRgbString;
 }
 

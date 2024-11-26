@@ -10,7 +10,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     initializeSandGrid();
     setElements();
     
-    // Event listeners
     getElements().newGameMenuButton.addEventListener('click', async () => {
         setBeginGameStatus(true);
         if (!getGameInProgress()) {
@@ -68,7 +67,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
-    // Handle mouse click to paint on the grid
     function handleMouseClick(event) {
         const canvas = getElements().canvas;
         const rect = canvas.getBoundingClientRect();
