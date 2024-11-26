@@ -1,13 +1,15 @@
-import { getGridCols, getGridRows, getShouldDrawGrid, setShouldDrawGrid, getLanguage, setElements, getElements, setBeginGameStatus, getGameInProgress, setGameInProgress, getGameVisiblePaused, getBeginGameStatus, getGameVisibleActive, getMenuState, getLanguageSelected, setLanguageSelected, setLanguage } from './constantsAndGlobalVars.js';
-import { setStateOfCell, initializeSandGrid, setGameState, startGame, gameLoop } from './game.js';
+import { setCurrentSandColor, getGridCols, getGridRows, getLanguage, setElements, getElements, setBeginGameStatus, getGameInProgress, setGameInProgress, getGameVisiblePaused, getBeginGameStatus, getGameVisibleActive, getMenuState, getLanguageSelected, setLanguageSelected, setLanguage, getCurrentSandColor } from './constantsAndGlobalVars.js';
+import { incrementHueInRgb, setStateOfCell, initializeSandGrid, setGameState, startGame, gameLoop } from './game.js';
 import { initLocalization, localize } from './localization.js';
 
 let isMouseDown = false;
-let intervalId = null;
+let colorChangeTimer = null;
+let increment = 20;
 
 document.addEventListener('DOMContentLoaded', async () => {
     initializeSandGrid();
     setElements();
+    
     // Event listeners
     getElements().newGameMenuButton.addEventListener('click', async () => {
         setBeginGameStatus(true);
@@ -23,8 +25,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     getElements().button1.addEventListener('click', () => {
-        setShouldDrawGrid(!getShouldDrawGrid()) // Toggle the grid drawing state
-        console.log(`Grid drawing is now ${getShouldDrawGrid() ? 'enabled' : 'disabled'}.`);
     });
 
     getElements().button2.addEventListener('click', () => {
@@ -34,25 +34,41 @@ document.addEventListener('DOMContentLoaded', async () => {
     setGameState(getMenuState());
     handleLanguageChange(getLanguageSelected());
     
+    const canvas = getElements().canvas;
+    
     canvas.addEventListener('mousedown', (event) => {
         if (!isMouseDown) {
             isMouseDown = true;
             handleMouseClick(event);
-            intervalId = setInterval(() => handleMouseClick(event), 30);
+            startColorChangeInterval();
         }
-    });
-
-    canvas.addEventListener('mouseup', () => {
-        isMouseDown = false;
-        clearInterval(intervalId);
     });
 
     canvas.addEventListener('mousemove', (event) => {
         if (isMouseDown) {
-            handleMouseClick(event); 
+            handleMouseClick(event);
         }
     });
-    
+
+    canvas.addEventListener('mouseup', () => {
+        if (isMouseDown) {
+            isMouseDown = false;
+            clearInterval(colorChangeTimer);
+            colorChangeTimer = null;
+        }
+    });
+
+
+    function startColorChangeInterval() {
+        if (!colorChangeTimer) {
+            colorChangeTimer = setInterval(() => {
+                setCurrentSandColor(incrementHueInRgb(getCurrentSandColor(), increment));
+                console.log(getCurrentSandColor());
+            }, 1000);
+        }
+    }
+
+    // Handle mouse click to paint on the grid
     function handleMouseClick(event) {
         const canvas = getElements().canvas;
         const rect = canvas.getBoundingClientRect();
@@ -65,13 +81,12 @@ document.addEventListener('DOMContentLoaded', async () => {
         const cellHeight = canvas.height / rows;
     
         const col = Math.floor(x / cellWidth);
-        const row = Math.floor(y / cellHeight);
+        const row = Math.floor(y / cellHeight);    
+        setStateOfCell(col, row);
     
-        setStateOfCell(col, row, 1);
-        
         event.preventDefault();
-    }
-    
+    }  
+
 });
 
 async function setElementsLanguageText() {
@@ -102,4 +117,3 @@ export function disableActivateButton(button, action, activeClass) {
             break;
     }
 }
-

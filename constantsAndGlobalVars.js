@@ -15,21 +15,22 @@ export let gameState;
 export const MENU_STATE = 'menuState';
 export const GAME_VISIBLE_PAUSED = 'gameVisiblePaused';
 export const GAME_VISIBLE_ACTIVE = 'gameVisibleActive';
-export const GRID_COLS = 80;
-export const GRID_ROWS = 60;
+export const GRID_COLS = 100;
+export const GRID_ROWS = 80;
 
 export const DICTIONARY_URL = './resources/WebstersEnglishDictionary-master/dictionary.json';
 
 //GLOBAL VARIABLES
 let sandGrid = [];
 let sandState = [];
+let currentSandColor = 'rgb(255,0,0)'
+let sandColors = [];
 
 //FLAGS
 let audioMuted;
 let languageChangedFlag;
 let beginGameState = true;
 let gameInProgress = false;
-let shouldDrawGrid = false;
 
 let autoSaveOn = false;
 export let pauseAutoSaveCountdown = true;
@@ -48,11 +49,6 @@ export function setElements() {
         button1: document.getElementById('button1'),
         button2: document.getElementById('button2')
     };
-}
-
-
-export function getPlayerObject() {
-    return playerObject;
 }
 
 export function setGameStateVariable(value) {
@@ -196,14 +192,6 @@ export function setGameInProgress(value) {
     gameInProgress = value;
 }
 
-export function getShouldDrawGrid() {
-    return shouldDrawGrid;
-}
-
-export function setShouldDrawGrid(value) {
-    shouldDrawGrid = value;
-}
-
 export function getSandGrid() {
     return sandGrid;
 }
@@ -226,4 +214,20 @@ export function getSandState() {
 
 export function setSandState(newState) {
     sandState = newState;
+}
+
+export function getCurrentSandColor() {
+    return currentSandColor;
+}
+
+export function setCurrentSandColor(value) {
+    currentSandColor = value;
+}
+
+export function getSandColors() {
+    return sandColors;
+}
+
+export function setSandColors(value) {
+    sandColors = value;
 }
