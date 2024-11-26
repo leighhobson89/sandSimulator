@@ -1,9 +1,12 @@
-import { getShouldDrawGrid, setShouldDrawGrid, getLanguage, setElements, getElements, setBeginGameStatus, getGameInProgress, setGameInProgress, getGameVisiblePaused, getBeginGameStatus, getGameVisibleActive, getMenuState, getLanguageSelected, setLanguageSelected, setLanguage } from './constantsAndGlobalVars.js';
-import { initializeSandGrid, setGameState, startGame, gameLoop } from './game.js';
+import { getGridCols, getGridRows, getShouldDrawGrid, setShouldDrawGrid, getLanguage, setElements, getElements, setBeginGameStatus, getGameInProgress, setGameInProgress, getGameVisiblePaused, getBeginGameStatus, getGameVisibleActive, getMenuState, getLanguageSelected, setLanguageSelected, setLanguage } from './constantsAndGlobalVars.js';
+import { setStateOfCell, initializeSandGrid, setGameState, startGame, gameLoop } from './game.js';
 import { initLocalization, localize } from './localization.js';
 
+let isMouseDown = false;
+let intervalId = null;
 
 document.addEventListener('DOMContentLoaded', async () => {
+    initializeSandGrid();
     setElements();
     // Event listeners
     getElements().newGameMenuButton.addEventListener('click', async () => {
@@ -12,7 +15,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             setGameInProgress(true);
         }
         setGameState(getGameVisiblePaused());
-        initializeSandGrid();
         startGame();
     });
 
@@ -31,6 +33,45 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     setGameState(getMenuState());
     handleLanguageChange(getLanguageSelected());
+    
+    canvas.addEventListener('mousedown', (event) => {
+        if (!isMouseDown) {
+            isMouseDown = true;
+            handleMouseClick(event);
+            intervalId = setInterval(() => handleMouseClick(event), 30);
+        }
+    });
+
+    canvas.addEventListener('mouseup', () => {
+        isMouseDown = false;
+        clearInterval(intervalId);
+    });
+
+    canvas.addEventListener('mousemove', (event) => {
+        if (isMouseDown) {
+            handleMouseClick(event); 
+        }
+    });
+    
+    function handleMouseClick(event) {
+        const canvas = getElements().canvas;
+        const rect = canvas.getBoundingClientRect();
+        const x = event.clientX - rect.left;
+        const y = event.clientY - rect.top;
+    
+        const cols = getGridCols();
+        const rows = getGridRows();
+        const cellWidth = canvas.width / cols;
+        const cellHeight = canvas.height / rows;
+    
+        const col = Math.floor(x / cellWidth);
+        const row = Math.floor(y / cellHeight);
+    
+        setStateOfCell(col, row, 1);
+        
+        event.preventDefault();
+    }
+    
 });
 
 async function setElementsLanguageText() {

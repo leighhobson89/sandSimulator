@@ -22,6 +22,7 @@ export const DICTIONARY_URL = './resources/WebstersEnglishDictionary-master/dict
 
 //GLOBAL VARIABLES
 let sandGrid = [];
+let sandState = [];
 
 //FLAGS
 let audioMuted;
@@ -217,4 +218,12 @@ export function getGridCols() {
 
 export function getGridRows() {
     return GRID_ROWS;
+}
+
+export function getSandState() {
+    return sandState;
+}
+
+export function setSandState(newState) {
+    sandState = newState;
 }

@@ -1,5 +1,5 @@
 import { localize } from './localization.js';
-import { getSandGrid, setSandGrid, getGridCols, getGridRows, getShouldDrawGrid, setShouldDrawGrid, setBeginGameStatus, setGameStateVariable, getBeginGameStatus, getMenuState, getGameVisiblePaused, getGameVisibleActive, getElements, getLanguage, gameState } from './constantsAndGlobalVars.js';
+import { getSandState, setSandState, getSandGrid, setSandGrid, getGridCols, getGridRows, getShouldDrawGrid, setShouldDrawGrid, setBeginGameStatus, setGameStateVariable, getBeginGameStatus, getMenuState, getGameVisiblePaused, getGameVisibleActive, getElements, getLanguage, gameState } from './constantsAndGlobalVars.js';
 
 //--------------------------------------------------------------------------------------------------------
 let shouldDrawGrid = false; // Add this at the top of game.js
@@ -41,11 +41,11 @@ export async function gameLoop() {
             draw(ctx);
         }
 
-        paintSand(34, 34, 'rgb(255,255,255)');
+        applyGravity();
 
-        await gameLoopFunction();
-
-        requestAnimationFrame(gameLoop);
+        setTimeout(() => {
+            gameLoop();
+        }, 40);
     }
 }
 
@@ -53,9 +53,6 @@ export async function gameLoop() {
 export function draw(ctx) {
     const canvasWidth = getElements().canvas.width;
     const canvasHeight = getElements().canvas.height;
-    const cols = getGridCols();
-    const rows = getGridRows();
-    const sandGrid = getSandGrid();
 
     ctx.clearRect(0, 0, canvasWidth, canvasHeight);
 
@@ -63,18 +60,72 @@ export function draw(ctx) {
         drawGrid(ctx);
     }
 
+    paintCellsWithSand(ctx);
+}
+
+export function paintCellsWithSand(ctx) {
+    const canvasWidth = getElements().canvas.width;
+    const canvasHeight = getElements().canvas.height;
+    const cols = getGridCols();
+    const rows = getGridRows();
+
     const cellWidth = canvasWidth / cols;
     const cellHeight = canvasHeight / rows;
 
     for (let x = 0; x < cols; x++) {
         for (let y = 0; y < rows; y++) {
-            const color = sandGrid[x][y];
-            if (color) {
-                ctx.fillStyle = color;
-                ctx.fillRect(x * cellWidth, y * cellHeight, cellWidth, cellHeight);
+            const cellState = getSandState()[x][y];
+            if (cellState === 1) {
+                ctx.fillStyle = 'rgb(255, 255, 255)'; //sand
+            } else {
+                ctx.fillStyle = 'rgb(0, 0, 0)'; // empty
+            }
+
+            ctx.fillRect(x * cellWidth, y * cellHeight, cellWidth, cellHeight);
+        }
+    }
+}
+
+export function applyGravity() {
+    const cols = getGridCols();
+    const rows = getGridRows();
+    const sandState = getSandState();
+
+    for (let x = 0; x < cols; x++) {
+        for (let y = rows - 2; y >= 0; y--) {
+            if (sandState[x][y] === 1 && sandState[x][y + 1] === 0) {
+                sandState[x][y] = 0;
+                sandState[x][y + 1] = 1;
             }
         }
     }
+
+    setSandState(sandState); // Update the global state after applying gravity
+}
+
+export function initializeSandGrid() {
+    const cols = getGridCols();
+    const rows = getGridRows();
+    const sandState = []; // Local state array
+
+    for (let x = 0; x < cols; x++) {
+        sandState[x] = [];
+        for (let y = 0; y < rows; y++) {
+            sandState[x][y] = 0; // Set initial state as empty (0)
+        }
+    }
+
+    setSandState(sandState); // Save to global state
+}
+
+export function setStateOfCell(x, y) {
+    const sandState = getSandState();
+
+    if (x >= 0 && x < getGridCols() && y >= 0 && y < getGridRows()) {
+        sandState[x][y] = 1; // Set the state to 1 when sand is painted
+    }
+
+    setSandState(sandState); // Update global state
 }
 
 export function drawGrid(ctx) {
@@ -104,37 +155,6 @@ export function drawGrid(ctx) {
         ctx.lineTo(canvasWidth, y);
         ctx.stroke();
     }
-}
-
-export async function gameLoopFunction() {
-
-}
-
-export function initializeSandGrid() {
-    const cols = getGridCols();
-    const rows = getGridRows();
-    let sandGrid = getSandGrid();
-    
-    for (let x = 0; x < cols; x++) {
-        sandGrid[x] = [];
-        for (let y = 0; y < rows; y++) {
-            sandGrid[x][y] = null;
-        }
-    }
-
-    setSandGrid(sandGrid);
-}
-
-export function paintSand(x, y, color) {
-    const cols = getGridCols();
-    const rows = getGridRows();
-    let sandGrid = getSandGrid();
-
-    if (x >= 0 && x < cols && y >= 0 && y < rows) {
-        sandGrid[x][y] = color;
-    }
-
-    setSandGrid(sandGrid);
 }
 
 //===============================================================================================================
