@@ -1,5 +1,5 @@
-import { getLanguage, setElements, getElements, setBeginGameStatus, getGameInProgress, setGameInProgress, getGameVisiblePaused, getBeginGameStatus, getGameVisibleActive, getMenuState, getLanguageSelected, setLanguageSelected, setLanguage } from './constantsAndGlobalVars.js';
-import { setGameState, startGame, gameLoop } from './game.js';
+import { getShouldDrawGrid, setShouldDrawGrid, getLanguage, setElements, getElements, setBeginGameStatus, getGameInProgress, setGameInProgress, getGameVisiblePaused, getBeginGameStatus, getGameVisibleActive, getMenuState, getLanguageSelected, setLanguageSelected, setLanguage } from './constantsAndGlobalVars.js';
+import { initializeSandGrid, setGameState, startGame, gameLoop } from './game.js';
 import { initLocalization, localize } from './localization.js';
 
 
@@ -12,7 +12,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             setGameInProgress(true);
         }
         setGameState(getGameVisiblePaused());
-        //PRE GAME START CODE HERE AFTER NEW GAME CLICKED
+        initializeSandGrid();
         startGame();
     });
 
@@ -21,7 +21,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     getElements().button1.addEventListener('click', () => {
-        //BUTTON 1 CODE
+        setShouldDrawGrid(!getShouldDrawGrid()) // Toggle the grid drawing state
+        console.log(`Grid drawing is now ${getShouldDrawGrid() ? 'enabled' : 'disabled'}.`);
     });
 
     getElements().button2.addEventListener('click', () => {

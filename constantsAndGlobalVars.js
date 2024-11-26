@@ -15,20 +15,20 @@ export let gameState;
 export const MENU_STATE = 'menuState';
 export const GAME_VISIBLE_PAUSED = 'gameVisiblePaused';
 export const GAME_VISIBLE_ACTIVE = 'gameVisibleActive';
-export const NUMBER_OF_ENEMY_SQUARES = 10;
-export const INITIAL_SPEED_PLAYER = 4;
-export const INITIAL_SPEED_MOVING_ENEMY = 4;
-export const MAX_ATTEMPTS_TO_DRAW_ENEMIES = 1000;
+export const GRID_COLS = 80;
+export const GRID_ROWS = 60;
 
 export const DICTIONARY_URL = './resources/WebstersEnglishDictionary-master/dictionary.json';
 
 //GLOBAL VARIABLES
+let sandGrid = [];
 
 //FLAGS
 let audioMuted;
 let languageChangedFlag;
 let beginGameState = true;
 let gameInProgress = false;
+let shouldDrawGrid = false;
 
 let autoSaveOn = false;
 export let pauseAutoSaveCountdown = true;
@@ -193,4 +193,28 @@ export function getGameInProgress() {
 
 export function setGameInProgress(value) {
     gameInProgress = value;
+}
+
+export function getShouldDrawGrid() {
+    return shouldDrawGrid;
+}
+
+export function setShouldDrawGrid(value) {
+    shouldDrawGrid = value;
+}
+
+export function getSandGrid() {
+    return sandGrid;
+}
+
+export function setSandGrid(newSandGrid) {
+    sandGrid = newSandGrid;
+}
+
+export function getGridCols() {
+    return GRID_COLS;
+}
+
+export function getGridRows() {
+    return GRID_ROWS;
 }

@@ -1,7 +1,8 @@
 import { localize } from './localization.js';
-import { setBeginGameStatus, setGameStateVariable, getBeginGameStatus, getMenuState, getGameVisiblePaused, getGameVisibleActive, getElements, getLanguage, gameState } from './constantsAndGlobalVars.js';
+import { getSandGrid, setSandGrid, getGridCols, getGridRows, getShouldDrawGrid, setShouldDrawGrid, setBeginGameStatus, setGameStateVariable, getBeginGameStatus, getMenuState, getGameVisiblePaused, getGameVisibleActive, getElements, getLanguage, gameState } from './constantsAndGlobalVars.js';
 
 //--------------------------------------------------------------------------------------------------------
+let shouldDrawGrid = false; // Add this at the top of game.js
 
 export function startGame() {
     const ctx = getElements().canvas.getContext('2d');
@@ -40,6 +41,8 @@ export async function gameLoop() {
             draw(ctx);
         }
 
+        paintSand(34, 34, 'rgb(255,255,255)');
+
         await gameLoopFunction();
 
         requestAnimationFrame(gameLoop);
@@ -47,17 +50,91 @@ export async function gameLoop() {
 }
 
 
-function draw(ctx) {
+export function draw(ctx) {
     const canvasWidth = getElements().canvas.width;
     const canvasHeight = getElements().canvas.height;
+    const cols = getGridCols();
+    const rows = getGridRows();
+    const sandGrid = getSandGrid();
 
-    // Clear the previous drawing
     ctx.clearRect(0, 0, canvasWidth, canvasHeight);
 
+    if (getShouldDrawGrid()) {
+        drawGrid(ctx);
+    }
+
+    const cellWidth = canvasWidth / cols;
+    const cellHeight = canvasHeight / rows;
+
+    for (let x = 0; x < cols; x++) {
+        for (let y = 0; y < rows; y++) {
+            const color = sandGrid[x][y];
+            if (color) {
+                ctx.fillStyle = color;
+                ctx.fillRect(x * cellWidth, y * cellHeight, cellWidth, cellHeight);
+            }
+        }
+    }
+}
+
+export function drawGrid(ctx) {
+    const canvasWidth = getElements().canvas.width;
+    const canvasHeight = getElements().canvas.height;
+    const cols = getGridCols();
+    const rows = getGridRows();
+
+    const cellWidth = canvasWidth / cols;
+    const cellHeight = canvasHeight / rows;
+
+    ctx.strokeStyle = 'white';
+    ctx.lineWidth = 1;
+
+    // Draw vertical lines
+    for (let x = 0; x <= canvasWidth; x += cellWidth) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, canvasHeight);
+        ctx.stroke();
+    }
+
+    // Draw horizontal lines
+    for (let y = 0; y <= canvasHeight; y += cellHeight) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(canvasWidth, y);
+        ctx.stroke();
+    }
 }
 
 export async function gameLoopFunction() {
 
+}
+
+export function initializeSandGrid() {
+    const cols = getGridCols();
+    const rows = getGridRows();
+    let sandGrid = getSandGrid();
+    
+    for (let x = 0; x < cols; x++) {
+        sandGrid[x] = [];
+        for (let y = 0; y < rows; y++) {
+            sandGrid[x][y] = null;
+        }
+    }
+
+    setSandGrid(sandGrid);
+}
+
+export function paintSand(x, y, color) {
+    const cols = getGridCols();
+    const rows = getGridRows();
+    let sandGrid = getSandGrid();
+
+    if (x >= 0 && x < cols && y >= 0 && y < rows) {
+        sandGrid[x][y] = color;
+    }
+
+    setSandGrid(sandGrid);
 }
 
 //===============================================================================================================
