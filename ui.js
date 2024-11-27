@@ -4,7 +4,9 @@ import { initLocalization, localize } from './localization.js';
 
 let isMouseDown = false;
 let colorChangeTimer = null;
+let clickTimer = null;
 let increment = 20;
+let mouseLocation = {};
 
 document.addEventListener('DOMContentLoaded', async () => {
     initializeSandGrid();
@@ -37,15 +39,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     canvas.addEventListener('mousedown', (event) => {
         if (!isMouseDown) {
+            mouseLocation = event;
             isMouseDown = true;
-            handleMouseClick(event);
+            handleMouseClick();
             startColorChangeInterval();
+            startLongPressInterval();
         }
     });
 
     canvas.addEventListener('mousemove', (event) => {
         if (isMouseDown) {
+            console.log('calling handleMouseClick from mouseMOVE');
             handleMouseClick(event);
+            mouseLocation = event;
         }
     });
 
@@ -53,9 +59,21 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (isMouseDown) {
             isMouseDown = false;
             clearInterval(colorChangeTimer);
+            clickTimer = null;
             colorChangeTimer = null;
         }
     });
+
+    function startLongPressInterval() {
+        if (!clickTimer) {
+            console.log('calling handleMouseClick from mouseDOWN');
+            clickTimer = setInterval(() => {
+                if (isMouseDown) {
+                    handleMouseClick(mouseLocation);
+                }
+            }, 30);
+        }
+    }
 
 
     function startColorChangeInterval() {
@@ -67,11 +85,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     }
 
-    function handleMouseClick(event) {
+    function handleMouseClick() {
         const canvas = getElements().canvas;
         const rect = canvas.getBoundingClientRect();
-        const x = event.clientX - rect.left;
-        const y = event.clientY - rect.top;
+        const x = mouseLocation.clientX - rect.left;
+        const y = mouseLocation.clientY - rect.top;
     
         const cols = getGridCols();
         const rows = getGridRows();
@@ -81,8 +99,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         const col = Math.floor(x / cellWidth);
         const row = Math.floor(y / cellHeight);    
         setStateOfCell(col, row);
-    
-        event.preventDefault();
     }  
 
 });
