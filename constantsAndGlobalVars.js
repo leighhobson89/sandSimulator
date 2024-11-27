@@ -13,18 +13,20 @@ let oldLanguage = 'en';
 //CONSTANTS
 export let gameState;
 export const MENU_STATE = 'menuState';
-export const GAME_VISIBLE_PAUSED = 'gameVisiblePaused';
 export const GAME_VISIBLE_ACTIVE = 'gameVisibleActive';
-export const GRID_COLS = 160;
-export const GRID_ROWS = 120;
-
-export const DICTIONARY_URL = './resources/WebstersEnglishDictionary-master/dictionary.json';
+export const GRID_COLS = 120;
+export const GRID_ROWS = 90;
 
 //GLOBAL VARIABLES
 let sandGrid = [];
 let sandState = [];
-let currentSandColor = 'rgb(255,0,0)'
-let sandColors = [];
+let waterState = [];
+let fireState = [];
+let iceState = [];
+let oilState = [];
+let lavaState = [];
+let glassState = [];
+let mudState = [];
 let particleDefinitions = null;
 let particleTypeIdSelected = 1; //starting particle sand
 
@@ -49,9 +51,20 @@ export function setElements() {
         buttonRow: document.getElementById('buttonRow'),
         overlay: document.getElementById('overlay'),
         button1: document.getElementById('button1'),
-        button2: document.getElementById('button2')
+        button2: document.getElementById('button2'),
+        floatingContainer: document.getElementById('floatingContainer'),
+        particle1: document.getElementById('particle1'), // Sand
+        particle2: document.getElementById('particle2'), // Water
+        particle3: document.getElementById('particle3'), // Fire
+        particle4: document.getElementById('particle4'), // Ice
+        particle5: document.getElementById('particle5'), // Oil
+        particle6: document.getElementById('particle6'), // Lava
+        particle7: document.getElementById('particle7'), // Glass
+        particle8: document.getElementById('particle8') // Mud
     };
 }
+
+
 
 export function setGameStateVariable(value) {
     gameState = value;
@@ -210,30 +223,6 @@ export function getGridRows() {
     return GRID_ROWS;
 }
 
-export function getSandState() {
-    return sandState;
-}
-
-export function setSandState(newState) {
-    sandState = newState;
-}
-
-export function getCurrentSandColor() {
-    return currentSandColor;
-}
-
-export function setCurrentSandColor(value) {
-    currentSandColor = value;
-}
-
-export function getSandColors() {
-    return sandColors;
-}
-
-export function setSandColors(value) {
-    sandColors = value;
-}
-
 export function getParticleDefinitions() {
     return particleDefinitions;
 }
@@ -242,12 +231,88 @@ export function setParticleDefinitions(value) {
     particleDefinitions = value;
 }
 
+export function getSandState() {
+    return sandState;
+}
+
+export function setSandState(value) {
+    sandState = value;
+}
+
+export function getWaterState() {
+    return waterState;
+}
+
+export function setWaterState(value) {
+    waterState = value;
+}
+
+export function getFireState() {
+    return fireState;
+}
+
+export function setFireState(value) {
+    fireState = value;
+}
+
+export function getIceState() {
+    return iceState;
+}
+
+export function setIceState(value) {
+    iceState = value;
+}
+
+export function getOilState() {
+    return oilState;
+}
+
+export function setOilState(value) {
+    oilState = value;
+}
+
+export function getLavaState() {
+    return lavaState;
+}
+
+export function setLavaState(value) {
+    lavaState = value;
+}
+
+export function getGlassState() {
+    return glassState;
+}
+
+export function setGlassState(value) {
+    glassState = value;
+}
+
+export function getMudState() {
+    return mudState;
+}
+
+export function setMudState(value) {
+    mudState = value;
+}
+
 export function getParticleState(particleType) {
     switch (particleType) {
         case 1:
             return getSandState();
-        // case 2:
-        //     return getWaterState();
+        case 2:
+            return getWaterState();
+        case 3:
+            return getFireState();
+        case 4:
+            return getIceState();
+        case 5:
+            return getOilState();
+        case 6:
+            return getLavaState();
+        case 7:
+            return getGlassState();
+        case 8:
+            return getMudState();
         default:
             return [];
     }
@@ -258,9 +323,27 @@ export function setParticleState(particleType, state) {
         case 1:
             setSandState(state);
             break;
-        // case 2:
-        //     setWaterState(state);
-        //     break;
+        case 2:
+            setWaterState(state);
+            break;
+        case 3:
+            setFireState(state);
+            break;
+        case 4:
+            setIceState(state);
+            break;
+        case 5:
+            setOilState(state);
+            break;
+        case 6:
+            setLavaState(state);
+            break;
+        case 7:
+            setGlassState(state);
+            break;
+        case 8:
+            setMudState(state);
+            break;
         default:
             console.warn(`Unknown particle type: ${particleType}`);
     }

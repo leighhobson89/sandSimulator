@@ -1,4 +1,4 @@
-import { getGridCols, getGridRows, getLanguage, setElements, getElements, setBeginGameStatus, getGameInProgress, setGameInProgress, getGameVisiblePaused, getMenuState, getLanguageSelected, setLanguageSelected, setLanguage, getParticleTypeIdSelected } from './constantsAndGlobalVars.js';
+import { setParticleTypeIdSelected, getGameVisibleActive, getGridCols, getGridRows, getLanguage, setElements, getElements, setBeginGameStatus, getGameInProgress, setGameInProgress, getMenuState, getLanguageSelected, setLanguageSelected, setLanguage, getParticleTypeIdSelected } from './constantsAndGlobalVars.js';
 import { loadParticleDefinitions, setStateOfCell, initializeParticleGrids, setGameState, startGame } from './game.js';
 import { initLocalization, localize } from './localization.js';
 
@@ -16,7 +16,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (!getGameInProgress()) {
             setGameInProgress(true);
         }
-        setGameState(getGameVisiblePaused());
+        setGameState(getGameVisibleActive());
         startGame();
     });
 
@@ -30,6 +30,39 @@ document.addEventListener('DOMContentLoaded', async () => {
     getElements().button2.addEventListener('click', () => {
         //BUTTON 2 CODE
     });
+
+    getElements().particle1.addEventListener('click', function() {
+            setParticleTypeIdSelected(1); // Sand
+        });
+    
+        getElements().particle2.addEventListener('click', function() {
+            setParticleTypeIdSelected(2); // Water
+        });
+    
+        getElements().particle3.addEventListener('click', function() {
+            setParticleTypeIdSelected(3); // Fire
+        });
+    
+        getElements().particle4.addEventListener('click', function() {
+            setParticleTypeIdSelected(4); // Ice
+        });
+    
+        getElements().particle5.addEventListener('click', function() {
+            setParticleTypeIdSelected(5); // Oil
+        });
+    
+        getElements().particle6.addEventListener('click', function() {
+            setParticleTypeIdSelected(6); // Lava
+        });
+    
+        getElements().particle7.addEventListener('click', function() {
+            setParticleTypeIdSelected(7); // Glass
+        });
+    
+        getElements().particle8.addEventListener('click', function() {
+            setParticleTypeIdSelected(8); // Mud
+        });
+
 
     setGameState(getMenuState());
     handleLanguageChange(getLanguageSelected());

@@ -1,11 +1,12 @@
 import { localize } from './localization.js';
-import { getParticleTypeIdSelected, setParticleState, getParticleState, setParticleDefinitions, setSandColors, getSandColors, getCurrentSandColor, getSandState, setSandState, getGridCols, getGridRows, setBeginGameStatus, setGameStateVariable, getBeginGameStatus, getMenuState, getGameVisiblePaused, getGameVisibleActive, getElements, getLanguage, gameState, getParticleDefinitions } from './constantsAndGlobalVars.js';
+import { getParticleTypeIdSelected, setParticleState, getParticleState, setParticleDefinitions, getGridCols, getGridRows, setBeginGameStatus, setGameStateVariable, getBeginGameStatus, getMenuState, getGameVisiblePaused, getGameVisibleActive, getElements, getLanguage, gameState, getParticleDefinitions } from './constantsAndGlobalVars.js';
 
 //--------------------------------------------------------------------------------------------------------
 
 export function startGame() {
     const ctx = getElements().canvas.getContext('2d');
     const container = getElements().canvasContainer;
+    const floatingContainer = getElements().leftContainer;
 
     function updateCanvasSize() {
         const canvasWidth = container.clientWidth * 0.8;
@@ -16,7 +17,7 @@ export function startGame() {
 
         getElements().canvas.width = canvasWidth;
         getElements().canvas.height = canvasHeight;
-        
+
         ctx.scale(1, 1);
     }
 
@@ -31,7 +32,9 @@ export function startGame() {
     gameLoop();
 }
 
+
 export async function gameLoop() {
+    console.log(getParticleTypeIdSelected() + " is currently selected!")
     const ctx = getElements().canvas.getContext('2d');
     if (gameState === getGameVisibleActive() || gameState === getGameVisiblePaused()) {
         ctx.clearRect(0, 0, getElements().canvas.width, getElements().canvas.height);
@@ -161,10 +164,10 @@ function applyNonStickySolidBehavior(x, y, particleStateGrid) {
         const left = x - 1 >= 0 ? particleStateGrid[x - 1][y + 1] : 1;
         const right = x + 1 < cols ? particleStateGrid[x + 1][y + 1] : 1;
 
-        if (left === 0 && right === 1) {
+        if (left === 0 && right !== 0) {
             particleStateGrid[x - 1][y] = particleStateGrid[x][y];
             particleStateGrid[x][y] = 0;
-        } else if (right === 0 && left === 1) {
+        } else if (right === 0 && left !== 0) {
             particleStateGrid[x + 1][y] = particleStateGrid[x][y];
             particleStateGrid[x][y] = 0;
         } else if (left === 0 && right === 0) {
@@ -285,21 +288,7 @@ export function setGameState(newState) {
             getElements().returnToMenuButton.classList.add('d-none');
             getElements().button1.classList.add('d-none');
             getElements().button2.classList.add('d-none');
-
-            console.log("Language is " + getLanguage());
-            break;
-        case getGameVisiblePaused():
-            getElements().menu.classList.remove('d-flex');
-            getElements().menu.classList.add('d-none');
-            getElements().buttonRow.classList.remove('d-none');
-            getElements().buttonRow.classList.add('d-flex');
-            getElements().canvasContainer.classList.remove('d-none');
-            getElements().canvasContainer.classList.add('d-flex');
-            getElements().returnToMenuButton.classList.remove('d-none');
-            getElements().returnToMenuButton.classList.add('d-flex');
-            getElements().returnToMenuButton.innerHTML = `${localize('menuTitle', getLanguage())}`;
-            getElements().button1.classList.add('d-none');
-            getElements().button2.classList.add('d-none');
+            getElements().floatingContainer.classList.add("d-none");
             break;
         case getGameVisibleActive():
             getElements().menu.classList.remove('d-flex');
@@ -313,6 +302,7 @@ export function setGameState(newState) {
             getElements().returnToMenuButton.innerHTML = `${localize('menuTitle', getLanguage())}`;
             getElements().button1.classList.remove('d-none');
             getElements().button2.classList.remove('d-none');
+            getElements().floatingContainer.classList.remove("d-none");
             break;
     }
 }
