@@ -1,0 +1,15 @@
+{
+    "particles": {
+      "id": {
+        "1": {
+            "name": "sand",
+            "color": "rgb(211, 214, 129)",
+            "gravity": 1,
+            "spread": true,
+            "group": "solid",
+            "sticky": false
+        }
+      }
+    }
+  }
+  

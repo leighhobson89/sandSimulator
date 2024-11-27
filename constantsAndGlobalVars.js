@@ -15,8 +15,8 @@ export let gameState;
 export const MENU_STATE = 'menuState';
 export const GAME_VISIBLE_PAUSED = 'gameVisiblePaused';
 export const GAME_VISIBLE_ACTIVE = 'gameVisibleActive';
-export const GRID_COLS = 100;
-export const GRID_ROWS = 80;
+export const GRID_COLS = 160;
+export const GRID_ROWS = 120;
 
 export const DICTIONARY_URL = './resources/WebstersEnglishDictionary-master/dictionary.json';
 
@@ -25,6 +25,8 @@ let sandGrid = [];
 let sandState = [];
 let currentSandColor = 'rgb(255,0,0)'
 let sandColors = [];
+let particleDefinitions = null;
+let particleTypeIdSelected = 1; //starting particle sand
 
 //FLAGS
 let audioMuted;
@@ -230,4 +232,44 @@ export function getSandColors() {
 
 export function setSandColors(value) {
     sandColors = value;
+}
+
+export function getParticleDefinitions() {
+    return particleDefinitions;
+}
+
+export function setParticleDefinitions(value) {
+    particleDefinitions = value;
+}
+
+export function getParticleState(particleType) {
+    switch (particleType) {
+        case 1:
+            return getSandState();
+        // case 2:
+        //     return getWaterState();
+        default:
+            return [];
+    }
+}
+
+export function setParticleState(particleType, state) {
+    switch (particleType) {
+        case 1:
+            setSandState(state);
+            break;
+        // case 2:
+        //     setWaterState(state);
+        //     break;
+        default:
+            console.warn(`Unknown particle type: ${particleType}`);
+    }
+}
+
+export function getParticleTypeIdSelected() {
+    return particleTypeIdSelected;
+}
+
+export function setParticleTypeIdSelected(value) {
+    particleTypeIdSelected = value;
 }

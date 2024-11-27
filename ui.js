@@ -1,15 +1,14 @@
-import { setCurrentSandColor, getGridCols, getGridRows, getLanguage, setElements, getElements, setBeginGameStatus, getGameInProgress, setGameInProgress, getGameVisiblePaused, getBeginGameStatus, getGameVisibleActive, getMenuState, getLanguageSelected, setLanguageSelected, setLanguage, getCurrentSandColor } from './constantsAndGlobalVars.js';
-import { incrementHueInRgb, setStateOfCell, initializeSandGrid, setGameState, startGame, gameLoop } from './game.js';
+import { getGridCols, getGridRows, getLanguage, setElements, getElements, setBeginGameStatus, getGameInProgress, setGameInProgress, getGameVisiblePaused, getMenuState, getLanguageSelected, setLanguageSelected, setLanguage, getParticleTypeIdSelected } from './constantsAndGlobalVars.js';
+import { loadParticleDefinitions, setStateOfCell, initializeParticleGrids, setGameState, startGame } from './game.js';
 import { initLocalization, localize } from './localization.js';
 
 let isMouseDown = false;
-let colorChangeTimer = null;
 let clickTimer = null;
-let increment = 20;
 let mouseLocation = {};
 
 document.addEventListener('DOMContentLoaded', async () => {
-    initializeSandGrid();
+    await loadParticleDefinitions();
+    initializeParticleGrids();
     setElements();
     
     getElements().newGameMenuButton.addEventListener('click', async () => {
@@ -42,14 +41,12 @@ document.addEventListener('DOMContentLoaded', async () => {
             mouseLocation = event;
             isMouseDown = true;
             handleMouseClick();
-            startColorChangeInterval();
             startLongPressInterval();
         }
     });
 
     canvas.addEventListener('mousemove', (event) => {
         if (isMouseDown) {
-            console.log('calling handleMouseClick from mouseMOVE');
             handleMouseClick(event);
             mouseLocation = event;
         }
@@ -58,30 +55,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     canvas.addEventListener('mouseup', () => {
         if (isMouseDown) {
             isMouseDown = false;
-            clearInterval(colorChangeTimer);
             clickTimer = null;
-            colorChangeTimer = null;
         }
     });
 
     function startLongPressInterval() {
         if (!clickTimer) {
-            console.log('calling handleMouseClick from mouseDOWN');
             clickTimer = setInterval(() => {
                 if (isMouseDown) {
                     handleMouseClick(mouseLocation);
                 }
             }, 30);
-        }
-    }
-
-
-    function startColorChangeInterval() {
-        if (!colorChangeTimer) {
-            colorChangeTimer = setInterval(() => {
-                setCurrentSandColor(incrementHueInRgb(getCurrentSandColor(), increment));
-                console.log(getCurrentSandColor());
-            }, 1000);
         }
     }
 
@@ -98,7 +82,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     
         const col = Math.floor(x / cellWidth);
         const row = Math.floor(y / cellHeight);    
-        setStateOfCell(col, row);
+        setStateOfCell(col, row, getParticleTypeIdSelected());
     }  
 
 });
