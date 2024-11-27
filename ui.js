@@ -52,12 +52,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
     });
 
-    canvas.addEventListener('mouseup', () => {
+
+    canvas.addEventListener('mouseup', stopMouseInteraction);
+    canvas.addEventListener('mouseleave', stopMouseInteraction);
+
+    function stopMouseInteraction() {
         if (isMouseDown) {
             isMouseDown = false;
             clickTimer = null;
         }
-    });
+    }
 
     function startLongPressInterval() {
         if (!clickTimer) {
