@@ -31,9 +31,7 @@ export function startGame() {
     gameLoop();
 }
 
-
 export async function gameLoop() {
-    console.log(getParticleTypeIdSelected() + " is currently selected!")
     const ctx = getElements().canvas.getContext('2d');
     if (gameState === getGameVisibleActive() || gameState === getGameVisiblePaused()) {
         ctx.clearRect(0, 0, getElements().canvas.width, getElements().canvas.height);
@@ -55,7 +53,6 @@ export function drawParticles(ctx) {
     ctx.clearRect(0, 0, canvasWidth, canvasHeight);
 
     if (particleIds) {
-        console.log("Object.keys(particleIds):", Object.keys(particleIds));
 
         Object.keys(particleIds).forEach(particleId => {
             const id = parseInt(particleId);
@@ -154,65 +151,151 @@ function applyParticleBehaviors() {
 
 function applyStickySolidBehavior(x, y) {
     let mainStateGrid = getMainStateGrid();
-
     const particleData = getParticleDefinitions().particles.id[mainStateGrid[x][y]];
     const gravity = particleData.gravity;
+    const density = particleData.density;
 
     const cols = getGridCols();
     const rows = getGridRows();
 
+    // Gravity-based Movement
     if (gravity > 0) {
+        // Try to move the particle down if the space below is empty
         if (y + 1 < rows && mainStateGrid[x][y + 1] === 0) {
             mainStateGrid[x][y + 1] = mainStateGrid[x][y];
             mainStateGrid[x][y] = 0;
+        } else {
+            const below = y + 1 < rows ? mainStateGrid[x][y + 1] : 0;
+            const belowParticleData = below ? getParticleDefinitions().particles.id[below] : null;
+
+            // Density-based Behavior: Solid vs. Liquid/Gas
+            if (below !== 0 && belowParticleData && (belowParticleData.group === "liquid" || belowParticleData.group === "gas")) {
+                const belowDensity = belowParticleData.density;
+
+                // Move denser particles down and displace less dense ones
+                if (density > belowDensity) {
+                    mainStateGrid[x][y + 1] = mainStateGrid[x][y];
+                    mainStateGrid[x][y] = 0;
+
+                    // Move the displaced less dense particle randomly (left or right)
+                    if (y + 8 < rows) {
+                        const moveDirection = Math.random() < 0.5 ? -1 : 1;
+                        const newX = x + moveDirection * 4;
+
+                        if (newX >= 0 && newX < cols) {
+                            mainStateGrid[newX][y + 1] = below;
+                        }
+                    }
+                }
+            } 
+
+            // Prevent less dense solids from replacing liquids
+            else if (below !== 0 && belowParticleData && belowParticleData.group === "liquid" && density < belowParticleData.density) {
+                return mainStateGrid;
+            }
         }
+    }
+
+    // Final check: Move the particle up if there's a denser particle above or on either side
+    const above = y - 1 >= 0 ? mainStateGrid[x][y - 1] : 0;
+    const left = x - 1 >= 0 ? mainStateGrid[x - 1][y] : 0;
+    const right = x + 1 < cols ? mainStateGrid[x + 1][y] : 0;
+
+    const aboveParticleData = above ? getParticleDefinitions().particles.id[above] : null;
+    const leftParticleData = left ? getParticleDefinitions().particles.id[left] : null;
+    const rightParticleData = right ? getParticleDefinitions().particles.id[right] : null;
+
+    // Check if there's a denser particle above or on either side (excluding solids)
+    if (
+        (aboveParticleData && aboveParticleData.density > density && aboveParticleData.group !== "solid") ||
+        (leftParticleData && leftParticleData.density > density && leftParticleData.group !== "solid") ||
+        (rightParticleData && rightParticleData.density > density && rightParticleData.group !== "solid")
+    ) {
+        // Move the current particle up by 1, and move the particle above down by 1
+        const temp = mainStateGrid[x][y - 1];  // Temporary storage for the particle above
+
+        // Move the current particle up
+        mainStateGrid[x][y - 1] = mainStateGrid[x][y];
+        mainStateGrid[x][y] = 0;
+
+        // Move the particle above down
+        mainStateGrid[x][y] = temp;
     }
 
     return mainStateGrid;
 }
 
+
 function applyNonStickySolidBehavior(x, y) {
     let mainStateGrid = getMainStateGrid();
-
     const particleData = getParticleDefinitions().particles.id[mainStateGrid[x][y]];
     const gravity = particleData.gravity;
+    const density = particleData.density;
 
     const cols = getGridCols();
     const rows = getGridRows();
 
+    // Gravity-based Movement
     if (gravity > 0) {
+        // Try to move the particle down if the space below is empty
         if (y + 1 < rows && mainStateGrid[x][y + 1] === 0) {
             mainStateGrid[x][y + 1] = mainStateGrid[x][y];
             mainStateGrid[x][y] = 0;
         } else {
-            const left = x - 1 >= 0 ? mainStateGrid[x - 1][y + 1] : 1;
-            const right = x + 1 < cols ? mainStateGrid[x + 1][y + 1] : 1;
+            const below = y + 1 < rows ? mainStateGrid[x][y + 1] : 0;
+            const belowParticleData = below ? getParticleDefinitions().particles.id[below] : null;
 
-            if (left === 0 && right !== 0) {
-                mainStateGrid[x - 1][y] = mainStateGrid[x][y];
-                mainStateGrid[x][y] = 0;
-            } else if (right === 0 && left !== 0) {
-                mainStateGrid[x + 1][y] = mainStateGrid[x][y];
-                mainStateGrid[x][y] = 0;
-            } else if (left === 0 && right === 0) {
-                if (Math.random() < 0.5) {
-                    mainStateGrid[x - 1][y] = mainStateGrid[x][y];
-                } else {
-                    mainStateGrid[x + 1][y] = mainStateGrid[x][y];
+            // Density-based Behavior: Solid vs. Liquid/Gas
+            if (below !== 0 && belowParticleData && (belowParticleData.group === "liquid" || belowParticleData.group === "gas")) {
+                const belowDensity = belowParticleData.density;
+
+                // Move denser particles down and displace less dense ones
+                if (density > belowDensity) {
+                    mainStateGrid[x][y + 1] = mainStateGrid[x][y];
+                    mainStateGrid[x][y] = 0;
+
+                    // Move the displaced less dense particle randomly
+                    if (y + 8 < rows) {
+                        const moveDirection = Math.random() < 0.5 ? -1 : 1;
+                        const newX = x + moveDirection * 4;
+
+                        if (newX >= 0 && newX < cols) {
+                            mainStateGrid[newX][y + 1] = below;
+                        }
+                    }
                 }
-                mainStateGrid[x][y] = 0;
+            } 
+
+            // Prevent less dense solids from replacing liquids
+            else if (below !== 0 && belowParticleData && belowParticleData.group === "liquid" && density < belowParticleData.density) {
+                return mainStateGrid;
+            } 
+            
+            // Side-to-side Flow Behavior
+            else {
+                const left = x - 1 >= 0 ? mainStateGrid[x - 1][y + 1] : 1;
+                const right = x + 1 < cols ? mainStateGrid[x + 1][y + 1] : 1;
+
+                if (left === 0 && right !== 0) {
+                    mainStateGrid[x - 1][y] = mainStateGrid[x][y];
+                    mainStateGrid[x][y] = 0;
+                } else if (right === 0 && left !== 0) {
+                    mainStateGrid[x + 1][y] = mainStateGrid[x][y];
+                    mainStateGrid[x][y] = 0;
+                } else if (left === 0 && right === 0) {
+                    if (Math.random() < 0.5) {
+                        mainStateGrid[x - 1][y] = mainStateGrid[x][y];
+                    } else {
+                        mainStateGrid[x + 1][y] = mainStateGrid[x][y];
+                    }
+                    mainStateGrid[x][y] = 0;
+                }
             }
         }
     }
 
     return mainStateGrid;
 }
-// Initialize global counters
-let leftCounter = 0;
-let rightCounter = 0;
-
-let leftFlowCounter = 0;
-let rightFlowCounter = 0;
 
 function applyNonStickyLiquidBehavior(x, y) {
     let mainStateGrid = getMainStateGrid();
@@ -220,6 +303,7 @@ function applyNonStickyLiquidBehavior(x, y) {
 
     const particleData = particleDefinitions[mainStateGrid[x][y]];
     const gravity = particleData.gravity;
+    const density = particleData.density;  // Get density of the particle
 
     const cols = getGridCols();
     const rows = getGridRows();
@@ -229,21 +313,58 @@ function applyNonStickyLiquidBehavior(x, y) {
             mainStateGrid[x][y + 1] = mainStateGrid[x][y];
             mainStateGrid[x][y] = 0;
         } else {
+            // Check surrounding cells for less dense particles
+            const below = y + 1 < rows ? mainStateGrid[x][y + 1] : 0;
+            const left = x - 1 >= 0 ? mainStateGrid[x - 1][y] : 0;
+            const right = x + 1 < cols ? mainStateGrid[x + 1][y] : 0;
+
+            const belowParticleData = below ? particleDefinitions[below] : null;
+            const leftParticleData = left ? particleDefinitions[left] : null;
+            const rightParticleData = right ? particleDefinitions[right] : null;
+
+            // Displace less dense particles (liquid, gas, solid)
+            if (below !== 0 && belowParticleData && belowParticleData.density < density) {
+                // Move the less dense particle up 8 units and randomly left or right by 4
+                if (y + 8 < rows) {
+                    mainStateGrid[x][y - 4] = below;
+                    mainStateGrid[x][y + 1] = 0; // Clear the space below
+                    const moveDirection = Math.random() < 0.5 ? -1 : 1;
+                    const newX = x + moveDirection * 4;
+                    if (newX >= 0 && newX < cols) {
+                        mainStateGrid[newX][y + 8] = below;
+                    }
+                }
+            }
+
+            if (left !== 0 && leftParticleData && leftParticleData.density < density) {
+                // Move the less dense particle up 8 units and randomly left or right by 4
+                if (y + 8 < rows) {
+                    mainStateGrid[x - 1][y + 8] = left;
+                    mainStateGrid[x - 1][y] = 0; // Clear the space to the left
+                    const moveDirection = Math.random() < 0.5 ? -1 : 1;
+                    const newX = x + moveDirection * 4;
+                    if (newX >= 0 && newX < cols) {
+                        mainStateGrid[newX][y + 8] = left;
+                    }
+                }
+            }
+
+            if (right !== 0 && rightParticleData && rightParticleData.density < density) {
+                // Move the less dense particle up 8 units and randomly left or right by 4
+                if (y + 8 < rows) {
+                    mainStateGrid[x + 1][y + 8] = right;
+                    mainStateGrid[x + 1][y] = 0; // Clear the space to the right
+                    const moveDirection = Math.random() < 0.5 ? -1 : 1;
+                    const newX = x + moveDirection * 4;
+                    if (newX >= 0 && newX < cols) {
+                        mainStateGrid[newX][y + 8] = right;
+                    }
+                }
+            }
+
+            // Default movement logic for liquid if no displacement occurred
             const canFlowLeft = checkForEdge(x, y, -1, mainStateGrid, cols, rows);
             const canFlowRight = checkForEdge(x, y, 1, mainStateGrid, cols, rows);
-
-            // Increment counters if flow is possible
-            if (canFlowLeft) {
-                leftFlowCounter++;
-            }
-            if (canFlowRight) {
-                rightFlowCounter++;
-            }
-
-            // Log the current flow status
-            //console.log(`Can flow left: ${canFlowLeft}, Can flow right: ${canFlowRight}`);
-            console.log(`Left flow count: ${leftFlowCounter}, Right flow count: ${rightFlowCounter}`);
-
 
             if (canFlowLeft && canFlowRight) {
                 if (Math.random() < 0.5) {
@@ -259,39 +380,44 @@ function applyNonStickyLiquidBehavior(x, y) {
                 mainStateGrid[x + 1][y] = mainStateGrid[x][y];
                 mainStateGrid[x][y] = 0;
             } else {
+                // If it cannot move left or right, randomize movement
                 const right = x + 1 < cols ? mainStateGrid[x + 1][y] : 1;
                 const left = x - 1 >= 0 ? mainStateGrid[x - 1][y] : 1;
 
-
                 if (left === 0 && right === 0) {
-                    // Explicitly randomize the order of checks to avoid bias
                     if (Math.random() < 0.5) {
-                        mainStateGrid[x - 1][y] = mainStateGrid[x][y]; // Move left
-                        //leftCounter++;
+                        mainStateGrid[x - 1][y] = mainStateGrid[x][y];
                     } else {
-                        mainStateGrid[x + 1][y] = mainStateGrid[x][y]; // Move right
-                        //rightCounter++; 
+                        mainStateGrid[x + 1][y] = mainStateGrid[x][y];
                     }
                     mainStateGrid[x][y] = 0;
                 } else if (left === 0) {
-                    mainStateGrid[x - 1][y] = mainStateGrid[x][y]; // Move left if right is blocked
+                    mainStateGrid[x - 1][y] = mainStateGrid[x][y];
                     mainStateGrid[x][y] = 0;
-                    //leftCounter++;
                 } else if (right === 0) {
-                    mainStateGrid[x + 1][y] = mainStateGrid[x][y]; // Move right if left is blocked
+                    mainStateGrid[x + 1][y] = mainStateGrid[x][y];
                     mainStateGrid[x][y] = 0;
-                    //rightCounter++; 
                 }
-                
             }
         }
     }
-    // Log counters after each function call
-    //console.log(`Left movements: ${leftCounter}, Right movements: ${rightCounter}`);
 
+    const above = y - 1 >= 0 ? mainStateGrid[x][y - 1] : 0;
+    const aboveParticleData = above ? particleDefinitions[above] : null;
+
+    if (above !== 0 && aboveParticleData && aboveParticleData.group === "liquid" && aboveParticleData.density > density) {
+        const temp = mainStateGrid[x][y - 1];
+
+        mainStateGrid[x][y - 1] = mainStateGrid[x][y];
+        mainStateGrid[x][y] = 0;
+
+        mainStateGrid[x][y] = temp;
+    }
 
     return mainStateGrid;
 }
+
+
 
 // Helper function to check for edges
 function checkForEdge(x, y, direction, mainStateGrid, cols, rows) {
@@ -338,24 +464,6 @@ function applyStickyGasBehavior(x, y) {
     return mainStateGrid;
 }
 
-function getSurroundingGroups(x, y) {
-    const mainStateGrid = getMainStateGrid();
-    const particleDefinitions = getParticleDefinitions().particles.id;
-
-    const cols = getGridCols();
-    const rows = getGridRows();
-
-    const left = x - 1 >= 0 ? mainStateGrid[x - 1][y] : 0;
-    const right = x + 1 < cols ? mainStateGrid[x + 1][y] : 0;
-    const below = y + 1 < rows ? mainStateGrid[x][y + 1] : 0;
-
-    return {
-        leftGroup: left !== 0 ? particleDefinitions[left].group : "empty",
-        rightGroup: right !== 0 ? particleDefinitions[right].group : "empty",
-        belowGroup: below !== 0 ? particleDefinitions[below].group : "empty",
-    };
-}
-
 export function initializeParticleGrids() {
     const cols = getGridCols();
     const rows = getGridRows();
@@ -394,7 +502,7 @@ export function setStateOfCell(x, y) {
     function selectOffsetCellsToPaintWhenClicking(i, j) { //to 'spray' particles
         if (gravity > 0) { //only one brush size for paintable non moving particles, no 'spray'
             if (i >= 0 && i < cols && j >= 0 && j < rows) {
-                if (Math.random() < 0.1) {
+                if (Math.random() < 0.1) { //0.1
                     mainStateGrid[i][j] = particleTypeSelected;
                 }
             }
