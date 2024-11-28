@@ -207,12 +207,118 @@ function applyNonStickySolidBehavior(x, y) {
 
     return mainStateGrid;
 }
+// Initialize global counters
+let leftCounter = 0;
+let rightCounter = 0;
+
+let leftFlowCounter = 0;
+let rightFlowCounter = 0;
 
 function applyNonStickyLiquidBehavior(x, y) {
     let mainStateGrid = getMainStateGrid();
+    const particleDefinitions = getParticleDefinitions().particles.id;
+
+    const particleData = particleDefinitions[mainStateGrid[x][y]];
+    const gravity = particleData.gravity;
+
+    const cols = getGridCols();
+    const rows = getGridRows();
+
+    if (gravity > 0) {
+        if (y + 1 < rows && mainStateGrid[x][y + 1] === 0) {
+            mainStateGrid[x][y + 1] = mainStateGrid[x][y];
+            mainStateGrid[x][y] = 0;
+        } else {
+            const canFlowLeft = checkForEdge(x, y, -1, mainStateGrid, cols, rows);
+            const canFlowRight = checkForEdge(x, y, 1, mainStateGrid, cols, rows);
+
+            // Increment counters if flow is possible
+            if (canFlowLeft) {
+                leftFlowCounter++;
+            }
+            if (canFlowRight) {
+                rightFlowCounter++;
+            }
+
+            // Log the current flow status
+            //console.log(`Can flow left: ${canFlowLeft}, Can flow right: ${canFlowRight}`);
+            console.log(`Left flow count: ${leftFlowCounter}, Right flow count: ${rightFlowCounter}`);
+
+
+            if (canFlowLeft && canFlowRight) {
+                if (Math.random() < 0.5) {
+                    mainStateGrid[x - 1][y] = mainStateGrid[x][y];
+                } else {
+                    mainStateGrid[x + 1][y] = mainStateGrid[x][y];
+                }
+                mainStateGrid[x][y] = 0;
+            } else if (canFlowLeft) {
+                mainStateGrid[x - 1][y] = mainStateGrid[x][y];
+                mainStateGrid[x][y] = 0;
+            } else if (canFlowRight) {
+                mainStateGrid[x + 1][y] = mainStateGrid[x][y];
+                mainStateGrid[x][y] = 0;
+            } else {
+                const right = x + 1 < cols ? mainStateGrid[x + 1][y] : 1;
+                const left = x - 1 >= 0 ? mainStateGrid[x - 1][y] : 1;
+
+
+                if (left === 0 && right === 0) {
+                    // Explicitly randomize the order of checks to avoid bias
+                    if (Math.random() < 0.5) {
+                        mainStateGrid[x - 1][y] = mainStateGrid[x][y]; // Move left
+                        //leftCounter++;
+                    } else {
+                        mainStateGrid[x + 1][y] = mainStateGrid[x][y]; // Move right
+                        //rightCounter++; 
+                    }
+                    mainStateGrid[x][y] = 0;
+                } else if (left === 0) {
+                    mainStateGrid[x - 1][y] = mainStateGrid[x][y]; // Move left if right is blocked
+                    mainStateGrid[x][y] = 0;
+                    //leftCounter++;
+                } else if (right === 0) {
+                    mainStateGrid[x + 1][y] = mainStateGrid[x][y]; // Move right if left is blocked
+                    mainStateGrid[x][y] = 0;
+                    //rightCounter++; 
+                }
+                
+            }
+        }
+    }
+    // Log counters after each function call
+    //console.log(`Left movements: ${leftCounter}, Right movements: ${rightCounter}`);
+
 
     return mainStateGrid;
 }
+
+// Helper function to check for edges
+function checkForEdge(x, y, direction, mainStateGrid, cols, rows) {
+    let currentX = x;
+    let currentY = y;
+
+    // Check up to 3 spaces in the given direction
+    for (let i = 1; i <= 3; i++) {
+        currentX += direction;
+        if (currentX < 0 || currentX >= cols) return false; // Out of bounds
+
+        // Check if current cell is empty and below it is also empty
+        if (mainStateGrid[currentX][currentY] === 0 && 
+            (currentY + 1 >= rows || mainStateGrid[currentX][currentY + 1] === 0)) {
+            return true; // Found an edge
+        }
+
+        // Stop checking if we hit a solid
+        const currentParticle = mainStateGrid[currentX][currentY];
+        const particleGroup = currentParticle ? getParticleDefinitions().particles.id[currentParticle].group : "empty";
+        if (particleGroup === "solid") return false;
+    }
+
+    return false; // No edge found
+}
+
+
 
 function applyStickyLiquidBehavior(x, y) {
     let mainStateGrid = getMainStateGrid();
@@ -230,6 +336,24 @@ function applyStickyGasBehavior(x, y) {
     let mainStateGrid = getMainStateGrid();
 
     return mainStateGrid;
+}
+
+function getSurroundingGroups(x, y) {
+    const mainStateGrid = getMainStateGrid();
+    const particleDefinitions = getParticleDefinitions().particles.id;
+
+    const cols = getGridCols();
+    const rows = getGridRows();
+
+    const left = x - 1 >= 0 ? mainStateGrid[x - 1][y] : 0;
+    const right = x + 1 < cols ? mainStateGrid[x + 1][y] : 0;
+    const below = y + 1 < rows ? mainStateGrid[x][y + 1] : 0;
+
+    return {
+        leftGroup: left !== 0 ? particleDefinitions[left].group : "empty",
+        rightGroup: right !== 0 ? particleDefinitions[right].group : "empty",
+        belowGroup: below !== 0 ? particleDefinitions[below].group : "empty",
+    };
 }
 
 export function initializeParticleGrids() {
