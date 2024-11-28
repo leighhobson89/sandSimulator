@@ -236,9 +236,10 @@ function applyNonStickySolidBehavior(x, y) {
 
     // Gravity-based Movement
     if (gravity > 0) {
-        // Try to move the particle down if the space below is empty
-        if (y + 1 < rows && mainStateGrid[x][y + 1] === 0) {
-            mainStateGrid[x][y + 1] = mainStateGrid[x][y];
+        const fallSpeedMultiplier = 1; //viscosity < 0.5 ? 2 : 1;  // Falls faster for lower viscosity
+
+        if (y + fallSpeedMultiplier < rows && mainStateGrid[x][y + fallSpeedMultiplier] === 0) {
+            mainStateGrid[x][y + fallSpeedMultiplier] = mainStateGrid[x][y];
             mainStateGrid[x][y] = 0;
         } else {
             const below = y + 1 < rows ? mainStateGrid[x][y + 1] : 0;
@@ -250,10 +251,11 @@ function applyNonStickySolidBehavior(x, y) {
 
                 // Move denser particles down and displace less dense ones
                 if (density > belowDensity) {
+                    // Move the solid down
                     mainStateGrid[x][y + 1] = mainStateGrid[x][y];
                     mainStateGrid[x][y] = 0;
 
-                    // Move the displaced less dense particle randomly
+                    // Move the displaced less dense particle randomly to the side
                     if (y + 8 < rows) {
                         const moveDirection = Math.random() < 0.5 ? -1 : 1;
                         const newX = x + moveDirection * 4;
@@ -267,21 +269,25 @@ function applyNonStickySolidBehavior(x, y) {
 
             // Prevent less dense solids from replacing liquids (viscosity check)
             else if (below !== 0 && belowParticleData && belowParticleData.viscosity < viscosity) {
+                // Keep solid particles from replacing liquid particles
                 return mainStateGrid;
-            } 
-            
-            // Side-to-side Flow Behavior
+            }
+
+            // Side-to-side Flow Behavior for solids
             else {
-                const left = x - 1 >= 0 ? mainStateGrid[x - 1][y + 1] : 1;
-                const right = x + 1 < cols ? mainStateGrid[x + 1][y + 1] : 1;
+                const left = x - 1 >= 0 ? mainStateGrid[x - 1][y + 1] : 0;
+                const right = x + 1 < cols ? mainStateGrid[x + 1][y + 1] : 0;
 
                 if (left === 0 && right !== 0) {
+                    // Move left if the space is available
                     mainStateGrid[x - 1][y] = mainStateGrid[x][y];
                     mainStateGrid[x][y] = 0;
                 } else if (right === 0 && left !== 0) {
+                    // Move right if the space is available
                     mainStateGrid[x + 1][y] = mainStateGrid[x][y];
                     mainStateGrid[x][y] = 0;
                 } else if (left === 0 && right === 0) {
+                    // Randomly choose a direction if both sides are free
                     if (Math.random() < 0.5) {
                         mainStateGrid[x - 1][y] = mainStateGrid[x][y];
                     } else {
@@ -295,6 +301,7 @@ function applyNonStickySolidBehavior(x, y) {
 
     return mainStateGrid;
 }
+
 
 
 function applyNonStickyLiquidBehavior(x, y) {
