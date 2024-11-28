@@ -1,4 +1,4 @@
-import { setParticleTypeIdSelected, getGameVisibleActive, getGridCols, getGridRows, getLanguage, setElements, getElements, setBeginGameStatus, getGameInProgress, setGameInProgress, getMenuState, getLanguageSelected, setLanguageSelected, setLanguage, getParticleTypeIdSelected } from './constantsAndGlobalVars.js';
+import { setParticleTypeIdSelected, getGameVisibleActive, getGridCols, getGridRows, getLanguage, setElements, getElements, setBeginGameStatus, getGameInProgress, setGameInProgress, getMenuState, getLanguageSelected, setLanguageSelected, setLanguage } from './constantsAndGlobalVars.js';
 import { loadParticleDefinitions, setStateOfCell, initializeParticleGrids, setGameState, startGame } from './game.js';
 import { initLocalization, localize } from './localization.js';
 
@@ -119,7 +119,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     
         const col = Math.floor(x / cellWidth);
         const row = Math.floor(y / cellHeight);    
-        setStateOfCell(col, row, getParticleTypeIdSelected());
+        setStateOfCell(col, row);
     }  
 
 });

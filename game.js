@@ -1,12 +1,11 @@
 import { localize } from './localization.js';
-import { getParticleTypeIdSelected, setParticleState, getParticleState, setParticleDefinitions, getGridCols, getGridRows, setBeginGameStatus, setGameStateVariable, getBeginGameStatus, getMenuState, getGameVisiblePaused, getGameVisibleActive, getElements, getLanguage, gameState, getParticleDefinitions } from './constantsAndGlobalVars.js';
+import { getMainStateGrid, setMainStateGrid, getParticleTypeIdSelected, setParticleDefinitions, getGridCols, getGridRows, setBeginGameStatus, setGameStateVariable, getBeginGameStatus, getMenuState, getGameVisiblePaused, getGameVisibleActive, getElements, getLanguage, gameState, getParticleDefinitions } from './constantsAndGlobalVars.js';
 
 //--------------------------------------------------------------------------------------------------------
 
 export function startGame() {
     const ctx = getElements().canvas.getContext('2d');
     const container = getElements().canvasContainer;
-    const floatingContainer = getElements().leftContainer;
 
     function updateCanvasSize() {
         const canvasWidth = container.clientWidth * 0.8;
@@ -56,6 +55,8 @@ export function drawParticles(ctx) {
     ctx.clearRect(0, 0, canvasWidth, canvasHeight);
 
     if (particleIds) {
+        console.log("Object.keys(particleIds):", Object.keys(particleIds));
+
         Object.keys(particleIds).forEach(particleId => {
             const id = parseInt(particleId);
             paintCellsWithParticleType(ctx, id);
@@ -72,7 +73,8 @@ function paintCellsWithParticleType(ctx, particleId) {
     const particleDefinitions = getParticleDefinitions().particles.id;
     const particleData = particleDefinitions[particleId];
 
-    const particleState = getParticleState(particleId);
+    const mainStateGrid = getMainStateGrid();
+
     const particleColor = particleData.color;
 
     const cellWidth = canvasWidth / cols;
@@ -80,9 +82,9 @@ function paintCellsWithParticleType(ctx, particleId) {
 
     for (let x = 0; x < cols; x++) {
         for (let y = 0; y < rows; y++) {
-            const cellState = particleState[x][y];
+            const cellState = mainStateGrid[x][y];
 
-            if (cellState !== 0) {
+            if (cellState === particleId) {
                 ctx.fillStyle = particleColor;
                 ctx.fillRect(x * cellWidth, y * cellHeight, cellWidth, cellHeight);
             } else {
@@ -100,41 +102,40 @@ function applyParticleBehaviors() {
     const particleIds = getParticleDefinitions().particles.id;
 
     Object.keys(particleIds).forEach((particleId) => {
-        const id = parseInt(particleId);
         const particleData = particleIds[particleId];
-        let particleStateGrid = getParticleState(id);
+        let mainStateGrid = getMainStateGrid();
 
         const { group, sticky } = particleData;
 
         for (let x = 0; x < cols; x++) {
             for (let y = rows - 2; y >= 0; y--) {
                 // Skip empty cells
-                if (particleStateGrid[x][y] === 0) {
+                if (mainStateGrid[x][y] === 0) {
                     continue;
                 }
 
                 switch (group) {
                     case "solid":
                         if (sticky) {
-                            particleStateGrid = applyStickySolidBehavior(x, y, particleStateGrid);
+                            mainStateGrid = applyStickySolidBehavior(x, y, mainStateGrid);
                         } else {
-                            particleStateGrid = applyNonStickySolidBehavior(x, y, particleStateGrid);
+                            mainStateGrid = applyNonStickySolidBehavior(x, y, mainStateGrid);
                         }
                         break;
 
                     case "liquid":
                         if (sticky) {
-                            particleStateGrid = applyStickyLiquidBehavior(x, y, particleStateGrid);
+                            mainStateGrid = applyStickyLiquidBehavior(x, y);
                         } else {
-                            particleStateGrid = applyNonStickyLiquidBehavior(x, y, particleStateGrid);
+                            mainStateGrid = applyNonStickyLiquidBehavior(x, y);
                         }
                         break;
 
                     case "gas":
                         if (sticky) {
-                            particleStateGrid = applyStickyGasBehavior(x, y, particleStateGrid);
+                            mainStateGrid = applyStickyGasBehavior(x, y);
                         } else {
-                            particleStateGrid = applyNonStickyGasBehavior(x, y, particleStateGrid);
+                            mainStateGrid = applyNonStickyGasBehavior(x, y);
                         }
                         break;
 
@@ -144,63 +145,70 @@ function applyParticleBehaviors() {
             }
         }
 
-        setParticleState(id, particleStateGrid);
+        setMainStateGrid(mainStateGrid);
     });
 }
 
-function applyStickySolidBehavior(x, y, particleStateGrid) {
-    // Placeholder for sticky solid behavior
-    return particleStateGrid;
+function applyStickySolidBehavior(x, y) {
+    let mainStateGrid = getMainStateGrid();
+
+    return mainStateGrid;
 }
 
-function applyNonStickySolidBehavior(x, y, particleStateGrid) {
+function applyNonStickySolidBehavior(x, y) {
+    let mainStateGrid = getMainStateGrid();
+
     const cols = getGridCols();
     const rows = getGridRows();
 
-    if (y + 1 < rows && particleStateGrid[x][y + 1] === 0) {
-        particleStateGrid[x][y + 1] = particleStateGrid[x][y];
-        particleStateGrid[x][y] = 0;
+    if (y + 1 < rows && mainStateGrid[x][y + 1] === 0) {
+        mainStateGrid[x][y + 1] = mainStateGrid[x][y];
+        mainStateGrid[x][y] = 0;
     } else {
-        const left = x - 1 >= 0 ? particleStateGrid[x - 1][y + 1] : 1;
-        const right = x + 1 < cols ? particleStateGrid[x + 1][y + 1] : 1;
+        const left = x - 1 >= 0 ? mainStateGrid[x - 1][y + 1] : 1;
+        const right = x + 1 < cols ? mainStateGrid[x + 1][y + 1] : 1;
 
         if (left === 0 && right !== 0) {
-            particleStateGrid[x - 1][y] = particleStateGrid[x][y];
-            particleStateGrid[x][y] = 0;
+            mainStateGrid[x - 1][y] = mainStateGrid[x][y];
+            mainStateGrid[x][y] = 0;
         } else if (right === 0 && left !== 0) {
-            particleStateGrid[x + 1][y] = particleStateGrid[x][y];
-            particleStateGrid[x][y] = 0;
+            mainStateGrid[x + 1][y] = mainStateGrid[x][y];
+            mainStateGrid[x][y] = 0;
         } else if (left === 0 && right === 0) {
             if (Math.random() < 0.5) {
-                particleStateGrid[x - 1][y] = particleStateGrid[x][y];
+                mainStateGrid[x - 1][y] = mainStateGrid[x][y];
             } else {
-                particleStateGrid[x + 1][y] = particleStateGrid[x][y];
+                mainStateGrid[x + 1][y] = mainStateGrid[x][y];
             }
-            particleStateGrid[x][y] = 0;
+            mainStateGrid[x][y] = 0;
         }
     }
 
-    return particleStateGrid;
+    return mainStateGrid;
 }
 
-function applyNonStickyLiquidBehavior(x, y, particleStateGrid) {
-    // Placeholder for non-sticky liquid behavior
-    return particleStateGrid;
+function applyNonStickyLiquidBehavior(x, y) {
+    let mainStateGrid = getMainStateGrid();
+
+    return mainStateGrid;
 }
 
-function applyStickyLiquidBehavior(x, y, particleStateGrid) {
-    // Placeholder for sticky liquid behavior
-    return particleStateGrid;
+function applyStickyLiquidBehavior(x, y) {
+    let mainStateGrid = getMainStateGrid();
+
+    return mainStateGrid;
 }
 
-function applyNonStickyGasBehavior(x, y, particleStateGrid) {
-    // Placeholder for non-sticky gas behavior
-    return particleStateGrid;
+function applyNonStickyGasBehavior(x, y) {
+    let mainStateGrid = getMainStateGrid();
+
+    return mainStateGrid;
 }
 
-function applyStickyGasBehavior(x, y, particleStateGrid) {
-    // Placeholder for sticky gas behavior
-    return particleStateGrid;
+function applyStickyGasBehavior(x, y) {
+    let mainStateGrid = getMainStateGrid();
+
+    return mainStateGrid;
 }
 
 export function initializeParticleGrids() {
@@ -210,42 +218,46 @@ export function initializeParticleGrids() {
     const particleIds = getParticleDefinitions().particles.id;
 
     Object.keys(particleIds).forEach((particleId) => {
-        const id = parseInt(particleId);
-        const particleState = [];
+        const newGrid = [];
 
         for (let x = 0; x < cols; x++) {
-            particleState[x] = [];
+            newGrid[x] = [];
             for (let y = 0; y < rows; y++) {
-                particleState[x][y] = 0;
+                newGrid[x][y] = 0;
             }
         }
 
-        setParticleState(id, particleState);
+        setMainStateGrid(newGrid);
     });
 }
 
-export function setStateOfCell(x, y, particleId) {
+export function setStateOfCell(x, y) {
     const particleTypeSelected = getParticleTypeIdSelected();
+    const particleData = getParticleDefinitions().particles.id[particleTypeSelected];
+    const gravity = particleData.gravity;
+    
     const cols = getGridCols();
     const rows = getGridRows();
     
-    const particleState = getParticleState(particleId);
+    const mainStateGrid = getMainStateGrid();
     
-    if (!particleId) {
-        console.warn(`Unknown particle type: ${particleId}`);
+    if (!particleTypeSelected) {
+        console.warn(`Unknown particle type: ${particleTypeSelected}`);
         return;
     }
 
-    function selectOffsetCellsToPaintWhenClicking(i, j) {
-        if (i >= 0 && i < cols && j >= 0 && j < rows) {
-            if (Math.random() < 0.1) {
-                particleState[i][j] = particleTypeSelected;
+    function selectOffsetCellsToPaintWhenClicking(i, j) { //to 'spray' particles
+        if (gravity > 0) { //only one brush size for paintable non moving particles, no 'spray'
+            if (i >= 0 && i < cols && j >= 0 && j < rows) {
+                if (Math.random() < 0.1) {
+                    mainStateGrid[i][j] = particleTypeSelected;
+                }
             }
         }
     }
 
     if (x >= 0 && x < cols && y >= 0 && y < rows) {
-        particleState[x][y] = particleTypeSelected;
+        mainStateGrid[x][y] = particleTypeSelected;
     }
 
     const surroundingOffsets = [
@@ -258,7 +270,7 @@ export function setStateOfCell(x, y, particleId) {
         selectOffsetCellsToPaintWhenClicking(x + dx, y + dy);
     });
 
-    setParticleState(particleId, particleState);
+    setMainStateGrid(mainStateGrid);
 }
 
 export async function loadParticleDefinitions() {

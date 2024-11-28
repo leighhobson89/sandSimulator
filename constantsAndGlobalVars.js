@@ -18,15 +18,8 @@ export const GRID_COLS = 120;
 export const GRID_ROWS = 90;
 
 //GLOBAL VARIABLES
-let sandGrid = [];
-let sandState = [];
-let waterState = [];
-let fireState = [];
-let iceState = [];
-let oilState = [];
-let lavaState = [];
-let glassState = [];
-let mudState = [];
+let mainStateGrid = [];
+
 let particleDefinitions = null;
 let particleTypeIdSelected = 1; //starting particle sand
 
@@ -207,14 +200,6 @@ export function setGameInProgress(value) {
     gameInProgress = value;
 }
 
-export function getSandGrid() {
-    return sandGrid;
-}
-
-export function setSandGrid(newSandGrid) {
-    sandGrid = newSandGrid;
-}
-
 export function getGridCols() {
     return GRID_COLS;
 }
@@ -231,122 +216,12 @@ export function setParticleDefinitions(value) {
     particleDefinitions = value;
 }
 
-export function getSandState() {
-    return sandState;
+export function getMainStateGrid() {
+    return mainStateGrid;
 }
 
-export function setSandState(value) {
-    sandState = value;
-}
-
-export function getWaterState() {
-    return waterState;
-}
-
-export function setWaterState(value) {
-    waterState = value;
-}
-
-export function getFireState() {
-    return fireState;
-}
-
-export function setFireState(value) {
-    fireState = value;
-}
-
-export function getIceState() {
-    return iceState;
-}
-
-export function setIceState(value) {
-    iceState = value;
-}
-
-export function getOilState() {
-    return oilState;
-}
-
-export function setOilState(value) {
-    oilState = value;
-}
-
-export function getLavaState() {
-    return lavaState;
-}
-
-export function setLavaState(value) {
-    lavaState = value;
-}
-
-export function getGlassState() {
-    return glassState;
-}
-
-export function setGlassState(value) {
-    glassState = value;
-}
-
-export function getMudState() {
-    return mudState;
-}
-
-export function setMudState(value) {
-    mudState = value;
-}
-
-export function getParticleState(particleType) {
-    switch (particleType) {
-        case 1:
-            return getSandState();
-        case 2:
-            return getWaterState();
-        case 3:
-            return getFireState();
-        case 4:
-            return getIceState();
-        case 5:
-            return getOilState();
-        case 6:
-            return getLavaState();
-        case 7:
-            return getGlassState();
-        case 8:
-            return getMudState();
-        default:
-            return [];
-    }
-}
-
-export function setParticleState(particleType, state) {
-    switch (particleType) {
-        case 1:
-            setSandState(state);
-            break;
-        case 2:
-            setWaterState(state);
-            break;
-        case 3:
-            setFireState(state);
-            break;
-        case 4:
-            setIceState(state);
-            break;
-        case 5:
-            setOilState(state);
-            break;
-        case 6:
-            setLavaState(state);
-            break;
-        case 7:
-            setGlassState(state);
-            break;
-        case 8:
-            setMudState(state);
-            break;
-        default:
-            console.warn(`Unknown particle type: ${particleType}`);
-    }
+export function setMainStateGrid(value) {
+    mainStateGrid = value;
 }
 
 export function getParticleTypeIdSelected() {
