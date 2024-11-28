@@ -153,11 +153,10 @@ function applyParticleBehaviors() {
 }
 
 function applyStickySolidBehavior(x, y) {
-    const particleTypeSelected = getParticleTypeIdSelected();
-    const particleData = getParticleDefinitions().particles.id[particleTypeSelected];
-    const gravity = particleData.gravity;
-
     let mainStateGrid = getMainStateGrid();
+
+    const particleData = getParticleDefinitions().particles.id[mainStateGrid[x][y]];
+    const gravity = particleData.gravity;
 
     const cols = getGridCols();
     const rows = getGridRows();
@@ -173,11 +172,10 @@ function applyStickySolidBehavior(x, y) {
 }
 
 function applyNonStickySolidBehavior(x, y) {
-    const particleTypeSelected = getParticleTypeIdSelected();
-    const particleData = getParticleDefinitions().particles.id[particleTypeSelected];
-    const gravity = particleData.gravity;
-
     let mainStateGrid = getMainStateGrid();
+
+    const particleData = getParticleDefinitions().particles.id[mainStateGrid[x][y]];
+    const gravity = particleData.gravity;
 
     const cols = getGridCols();
     const rows = getGridRows();
