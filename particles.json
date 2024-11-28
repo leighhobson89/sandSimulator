@@ -41,12 +41,12 @@
         "color": "rgb(255, 69, 0)",
         "gravity": 1,
         "group": "liquid",
-        "sticky": false
+        "sticky": true
       },
       "7": {
-        "name": "glass",
+        "name": "stone",
         "color": "rgb(169, 169, 169)",
-        "gravity": 0,
+        "gravity": 1,
         "group": "solid",
         "sticky": true
       },

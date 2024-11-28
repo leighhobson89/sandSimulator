@@ -52,7 +52,7 @@ export function setElements() {
         particle4: document.getElementById('particle4'), // Ice
         particle5: document.getElementById('particle5'), // Oil
         particle6: document.getElementById('particle6'), // Lava
-        particle7: document.getElementById('particle7'), // Glass
+        particle7: document.getElementById('particle7'), // Stone
         particle8: document.getElementById('particle8') // Mud
     };
 }

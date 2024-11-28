@@ -153,37 +153,57 @@ function applyParticleBehaviors() {
 }
 
 function applyStickySolidBehavior(x, y) {
-    let mainStateGrid = getMainStateGrid();
+    const particleTypeSelected = getParticleTypeIdSelected();
+    const particleData = getParticleDefinitions().particles.id[particleTypeSelected];
+    const gravity = particleData.gravity;
 
-    return mainStateGrid;
-}
-
-function applyNonStickySolidBehavior(x, y) {
     let mainStateGrid = getMainStateGrid();
 
     const cols = getGridCols();
     const rows = getGridRows();
 
-    if (y + 1 < rows && mainStateGrid[x][y + 1] === 0) {
-        mainStateGrid[x][y + 1] = mainStateGrid[x][y];
-        mainStateGrid[x][y] = 0;
-    } else {
-        const left = x - 1 >= 0 ? mainStateGrid[x - 1][y + 1] : 1;
-        const right = x + 1 < cols ? mainStateGrid[x + 1][y + 1] : 1;
+    if (gravity > 0) {
+        if (y + 1 < rows && mainStateGrid[x][y + 1] === 0) {
+            mainStateGrid[x][y + 1] = mainStateGrid[x][y];
+            mainStateGrid[x][y] = 0;
+        }
+    }
 
-        if (left === 0 && right !== 0) {
-            mainStateGrid[x - 1][y] = mainStateGrid[x][y];
+    return mainStateGrid;
+}
+
+function applyNonStickySolidBehavior(x, y) {
+    const particleTypeSelected = getParticleTypeIdSelected();
+    const particleData = getParticleDefinitions().particles.id[particleTypeSelected];
+    const gravity = particleData.gravity;
+
+    let mainStateGrid = getMainStateGrid();
+
+    const cols = getGridCols();
+    const rows = getGridRows();
+
+    if (gravity > 0) {
+        if (y + 1 < rows && mainStateGrid[x][y + 1] === 0) {
+            mainStateGrid[x][y + 1] = mainStateGrid[x][y];
             mainStateGrid[x][y] = 0;
-        } else if (right === 0 && left !== 0) {
-            mainStateGrid[x + 1][y] = mainStateGrid[x][y];
-            mainStateGrid[x][y] = 0;
-        } else if (left === 0 && right === 0) {
-            if (Math.random() < 0.5) {
+        } else {
+            const left = x - 1 >= 0 ? mainStateGrid[x - 1][y + 1] : 1;
+            const right = x + 1 < cols ? mainStateGrid[x + 1][y + 1] : 1;
+
+            if (left === 0 && right !== 0) {
                 mainStateGrid[x - 1][y] = mainStateGrid[x][y];
-            } else {
+                mainStateGrid[x][y] = 0;
+            } else if (right === 0 && left !== 0) {
                 mainStateGrid[x + 1][y] = mainStateGrid[x][y];
+                mainStateGrid[x][y] = 0;
+            } else if (left === 0 && right === 0) {
+                if (Math.random() < 0.5) {
+                    mainStateGrid[x - 1][y] = mainStateGrid[x][y];
+                } else {
+                    mainStateGrid[x + 1][y] = mainStateGrid[x][y];
+                }
+                mainStateGrid[x][y] = 0;
             }
-            mainStateGrid[x][y] = 0;
         }
     }
 

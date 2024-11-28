@@ -56,7 +56,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     
         getElements().particle7.addEventListener('click', function() {
-            setParticleTypeIdSelected(7); // Glass
+            setParticleTypeIdSelected(7); // Stone
         });
     
         getElements().particle8.addEventListener('click', function() {
