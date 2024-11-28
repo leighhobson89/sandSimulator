@@ -14,8 +14,8 @@ let oldLanguage = 'en';
 export let gameState;
 export const MENU_STATE = 'menuState';
 export const GAME_VISIBLE_ACTIVE = 'gameVisibleActive';
-export const GRID_COLS = 120;
-export const GRID_ROWS = 90;
+export const GRID_COLS = 140;
+export const GRID_ROWS = 105;
 
 //GLOBAL VARIABLES
 let mainStateGrid = [];
@@ -56,8 +56,6 @@ export function setElements() {
         particle8: document.getElementById('particle8') // Mud
     };
 }
-
-
 
 export function setGameStateVariable(value) {
     gameState = value;
@@ -158,22 +156,6 @@ export function getGameVisiblePaused() {
 
 export function getGameVisibleActive() {
     return GAME_VISIBLE_ACTIVE;
-}
-
-export function getNumberOfEnemySquares() {
-    return NUMBER_OF_ENEMY_SQUARES;
-}
-
-export function getInitialSpeedPlayer() {
-    return INITIAL_SPEED_PLAYER;
-}
-
-export function getInitialSpeedMovingEnemy() {
-    return INITIAL_SPEED_MOVING_ENEMY;
-}
-
-export function getMaxAttemptsToDrawEnemies() {
-    return MAX_ATTEMPTS_TO_DRAW_ENEMIES;
 }
 
 export function getLanguageSelected() {

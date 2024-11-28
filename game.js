@@ -102,7 +102,8 @@ function applyParticleBehaviors() {
     const particleIds = getParticleDefinitions().particles.id;
 
     Object.keys(particleIds).forEach((particleId) => {
-        const particleData = particleIds[particleId];
+        const id = parseInt(particleId);
+        const particleData = particleIds[id];
         let mainStateGrid = getMainStateGrid();
 
         const { group, sticky } = particleData;
@@ -112,35 +113,37 @@ function applyParticleBehaviors() {
                 // Skip empty cells
                 if (mainStateGrid[x][y] === 0) {
                     continue;
-                }
-
-                switch (group) {
-                    case "solid":
-                        if (sticky) {
-                            mainStateGrid = applyStickySolidBehavior(x, y, mainStateGrid);
-                        } else {
-                            mainStateGrid = applyNonStickySolidBehavior(x, y, mainStateGrid);
+                } else {
+                    if (mainStateGrid[x][y] === id) {
+                        switch (group) {
+                            case "solid":
+                                if (sticky) {
+                                    mainStateGrid = applyStickySolidBehavior(x, y, mainStateGrid);
+                                } else {
+                                    mainStateGrid = applyNonStickySolidBehavior(x, y, mainStateGrid);
+                                }
+                                break;
+        
+                            case "liquid":
+                                if (sticky) {
+                                    mainStateGrid = applyStickyLiquidBehavior(x, y);
+                                } else {
+                                    mainStateGrid = applyNonStickyLiquidBehavior(x, y);
+                                }
+                                break;
+        
+                            case "gas":
+                                if (sticky) {
+                                    mainStateGrid = applyStickyGasBehavior(x, y);
+                                } else {
+                                    mainStateGrid = applyNonStickyGasBehavior(x, y);
+                                }
+                                break;
+        
+                            default:
+                                console.warn(`Unknown group type: ${group}`);
                         }
-                        break;
-
-                    case "liquid":
-                        if (sticky) {
-                            mainStateGrid = applyStickyLiquidBehavior(x, y);
-                        } else {
-                            mainStateGrid = applyNonStickyLiquidBehavior(x, y);
-                        }
-                        break;
-
-                    case "gas":
-                        if (sticky) {
-                            mainStateGrid = applyStickyGasBehavior(x, y);
-                        } else {
-                            mainStateGrid = applyNonStickyGasBehavior(x, y);
-                        }
-                        break;
-
-                    default:
-                        console.warn(`Unknown group type: ${group}`);
+                    }
                 }
             }
         }
