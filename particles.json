@@ -4,7 +4,7 @@
       "1": {
         "name": "sand",
         "color": "rgb(211, 214, 129)",
-        "gravity": 1,
+        "gravity": 2,
         "group": "solid",
         "sticky": false,
         "density": 1.6,
@@ -13,7 +13,7 @@
       "2": {
         "name": "water",
         "color": "rgb(0, 119, 190)",
-        "gravity": 1,
+        "gravity": 2,
         "group": "liquid",
         "sticky": false,
         "density": 1,
@@ -22,7 +22,7 @@
       "3": {
         "name": "fire",
         "color": "rgb(255, 69, 0)",
-        "gravity": 0.1,
+        "gravity": 1,
         "group": "gas",
         "sticky": false,
         "density": 0,
@@ -31,7 +31,7 @@
       "4": {
         "name": "ice",
         "color": "rgb(173, 216, 230)",
-        "gravity": 1,
+        "gravity": 2,
         "group": "solid",
         "sticky": true,
         "density": 0.89,
@@ -40,7 +40,7 @@
       "5": {
         "name": "oil",
         "color": "rgb(36, 32, 32)",
-        "gravity": 1,
+        "gravity": 2,
         "group": "liquid",
         "sticky": false,
         "density": 0.9,
@@ -49,7 +49,7 @@
       "6": {
         "name": "lava",
         "color": "rgb(255, 69, 0)",
-        "gravity": 1,
+        "gravity": 2,
         "group": "liquid",
         "sticky": true,
         "density": 2.4,
@@ -58,7 +58,7 @@
       "7": {
         "name": "stone",
         "color": "rgb(169, 169, 169)",
-        "gravity": 1,
+        "gravity": 2,
         "group": "solid",
         "sticky": true,
         "density": 2.7,
@@ -67,7 +67,7 @@
       "8": {
         "name": "mud",
         "color": "rgb(139, 69, 19)",
-        "gravity": 1,
+        "gravity": 2,
         "group": "solid",
         "sticky": false,
         "density": 1.3,
