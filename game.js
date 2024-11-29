@@ -340,6 +340,7 @@ function applyNonStickyLiquidBehavior(x, y) {
             if (direction !== null) {
                 if (direction !== 0) {
                     const newX = x + direction;
+                    const newY = y - 1;
                     mainStateGrid[newX][y] = mainStateGrid[x][y];
                     mainStateGrid[x][y] = 0;
                 } else {
@@ -380,35 +381,43 @@ function moveParticleToClosestEmptySpace(x, y, mainStateGrid, cols, rows) {
 }
 
 function checkForEdge(x, y, mainStateGrid, cols, rows) {
-    let currentX = x;
-    let currentY = y;
-    const searchRange = Math.floor(cols / 2);
+    let neighboringX = x;
+    let neighboringY = y;
+    const searchRange = cols;
     let edgeFoundRight = null;
     let edgeFoundLeft = null;
 
+    // Get the particle and viscosity of the current cell (A)
+    const actualParticle = mainStateGrid[x][y];
+    const actualParticleViscosity = actualParticle ? getParticleDefinitions().particles.id[actualParticle].viscosity : 0;
+
     for (let dir of [1, -1]) {
-        currentX = x;
+        neighboringX = x;
 
         for (let i = 1; i <= searchRange; i++) {
-            currentX += dir;
+            neighboringX += dir;
 
-            if (currentX < 0 || currentX >= cols) {
-                console.log(`Out of bounds at (${currentX}, ${currentY}), direction: ${dir}`);
+            if (neighboringX < 0 || neighboringX >= cols) {
+                console.log(`Out of bounds at (${neighboringX}, ${neighboringY}), direction: ${dir}`);
                 break;
             }
 
-            if (mainStateGrid[currentX][currentY] === 0 &&
-                (currentY + 1 >= rows || mainStateGrid[currentX][currentY + 1] === 0)) {
-                console.log(`Edge found at (${currentX}, ${currentY}), direction: ${dir}`);
+            const neighboringParticle = mainStateGrid[neighboringX][neighboringY];
+            const neighboringParticleViscosity = neighboringParticle ? getParticleDefinitions().particles.id[neighboringParticle].viscosity : 0;
+            const belowNeighboringParticle = neighboringY + 1 < rows ? mainStateGrid[neighboringX][neighboringY + 1] : null;
+            const canMoveIntoNeighbor = neighboringParticle === 0 || neighboringParticleViscosity < actualParticleViscosity;
+            const belowNeighborIsEmptyOrOutOfBounds =
+                neighboringY + 1 >= rows || belowNeighboringParticle === 0;
+
+            if (canMoveIntoNeighbor && belowNeighborIsEmptyOrOutOfBounds) {
+                console.log(`Edge found at (${neighboringX}, ${neighboringY}), direction: ${dir}`);
                 if (dir === 1) edgeFoundRight = dir;
                 if (dir === -1) edgeFoundLeft = dir;
                 break;
             }
 
-            const currentParticle = mainStateGrid[currentX][currentY];
-            const particleGroup = currentParticle ? getParticleDefinitions().particles.id[currentParticle].group : "empty";
-            if (particleGroup === "solid") {
-                console.log(`Hit solid at (${currentX}, ${currentY}), direction: ${dir}`);
+            if (neighboringParticleViscosity >= actualParticleViscosity) {
+                console.log(`Blocked by higher viscosity at (${neighboringX}, ${neighboringY}), direction: ${dir}`);
                 break;
             }
         }
@@ -431,9 +440,11 @@ function checkForEdge(x, y, mainStateGrid, cols, rows) {
 
     return {
         direction: chosenDirection,
-        mainStateGrid: mainStateGrid
+        mainStateGrid: mainStateGrid,
     };
 }
+
+
 
 
 function applyStickyLiquidBehavior(x, y) {
