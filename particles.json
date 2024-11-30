@@ -22,10 +22,10 @@
       "3": {
         "name": "fire",
         "color": "rgb(255, 69, 0)",
-        "gravity": 1,
+        "gravity": 0,
         "group": "gas",
         "sticky": false,
-        "density": 0,
+        "density": 0.1,
         "viscosity": 0.1
       },
       "4": {

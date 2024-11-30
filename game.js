@@ -302,8 +302,8 @@ function applyNonStickySolidBehavior(x, y) {
     return mainStateGrid;
 }
 
-
 function applyNonStickyLiquidBehavior(x, y) {
+    
     let mainStateGrid = getMainStateGrid();
     const particleDefinitions = getParticleDefinitions().particles.id;
     const particleData = particleDefinitions[mainStateGrid[x][y]];
@@ -314,39 +314,37 @@ function applyNonStickyLiquidBehavior(x, y) {
     const cols = getGridCols();
     const rows = getGridRows();
 
-    if (gravity > 0) {
-        if (y + gravity < rows && mainStateGrid[x][y + gravity] === 0) { //move down normally
-            mainStateGrid[x][y + gravity] = mainStateGrid[x][y];
-            mainStateGrid[x][y] = 0;
-        } else if (mainStateGrid[x][y + 1] === 0) { // Move down by 1 if near bottom
-            mainStateGrid[x][y + 1] = mainStateGrid[x][y];
-            mainStateGrid[x][y] = 0;
-        } else { //
-            const below = y + 1 < rows ? mainStateGrid[x][y + 1] : 0;
-            const belowParticleData = below ? particleDefinitions[below] : null;
+    if (y + gravity < rows && mainStateGrid[x][y + gravity] === 0) { //move down normally
+        mainStateGrid[x][y + gravity] = mainStateGrid[x][y];
+        mainStateGrid[x][y] = 0;
+    } else if (mainStateGrid[x][y + gravity] === 0) { // Move down by 1 if near bottom
+        mainStateGrid[x][y + 1] = mainStateGrid[x][y];
+        mainStateGrid[x][y] = 0;
+    } else { //
+        const below = y + 1 < rows ? mainStateGrid[x][y + 1] : 0;
+        const belowParticleData = below ? particleDefinitions[below] : null;
 
-            // Move down if can absorb under another particle
-            if (below !== 0 && belowParticleData && belowParticleData.density < density && belowParticleData.viscosity < viscosity) {
-                [mainStateGrid[x][y], mainStateGrid[x][y + 1]] = [mainStateGrid[x][y + 1], mainStateGrid[x][y]];
+        // Move down if can absorb under another particle
+        if (below !== 0 && belowParticleData && belowParticleData.density < density && belowParticleData.viscosity < viscosity) {
+            [mainStateGrid[x][y], mainStateGrid[x][y + 1]] = [mainStateGrid[x][y + 1], mainStateGrid[x][y]];
 
-                return mainStateGrid;
-            }
+            return mainStateGrid;
+        }
 
-            // Check for lateral movement if sitting on top of a particle
-            const result = checkForEdge(x, y, mainStateGrid, cols, rows);
-            const direction = result.direction;
-            mainStateGrid = result.mainStateGrid;
+        // Check for lateral movement if sitting on top of a particle
+        const result = checkForEdge(x, y, mainStateGrid, cols, rows);
+        const direction = result.direction;
+        mainStateGrid = result.mainStateGrid;
 
-            if (direction !== null) {
-                if (direction !== 0) {
-                    const newX = x + direction;
-                    const newY = y - 1;
-                    mainStateGrid[newX][y] = mainStateGrid[x][y];
-                    mainStateGrid[x][y] = 0;
-                } else {
-                    // Move particle to the closest empty space if no edge found to flow towards
-                    mainStateGrid = moveParticleToClosestEmptySpace(x, y, mainStateGrid, cols, rows);
-                }
+        if (direction !== null) {
+            if (direction !== 0) {
+                const newX = x + direction;
+                const newY = y - 1;
+                mainStateGrid[newX][y] = mainStateGrid[x][y];
+                mainStateGrid[x][y] = 0;
+            } else {
+                // Move particle to the closest empty space if no edge found to flow towards
+                mainStateGrid = moveParticleToClosestEmptySpace(x, y, mainStateGrid, cols, rows);
             }
         }
     }
@@ -354,6 +352,66 @@ function applyNonStickyLiquidBehavior(x, y) {
     return mainStateGrid;
 }
 
+function applyStickyLiquidBehavior(x, y) {
+    let mainStateGrid = getMainStateGrid();
+
+    return mainStateGrid;
+}
+
+function applyNonStickyGasBehavior(x, y) {
+    let mainStateGrid = getMainStateGrid();
+    const particleDefinitions = getParticleDefinitions().particles.id;
+    const particleData = particleDefinitions[mainStateGrid[x][y]];
+    const gravity = particleData.gravity;
+    const density = particleData.density;
+    const viscosity = particleData.viscosity;
+
+    const cols = getGridCols();
+    const rows = getGridRows();
+
+    if (y + gravity < rows && mainStateGrid[x][y + gravity] === 0) { //move down normally
+        mainStateGrid[x][y + gravity] = mainStateGrid[x][y];
+        mainStateGrid[x][y] = 0;
+    } else if (mainStateGrid[x][y + gravity] === 0) { // Move down by 1 if near bottom
+        mainStateGrid[x][y + 1] = mainStateGrid[x][y];
+        mainStateGrid[x][y] = 0;
+    } else { //
+        const below = y + 1 < rows ? mainStateGrid[x][y + 1] : 0;
+        const belowParticleData = below ? particleDefinitions[below] : null;
+
+        // Move down if can absorb under another particle
+        if (below !== 0 && belowParticleData && belowParticleData.density < density && belowParticleData.viscosity < viscosity) {
+            [mainStateGrid[x][y], mainStateGrid[x][y + 1]] = [mainStateGrid[x][y + 1], mainStateGrid[x][y]];
+
+            return mainStateGrid;
+        }
+
+        // Check for lateral movement if sitting on top of a particle
+        const result = checkForEdge(x, y, mainStateGrid, cols, rows);
+        const direction = result.direction;
+        mainStateGrid = result.mainStateGrid;
+
+        if (direction !== null) {
+            if (direction !== 0) {
+                const newX = x + direction;
+                const newY = y - 1;
+                mainStateGrid[newX][y] = mainStateGrid[x][y];
+                mainStateGrid[x][y] = 0;
+            } else {
+                // Move particle to the closest empty space if no edge found to flow towards
+                mainStateGrid = moveParticleToClosestEmptySpace(x, y, mainStateGrid, cols, rows);
+            }
+        }
+    }
+
+    return mainStateGrid;
+}
+
+function applyStickyGasBehavior(x, y) {
+    let mainStateGrid = getMainStateGrid();
+
+    return mainStateGrid;
+}
 
 function moveParticleToClosestEmptySpace(x, y, mainStateGrid, cols, rows) {
     const directions = [
@@ -442,27 +500,6 @@ function checkForEdge(x, y, mainStateGrid, cols, rows) {
         direction: chosenDirection,
         mainStateGrid: mainStateGrid,
     };
-}
-
-
-
-
-function applyStickyLiquidBehavior(x, y) {
-    let mainStateGrid = getMainStateGrid();
-
-    return mainStateGrid;
-}
-
-function applyNonStickyGasBehavior(x, y) {
-    let mainStateGrid = getMainStateGrid();
-
-    return mainStateGrid;
-}
-
-function applyStickyGasBehavior(x, y) {
-    let mainStateGrid = getMainStateGrid();
-
-    return mainStateGrid;
 }
 
 export function initializeParticleGrids() {
