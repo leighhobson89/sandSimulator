@@ -14,14 +14,18 @@ let oldLanguage = 'en';
 export let gameState;
 export const MENU_STATE = 'menuState';
 export const GAME_VISIBLE_ACTIVE = 'gameVisibleActive';
-export const GRID_COLS = 140;
-export const GRID_ROWS = 105;
+export const GAME_VISIBLE_PAUSED = 'gameVisiblePaused';
+export const GRID_COLS = 200;
+export const GRID_ROWS = 150;
 
 //GLOBAL VARIABLES
-let mainStateGrid = [];
-
 let particleDefinitions = null;
 let particleTypeIdSelected = 1; //starting particle sand
+let brushSize = 3;
+let windStrength = 2;
+let eraserOn = false;
+let heatViewOn = false;
+let simulationPaused = false;
 
 //FLAGS
 let audioMuted;
@@ -43,17 +47,22 @@ export function setElements() {
         canvasContainer: document.getElementById('canvasContainer'),
         buttonRow: document.getElementById('buttonRow'),
         overlay: document.getElementById('overlay'),
-        button1: document.getElementById('button1'),
-        button2: document.getElementById('button2'),
+        pauseButton: document.getElementById('pauseButton'),
+        clearButton: document.getElementById('clearButton'),
+        heatViewButton: document.getElementById('heatViewButton'),
+        eraserButton: document.getElementById('eraserButton'),
+        brushSizeInput: document.getElementById('brushSize'),
+        brushSizeLabel: document.getElementById('brushSizeLabel'),
+        airTempInput: document.getElementById('airTemp'),
+        airTempValue: document.getElementById('airTempValue'),
+        airTempLabel: document.getElementById('airTempLabel'),
+        layerLapseInput: document.getElementById('layerLapse'),
+        layerLapseLabel: document.getElementById('layerLapseLabel'),
+        windStrengthInput: document.getElementById('windStrength'),
+        windStrengthLabel: document.getElementById('windStrengthLabel'),
         floatingContainer: document.getElementById('floatingContainer'),
-        particle1: document.getElementById('particle1'), // Sand
-        particle2: document.getElementById('particle2'), // Water
-        particle3: document.getElementById('particle3'), // Fire
-        particle4: document.getElementById('particle4'), // Ice
-        particle5: document.getElementById('particle5'), // Oil
-        particle6: document.getElementById('particle6'), // Lava
-        particle7: document.getElementById('particle7'), // Stone
-        particle8: document.getElementById('particle8') // Mud
+        particleButtons: document.getElementById('particleButtons'),
+        readout: document.getElementById('readout')
     };
 }
 
@@ -96,6 +105,7 @@ export function captureGameStatusForSaving() {
 
     return gameState;
 }
+
 export function restoreGameStatus(gameState) {
     return new Promise((resolve, reject) => {
         try {
@@ -198,18 +208,50 @@ export function setParticleDefinitions(value) {
     particleDefinitions = value;
 }
 
-export function getMainStateGrid() {
-    return mainStateGrid;
-}
-
-export function setMainStateGrid(value) {
-    mainStateGrid = value;
-}
-
 export function getParticleTypeIdSelected() {
     return particleTypeIdSelected;
 }
 
 export function setParticleTypeIdSelected(value) {
     particleTypeIdSelected = value;
+}
+
+export function getBrushSize() {
+    return brushSize;
+}
+
+export function setBrushSize(value) {
+    brushSize = value;
+}
+
+export function getWindStrength() {
+    return windStrength;
+}
+
+export function setWindStrength(value) {
+    windStrength = value;
+}
+
+export function getEraserOn() {
+    return eraserOn;
+}
+
+export function setEraserOn(value) {
+    eraserOn = value;
+}
+
+export function getHeatViewOn() {
+    return heatViewOn;
+}
+
+export function setHeatViewOn(value) {
+    heatViewOn = value;
+}
+
+export function getSimulationPaused() {
+    return simulationPaused;
+}
+
+export function setSimulationPaused(value) {
+    simulationPaused = value;
 }

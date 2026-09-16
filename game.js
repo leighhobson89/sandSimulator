@@ -1,715 +1,355 @@
+// game.js
+// -----------------------------------------------------------------------------
+// Canvas setup, drawing, the main loop and the screen states. All of the actual
+// simulation lives in physics.js.
+//
+// Drawing note: the canvas is exactly one pixel per cell and is stretched to
+// fit the screen by CSS with image-rendering: pixelated. That means a frame is
+// one putImageData call instead of tens of thousands of fillRect calls, which
+// is the single biggest speed win over the old version.
+// -----------------------------------------------------------------------------
+
 import { localize } from './localization.js';
-import { getMainStateGrid, setMainStateGrid, getParticleTypeIdSelected, setParticleDefinitions, getGridCols, getGridRows, setBeginGameStatus, setGameStateVariable, getBeginGameStatus, getMenuState, getGameVisiblePaused, getGameVisibleActive, getElements, getLanguage, gameState, getParticleDefinitions } from './constantsAndGlobalVars.js';
+import {
+    getGridCols, getGridRows, getElements, getLanguage, gameState,
+    setBeginGameStatus, setGameStateVariable, getBeginGameStatus,
+    getMenuState, getGameVisiblePaused, getGameVisibleActive,
+    getParticleTypeIdSelected, setParticleDefinitions,
+    getBrushSize, getEraserOn, getHeatViewOn, getSimulationPaused, getWindStrength
+} from './constantsAndGlobalVars.js';
+import {
+    prepareDefinitions, createWorld, getWorld, clearWorld, stepSimulation,
+    setCell, inBounds, index, getDefinitions, getAmbientTemp, getAirTempAt,
+    getTemperature, getFrameCount, applyWind, EMPTY
+} from './physics.js';
+
+let context = null;
+let imageData = null;
+let pixels = null;
+let frames = 0;
+let lastFpsCheck = 0;
+let fps = 0;
+let loopRunning = false;
 
 //--------------------------------------------------------------------------------------------------------
 
 export function startGame() {
-    const ctx = getElements().canvas.getContext('2d');
-    const container = getElements().canvasContainer;
+    const canvas = getElements().canvas;
+    const cols = getGridCols();
+    const rows = getGridRows();
 
-    function updateCanvasSize() {
-        const canvasWidth = container.clientWidth * 0.8;
-        const canvasHeight = container.clientHeight * 0.8;
+    // One canvas pixel per simulation cell. CSS does the scaling.
+    canvas.width = cols;
+    canvas.height = rows;
 
-        getElements().canvas.style.width = `${canvasWidth}px`;
-        getElements().canvas.style.height = `${canvasHeight}px`;
+    context = canvas.getContext('2d');
+    context.imageSmoothingEnabled = false;
+    imageData = context.createImageData(cols, rows);
+    pixels = imageData.data;
 
-        getElements().canvas.width = canvasWidth;
-        getElements().canvas.height = canvasHeight;
-
-        ctx.scale(1, 1);
-    }
-
-    updateCanvasSize();
-    window.addEventListener('resize', updateCanvasSize);
+    fitCanvasToScreen();
+    window.addEventListener('resize', fitCanvasToScreen);
 
     if (getBeginGameStatus()) {
         setBeginGameStatus(false);
     }
     setGameState(getGameVisibleActive());
 
-    gameLoop();
+    // Going back to the menu stops the loop, so coming back in has to start it
+    // again - but only ever one loop at a time.
+    if (loopRunning) return;
+    loopRunning = true;
+    lastFpsCheck = performance.now();
+    requestAnimationFrame(gameLoop);
 }
 
-export async function gameLoop() {
-    const ctx = getElements().canvas.getContext('2d');
+// Makes the canvas as big as it fits in the work area while keeping cells
+// square. The canvas itself stays at one pixel per cell; this only stretches it.
+function fitCanvasToScreen() {
+    const canvas = getElements().canvas;
+    const area = canvas.parentElement;
     const cols = getGridCols();
     const rows = getGridRows();
 
-    if (gameState === getGameVisibleActive() || gameState === getGameVisiblePaused()) {
-        ctx.clearRect(0, 0, getElements().canvas.width, getElements().canvas.height);
+    const availableWidth = area.clientWidth - 32;
+    const availableHeight = area.clientHeight - 32;
+    const scale = Math.max(1, Math.min(availableWidth / cols, availableHeight / rows));
 
-        if (gameState === getGameVisibleActive()) {
-            drawParticles(ctx);
-        }
-
-        applyParticleBehaviors();
-
-        requestAnimationFrame(gameLoop);
-    }
+    canvas.style.width = Math.floor(cols * scale) + 'px';
+    canvas.style.height = Math.floor(rows * scale) + 'px';
 }
 
-export function drawParticles(ctx) {
-    const particleIds = getParticleDefinitions().particles.id;
-    const canvasWidth = getElements().canvas.width;
-    const canvasHeight = getElements().canvas.height;
-
-    ctx.clearRect(0, 0, canvasWidth, canvasHeight);
-
-    if (particleIds) {
-
-        Object.keys(particleIds).forEach(particleId => {
-            const id = parseInt(particleId);
-            paintCellsWithParticleType(ctx, id);
-        });
-    }
-}
-
-function paintCellsWithParticleType(ctx, particleId) {
-    const canvasWidth = getElements().canvas.width;
-    const canvasHeight = getElements().canvas.height;
-    const cols = getGridCols();
-    const rows = getGridRows();
-
-    const particleDefinitions = getParticleDefinitions().particles.id;
-    const particleData = particleDefinitions[particleId];
-
-    const mainStateGrid = getMainStateGrid();
-
-    const particleColor = particleData.color;
-
-    const cellWidth = canvasWidth / cols;
-    const cellHeight = canvasHeight / rows;
-
-    for (let x = 0; x < cols; x++) {
-        for (let y = 0; y < rows; y++) {
-            const cellState = mainStateGrid[x][y];
-
-            if (cellState === particleId) {
-                ctx.fillStyle = particleColor;
-                ctx.fillRect(x * cellWidth, y * cellHeight, cellWidth, cellHeight);
-            } else {
-                ctx.fillStyle = 'rgba(0, 0, 0, 0)';
-                ctx.fillRect(Math.floor(x * cellWidth), Math.floor(y * cellHeight), Math.floor(cellWidth), Math.floor(cellHeight));
-            }
-        }
-    }
-}
-
-function applyParticleBehaviors() {
-    const cols = getGridCols();
-    const rows = getGridRows();
-    const particleIds = getParticleDefinitions().particles.id;
-    let mainStateGrid = getMainStateGrid();
-
-    Object.keys(particleIds).forEach((particleId) => {
-        const id = parseInt(particleId);
-        const particleData = particleIds[id];
-        const { group, sticky } = particleData;
-
-        for (let x = 0; x < cols; x++) {
-            for (let y = rows - 2; y >= 0; y--) {                
-                if (mainStateGrid[x][y] === id) {
-                    switch (group) {
-                        case "solid":
-                            if (sticky) {
-                                mainStateGrid = applyStickySolidBehavior(x, y);
-                            } else {
-                                mainStateGrid = applyNonStickySolidBehavior(x, y);
-                            }
-                            break;
-
-                        case "liquid":
-                            if (sticky) {
-                                mainStateGrid = applyStickyLiquidBehavior(x, y);
-                            } else {
-                                mainStateGrid = applyNonStickyLiquidBehavior(x, y);
-                            }
-                            break;
-
-                        case "gas":
-                            if (sticky) {
-                                mainStateGrid = applyStickyGasBehavior(x, y);
-                            } else {
-                                mainStateGrid = applyNonStickyGasBehavior(x, y);
-                            }
-                            break;
-
-                        default:
-                            console.warn(`Unknown group type: ${group}`);
-                    }
-                }
-            }
-        }
-
-        setMainStateGrid(mainStateGrid);
-    });
-
-    // Perform additional logic (e.g., handling particles swapping based on density/viscosity)
-    let tempStateGrid = JSON.parse(JSON.stringify(mainStateGrid));
-
-    for (let x = 0; x < cols; x++) {
-        for (let y = rows - 2; y >= 0; y--) {
-            const currentParticle = mainStateGrid[x][y];
-            const belowParticle = y + 1 < rows ? mainStateGrid[x][y + 1] : 0;
-
-            if (currentParticle !== 0 && belowParticle !== 0 && currentParticle !== belowParticle) {
-                const currentParticleData = particleIds[currentParticle];
-                const belowParticleData = particleIds[belowParticle];
-
-                if (
-                    currentParticleData.density > belowParticleData.density &&
-                    currentParticleData.viscosity < belowParticleData.viscosity
-                ) {
-                    tempStateGrid[x][y] = belowParticle;
-                    tempStateGrid[x][y + 1] = currentParticle;
-                }
-            }
-        }
-    }
-
-    setMainStateGrid(tempStateGrid);
-}
-
-
-function applyStickySolidBehavior(x, y) {
-    let mainStateGrid = getMainStateGrid();
-    const particleData = getParticleDefinitions().particles.id[mainStateGrid[x][y]];
-    const gravity = particleData.gravity;
-    const density = particleData.density;
-    const viscosity = particleData.viscosity; // how much a particle wants to flow, higher is less likely to flow, max 1 (solid), min 0 (gas)
-
-    const cols = getGridCols();
-    const rows = getGridRows();
-
-    // Gravity-based Movement
-    if (gravity > 0) {
-        // Try to move the particle down if the space below is empty
-        if (y + gravity < rows && mainStateGrid[x][y + gravity] === 0) {
-            mainStateGrid[x][y + gravity] = mainStateGrid[x][y];
-            mainStateGrid[x][y] = 0;
-        } else if (mainStateGrid[x][y + 1] === 0) {
-            mainStateGrid[x][y + 1] = mainStateGrid[x][y];
-            mainStateGrid[x][y] = 0;
-        } else {
-            const below = y + 1 < rows ? mainStateGrid[x][y + 1] : 0;
-            const belowParticleData = below ? getParticleDefinitions().particles.id[below] : null;
-
-            // Density-based Behavior: Solid vs. Liquid/Gas
-            if (below !== 0 && belowParticleData && belowParticleData.viscosity < viscosity) {
-                const belowDensity = belowParticleData.density;
-
-                // Move denser particles down and displace less dense ones
-                if (density > belowDensity) {
-                    mainStateGrid[x][y + 1] = mainStateGrid[x][y];
-                    mainStateGrid[x][y] = 0;
-                    // Move the displaced less dense particle randomly (left or right)
-                    if (y + 8 < rows) {
-                        const moveDirection = Math.random() < 0.5 ? -1 : 1;
-                        const newX = x + moveDirection * 4;
-
-                        // Out-of-bounds check for newX (left or right movement)
-                        if (newX >= 0 && newX < cols) {
-                            mainStateGrid[newX][y + 1] = below;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    return mainStateGrid;
-}
-
-
-function applyNonStickySolidBehavior(x, y) {
-    let mainStateGrid = getMainStateGrid();
-    const particleData = getParticleDefinitions().particles.id[mainStateGrid[x][y]];
-    const gravity = particleData.gravity;
-    const density = particleData.density;
-    const viscosity = particleData.viscosity; // Get viscosity of the current particle
-
-    const cols = getGridCols();
-    const rows = getGridRows();
-
-    if (y + gravity < rows && mainStateGrid[x][y + gravity] === 0) {
-        mainStateGrid[x][y + gravity] = mainStateGrid[x][y];
-        mainStateGrid[x][y] = 0;
-    } else if (mainStateGrid[x][y + 1] === 0) {
-        mainStateGrid[x][y + 1] = mainStateGrid[x][y];
-        mainStateGrid[x][y] = 0;
-    } else {
-        const below = y + 1 < rows ? mainStateGrid[x][y + 1] : 0;
-        const belowParticleData = below ? getParticleDefinitions().particles.id[below] : null;
-
-        // Viscosity-based Behavior: Solid vs. Liquid/Gas
-        if (below !== 0 && belowParticleData && belowParticleData.viscosity < viscosity) {
-            const belowDensity = belowParticleData.density;
-
-            // Move denser particles down and displace less dense ones
-            if (density > belowDensity) {
-                // Move the solid down
-                mainStateGrid[x][y + 1] = mainStateGrid[x][y];
-                mainStateGrid[x][y] = 0;
-                // Move the displaced less dense particle randomly to the side
-                if (y + 8 < rows) {
-                    const moveDirection = Math.random() < 0.5 ? -1 : 1;
-                    const newX = x + moveDirection * 4;
-
-                    // Out-of-bounds check for newX
-                    if (newX >= 0 && newX < cols) {
-                        mainStateGrid[newX][y + 1] = below;
-                    }
-                }
-            }
-
-            return mainStateGrid;
-        } else if (below !== 0 && belowParticleData) {
-            const left = x - 1 >= 0 ? mainStateGrid[x - 1][y + 1] : 0;
-            const right = x + 1 < cols ? mainStateGrid[x + 1][y + 1] : 0;
-
-            if (left === 0 && right !== 0) {
-                // Out-of-bounds check for left movement
-                if (x - 1 >= 0) {
-                    // Move left if the space is available
-                    mainStateGrid[x - 1][y] = mainStateGrid[x][y];
-                    mainStateGrid[x][y] = 0;
-                }
-            } else if (right === 0 && left !== 0) {
-                // Out-of-bounds check for right movement
-                if (x + 1 < cols) {
-                    // Move right if the space is available
-                    mainStateGrid[x + 1][y] = mainStateGrid[x][y];
-                    mainStateGrid[x][y] = 0;
-                }
-            } else if (left === 0 && right === 0) {
-                // Randomly choose a direction if both sides are free
-                const moveDirection = Math.random() < 0.5 ? -1 : 1;
-                const newX = x + moveDirection;
-
-                // Out-of-bounds check for random side movement
-                if (newX >= 0 && newX < cols) {
-                    if (moveDirection < 0) {
-                        mainStateGrid[newX][y] = mainStateGrid[x][y];
-                    } else {
-                        mainStateGrid[newX][y] = mainStateGrid[x][y];
-                    }
-                }
-                mainStateGrid[x][y] = 0;
-            }
-        }
-    }
-    return mainStateGrid;
-}
-
-function applyNonStickyLiquidBehavior(x, y) {
-    
-    let mainStateGrid = getMainStateGrid();
-    const particleDefinitions = getParticleDefinitions().particles.id;
-    const particleData = particleDefinitions[mainStateGrid[x][y]];
-    const gravity = particleData.gravity;
-    const density = particleData.density;
-    const viscosity = particleData.viscosity;
-
-    const cols = getGridCols();
-    const rows = getGridRows();
-
-    if (y + gravity < rows && mainStateGrid[x][y + gravity] === 0) { //move down normally
-        mainStateGrid[x][y + gravity] = mainStateGrid[x][y];
-        mainStateGrid[x][y] = 0;
-    } else if (mainStateGrid[x][y + gravity] === 0) { // Move down by 1 if near bottom
-        mainStateGrid[x][y + 1] = mainStateGrid[x][y];
-        mainStateGrid[x][y] = 0;
-    } else { //
-        const below = y + 1 < rows ? mainStateGrid[x][y + 1] : 0;
-        const belowParticleData = below ? particleDefinitions[below] : null;
-
-        // Move down if can absorb under another particle
-        if (below !== 0 && belowParticleData && belowParticleData.density < density && belowParticleData.viscosity < viscosity) {
-            [mainStateGrid[x][y], mainStateGrid[x][y + 1]] = [mainStateGrid[x][y + 1], mainStateGrid[x][y]];
-
-            return mainStateGrid;
-        }
-
-        // Check for lateral movement if sitting on top of a particle
-        const result = checkForEdge(x, y, mainStateGrid, cols, rows);
-        const direction = result.direction;
-        mainStateGrid = result.mainStateGrid;
-
-        if (direction !== null) {
-            if (direction !== 0) {
-                const newX = x + direction;
-                const newY = y - 1;
-                mainStateGrid[newX][y] = mainStateGrid[x][y];
-                mainStateGrid[x][y] = 0;
-            } else {
-                // Move particle to the closest empty space if no edge found to flow towards
-                mainStateGrid = moveParticleToClosestEmptySpace(x, y, mainStateGrid, cols, rows);
-            }
-        }
-    }
-
-    return mainStateGrid;
-}
-
-function applyStickyLiquidBehavior(x, y) {
-    let mainStateGrid = getMainStateGrid();
-
-    return mainStateGrid;
-}
-
-function applyNonStickyGasBehavior(x, y) {
-    let mainStateGrid = getMainStateGrid();
-    const particleDefinitions = getParticleDefinitions().particles.id;
-    const particleData = particleDefinitions[mainStateGrid[x][y]];
-    const gravity = particleData.gravity;
-    const density = particleData.density;
-    const viscosity = particleData.viscosity;
-
-    const cols = getGridCols();
-    const rows = getGridRows();
-
-    if (y + gravity < rows && mainStateGrid[x][y + gravity] === 0) { //move down normally
-        mainStateGrid[x][y + gravity] = mainStateGrid[x][y];
-        mainStateGrid[x][y] = 0;
-    } else if (mainStateGrid[x][y + gravity] === 0) { // Move down by 1 if near bottom
-        mainStateGrid[x][y + 1] = mainStateGrid[x][y];
-        mainStateGrid[x][y] = 0;
-    } else { //
-        const below = y + 1 < rows ? mainStateGrid[x][y + 1] : 0;
-        const belowParticleData = below ? particleDefinitions[below] : null;
-
-        // Move down if can absorb under another particle
-        if (below !== 0 && belowParticleData && belowParticleData.density < density && belowParticleData.viscosity < viscosity) {
-            [mainStateGrid[x][y], mainStateGrid[x][y + 1]] = [mainStateGrid[x][y + 1], mainStateGrid[x][y]];
-
-            return mainStateGrid;
-        }
-
-        // Check for lateral movement if sitting on top of a particle
-        const result = checkForEdge(x, y, mainStateGrid, cols, rows);
-        const direction = result.direction;
-        mainStateGrid = result.mainStateGrid;
-
-        if (direction !== null) {
-            if (direction !== 0) {
-                const newX = x + direction;
-                const newY = y - 1;
-                mainStateGrid[newX][y] = mainStateGrid[x][y];
-                mainStateGrid[x][y] = 0;
-            } else {
-                // Move particle to the closest empty space if no edge found to flow towards
-                mainStateGrid = moveParticleToClosestEmptySpace(x, y, mainStateGrid, cols, rows);
-            }
-        }
-    }
-
-    return mainStateGrid;
-}
-
-function applyStickyGasBehavior(x, y) {
-    let mainStateGrid = getMainStateGrid();
-
-    return mainStateGrid;
-}
-
-function moveParticleToClosestEmptySpace(x, y, mainStateGrid, cols, rows) {
-    const directions = [
-        { dx: 0, dy: -1 }, // up
-        { dx: 0, dy: 1 },  // down
-        { dx: -1, dy: 0 }, // left
-        { dx: 1, dy: 0 }   // right
-    ];
-
-    for (let distance = 1; distance < Math.max(cols, rows); distance++) {
-        for (let direction of directions) {
-            const newX = x + direction.dx * distance;
-            const newY = y + direction.dy * distance;
-
-            if (newX >= 0 && newX < cols && newY >= 0 && newY < rows) {
-                if (mainStateGrid[newX][newY] === 0) {
-                    mainStateGrid[newX][newY] = mainStateGrid[x][y];
-                    mainStateGrid[x][y] = 0;
-
-                    return mainStateGrid;
-                }
-            }
-        }
-    }
-}
-
-function checkForEdge(x, y, mainStateGrid, cols, rows) {
-    let neighboringX = x;
-    let neighboringY = y;
-    const searchRange = cols;
-    let edgeFoundRight = null;
-    let edgeFoundLeft = null;
-
-    // Get the particle and viscosity of the current cell (A)
-    const actualParticle = mainStateGrid[x][y];
-    const actualParticleViscosity = actualParticle ? getParticleDefinitions().particles.id[actualParticle].viscosity : 0;
-
-    for (let dir of [1, -1]) {
-        neighboringX = x;
-
-        for (let i = 1; i <= searchRange; i++) {
-            neighboringX += dir;
-
-            if (neighboringX < 0 || neighboringX >= cols) {
-                console.log(`Out of bounds at (${neighboringX}, ${neighboringY}), direction: ${dir}`);
-                break;
-            }
-
-            const neighboringParticle = mainStateGrid[neighboringX][neighboringY];
-            const neighboringParticleViscosity = neighboringParticle ? getParticleDefinitions().particles.id[neighboringParticle].viscosity : 0;
-            const belowNeighboringParticle = neighboringY + 1 < rows ? mainStateGrid[neighboringX][neighboringY + 1] : null;
-            const canMoveIntoNeighbor = neighboringParticle === 0 || neighboringParticleViscosity < actualParticleViscosity;
-            const belowNeighborIsEmptyOrOutOfBounds =
-                neighboringY + 1 >= rows || belowNeighboringParticle === 0;
-
-            if (canMoveIntoNeighbor && belowNeighborIsEmptyOrOutOfBounds) {
-                console.log(`Edge found at (${neighboringX}, ${neighboringY}), direction: ${dir}`);
-                if (dir === 1) edgeFoundRight = dir;
-                if (dir === -1) edgeFoundLeft = dir;
-                break;
-            }
-
-            if (neighboringParticleViscosity >= actualParticleViscosity) {
-                console.log(`Blocked by higher viscosity at (${neighboringX}, ${neighboringY}), direction: ${dir}`);
-                break;
-            }
-        }
-    }
-
-    let chosenDirection = 0;
-    if (edgeFoundRight && edgeFoundLeft) {
-        chosenDirection = Math.random() < 0.5 ? edgeFoundRight : edgeFoundLeft;
-        console.log(`Both edges found; chosen direction: ${chosenDirection}`);
-    } else if (edgeFoundRight) {
-        chosenDirection = edgeFoundRight;
-        console.log(`Edge found in positive direction: ${chosenDirection}`);
-    } else if (edgeFoundLeft) {
-        chosenDirection = edgeFoundLeft;
-        console.log(`Edge found in negative direction: ${chosenDirection}`);
-    } else {
-        chosenDirection = null;
-        console.log(`No edge found in either direction`);
-    }
-
-    return {
-        direction: chosenDirection,
-        mainStateGrid: mainStateGrid,
-    };
-}
-
-export function initializeParticleGrids() {
-    const cols = getGridCols();
-    const rows = getGridRows();
-
-    const particleIds = getParticleDefinitions().particles.id;
-
-    Object.keys(particleIds).forEach((particleId) => {
-        const newGrid = [];
-
-        for (let x = 0; x < cols; x++) {
-            newGrid[x] = [];
-            for (let y = 0; y < rows; y++) {
-                newGrid[x][y] = 0;
-            }
-        }
-
-        setMainStateGrid(newGrid);
-    });
-}
-
-export function setStateOfCell(x, y) {
-    const particleTypeSelected = getParticleTypeIdSelected();
-    const particleData = getParticleDefinitions().particles.id[particleTypeSelected];
-    const gravity = particleData.gravity;
-    
-    const cols = getGridCols();
-    const rows = getGridRows();
-    
-    const mainStateGrid = getMainStateGrid();
-    
-    if (!particleTypeSelected) {
-        console.warn(`Unknown particle type: ${particleTypeSelected}`);
+export function gameLoop(now) {
+    if (gameState !== getGameVisibleActive() && gameState !== getGameVisiblePaused()) {
+        loopRunning = false;
         return;
     }
 
-    function selectOffsetCellsToPaintWhenClicking(i, j) { //to 'spray' particles
-        if (gravity > 0) { //only one brush size for paintable non moving particles, no 'spray'
-            if (i >= 0 && i < cols && j >= 0 && j < rows) {
-                if (Math.random() < 0.1) { //0.1
-                    mainStateGrid[i][j] = particleTypeSelected;
-                }
+    if (!getSimulationPaused()) {
+        stepSimulation();
+    }
+    drawWorld();
+
+    frames++;
+    if (now - lastFpsCheck >= 250) {
+        fps = Math.round((frames * 1000) / (now - lastFpsCheck));
+        frames = 0;
+        lastFpsCheck = now;
+        updateReadout();
+    }
+
+    requestAnimationFrame(gameLoop);
+}
+
+//------------------------------------------------------------------- rendering
+
+function drawWorld() {
+    const world = getWorld();
+    const defs = getDefinitions();
+    const type = world.type;
+    const temp = world.temp;
+    const life = world.life;
+    const shade = world.shade;
+    const data = world.data;
+    const total = type.length;
+    const heatView = getHeatViewOn();
+    // Lit gunpowder flickers between its two colours while it catches.
+    const flicker = (getFrameCount() & 2) === 0;
+
+    for (let i = 0; i < total; i++) {
+        const p = i * 4;
+        const id = type[i];
+
+        if (heatView) {
+            writeHeatColour(pixels, p, temp[i], id);
+            continue;
+        }
+
+        if (id === EMPTY) {
+            pixels[p] = 0;
+            pixels[p + 1] = 0;
+            pixels[p + 2] = 0;
+            pixels[p + 3] = 255;
+            continue;
+        }
+
+        const def = defs[id];
+        let r = def.rgb[0];
+        let g = def.rgb[1];
+        let b = def.rgb[2];
+
+        if (def.palette) {
+            // Flowers: each one keeps a fixed random number, which picks its
+            // colour out of the rainbow and keeps it for as long as it lives.
+            const colour = def.palette[shade[i] % def.palette.length];
+            r = colour[0];
+            g = colour[1];
+            b = colour[2];
+        } else if (def.blastRadius > 0) {
+            // Gunpowder: dark until it catches, then glowing.
+            if (data[i] > 0 && flicker) {
+                r = def.rgb2[0];
+                g = def.rgb2[1];
+                b = def.rgb2[2];
+            }
+        } else if (def.gradient) {
+            // Fire and lava fade from their bright colour to their dark one:
+            // fire as it burns out, lava as it cools towards solid.
+            let mix;
+            if (def.life > 0) {
+                mix = life[i] / def.life;
+            } else {
+                const floor = def.freezePoint !== undefined ? def.freezePoint : 0;
+                mix = (temp[i] - floor) / Math.max(1, def.emit - floor);
+            }
+            if (mix < 0) mix = 0;
+            if (mix > 1) mix = 1;
+            r = def.rgb2[0] + (def.rgb[0] - def.rgb2[0]) * mix;
+            g = def.rgb2[1] + (def.rgb[1] - def.rgb2[1]) * mix;
+            b = def.rgb2[2] + (def.rgb[2] - def.rgb2[2]) * mix;
+        }
+
+        // A fixed per-cell wobble in brightness so materials look grainy.
+        const wobble = (shade[i] - 128) * 0.14;
+        pixels[p] = clampByte(r + wobble);
+        pixels[p + 1] = clampByte(g + wobble);
+        pixels[p + 2] = clampByte(b + wobble);
+        pixels[p + 3] = 255;
+    }
+
+    context.putImageData(imageData, 0, 0);
+}
+
+function clampByte(v) {
+    return v < 0 ? 0 : v > 255 ? 255 : v | 0;
+}
+
+// Temperature overlay: deep blue when frozen, through green at room
+// temperature, to white hot.
+function writeHeatColour(out, p, t, id) {
+    let r, g, b;
+    if (t < 0) {
+        const f = Math.max(0, (t + 60) / 60);
+        r = 20 * f; g = 60 * f; b = 140 + 115 * f;
+    } else if (t < 100) {
+        const f = t / 100;
+        r = 20 + 40 * f; g = 90 + 130 * f; b = 200 - 140 * f;
+    } else if (t < 600) {
+        const f = (t - 100) / 500;
+        r = 60 + 195 * f; g = 220 - 60 * f; b = 60 - 60 * f;
+    } else {
+        const f = Math.min(1, (t - 600) / 600);
+        r = 255; g = 160 + 95 * f; b = 30 + 225 * f;
+    }
+    if (id === EMPTY) { r *= 0.55; g *= 0.55; b *= 0.55; }
+    out[p] = clampByte(r);
+    out[p + 1] = clampByte(g);
+    out[p + 2] = clampByte(b);
+    out[p + 3] = 255;
+}
+
+// Where the mouse is, so the readout can show what is under it. Set from ui.js.
+let hoverX = -1;
+let hoverY = -1;
+
+export function setHoverCell(x, y) {
+    hoverX = x;
+    hoverY = y;
+}
+
+function updateReadout() {
+    const readout = getElements().readout;
+    if (!readout) return;
+
+    const type = getWorld().type;
+    let count = 0;
+    for (let i = 0; i < type.length; i++) if (type[i] !== EMPTY) count++;
+
+    const defs = getDefinitions();
+    const selected = getEraserOn() ? 'Eraser' : defs[getParticleTypeIdSelected()].name;
+
+    let under = '';
+    if (inBounds(hoverX, hoverY)) {
+        const id = type[index(hoverX, hoverY)];
+        under = `   ${defs[id].name} ${Math.round(getTemperature(hoverX, hoverY))}°C`;
+    }
+
+    readout.textContent = `${fps} fps   ${count} particles   air ` +
+        `${Math.round(getAmbientTemp())}°C   ${selected} ${getBrushSize()}px${under}`;
+}
+
+//---------------------------------------------------------------------- brush
+
+// Paints a blob of the selected particle. Existing particles are only painted
+// over when the brush is a solid one, so that dropping water onto sand does not
+// erase the sand.
+//
+// dragX and dragY are which way the mouse was moving, which only the wind tool
+// cares about.
+export function paintCell(centreX, centreY, dragX, dragY) {
+    const id = getEraserOn() ? EMPTY : getParticleTypeIdSelected();
+
+    // The wind is a tool rather than a material: it is not put into the world,
+    // it pushes what is already there.
+    if (id !== EMPTY && getDefinitions()[id].tool === 'wind') {
+        applyWind(centreX, centreY, dragX || 0, dragY || 0,
+            Math.max(2, Math.round(getBrushSize() / 2) + 2), getWindStrength());
+        return;
+    }
+
+    const size = getBrushSize();
+    const radius = (size - 1) / 2;
+    const world = getWorld();
+
+    for (let dy = -Math.floor(radius); dy <= Math.ceil(radius); dy++) {
+        for (let dx = -Math.floor(radius); dx <= Math.ceil(radius); dx++) {
+            const x = centreX + dx;
+            const y = centreY + dy;
+            if (!inBounds(x, y)) continue;
+            if (radius > 0.5 && dx * dx + dy * dy > radius * radius + 0.5) continue;
+
+            const i = index(x, y);
+            if (id === EMPTY) {
+                world.type[i] = EMPTY;
+                world.life[i] = 0;
+                world.residue[i] = EMPTY;
+                world.temp[i] = getAirTempAt(y);
+                continue;
+            }
+
+            // Sprinkle rather than fill for loose materials, which looks better
+            // and stops the brush dumping a solid block of sand.
+            const def = getDefinitions()[id];
+            const loose = def.category === 'powder' || def.category === 'gas';
+            if (loose && size > 1 && Math.random() < 0.45) continue;
+
+            if (world.type[i] === EMPTY || def.category === 'static' || Math.random() < 0.3) {
+                setCell(x, y, id);
             }
         }
     }
-
-    if (x >= 0 && x < cols && y >= 0 && y < rows) {
-        mainStateGrid[x][y] = particleTypeSelected;
-    }
-
-    const surroundingOffsets = [
-        [-1, -1], [-1, 0], [-1, 1],
-        [0, -1], /*[0, 0],*/ [0, 1],
-        [1, -1], [1, 0], [1, 1]
-    ];
-
-    surroundingOffsets.forEach(([dx, dy]) => {
-        selectOffsetCellsToPaintWhenClicking(x + dx, y + dy);
-    });
-
-    setMainStateGrid(mainStateGrid);
 }
 
+// Draws along the line between two mouse positions so that a fast drag leaves a
+// continuous stroke instead of a dotted one. The direction of the drag is
+// handed on, since the wind tool blows whichever way the mouse is going.
+export function paintLine(x0, y0, x1, y1) {
+    const dragX = x1 - x0;
+    const dragY = y1 - y0;
+    const steps = Math.max(Math.abs(dragX), Math.abs(dragY));
+    if (steps === 0) {
+        paintCell(x1, y1, 0, 0);
+        return;
+    }
+    for (let s = 0; s <= steps; s++) {
+        const t = s / steps;
+        paintCell(Math.round(x0 + dragX * t), Math.round(y0 + dragY * t), dragX, dragY);
+    }
+}
+
+export function clearCanvasWorld() {
+    clearWorld();
+}
+
+//---------------------------------------------------------------------- setup
+
 export async function loadParticleDefinitions() {
-    let particleDefinitions;
     const response = await fetch('./particles.json');
-    particleDefinitions = await response.json();
-    console.log("Loaded particle definitions:", particleDefinitions);
-    setParticleDefinitions(particleDefinitions);
+    const json = await response.json();
+    setParticleDefinitions(json);
+    prepareDefinitions(json);
+}
+
+export function initializeWorld() {
+    createWorld(getGridCols(), getGridRows());
 }
 
 //===============================================================================================================
 
-
 export function setGameState(newState) {
-    console.log("Setting game state to " + newState);
     setGameStateVariable(newState);
+
+    const elements = getElements();
 
     switch (newState) {
         case getMenuState():
-            getElements().menu.classList.remove('d-none');
-            getElements().menu.classList.add('d-flex');
-            getElements().buttonRow.classList.add('d-none');
-            getElements().buttonRow.classList.remove('d-flex');
-            getElements().canvasContainer.classList.remove('d-flex');
-            getElements().canvasContainer.classList.add('d-none');
-            getElements().returnToMenuButton.classList.remove('d-flex');
-            getElements().returnToMenuButton.classList.add('d-none');
-            getElements().button1.classList.add('d-none');
-            getElements().button2.classList.add('d-none');
-            getElements().floatingContainer.classList.add("d-none");
+            elements.menu.classList.remove('d-none');
+            elements.menu.classList.add('d-flex');
+            elements.buttonRow.classList.add('d-none');
+            elements.buttonRow.classList.remove('d-flex');
+            elements.canvasContainer.classList.remove('d-flex');
+            elements.canvasContainer.classList.add('d-none');
+            elements.floatingContainer.classList.add('d-none');
             break;
         case getGameVisibleActive():
-            getElements().menu.classList.remove('d-flex');
-            getElements().menu.classList.add('d-none');
-            getElements().buttonRow.classList.remove('d-none');
-            getElements().buttonRow.classList.add('d-flex');
-            getElements().canvasContainer.classList.remove('d-none');
-            getElements().canvasContainer.classList.add('d-flex');
-            getElements().returnToMenuButton.classList.remove('d-none');
-            getElements().returnToMenuButton.classList.add('d-flex');
-            getElements().returnToMenuButton.innerHTML = `${localize('menuTitle', getLanguage())}`;
-            getElements().button1.classList.remove('d-none');
-            getElements().button2.classList.remove('d-none');
-            getElements().floatingContainer.classList.remove("d-none");
+            elements.menu.classList.remove('d-flex');
+            elements.menu.classList.add('d-none');
+            elements.buttonRow.classList.remove('d-none');
+            elements.buttonRow.classList.add('d-flex');
+            elements.canvasContainer.classList.remove('d-none');
+            elements.canvasContainer.classList.add('d-flex');
+            elements.returnToMenuButton.innerHTML = `${localize('menuTitle', getLanguage())}`;
+            elements.floatingContainer.classList.remove('d-none');
             break;
     }
 }
-
-
-// function rgbToHsl(r, g, b) {
-//     r /= 255;
-//     g /= 255;
-//     b /= 255;
-
-//     const max = Math.max(r, g, b);
-//     const min = Math.min(r, g, b);
-//     const delta = max - min;
-//     let h = 0, s = 0, l = (max + min) / 2;
-
-//     if (delta !== 0) {
-//         s = delta / (1 - Math.abs(2 * l - 1));
-
-//         if (max === r) {
-//             h = (g - b) / delta;
-//         } else if (max === g) {
-//             h = 2 + (b - r) / delta;
-//         } else {
-//             h = 4 + (r - g) / delta;
-//         }
-
-//         h *= 60;
-
-//         if (h < 0) {
-//             h += 360;
-//         }
-//     }
-
-//     console.log(`HSL: h=${h}, s=${s}, l=${l}`);
-
-//     return [h, s, l];
-// }
-
-// function hslToRgb(h, s, l) {
-//     s = Math.max(0, Math.min(s, 1));
-//     l = Math.max(0, Math.min(l, 1));
-
-//     if (s === 0) {
-//         const gray = Math.round(l * 255);
-//         return `rgb(${gray}, ${gray}, ${gray})`;
-//     }
-
-//     const c = (1 - Math.abs(2 * l - 1)) * s;
-//     const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
-//     const m = l - c / 2;
-
-//     let r = 0, g = 0, b = 0;
-
-//     if (0 <= h && h < 60) {
-//         r = c;
-//         g = x;
-//         b = 0;
-//     } else if (60 <= h && h < 120) {
-//         r = x;
-//         g = c;
-//         b = 0;
-//     } else if (120 <= h && h < 180) {
-//         r = 0;
-//         g = c;
-//         b = x;
-//     } else if (180 <= h && h < 240) {
-//         r = 0;
-//         g = x;
-//         b = c;
-//     } else if (240 <= h && h < 300) {
-//         r = x;
-//         g = 0;
-//         b = c;
-//     } else {
-//         r = c;
-//         g = 0;
-//         b = x;
-//     }
-
-//     r = Math.round((r + m) * 255);
-//     g = Math.round((g + m) * 255);
-//     b = Math.round((b + m) * 255);
-
-//     console.log(`RGB: r=${r}, g=${g}, b=${b}`);
-
-//     return `rgb(${r}, ${g}, ${b})`;
-// }
-
-// export function incrementHueInRgb(rgbString, increment) {
-//     const regex = /^rgb\((\d+),\s*(\d+),\s*(\d+)\)$/;
-//     const match = rgbString.match(regex);
-
-//     if (!match) {
-//         console.error("Invalid RGB string format");
-//         return rgbString;
-//     }
-
-//     let r = parseInt(match[1]);
-//     let g = parseInt(match[2]);
-//     let b = parseInt(match[3]);
-
-//     let [h, s, l] = rgbToHsl(r, g, b);
-//     h = (h + increment) % 360;
-
-//     const newRgbString = hslToRgb(h, s, l);
-//     return newRgbString;
-// }

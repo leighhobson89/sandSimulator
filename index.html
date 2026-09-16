@@ -3,74 +3,85 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Game</title>
-    <link href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css" rel="stylesheet">
+    <title>Sand Simulator</title>
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <!-- Menu Container -->
-    <div id="menu" class="d-flex flex-column align-items-center justify-content-center d-none">
-        <h1 id="menuTitle" class="mb-4">Game Title Placeholder</h1>
-        <div class="d-flex mb-2">
-            <button id="newGame" class="btn btn-primary mr-2">New Game Placeholder</button>
+    <!-- Menu -->
+    <div id="menu" class="d-none">
+        <div class="menu-card">
+            <h1 id="menuTitle" class="menu-title">Sand Simulator</h1>
+            <p class="menu-subtitle">A falling sand sandbox with heat, fire and flowing water.</p>
+            <button id="newGame" class="btn btn-primary btn-lead">New Game</button>
+            <ul class="menu-hints">
+                <li><span class="key">Click</span> to pour, <span class="key">Right click</span> to erase</li>
+                <li><span class="key">Space</span> pause &middot; <span class="key">E</span> eraser &middot; <span class="key">H</span> heat view</li>
+                <li><span class="key">[</span> and <span class="key">]</span> change brush size</li>
+                <li>Drop a seed on wet mud &middot; light gunpowder &middot; freeze a lake</li>
+            </ul>
         </div>
     </div>
 
-    <!-- Canvas Container -->
+    <!-- Simulator -->
     <div id="canvasContainer" class="d-none">
-        <!-- Button Row -->
-        <div id="buttonRow" class="d-flex justify-content-center mb-3">
-            <button id="button1" class="btn btn-warning mr-2">Show / Hide Grid</button>
-            <button id="button2" class="btn btn-success">Button2</button>
-            <button id="returnToMenu" class="btn btn-secondary mr-2">Return to Menu</button>
-        </div>
-        <!-- Canvas Row -->
-        <div class="d-flex justify-content-center">
-            <canvas id="canvas"></canvas>
+        <header id="buttonRow">
+            <div class="toolbar-group toolbar-brand">
+                <span class="brand-dot"></span>
+                <span class="brand-name">Sand Simulator</span>
+            </div>
+
+            <div class="toolbar-group">
+                <button id="pauseButton" class="btn btn-tool">Pause</button>
+                <button id="clearButton" class="btn btn-tool">Clear</button>
+                <button id="heatViewButton" class="btn btn-tool">Heat View</button>
+                <button id="eraserButton" class="btn btn-tool">Eraser</button>
+            </div>
+
+            <div class="toolbar-group brush-group">
+                <label id="brushSizeLabel" for="brushSize">Brush 3</label>
+                <input id="brushSize" type="range" min="1" max="31" step="2" value="3">
+            </div>
+
+            <div class="toolbar-group brush-group">
+                <label id="airTempLabel" for="airTemp">Air</label>
+                <input id="airTemp" type="range" min="-60" max="600" step="1" value="20">
+                <input id="airTempValue" class="number-input" type="number"
+                       min="-60" max="600" step="1" value="20"
+                       title="Type a temperature and press Enter">
+                <span class="unit">&deg;C</span>
+            </div>
+
+            <div class="toolbar-group brush-group">
+                <label id="layerLapseLabel" for="layerLapse"
+                       title="How much colder each fifth of the height is than the one below it">Layers 2.0</label>
+                <input id="layerLapse" type="range" min="0" max="10" step="0.5" value="2">
+            </div>
+
+            <div class="toolbar-group brush-group">
+                <label id="windStrengthLabel" for="windStrength"
+                       title="How hard the wind tool blows">Wind 2</label>
+                <input id="windStrength" type="range" min="1" max="8" step="1" value="2">
+            </div>
+
+            <div class="toolbar-group toolbar-end">
+                <span id="readout" class="readout">&nbsp;</span>
+                <button id="returnToMenu" class="btn btn-ghost">Menu</button>
+            </div>
+        </header>
+
+        <div id="workspace">
+            <aside id="floatingContainer">
+                <div id="particleButtons"></div>
+            </aside>
+
+            <main id="canvasArea">
+                <canvas id="canvas"></canvas>
+            </main>
         </div>
     </div>
 
-    <div id="floatingContainer">
-        <div id="innerContainer">
-            <div class="button-container">
-                <button id="particle1" class="btn btn-primary w-100">Sand</button>
-            </div>
-            <div class="button-container">
-                <button id="particle2" class="btn btn-primary w-100">Water</button>
-            </div>
-            <div class="button-container">
-                <button id="particle3" class="btn btn-primary w-100">Fire</button>
-            </div>
-            <div class="button-container">
-                <button id="particle4" class="btn btn-primary w-100">Ice</button>
-            </div>
-            <div class="button-container">
-                <button id="particle5" class="btn btn-primary w-100">Oil</button>
-            </div>
-            <div class="button-container">
-                <button id="particle6" class="btn btn-primary w-100">Lava</button>
-            </div>
-            <div class="button-container">
-                <button id="particle7" class="btn btn-primary w-100">Stone</button>
-            </div>
-            <div class="button-container">
-                <button id="particle8" class="btn btn-primary w-100">Mud</button>
-            </div>
-        </div>
-    </div>      
+    <div id="overlay" class="d-none overlay"></div>
 
-    <!-- Overlay -->
-    <div id="overlay" class="d-none overlay">
-    </div>
-
-    <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.5.4/dist/umd/popper.min.js"></script>
-    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/lz-string/1.4.4/lz-string.min.js"></script>
-
-    <script type="module" src="game.js"></script>
-    <script type="module" src="localization.js"></script>
-    <script type="module" src="constantsAndGlobalVars.js"></script>
     <script type="module" src="ui.js"></script>
 </body>
 </html>

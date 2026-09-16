@@ -1,0 +1,224 @@
+// tools/smokeTest.mjs
+// -----------------------------------------------------------------------------
+// Runs the real ui.js and game.js against a stand-in for the browser, so that
+// wiring mistakes (a button id that does not exist, a function that was
+// renamed, a canvas call that is not supported) turn up here instead of as a
+// blank page with an error in the console.
+//
+//     node tools/smokeTest.mjs
+// -----------------------------------------------------------------------------
+
+import { readFile } from 'fs/promises';
+import { fileURLToPath } from 'url';
+
+const root = fileURLToPath(new URL('..', import.meta.url));
+
+let failures = 0;
+function fail(message) { failures++; console.log(`  FAIL  ${message}`); }
+function pass(message) { console.log(`  PASS  ${message}`); }
+
+// ------------------------------------------------------------ browser stand-in
+
+function makeElement(id) {
+    const classes = new Set(['d-none']);
+    return {
+        id,
+        style: {},
+        dataset: {},
+        value: '',
+        textContent: '',
+        innerHTML: '',
+        children: [],
+        listeners: {},
+        classList: {
+            add: (...c) => c.forEach(n => classes.add(n)),
+            remove: (...c) => c.forEach(n => classes.delete(n)),
+            contains: c => classes.has(c),
+            toggle: (c, on) => { if (on === undefined) { classes.has(c) ? classes.delete(c) : classes.add(c); } else if (on) { classes.add(c); } else { classes.delete(c); } }
+        },
+        tagName: 'DIV',
+        blur() { this.fire('blur', {}); },
+        focus() {},
+        addEventListener(type, handler) { (this.listeners[type] ||= []).push(handler); },
+        fire(type, event = {}) {
+            event.preventDefault ||= () => {};
+            event.target ||= this;
+            (this.listeners[type] || []).forEach(h => h(event));
+        },
+        click() { this.fire('click', { button: 0 }); },
+        appendChild(child) { this.children.push(child); },
+        // Good enough for ".particle-button": walks the tree and matches on
+        // class name, since the panel nests buttons inside group grids.
+        querySelectorAll(selector) {
+            const wanted = String(selector).replace('.', '');
+            const found = [];
+            const visit = node => node.children.forEach(child => {
+                if (String(child.className).split(' ').includes(wanted)) found.push(child);
+                visit(child);
+            });
+            visit(this);
+            return found;
+        },
+        getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }),
+        get clientWidth() { return 1200; },
+        get clientHeight() { return 800; },
+        get parentElement() { return elements.canvasArea; },
+        getContext() {
+            return {
+                imageSmoothingEnabled: true,
+                createImageData: (w, h) => ({ width: w, height: h, data: new Uint8ClampedArray(w * h * 4) }),
+                putImageData() { putCount++; }
+            };
+        }
+    };
+}
+
+let putCount = 0;
+const elements = {};
+function byId(id) {
+    if (!elements[id]) elements[id] = makeElement(id);
+    return elements[id];
+}
+elements.canvasArea = makeElement('canvasArea');
+
+const documentListeners = {};
+let frameCallbacks = [];
+
+globalThis.document = {
+    getElementById: byId,
+    createElement: () => makeElement('created'),
+    addEventListener: (type, handler) => { (documentListeners[type] ||= []).push(handler); },
+    querySelector: () => makeElement('q')
+};
+globalThis.window = { addEventListener() {} };
+globalThis.performance = { now: () => Date.now() };
+globalThis.requestAnimationFrame = cb => { frameCallbacks.push(cb); return frameCallbacks.length; };
+globalThis.fetch = async url => {
+    const name = String(url).replace('./', '');
+    const text = await readFile(root + name, 'utf8');
+    return { json: async () => JSON.parse(text), text: async () => text };
+};
+
+function runFrames(count) {
+    for (let f = 0; f < count; f++) {
+        const due = frameCallbacks;
+        frameCallbacks = [];
+        due.forEach(cb => cb(performance.now()));
+    }
+}
+
+// ---------------------------------------------------------------------- run it
+
+console.log('\nBrowser smoke test');
+
+await import('../ui.js');
+
+const ready = documentListeners['DOMContentLoaded'] || [];
+if (ready.length === 0) fail('ui.js never registered a DOMContentLoaded handler');
+for (const handler of ready) await handler();
+pass('page start-up ran without throwing');
+
+const panel = byId('particleButtons');
+const materialButtons = panel.querySelectorAll('.particle-button');
+const headings = panel.children.filter(child => child.className === 'panel-heading');
+// One button per entry in particles.json, whatever that number happens to be.
+const expectedButtons = Object.keys(
+    JSON.parse(await readFile(root + 'particles.json', 'utf8')).particles
+).length;
+if (materialButtons.length === expectedButtons) {
+    pass(`built ${materialButtons.length} material buttons from particles.json`);
+} else {
+    fail(`expected ${expectedButtons} material buttons, got ${materialButtons.length}`);
+}
+if (headings.length >= 4) pass(`grouped them under ${headings.length} headings`);
+else fail(`expected the materials to be grouped, got ${headings.length} headings`);
+
+byId('newGame').click();
+pass('New Game started without throwing');
+
+runFrames(30);
+if (putCount > 0) pass(`drew ${putCount} frames to the canvas`);
+else fail('nothing was ever drawn to the canvas');
+
+// Pick a material, then paint with the mouse.
+materialButtons[1].fire('click', {});
+const canvas = byId('canvas');
+canvas.fire('mousedown', { button: 0, clientX: 400, clientY: 100 });
+canvas.fire('mousemove', { button: 0, clientX: 420, clientY: 120 });
+runFrames(20);
+
+const { getWorld } = await import('../physics.js');
+let painted = 0;
+const type = getWorld().type;
+for (let i = 0; i < type.length; i++) if (type[i] !== 0) painted++;
+if (painted > 0) pass(`painting with the mouse put ${painted} particles into the world`);
+else fail('clicking the canvas did not paint anything');
+
+// The wind is a tool, not a material: dragging it must not leave Wind behind.
+const { getDefinitions } = await import('../physics.js');
+const windId = getDefinitions().findIndex(d => d && d.tool === 'wind');
+const windButton = materialButtons.find(b => parseInt(b.dataset.particleId) === windId);
+if (windButton) {
+    windButton.fire('click', {});
+    canvas.fire('mousedown', { button: 0, clientX: 300, clientY: 300 });
+    canvas.fire('mousemove', { button: 0, clientX: 380, clientY: 300 });
+    canvas.fire('mousemove', { button: 0, clientX: 300, clientY: 300 });
+    runFrames(10);
+    const worldType = (await import('../physics.js')).getWorld().type;
+    let windPlaced = 0;
+    for (let i = 0; i < worldType.length; i++) if (worldType[i] === windId) windPlaced++;
+    if (windPlaced === 0) pass('dragging the wind tool blows without leaving anything behind');
+    else fail(`the wind tool put ${windPlaced} cells of itself into the world`);
+} else {
+    fail('no wind tool button was built');
+}
+canvas.fire('mouseup', { button: 0 });
+
+// Every toolbar control should be clickable without blowing up.
+for (const id of ['pauseButton', 'clearButton', 'heatViewButton', 'eraserButton']) {
+    byId(id).click();
+    byId(id).click();
+}
+runFrames(5);
+pass('pause, clear, heat view and eraser all work');
+
+byId('brushSize').value = '9';
+byId('brushSize').fire('input', { target: { value: '9' } });
+pass('the brush size slider works');
+
+const { getAmbientTarget } = await import('../physics.js');
+const airSlider = byId('airTemp');
+const airBox = byId('airTempValue');
+
+// Sliding should fill in the box.
+airSlider.fire('input', { target: { value: '-40' } });
+if (getAmbientTarget() === -40) pass('the air temperature slider sets the temperature');
+else fail(`air temperature slider did nothing (target is ${getAmbientTarget()})`);
+if (airBox.value === '-40') pass('sliding fills in the number box');
+else fail(`number box did not follow the slider (shows ${airBox.value})`);
+
+// Typing a number and pressing Enter should move the slider.
+airBox.value = '137';
+airBox.fire('keydown', { key: 'Enter' });
+if (getAmbientTarget() === 137) pass('typing a temperature and pressing Enter sets it');
+else fail(`Enter in the number box did nothing (target is ${getAmbientTarget()})`);
+if (airSlider.value === '137') pass('typing moves the slider');
+else fail(`slider did not follow the number box (shows ${airSlider.value})`);
+
+// Out of range typing should be pulled back into range, not accepted.
+airBox.value = '9999';
+airBox.fire('keydown', { key: 'Enter' });
+if (getAmbientTarget() === 600) pass('a silly number is clamped to the top of the range');
+else fail(`out of range value was not clamped (target is ${getAmbientTarget()})`);
+
+airBox.value = '20';
+airBox.fire('keydown', { key: 'Enter' });
+
+byId('returnToMenu').click();
+runFrames(3);
+byId('newGame').click();
+runFrames(5);
+pass('going back to the menu and starting again works');
+
+console.log(failures === 0 ? '\nSmoke test passed\n' : `\n${failures} smoke test failures\n`);
+process.exit(failures > 0 ? 1 : 0);

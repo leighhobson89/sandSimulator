@@ -1,12 +1,10 @@
 {
-    "name": "my-app",
-    "version": "1.0.0",
-    "main": "server.js",
-    "scripts": {
-      "start": "node server.js"
-    },
-    "dependencies": {
-      "express": "^4.18.2"
-    }
+  "name": "sand-simulator",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "index.html",
+  "scripts": {
+    "start": "node tools/serve.mjs",
+    "test": "node tools/simTest.mjs"
   }
-  
+}
