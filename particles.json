@@ -129,7 +129,7 @@
     "150 rather than a realistic 300 - it is the temperature a cell can actually reach next to a fire."
   ],
 
-  "ambientTemp": 20,
+  "ambientTemp": 8,
   "airConductivity": 0.06,
   "airCooling": 0.012,
 

@@ -180,18 +180,36 @@ function setUpAirTemperature() {
 
     slider.addEventListener('input', event => apply(parseInt(event.target.value)));
 
-    // The box only takes effect on Enter, so half typed numbers do not send the
-    // weather somewhere strange on the way to the one that was meant.
+    // Typed digits are held back until the number is finished, so half typed
+    // ones do not send the weather somewhere strange on the way to the one that
+    // was meant. Anything else that changes the box - the spinner buttons, the
+    // arrow keys, the scroll wheel - is a finished number already, so it takes
+    // effect on the spot.
+    let typing = false;
+
     box.addEventListener('keydown', event => {
-        if (event.key !== 'Enter') return;
-        event.preventDefault();
-        commitAirTemperature(apply, box);
-        box.blur();
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            typing = false;
+            commitAirTemperature(apply, box);
+            box.blur();
+            return;
+        }
+        // The arrow keys step the box the same way the spinner buttons do.
+        if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') typing = true;
     });
 
-    // Clicking away commits it too, rather than silently throwing the number
-    // the person just typed away.
-    box.addEventListener('blur', () => commitAirTemperature(apply, box));
+    box.addEventListener('input', () => {
+        if (typing) return;
+        commitAirTemperature(apply, box);
+    });
+
+    // Clicking away commits what was typed, rather than silently throwing the
+    // number the person just entered away.
+    box.addEventListener('blur', () => {
+        typing = false;
+        commitAirTemperature(apply, box);
+    });
 }
 
 // How pronounced the layering of the air is: the number of degrees colder each

@@ -37,8 +37,8 @@ let world = null;
 
 // DEFS[id] is the definition for that particle. DEFS[0] is air.
 let DEFS = [];
-let AMBIENT = 20;
-let ambientTarget = 20;
+let AMBIENT = 8;
+let ambientTarget = 8;
 let frameCount = 0;
 
 // The plant that wet mud grows, worked out from the sprout rules when the
@@ -98,7 +98,9 @@ export function prepareDefinitions(json) {
 
     const toId = name => (name ? (nameToId[String(name).toLowerCase()] || EMPTY) : EMPTY);
 
-    AMBIENT = json.ambientTemp !== undefined ? json.ambientTemp : 20;
+    AMBIENT = json.ambientTemp !== undefined ? json.ambientTemp : 8;
+    // The dial starts where the air actually is, so nothing drifts on load.
+    ambientTarget = AMBIENT;
 
     // Air. Air is never drawn and never moves, but it does carry heat.
     const defs = [{
