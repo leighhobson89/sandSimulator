@@ -20,7 +20,7 @@ import {
 import {
     prepareDefinitions, createWorld, getWorld, clearWorld, stepSimulation,
     setCell, inBounds, index, getDefinitions, getAmbientTemp, getAirTempAt,
-    getTemperature, getFrameCount, applyWind, EMPTY
+    getTemperature, getFrameCount, applyWind, decayWindTrails, EMPTY
 } from './physics.js';
 
 let context = null;
@@ -88,6 +88,10 @@ export function gameLoop(now) {
     if (!getSimulationPaused()) {
         stepSimulation();
     }
+    // Wind trails fade on their own clock rather than the simulation's, so a
+    // gust blown while the simulation is paused still dies away instead of
+    // hanging on the screen.
+    decayWindTrails();
     drawWorld();
 
     frames++;
@@ -111,6 +115,7 @@ function drawWorld() {
     const life = world.life;
     const shade = world.shade;
     const data = world.data;
+    const wind = world.wind;
     const total = type.length;
     const heatView = getHeatViewOn();
     // Lit gunpowder flickers between its two colours while it catches.
@@ -126,9 +131,21 @@ function drawWorld() {
         }
 
         if (id === EMPTY) {
-            pixels[p] = 0;
-            pixels[p + 1] = 0;
-            pixels[p + 2] = 0;
+            // Empty air is black unless the wind has just been through it, in
+            // which case it carries a faint cool haze that fades over the next
+            // few frames. It is deliberately dim: enough to see which way the
+            // air is moving, not enough to read as a material.
+            const blown = wind[i];
+            if (blown > 0) {
+                const f = blown / 255;
+                pixels[p] = clampByte(24 * f);
+                pixels[p + 1] = clampByte(38 * f);
+                pixels[p + 2] = clampByte(56 * f);
+            } else {
+                pixels[p] = 0;
+                pixels[p + 1] = 0;
+                pixels[p + 2] = 0;
+            }
             pixels[p + 3] = 255;
             continue;
         }
@@ -160,13 +177,23 @@ function drawWorld() {
                 mix = life[i] / def.life;
             } else {
                 const floor = def.freezePoint !== undefined ? def.freezePoint : 0;
-                mix = (temp[i] - floor) / Math.max(1, def.emit - floor);
+                mix = (temp[i] - floor) / Math.max(1, def.glowTemp - floor);
             }
             if (mix < 0) mix = 0;
             if (mix > 1) mix = 1;
             r = def.rgb2[0] + (def.rgb[0] - def.rgb2[0]) * mix;
             g = def.rgb2[1] + (def.rgb[1] - def.rgb2[1]) * mix;
             b = def.rgb2[2] + (def.rgb[2] - def.rgb2[2]) * mix;
+        }
+
+        // Anything the wind is passing over catches a little of its pale light,
+        // so a gust shows up across a sand bank as well as in the open air.
+        const blown = wind[i];
+        if (blown > 0) {
+            const f = (blown / 255) * 0.3;
+            r += (226 - r) * f;
+            g += (238 - g) * f;
+            b += (255 - b) * f;
         }
 
         // A fixed per-cell wobble in brightness so materials look grainy.
@@ -250,10 +277,13 @@ export function paintCell(centreX, centreY, dragX, dragY) {
     const id = getEraserOn() ? EMPTY : getParticleTypeIdSelected();
 
     // The wind is a tool rather than a material: it is not put into the world,
-    // it pushes what is already there.
+    // it pushes what is already there. A gust covers twice the width the brush
+    // is set to - air spills out around whatever it is aimed at rather than
+    // stopping dead at the edge of the brush - so the gust radius is the brush
+    // size itself, the brush's own radius being half of that.
     if (id !== EMPTY && getDefinitions()[id].tool === 'wind') {
         applyWind(centreX, centreY, dragX || 0, dragY || 0,
-            Math.max(2, Math.round(getBrushSize() / 2) + 2), getWindStrength());
+            Math.max(3, getBrushSize()), getWindStrength());
         return;
     }
 

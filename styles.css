@@ -1,24 +1,82 @@
 /* -----------------------------------------------------------------------------
    Sand Simulator styles.
-   Dark workshop theme: near black background, one accent colour, and the
-   material palette carrying all the colour it needs from the particles
-   themselves.
+
+   Everything the look is made of - colour, corner rounding, border weight,
+   spacing, shadow, the font the chrome is set in, how the menu lays its panels
+   out - is a custom property declared once on :root. The rules further down
+   never name a colour or a radius of their own; they only ever read a token.
+
+   That is what makes the six themes at the bottom of this file possible. Each
+   one is a block of token overrides hung off body[data-theme], and switching
+   between them is a matter of changing that one attribute. A seventh theme is a
+   new block down there and a line in themes.js - nothing in between has to
+   change.
 ----------------------------------------------------------------------------- */
 
 :root {
+    /* Colour */
     --bg: #0b0d12;
     --bg-raised: #141821;
     --bg-sunken: #070910;
+    --bg-inset: #0d1220;
     --line: #232a38;
     --line-bright: #33405a;
     --text: #e6eaf2;
     --text-dim: #8e99ae;
     --accent: #5b8cff;
+    --accent-hover: #7aa2ff;
     --accent-soft: rgba(91, 140, 255, 0.16);
-    --danger: #ff6b5b;
+    --accent-ink: #08101f;
+    --on-accent: #cfdcff;
+
+    /* Shape */
     --radius: 10px;
+    --radius-sm: 7px;
+    --radius-pill: 999px;
+    --border: 1px;
+    --panel-blur: none;
+
+    /* Type */
     --font: 'Segoe UI', system-ui, -apple-system, Arial, sans-serif;
     --mono: 'Cascadia Mono', Consolas, 'SF Mono', monospace;
+    --chrome-font: var(--font);
+    --btn-transform: none;
+    --btn-tracking: 0.01em;
+    --btn-weight: 600;
+    --heading-tracking: 0.14em;
+
+    /* Spacing and proportion. The overall proportions are fixed - toolbar on
+       top, tool panel down the left, canvas filling what is left - and these
+       only tune the padding and the widths inside that. */
+    --toolbar-pad: 0.7rem 1rem;
+    --toolbar-gap: 1.25rem;
+    --btn-pad: 0.5rem 0.9rem;
+    --panel-width: 208px;
+    --panel-pad: 0.9rem 0.75rem;
+    --canvas-pad: 1rem;
+    --particle-gap: 0.4rem;
+
+    /* Depth */
+    --shadow-lead: 0 10px 30px rgba(91, 140, 255, 0.28);
+    --shadow-canvas: 0 18px 50px rgba(0, 0, 0, 0.65);
+    --shadow-card: none;
+    --canvas-frame: 1px solid var(--line-bright);
+    --canvas-radius: 6px;
+
+    /* Backdrops */
+    --menu-bg:
+        radial-gradient(900px 500px at 50% -10%, #1b2440 0%, transparent 60%),
+        var(--bg);
+    --canvas-area-bg:
+        radial-gradient(700px 400px at 50% 0%, #11151f 0%, transparent 70%),
+        var(--bg-sunken);
+    --brand-gradient: linear-gradient(140deg, #ffd24a, #ff6a2d);
+    --brand-glow: 0 0 12px rgba(255, 140, 60, 0.7);
+    --title-gradient: linear-gradient(120deg, #ffd24a, #ff7a3d 35%, #5b8cff 85%);
+
+    /* Menu layout */
+    --menu-card-pad: 2.6rem 3rem;
+    --menu-align: center;
 }
 
 * {
@@ -37,32 +95,49 @@ body {
     color: var(--text);
     overflow: hidden;
     -webkit-font-smoothing: antialiased;
+    transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 /* Replacements for the bootstrap display helpers the scripts toggle. */
 .d-none { display: none !important; }
 .d-flex { display: flex !important; }
 
+/* Present for screen readers, invisible on the page. Used for the label on the
+   air layers checkbox, which reads from the slider beside it. */
+.sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
 /* ------------------------------------------------------------------ buttons */
 
 .btn {
-    font-family: inherit;
+    font-family: var(--chrome-font);
     font-size: 0.85rem;
-    font-weight: 600;
-    letter-spacing: 0.01em;
+    font-weight: var(--btn-weight);
+    letter-spacing: var(--btn-tracking);
+    text-transform: var(--btn-transform);
     color: var(--text);
     background-color: var(--bg-raised);
-    border: 1px solid var(--line);
+    border: var(--border) solid var(--line);
     border-radius: var(--radius);
-    padding: 0.5rem 0.9rem;
+    padding: var(--btn-pad);
     cursor: pointer;
     transition: background-color 0.15s ease, border-color 0.15s ease,
-                transform 0.08s ease, box-shadow 0.15s ease;
+                transform 0.08s ease, box-shadow 0.15s ease, color 0.15s ease;
 }
 
 .btn:hover {
-    background-color: #1b2130;
     border-color: var(--line-bright);
+    color: var(--text);
+    filter: brightness(1.12);
 }
 
 .btn:active {
@@ -77,19 +152,20 @@ body {
 .btn-primary {
     background-color: var(--accent);
     border-color: var(--accent);
-    color: #08101f;
+    color: var(--accent-ink);
 }
 
 .btn-primary:hover {
-    background-color: #7aa2ff;
-    border-color: #7aa2ff;
+    background-color: var(--accent-hover);
+    border-color: var(--accent-hover);
+    filter: none;
 }
 
 .btn-lead {
     font-size: 1rem;
     padding: 0.75rem 2.4rem;
-    border-radius: 999px;
-    box-shadow: 0 10px 30px rgba(91, 140, 255, 0.28);
+    border-radius: var(--radius-pill);
+    box-shadow: var(--shadow-lead);
 }
 
 .btn-ghost {
@@ -104,13 +180,20 @@ body {
 .btn-tool.active-toggle {
     background-color: var(--accent-soft);
     border-color: var(--accent);
-    color: #cfdcff;
+    color: var(--on-accent);
 }
 
 .disabled,
 button.disabled {
     opacity: 0.45;
     pointer-events: none;
+}
+
+/* A control that is still on the page but has been switched out of use - the
+   layers slider with layering turned off. */
+.disabled-control {
+    opacity: 0.35;
+    cursor: not-allowed;
 }
 
 /* --------------------------------------------------------------------- menu */
@@ -121,26 +204,35 @@ button.disabled {
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    text-align: center;
-    background:
-        radial-gradient(900px 500px at 50% -10%, #1b2440 0%, transparent 60%),
-        var(--bg);
+    background: var(--menu-bg);
 }
 
 .menu-card {
     display: flex;
     flex-direction: column;
+    align-items: var(--menu-align);
+    text-align: var(--menu-align);
+    gap: 0.5rem;
+    width: min(880px, 92vw);
+    padding: var(--menu-card-pad);
+    border: var(--border) solid transparent;
+    border-radius: calc(var(--radius) * 1.6);
+    box-shadow: var(--shadow-card);
+}
+
+.menu-head {
+    display: flex;
     align-items: center;
-    gap: 0.35rem;
-    padding: 3rem 3.5rem;
+    gap: 0.8rem;
 }
 
 .menu-title {
     margin: 0;
-    font-size: clamp(2.2rem, 6vw, 3.6rem);
+    font-size: clamp(2.1rem, 5.5vw, 3.4rem);
     font-weight: 700;
     letter-spacing: -0.02em;
-    background: linear-gradient(120deg, #ffd24a, #ff7a3d 35%, #5b8cff 85%);
+    font-family: var(--chrome-font);
+    background: var(--title-gradient);
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
@@ -152,30 +244,86 @@ button.disabled {
 }
 
 .menu-subtitle {
-    margin: 0 0 1.6rem;
+    margin: 0 0 1.5rem;
     color: var(--text-dim);
     font-size: 0.98rem;
+    max-width: 46ch;
 }
 
-.menu-hints {
-    list-style: none;
-    margin: 2.2rem 0 0;
-    padding: 0;
+/* --------------------------------------------------------------- the themes */
+
+.theme-picker {
+    display: flex;
+    flex-direction: column;
+    align-items: var(--menu-align);
+    gap: 0.6rem;
+    width: 100%;
+    margin-top: 1.8rem;
+    padding-top: 1.4rem;
+    border-top: var(--border) solid var(--line);
+}
+
+.theme-picker-label {
+    font-size: 0.64rem;
+    font-weight: 700;
+    letter-spacing: var(--heading-tracking);
+    text-transform: uppercase;
     color: var(--text-dim);
-    font-size: 0.82rem;
-    line-height: 1.9;
 }
 
-.key {
-    display: inline-block;
-    padding: 0.05rem 0.4rem;
-    margin: 0 0.1rem;
-    border: 1px solid var(--line-bright);
-    border-radius: 5px;
+.theme-swatches {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.5rem;
+}
+
+.theme-swatch {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.4rem 0.7rem;
+    font-family: var(--chrome-font);
+    font-size: 0.74rem;
+    font-weight: 600;
+    color: var(--text-dim);
     background-color: var(--bg-raised);
+    border: var(--border) solid var(--line);
+    border-radius: var(--radius-pill);
+    cursor: pointer;
+    transition: color 0.15s ease, border-color 0.15s ease, transform 0.08s ease;
+}
+
+.theme-swatch:hover {
     color: var(--text);
-    font-family: var(--mono);
-    font-size: 0.76rem;
+    border-color: var(--line-bright);
+    transform: translateY(-1px);
+}
+
+.theme-swatch.selected {
+    color: var(--text);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent);
+}
+
+.theme-swatch:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+.theme-dots {
+    display: inline-flex;
+}
+
+.theme-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    border: 1px solid rgba(128, 128, 128, 0.45);
+}
+
+.theme-dot + .theme-dot {
+    margin-left: -3px;
 }
 
 /* ---------------------------------------------------------------- simulator */
@@ -190,11 +338,12 @@ button.disabled {
 #buttonRow {
     display: flex;
     align-items: center;
-    gap: 1.25rem;
+    gap: var(--toolbar-gap);
     flex-wrap: wrap;
-    padding: 0.7rem 1rem;
-    border-bottom: 1px solid var(--line);
+    padding: var(--toolbar-pad);
+    border-bottom: var(--border) solid var(--line);
     background-color: var(--bg-raised);
+    backdrop-filter: var(--panel-blur);
 }
 
 .toolbar-group {
@@ -210,21 +359,28 @@ button.disabled {
 .toolbar-brand {
     gap: 0.6rem;
     padding-right: 0.5rem;
-    border-right: 1px solid var(--line);
+    border-right: var(--border) solid var(--line);
 }
 
 .brand-dot {
     width: 11px;
     height: 11px;
     border-radius: 50%;
-    background: linear-gradient(140deg, #ffd24a, #ff6a2d);
-    box-shadow: 0 0 12px rgba(255, 140, 60, 0.7);
+    background: var(--brand-gradient);
+    box-shadow: var(--brand-glow);
+}
+
+.brand-dot-lg {
+    width: 20px;
+    height: 20px;
 }
 
 .brand-name {
+    font-family: var(--chrome-font);
     font-weight: 700;
     font-size: 0.92rem;
-    letter-spacing: 0.01em;
+    letter-spacing: var(--btn-tracking);
+    text-transform: var(--btn-transform);
 }
 
 .brush-group label {
@@ -239,7 +395,7 @@ input[type="range"] {
     appearance: none;
     width: 130px;
     height: 4px;
-    border-radius: 999px;
+    border-radius: var(--radius-pill);
     background-color: var(--line-bright);
     cursor: pointer;
 }
@@ -262,22 +418,66 @@ input[type="range"]::-moz-range-thumb {
     background-color: var(--accent);
 }
 
-.number-input {
-    width: 4.2rem;
+/* A plain labelled checkbox for the toolbar, sized to sit level with the
+   sliders beside it. */
+.toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    cursor: pointer;
+    user-select: none;
+}
+
+.toggle input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    margin: 0;
+    accent-color: var(--accent);
+    cursor: pointer;
+}
+
+.toggle span {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    white-space: nowrap;
+    transition: color 0.15s ease;
+}
+
+.toggle input:checked + span {
+    color: var(--text);
+}
+
+.toggle input:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+.number-input,
+.select-input {
     padding: 0.32rem 0.45rem;
     font-family: var(--mono);
     font-size: 0.78rem;
     color: var(--text);
     background-color: var(--bg-sunken);
-    border: 1px solid var(--line);
-    border-radius: 7px;
+    border: var(--border) solid var(--line);
+    border-radius: var(--radius-sm);
+}
+
+.number-input {
+    width: 4.2rem;
     text-align: right;
 }
 
-.number-input:focus {
+.select-input {
+    cursor: pointer;
+}
+
+.number-input:focus,
+.select-input:focus {
     outline: none;
     border-color: var(--accent);
-    background-color: #0d1220;
+    background-color: var(--bg-inset);
 }
 
 .unit {
@@ -305,11 +505,12 @@ input[type="range"]::-moz-range-thumb {
 #floatingContainer {
     display: flex;
     flex-direction: column;
-    width: 208px;
-    flex: 0 0 208px;
-    padding: 0.9rem 0.75rem;
-    border-right: 1px solid var(--line);
+    width: var(--panel-width);
+    flex: 0 0 var(--panel-width);
+    padding: var(--panel-pad);
+    border-right: var(--border) solid var(--line);
     background-color: var(--bg-raised);
+    backdrop-filter: var(--panel-blur);
     overflow-y: auto;
 }
 
@@ -317,7 +518,7 @@ input[type="range"]::-moz-range-thumb {
     margin: 0.95rem 0 0.45rem 0.15rem;
     font-size: 0.66rem;
     font-weight: 700;
-    letter-spacing: 0.14em;
+    letter-spacing: var(--heading-tracking);
     text-transform: uppercase;
     color: var(--text-dim);
 }
@@ -329,17 +530,17 @@ input[type="range"]::-moz-range-thumb {
 .particle-grid {
     display: grid;
     grid-template-columns: repeat(2, 1fr);
-    gap: 0.4rem;
+    gap: var(--particle-gap);
 }
 
 .particle-button {
     position: relative;
-    font-family: inherit;
+    font-family: var(--chrome-font);
     font-size: 0.74rem;
     font-weight: 700;
     padding: 0.4rem 0.3rem;
-    border: 1px solid rgba(255, 255, 255, 0.14);
-    border-radius: 8px;
+    border: var(--border) solid rgba(255, 255, 255, 0.14);
+    border-radius: var(--radius-sm);
     cursor: pointer;
     text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
     transition: transform 0.08s ease, box-shadow 0.15s ease, filter 0.15s ease;
@@ -369,18 +570,16 @@ input[type="range"]::-moz-range-thumb {
     align-items: center;
     justify-content: center;
     min-width: 0;
-    padding: 1rem;
-    background:
-        radial-gradient(700px 400px at 50% 0%, #11151f 0%, transparent 70%),
-        var(--bg-sunken);
+    padding: var(--canvas-pad);
+    background: var(--canvas-area-bg);
 }
 
 canvas {
     display: block;
     background-color: #000;
-    border: 1px solid var(--line-bright);
-    border-radius: 6px;
-    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.65);
+    border: var(--canvas-frame);
+    border-radius: var(--canvas-radius);
+    box-shadow: var(--shadow-canvas);
     cursor: crosshair;
     /* One canvas pixel per cell, scaled up with hard edges instead of blur. */
     image-rendering: pixelated;
@@ -395,7 +594,7 @@ canvas {
     z-index: 998;
 }
 
-/* ------------------------------------------------------------------ scrollbar */
+/* ---------------------------------------------------------------- scrollbar */
 
 #floatingContainer::-webkit-scrollbar {
     width: 8px;
@@ -403,11 +602,277 @@ canvas {
 
 #floatingContainer::-webkit-scrollbar-thumb {
     background-color: var(--line-bright);
-    border-radius: 999px;
+    border-radius: var(--radius-pill);
 }
 
 #floatingContainer::-webkit-scrollbar-track {
     background-color: transparent;
+}
+
+/* =============================================================== the themes
+
+   Workshop is the set of tokens declared on :root above, so it needs no block
+   of its own. Each of the other five overrides only what it actually changes.
+   ========================================================================= */
+
+/* Ember - warm charcoal and firelight. Everything is rounder and softer than
+   Workshop, with the panels lifted off the page by shadow instead of by line. */
+body[data-theme="ember"] {
+    --bg: #17110d;
+    --bg-raised: #221913;
+    --bg-sunken: #0e0a07;
+    --bg-inset: #2b201820;
+    --line: #35271e;
+    --line-bright: #57402f;
+    --text: #f6e8dc;
+    --text-dim: #ab917c;
+    --accent: #ff8a3d;
+    --accent-hover: #ffa564;
+    --accent-soft: rgba(255, 138, 61, 0.18);
+    --accent-ink: #2a1306;
+    --on-accent: #ffe3cb;
+
+    --radius: 15px;
+    --radius-sm: 11px;
+
+    --toolbar-pad: 0.85rem 1.2rem;
+    --toolbar-gap: 1.4rem;
+    --btn-pad: 0.55rem 1.05rem;
+    --panel-width: 200px;
+    --panel-pad: 1rem 0.8rem;
+    --canvas-pad: 1.3rem;
+    --particle-gap: 0.45rem;
+
+    --shadow-lead: 0 12px 34px rgba(255, 138, 61, 0.3);
+    --shadow-canvas: 0 22px 60px rgba(0, 0, 0, 0.75);
+    --shadow-card: 0 30px 80px rgba(0, 0, 0, 0.5);
+    --canvas-radius: 14px;
+
+    --menu-bg:
+        radial-gradient(900px 520px at 50% -10%, #3a2013 0%, transparent 62%),
+        var(--bg);
+    --canvas-area-bg:
+        radial-gradient(760px 420px at 50% 0%, #1f1610 0%, transparent 72%),
+        var(--bg-sunken);
+    --title-gradient: linear-gradient(120deg, #ffd79a, #ff8a3d 45%, #d63b2a 95%);
+    --menu-card-pad: 2.8rem 3.2rem;
+}
+
+/* Paper - a light theme. Thin rules, no shadow anywhere, tight corners: the
+   chrome gets out of the way and leaves the canvas as the only dark thing on
+   the page. */
+body[data-theme="paper"] {
+    --bg: #f2efe7;
+    --bg-raised: #fbf9f4;
+    --bg-sunken: #e7e3d8;
+    --bg-inset: #ffffff;
+    --line: #d3cec0;
+    --line-bright: #a9a294;
+    --text: #23211c;
+    --text-dim: #6d675b;
+    --accent: #1f6feb;
+    --accent-hover: #3b85ff;
+    --accent-soft: rgba(31, 111, 235, 0.12);
+    --accent-ink: #ffffff;
+    --on-accent: #12386f;
+
+    --radius: 4px;
+    --radius-sm: 3px;
+    --radius-pill: 4px;
+
+    --toolbar-pad: 0.6rem 1.1rem;
+    --toolbar-gap: 1.15rem;
+    --btn-pad: 0.45rem 0.85rem;
+    --panel-width: 216px;
+    --panel-pad: 1rem 0.8rem;
+    --canvas-pad: 1.4rem;
+
+    --shadow-lead: none;
+    --shadow-canvas: none;
+    --canvas-frame: 2px solid var(--line-bright);
+    --canvas-radius: 2px;
+
+    --menu-bg: var(--bg);
+    --canvas-area-bg: var(--bg-sunken);
+    --brand-gradient: linear-gradient(140deg, #e8a51f, #d2541f);
+    --brand-glow: none;
+    --title-gradient: linear-gradient(120deg, #23211c, #23211c);
+    --menu-card-pad: 2.4rem 2.8rem;
+}
+
+/* Terminal - a green screen. Square everywhere, monospace everywhere, hard
+   one pixel rules and nothing rounded or shadowed at all. */
+body[data-theme="terminal"] {
+    --bg: #04070a;
+    --bg-raised: #070d10;
+    --bg-sunken: #010304;
+    --bg-inset: #0a1418;
+    --line: #113322;
+    --line-bright: #1d5c3a;
+    --text: #bff5d3;
+    --text-dim: #4f9a70;
+    --accent: #3df07d;
+    --accent-hover: #6cff9f;
+    --accent-soft: rgba(61, 240, 125, 0.14);
+    --accent-ink: #012009;
+    --on-accent: #b6ffd2;
+
+    --radius: 0px;
+    --radius-sm: 0px;
+    --radius-pill: 0px;
+
+    --chrome-font: var(--mono);
+    --btn-transform: uppercase;
+    --btn-tracking: 0.11em;
+    --btn-weight: 700;
+    --heading-tracking: 0.22em;
+
+    --toolbar-pad: 0.55rem 0.9rem;
+    --toolbar-gap: 1rem;
+    --btn-pad: 0.45rem 0.8rem;
+    --panel-width: 192px;
+    --panel-pad: 0.75rem 0.6rem;
+    --canvas-pad: 0.8rem;
+    --particle-gap: 0.3rem;
+
+    --shadow-lead: none;
+    --shadow-canvas: none;
+    --canvas-frame: 1px solid var(--accent);
+    --canvas-radius: 0px;
+
+    --menu-bg: var(--bg);
+    --canvas-area-bg: var(--bg-sunken);
+    --brand-gradient: linear-gradient(140deg, #3df07d, #12a552);
+    --brand-glow: 0 0 10px rgba(61, 240, 125, 0.75);
+    --title-gradient: linear-gradient(120deg, #bff5d3, #3df07d);
+    --menu-card-pad: 2.2rem 2.4rem;
+    --menu-align: flex-start;
+}
+
+/* Lagoon - deep water. The most rounded of the six, with translucent panels
+   over the background rather than solid ones. */
+body[data-theme="lagoon"] {
+    --bg: #06191e;
+    --bg-raised: rgba(13, 43, 50, 0.72);
+    --bg-sunken: #031014;
+    --bg-inset: rgba(6, 30, 36, 0.8);
+    --line: rgba(76, 168, 168, 0.22);
+    --line-bright: rgba(96, 214, 205, 0.45);
+    --text: #dcf4f1;
+    --text-dim: #74a8a8;
+    --accent: #2fd8c5;
+    --accent-hover: #5ef0de;
+    --accent-soft: rgba(47, 216, 197, 0.16);
+    --accent-ink: #01221f;
+    --on-accent: #b4f4ec;
+
+    --radius: 18px;
+    --radius-sm: 13px;
+    --panel-blur: blur(14px);
+
+    --toolbar-pad: 0.8rem 1.3rem;
+    --toolbar-gap: 1.35rem;
+    --btn-pad: 0.55rem 1.1rem;
+    --panel-width: 216px;
+    --panel-pad: 1rem 0.85rem;
+    --canvas-pad: 1.5rem;
+    --particle-gap: 0.5rem;
+
+    --shadow-lead: 0 14px 40px rgba(47, 216, 197, 0.26);
+    --shadow-canvas: 0 24px 64px rgba(0, 0, 0, 0.6);
+    --shadow-card: 0 30px 90px rgba(0, 30, 36, 0.6);
+    --canvas-frame: 1px solid var(--line-bright);
+    --canvas-radius: 16px;
+
+    --menu-bg:
+        radial-gradient(1000px 560px at 50% -12%, #0d4a4d 0%, transparent 62%),
+        radial-gradient(700px 400px at 80% 110%, #0a3340 0%, transparent 60%),
+        var(--bg);
+    --canvas-area-bg:
+        radial-gradient(760px 420px at 50% 0%, #0b2a31 0%, transparent 72%),
+        var(--bg-sunken);
+    --brand-gradient: linear-gradient(140deg, #7df6e6, #1c9c9c);
+    --brand-glow: 0 0 14px rgba(47, 216, 197, 0.7);
+    --title-gradient: linear-gradient(120deg, #a9f5ea, #2fd8c5 50%, #3f8fd6 95%);
+    --menu-card-pad: 3rem 3.4rem;
+}
+
+/* Dune - warm sand and clay in daylight. No borders at all: everything is
+   separated by a change of tone and a soft shadow instead of by a line. */
+body[data-theme="dune"] {
+    --bg: #ece0cd;
+    --bg-raised: #f7efe1;
+    --bg-sunken: #ddcdb4;
+    --bg-inset: #fffaf1;
+    --line: rgba(120, 92, 62, 0.001);
+    --line-bright: rgba(120, 92, 62, 0.32);
+    --text: #3b2d21;
+    --text-dim: #7e6a55;
+    --accent: #b4562a;
+    --accent-hover: #cd6a3a;
+    --accent-soft: rgba(180, 86, 42, 0.14);
+    --accent-ink: #fff6ec;
+    --on-accent: #6f3117;
+
+    --radius: 13px;
+    --radius-sm: 9px;
+    --border: 0px;
+
+    --toolbar-pad: 0.8rem 1.2rem;
+    --toolbar-gap: 1.3rem;
+    --btn-pad: 0.55rem 1rem;
+    --panel-width: 200px;
+    --panel-pad: 1rem 0.8rem;
+    --canvas-pad: 1.5rem;
+    --particle-gap: 0.45rem;
+
+    --shadow-lead: 0 10px 26px rgba(180, 86, 42, 0.28);
+    --shadow-canvas: 0 18px 44px rgba(90, 66, 40, 0.3);
+    --shadow-card: 0 24px 70px rgba(120, 92, 62, 0.18);
+    --canvas-frame: 0;
+    --canvas-radius: 10px;
+
+    --menu-bg:
+        radial-gradient(900px 500px at 50% -10%, #fbf3e6 0%, transparent 65%),
+        var(--bg);
+    --canvas-area-bg:
+        radial-gradient(700px 400px at 50% 0%, #e6d6bd 0%, transparent 70%),
+        var(--bg-sunken);
+    --brand-gradient: linear-gradient(140deg, #e0a03c, #b4562a);
+    --brand-glow: none;
+    --title-gradient: linear-gradient(120deg, #b4562a, #7e5a34 60%, #3b2d21 100%);
+    --menu-card-pad: 2.8rem 3.2rem;
+}
+
+/* The bordered themes rely on a line to separate the toolbar and the tool panel
+   from the canvas. Dune has no lines, so it separates them with a shadow. */
+body[data-theme="dune"] #buttonRow {
+    box-shadow: 0 6px 18px rgba(120, 92, 62, 0.14);
+    position: relative;
+    z-index: 2;
+}
+
+body[data-theme="dune"] #floatingContainer {
+    box-shadow: 6px 0 18px rgba(120, 92, 62, 0.12);
+    position: relative;
+    z-index: 1;
+}
+
+/* The light themes need a darker shadow under the particle buttons for their
+   white lettering to hold up, and a real border to sit on. */
+body[data-theme="paper"] .particle-button,
+body[data-theme="dune"] .particle-button {
+    border: 1px solid rgba(0, 0, 0, 0.18);
+}
+
+/* Terminal writes everything in monospace, side panel included. */
+body[data-theme="terminal"] .particle-button {
+    font-family: var(--mono);
+}
+
+body[data-theme="terminal"] .menu-title {
+    font-size: clamp(1.8rem, 4.5vw, 2.7rem);
+    letter-spacing: 0.04em;
 }
 
 @media (max-width: 720px) {

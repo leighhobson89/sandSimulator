@@ -22,6 +22,9 @@
 //   data    a spare number per cell that a few particles use for their own
 //           purposes: the fuse on a lit bomb, and how much growing a plant has
 //           left in it
+//   wind    how recently moving air passed through the cell, 0 to 255, fading a
+//           little every frame. Nothing in the simulation reads it back - it is
+//           there only so that the wind can be seen as well as felt
 // -----------------------------------------------------------------------------
 
 export const EMPTY = 0;
@@ -37,6 +40,11 @@ let DEFS = [];
 let AMBIENT = 20;
 let ambientTarget = 20;
 let frameCount = 0;
+
+// The plant that wet mud grows, worked out from the sprout rules when the
+// definitions are prepared. A plant rooted in both wet mud and wet sand grows
+// as this one, wet mud being the richer of the two soils.
+let WET_MUD_PLANT = EMPTY;
 
 // The air is not perfectly even. Each cell settles towards an air temperature a
 // degree or two either side of the dial, giving a spread of up to AIR_VARIANCE
@@ -59,11 +67,21 @@ for (let s = 0; s < 256; s++) airOffset[s] = (s / 255 - 0.5) * AIR_VARIANCE;
 const AIR_BANDS = 5;
 let layerLapse = 2;
 
+// Layering can be switched off altogether, which makes the air one even
+// temperature from the floor to the ceiling. It is a different thing from
+// turning the lapse rate down to zero: this leaves whatever the slider was set
+// to untouched, so switching it back on picks up where it left off.
+let airLayersOn = true;
+
 export function setLayerLapse(value) { layerLapse = value; }
 export function getLayerLapse() { return layerLapse; }
 
+export function setAirLayersOn(value) { airLayersOn = !!value; }
+export function getAirLayersOn() { return airLayersOn; }
+
 // The air temperature at a given row, before the per-particle variance.
 export function getAirTempAt(y) {
+    if (!airLayersOn) return AMBIENT;
     const band = Math.floor((y * AIR_BANDS) / ROWS);
     return AMBIENT + (band - (AIR_BANDS - 1) / 2) * layerLapse;
 }
@@ -93,6 +111,15 @@ export function prepareDefinitions(json) {
         defaultTemp: AMBIENT,
         emit: 0,
         emitRate: 0,
+        // Air is built here by hand rather than from particles.json, so every
+        // field the per-frame code reads has to be spelled out. Leaving one off
+        // does not read as zero: a test like "radiates <= 0" is false for
+        // undefined, so air would start radiating undefined degrees and turn
+        // the temperature of the whole world into NaN.
+        coolsBy: 0,
+        radiates: 0,
+        clings: 0,
+        glowTemp: 0,
         rgb: [0, 0, 0],
         rgb2: [0, 0, 0]
     }];
@@ -116,9 +143,40 @@ export function prepareDefinitions(json) {
 
             conductivity: p.conductivity === undefined ? 0.06 : p.conductivity,
             cooling: p.cooling === undefined ? 0.004 : p.cooling,
+            // Degrees given up per frame on its own account, whatever the air
+            // is doing. This is how something that starts white hot cools: at
+            // its own pace, evenly through the whole of it, and never below the
+            // temperature of its surroundings.
+            coolsBy: p.coolsBy || 0,
+            // A crust over the top of it holds the heat in. Name the things
+            // that count as a crust, and how much of its own cooling is left
+            // while one is lying on it: lava under its own scoria gives up its
+            // heat a tenth as fast, which is what lets a flow stay molten
+            // underneath long after the top of it has gone hard.
+            insulatedBy: (p.insulatedBy || []).map(toId),
+            insulatedCooling: p.insulatedCooling === undefined ? 1 : p.insulatedCooling,
+            // The floor of the world is the heat the world sits on. Anything
+            // resting right on it never sets by cooling alone - only water can
+            // put it out - so a lava lake on the bedrock stays a lava lake.
+            bedrockKeepsMolten: !!p.bedrockKeepsMolten,
+            // Degrees per frame thrown at everything around it, in all eight
+            // directions rather than only the four that conduction uses. This
+            // is how a fire spreads sideways: a flame rises away from what lit
+            // it far too quickly to warm its neighbours by touch alone, and
+            // without it a pool of oil or a row of plants would only ever burn
+            // from underneath.
+            radiates: p.radiates || 0,
+            // Chance per frame that a flame stays where it is rather than
+            // rising, for as long as there is fuel beside it.
+            clings: p.clings || 0,
             defaultTemp: p.defaultTemp === undefined ? AMBIENT : p.defaultTemp,
             emit: p.emit || 0,
             emitRate: p.emitRate || 0,
+            // The temperature the colour fade treats as fully hot. A heat
+            // source glows up to its own emit, so that is the default; anything
+            // that only glows on its way down - cooling scoria - names the
+            // temperature it was last properly hot at instead.
+            glowTemp: p.glowTemp !== undefined ? p.glowTemp : (p.emit || 0),
             forceTemp: p.forceTemp,
             forceRate: p.forceRate || 0,
 
@@ -130,22 +188,44 @@ export function prepareDefinitions(json) {
             growHeightMin: p.growHeightMin || p.growHeight || 0,
             flowerInto: toId(p.flowerInto),
             growChance: p.growChance || 0,
+            // How this one grows. Left out, it climbs as an ordinary stem.
+            // "netting" weaves its way up through water as a mesh, "surface"
+            // creeps sideways along the top of the water as a lily pad.
+            growStyle: p.growStyle || null,
             seedChance: p.seedChance || 0,
             seedWaterRange: p.seedWaterRange || 0,
             seedInto: toId(p.seedInto),
             // What a seed can come up on, and what it becomes there. Good
-            // ground gives a taller plant than poor ground.
+            // ground gives a taller plant than poor ground, and submergedInto
+            // is what it comes up as instead when the ground it landed on is at
+            // the bottom of open water.
             sprouts: (p.sprouts || []).map(rule => ({
                 on: toId(rule.on),
                 into: toId(rule.into),
+                submergedInto: toId(rule.submergedInto),
                 chance: rule.chance === undefined ? 0.04 : rule.chance
             })),
             sproutMinTemp: p.sproutMinTemp === undefined ? -273 : p.sproutMinTemp,
+            // How deep the water overhead has to be before a seed counts as
+            // germinating underwater rather than in a puddle.
+            submergedDepth: p.submergedDepth || 4,
+
+            // Some of what a plant sets comes up buoyant and some does not, and
+            // which it is, is settled the moment the seed exists rather than
+            // being worked out later. A buoyant one weighs floatDensity instead
+            // of its own density, so it rides on top of water; the rest sink
+            // straight to the bottom.
+            floatChance: p.floatChance || 0,
+            floatDensity: p.floatDensity === undefined ? p.density || 0 : p.floatDensity,
 
             meltPoint: p.meltPoint,
             meltsInto: toId(p.meltsInto),
             freezePoint: p.freezePoint,
             freezesInto: toId(p.freezesInto),
+            // Set on anything that has to come to rest before it can set solid.
+            // Lava uses it, so that a falling stream goes on falling until it
+            // lands rather than turning to stone on the way down.
+            freezeNeedsGround: !!p.freezeNeedsGround,
             boilPoint: p.boilPoint,
             boilsInto: toId(p.boilsInto),
             boilEmits: toId(p.boilEmits),
@@ -182,6 +262,16 @@ export function prepareDefinitions(json) {
             douses: !!p.douses,
             corrodible: !!p.corrodible,
             corrosion: p.corrosion || 0,
+            // The fumes given off where it eats something away. They are left
+            // in the hole rather than puffed out at random, so a bank being
+            // dissolved gives off gas along the face of it.
+            corrodeEmits: toId(p.corrodeEmits),
+            // What this turns living things it touches into. The gas doing it
+            // is not used up in the process - it kills what it drifts through
+            // and carries on - and it works on anything that grows, so a new
+            // plant in particles.json is covered without a change in here.
+            withersPlants: toId(p.withersPlants),
+            witherChance: p.witherChance === undefined ? 0.3 : p.witherChance,
             // How readily the wind picks it up. Left out, it follows from what
             // sort of thing it is: gases go wherever the wind does, loose
             // powders skitter along, liquids barely ripple and nothing fixed
@@ -205,14 +295,61 @@ export function prepareDefinitions(json) {
         def.hasReaction = def.life > 0 || def.soaks || def.corrosion > 0 ||
             def.growChance > 0 || def.emit > 0 || def.quenchedInto !== EMPTY ||
             def.blastRadius > 0 || def.sprouts.length > 0 || def.seedChance > 0 ||
-            def.douses || def.contacts.length > 0;
+            def.douses || def.contacts.length > 0 || def.withersPlants !== EMPTY;
         def.moves = def.category !== 'static';
+
+        // A second, lighter copy of anything that can come up buoyant. The
+        // movement code picks whichever of the two matches the cell it is
+        // looking at, so buoyancy costs nothing at all for everything else.
+        def.buoyant = def.floatChance > 0
+            ? Object.assign({}, def, { density: def.floatDensity, buoyant: null })
+            : null;
 
         defs[id] = def;
     });
 
     DEFS = defs;
     for (const name in nameCache) delete nameCache[name];
+
+    // Which plant counts as the wet mud one. Worked out from the sprout rules
+    // rather than named in code, so that renaming or retuning the plants in
+    // particles.json does not need a change in here.
+    // What the wind cannot get past. Solid drawn materials - wall, stone,
+    // glass, wood - shelter whatever is behind them; growing things do not,
+    // because wind goes through a plant rather than round it.
+    //
+    // Which things count as growing is worked out from the definitions rather
+    // than listed here, so a plant added to particles.json is covered without
+    // anything in this file changing: anything that grows, anything growing
+    // opens into, and anything a seed comes up as.
+    const growing = new Set();
+    for (const def of defs) {
+        if (!def) continue;
+        if (def.growHeight > 0) {
+            growing.add(def.id);
+            if (def.flowerInto !== EMPTY) growing.add(def.flowerInto);
+        }
+        for (const rule of def.sprouts || []) {
+            if (rule.into !== EMPTY) growing.add(rule.into);
+            if (rule.submergedInto !== EMPTY) growing.add(rule.submergedInto);
+        }
+    }
+    for (const def of defs) {
+        if (!def) continue;
+        def.isPlant = growing.has(def.id);
+        def.blocksWind = def.category === 'static' && !def.isPlant;
+    }
+
+    WET_MUD_PLANT = EMPTY;
+    const wetMud = nameToId['wet mud'];
+    for (const def of defs) {
+        if (!def || !def.sprouts) continue;
+        for (const rule of def.sprouts) {
+            if (rule.on !== wetMud) continue;
+            if (DEFS[rule.into] && DEFS[rule.into].growHeight > 0) WET_MUD_PLANT = rule.into;
+        }
+    }
+
     return defs;
 }
 
@@ -282,7 +419,8 @@ export function createWorld(cols, rows) {
         shade: new Uint8Array(n),
         heat: new Float32Array(n),
         surface: new Int16Array(n),
-        data: new Uint8Array(n)
+        data: new Uint8Array(n),
+        wind: new Uint8Array(n)
     };
     world.temp.fill(AMBIENT);
     for (let i = 0; i < n; i++) world.shade[i] = Math.random() * 255;
@@ -298,12 +436,17 @@ export function clearWorld() {
     world.temp.fill(AMBIENT);
     world.heat.fill(0);
     world.data.fill(0);
+    world.wind.fill(0);
 }
 
 // What a freshly placed particle starts with in its data slot. A plant gets a
 // growing budget somewhere in its own range, so a row of them comes up at
-// different heights instead of looking like a fence.
+// different heights instead of looking like a fence. A seed instead gets the
+// one thing it has to settle at the moment it exists: whether it is buoyant.
+// That is decided here, once, and never revisited, so a seed that came up a
+// floater is a floater for as long as it lasts.
 function startingData(def) {
+    if (def.floatChance > 0) return Math.random() < def.floatChance ? 1 : 0;
     if (def.growHeight <= 0) return 0;
     const spread = def.growHeight - def.growHeightMin;
     return def.growHeightMin + Math.floor(Math.random() * (spread + 1));
@@ -379,8 +522,14 @@ export function stepSimulation() {
         if (Math.abs(ambientTarget - AMBIENT) < 0.05) AMBIENT = ambientTarget;
     }
     diffuseHeat();
+    radiateHeat();
     computeLiquidSurfaces();
     world.moved.fill(0);
+
+    // The breeze blows first, on the freshly cleared moved flags, so that
+    // anything it shifts counts as having had its move for the frame and is
+    // not then blown and dropped in the same tick.
+    updateAmbientWind();
 
     // Bottom row upwards, so a falling particle is not processed again after it
     // lands. The left/right scan order flips every frame, otherwise piles drift
@@ -401,11 +550,19 @@ export function stepSimulation() {
             if (def.hasReaction && applyReactions(x, y, i, def)) continue;
 
             if (!def.moves) continue;
-            if (def.moveChance < 1 && Math.random() > def.moveChance) continue;
 
-            if (def.category === 'powder') movePowder(x, y, i, def);
-            else if (def.category === 'liquid') moveLiquid(x, y, i, def);
-            else if (def.category === 'gas') moveGas(x, y, i, def);
+            // moveChance is how readily something shifts about of its own
+            // accord. Gravity is not a matter of choice: everything falls at
+            // its own fall speed whatever this says, and a low moveChance only
+            // makes it slow to creep, slide and settle. That is what lets lava
+            // crawl along the ground at the pace of treacle while still
+            // dropping through open air like the heavy stuff it is, and what
+            // stops wet ground looking like it is floating down.
+            const sluggish = def.moveChance < 1 && Math.random() > def.moveChance;
+
+            if (def.category === 'powder') movePowder(x, y, i, def, sluggish);
+            else if (def.category === 'liquid') moveLiquid(x, y, i, def, sluggish);
+            else if (def.category === 'gas' && !sluggish) moveGas(x, y, i, def);
         }
     }
 }
@@ -457,12 +614,82 @@ function diffuseHeat() {
             // piling up like a normal material.
             if (def.forceRate > 0) result += (def.forceTemp - result) * def.forceRate;
 
+            // Something that starts far hotter than anything around it loses
+            // heat at its own steady rate rather than in proportion to how cold
+            // the air happens to be. Lava at 1150C does not cool twice as fast
+            // because the weather turned, and the middle of a flow gives up its
+            // heat at the same rate as the edges, so the whole of it stiffens
+            // together instead of setting from the outside in. It stops at the
+            // temperature of the air, never running colder than its
+            // surroundings.
+            if (def.coolsBy > 0 && result > rowAir) {
+                let rate = def.coolsBy;
+                // Something lying on top of it holds the heat in. Only the cell
+                // directly above is looked at, which is all a crust is.
+                if (def.insulatedCooling !== 1 && y > 0 &&
+                    def.insulatedBy.includes(type[i - COLS])) {
+                    rate *= def.insulatedCooling;
+                }
+                result = Math.max(rowAir, result - rate);
+            }
+
             next[i] = result;
         }
     }
 
     world.temp = next;
     world.tempNext = temp;
+}
+
+// A diagonal neighbour is further away than a square one, so it catches less.
+const RADIANT_DIAGONAL = 0.55;
+
+// Radiant heat: what a flame throws at everything around it, as opposed to what
+// it passes on by touch.
+//
+// Conduction alone cannot spread a fire sideways. A flame is a gas, so the
+// instant a cell catches light the flame rises off it, and it is next to the
+// thing beside it for only a frame or two - nowhere near long enough to average
+// it up to its ignition point. That is why a pool of oil would sit there with a
+// fire on top of it and never light, and why a row of plants only ever caught
+// from below. Radiating outward in all eight directions fixes both, and is what
+// fire actually does.
+//
+// Nothing is ever heated past the temperature of what is heating it, so this
+// can warm a room but never run away.
+function radiateHeat() {
+    const type = world.type;
+    const temp = world.temp;
+
+    for (let y = 0; y < ROWS; y++) {
+        const rowStart = y * COLS;
+        for (let x = 0; x < COLS; x++) {
+            const i = rowStart + x;
+            const def = DEFS[type[i]];
+            // Written the positive way round on purpose: "<= 0" would be false
+            // for a definition that never set the field at all, and every cell
+            // in the world would start radiating undefined degrees.
+            if (!(def.radiates > 0)) continue;
+
+            const source = temp[i];
+            for (let dy = -1; dy <= 1; dy++) {
+                const ny = y + dy;
+                if (ny < 0 || ny >= ROWS) continue;
+                for (let dx = -1; dx <= 1; dx++) {
+                    if (dx === 0 && dy === 0) continue;
+                    const nx = x + dx;
+                    if (nx < 0 || nx >= COLS) continue;
+
+                    const ni = ny * COLS + nx;
+                    if (temp[ni] >= source) continue;
+                    const amount = dx === 0 || dy === 0
+                        ? def.radiates
+                        : def.radiates * RADIANT_DIAGONAL;
+                    temp[ni] = Math.min(source, temp[ni] + amount);
+                }
+            }
+        }
+    }
 }
 
 export function getTemperature(x, y) {
@@ -496,7 +723,14 @@ function applyStateChange(x, y, i, def) {
     } else if (def.meltPoint !== undefined && t > def.meltPoint) {
         change = 'melt';
         over = t - def.meltPoint;
-    } else if (def.freezePoint !== undefined && t < def.freezePoint) {
+    } else if (def.freezePoint !== undefined && t < def.freezePoint &&
+               !(def.bedrockKeepsMolten && y === ROWS - 1)) {
+        // Something that has to land before it can set - lava, which should
+        // never hang in the air as a stone - goes on cooling while it falls and
+        // only turns solid once there is something underneath it. The banked
+        // heat is left alone rather than bled off, so a cooled drop sets the
+        // moment it arrives instead of having to cool all over again.
+        if (def.freezeNeedsGround && !hasGroundUnder(x, y)) return false;
         change = 'freeze';
         over = def.freezePoint - t;
     }
@@ -559,6 +793,19 @@ function applyStateChange(x, y, i, def) {
 
     transform(i, def.freezesInto);
     return true;
+}
+
+// Has this cell come to rest on something? The bottom of the world counts as
+// ground, and so does anything solid or loose; open air does not, and neither
+// does water, which a sinking lump is still on its way down through. This is
+// what keeps cooling scoria from setting into stone halfway down a pond and
+// leaving a slab of it hanging there with nothing underneath.
+function hasGroundUnder(x, y) {
+    const below = typeAt(x, y + 1);
+    if (below === OUT_OF_BOUNDS) return true;
+    if (below === EMPTY) return false;
+    const under = DEFS[below].category;
+    return under !== 'liquid' && under !== 'gas';
 }
 
 function findEmptyNeighbour(x, y) {
@@ -691,6 +938,22 @@ function applyReactions(x, y, i, def) {
         }
     }
 
+    // Fumes killing off whatever green thing they drift through. The gas is not
+    // taken up in doing it - it withers what it touches and carries straight
+    // on - so a cloud of it works its way right across a bank of plants and
+    // leaves bare sand behind it.
+    if (def.withersPlants !== EMPTY) {
+        for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+                if (dx === 0 && dy === 0) continue;
+                const n = typeAt(x + dx, y + dy);
+                if (n <= 0 || !DEFS[n].isPlant) continue;
+                if (Math.random() >= def.witherChance) continue;
+                transform((y + dy) * COLS + (x + dx), def.withersPlants);
+            }
+        }
+    }
+
     // Acid dissolving whatever it is resting against.
     if (def.corrosion > 0) {
         for (let d = 0; d < 4; d++) {
@@ -699,8 +962,12 @@ function applyReactions(x, y, i, def) {
             const n = typeAt(nx, ny);
             if (n > 0 && DEFS[n].corrodible && Math.random() < def.corrosion) {
                 const ni = ny * COLS + nx;
-                world.type[ni] = EMPTY;
-                world.life[ni] = 0;
+                if (def.corrodeEmits !== EMPTY) {
+                    transform(ni, def.corrodeEmits);
+                } else {
+                    world.type[ni] = EMPTY;
+                    world.life[ni] = 0;
+                }
                 // The acid is used up as it eats, otherwise one drop dissolves
                 // the whole world.
                 if (Math.random() < 0.5) {
@@ -734,11 +1001,34 @@ function applyReactions(x, y, i, def) {
     // A seed landing on wet ground sprouts. Dry ground will not do - it is the
     // water in the ground that starts it off - and nor will cold ground, since
     // nothing germinates in the frost.
+    //
+    // A seed that comes up on the bed of open water is a different plant
+    // altogether: it climbs as a net through the water and opens out into a
+    // lily on the surface. That is settled here, on the one frame the seed
+    // germinates, from the water standing over it at that moment. Nothing
+    // afterwards re-checks it, so draining the pond leaves the lily growing.
     if (def.sprouts.length > 0 && world.temp[i] > def.sproutMinTemp) {
         const under = typeAt(x, y + 1);
         for (const rule of def.sprouts) {
             if (under !== rule.on) continue;
             if (Math.random() >= rule.chance) break;
+
+            const depth = rule.submergedInto !== EMPTY ? openWaterDepth(x, y) : 0;
+            if (depth >= def.submergedDepth) {
+                // Under water it is a lily or it is nothing. One that has
+                // landed too close to a lily already growing simply does not
+                // come up, and lies there until it rots - it does not settle
+                // for being pondweed instead.
+                if (crowdedBy(x, y, rule.submergedInto)) return false;
+                transform(i, rule.submergedInto);
+                // Enough climbing to reach the surface with some to spare,
+                // measured from the water that is actually standing over it.
+                // The spare matters: a net weaves as it climbs and strands that
+                // cross each other have to find a way round.
+                world.data[i] = Math.min(255, depth + 10);
+                return true;
+            }
+
             transform(i, rule.into);
             world.data[i] = startingData(DEFS[rule.into]);
             return true;
@@ -751,8 +1041,28 @@ function applyReactions(x, y, i, def) {
     // sensible height - and because a spent cell never grows again, a plant
     // that is burnt or dissolved stays gone instead of creeping back.
     if (def.growHeight > 0) {
+        if (def.growStyle === 'surface') return creepAcrossSurface(x, y, i, def);
+
         const budget = world.data[i];
         if (budget > 1 && Math.random() < def.growChance) {
+            // Nothing grows out of dry ground. A plant only puts on another
+            // cell while some part of it - anywhere in the plant, not just the
+            // cell doing the growing - is still touching wet mud or wet sand,
+            // so a patch that dries out stops where it is instead of carrying
+            // on regardless.
+            const soil = rootedIn(x, y);
+            if (soil === ROOT_NONE) return false;
+
+            if (def.growStyle === 'netting') return weaveThroughWater(x, y, i, def, budget);
+
+            // Wet mud is the richer of the two soils. A plant with any part of
+            // itself against wet mud grows on as the wet mud plant even if the
+            // rest of it is standing in wet sand, and takes that plant's height
+            // with it rather than staying stunted.
+            const grows = soil === ROOT_RICH && WET_MUD_PLANT !== EMPTY && def.growStyle === null
+                ? WET_MUD_PLANT
+                : def.id;
+
             // Straight up most of the time, off to one side now and then, which
             // is enough to make it look like a plant rather than a pole.
             const sideways = Math.random() < 0.25 ? randomSign() : 0;
@@ -760,8 +1070,10 @@ function applyReactions(x, y, i, def) {
                 const above = typeAt(x + dx, y - 1);
                 if (above !== EMPTY && above !== idOf('Water')) continue;
                 const ni = (y - 1) * COLS + (x + dx);
-                transform(ni, def.id);
-                world.data[ni] = budget - 1;
+                transform(ni, grows);
+                world.data[ni] = grows === def.id
+                    ? budget - 1
+                    : Math.max(budget - 1, world.data[ni]);
                 world.data[i] = 1;
                 return false;
             }
@@ -794,6 +1106,315 @@ function applyReactions(x, y, i, def) {
     }
 
     return false;
+}
+
+// ------------------------------------------------------------------- rooting
+//
+// A plant is only as alive as its roots. Before any plant puts on another cell
+// it has to be able to find wet ground somewhere along itself, which is what
+// makes a patch stop growing when its soil dries out or when the ground is dug
+// out from under it.
+
+const ROOT_NONE = 0;   // nothing wet anywhere against it
+const ROOT_POOR = 1;   // wet sand only
+const ROOT_RICH = 2;   // wet mud, which beats wet sand wherever both are found
+
+// How much of one plant is walked before the search gives up. The cap is what
+// keeps the cost of the search off the frame time when a whole bank has grown
+// into one connected mat of grass, or a pond is full of lilies tangled into
+// each other. It is generous, because the walk only ever runs on the rare frame
+// a plant is actually about to put on a cell, and because a lily that gave up
+// looking would stop climbing halfway to the surface.
+const ROOT_SEARCH_LIMIT = 512;
+
+// Walking the plant needs somewhere to remember where it has already been. A
+// stamp that counts up is used instead of a flag that has to be cleared, so no
+// part of this ever has to sweep the whole grid.
+let rootStack = null;
+let rootStamp = null;
+let rootVisit = 0;
+
+// Walks every cell of one plant - the whole of it, side shoots included - and
+// reports the best soil any part of it is touching.
+//
+// The walk crosses between kinds of plant rather than following one kind only,
+// because a plant is not always made of one thing: grass that has found wet mud
+// carries on upwards as a plant, and a lily is a stem with pads on top. Either
+// way what is standing there is one plant with one set of roots.
+function rootedIn(x, y) {
+    const n = world.type.length;
+    if (!rootStamp || rootStamp.length !== n) {
+        rootStamp = new Int32Array(n);
+        rootStack = new Int32Array(ROOT_SEARCH_LIMIT);
+        rootVisit = 0;
+    }
+
+    const wetMud = idOf('Wet Mud');
+    const wetSand = idOf('Wet Sand');
+
+    rootVisit++;
+    let top = 0;
+    const start = y * COLS + x;
+    rootStamp[start] = rootVisit;
+    rootStack[top++] = start;
+
+    let best = ROOT_NONE;
+    let examined = 0;
+
+    while (top > 0 && examined < ROOT_SEARCH_LIMIT) {
+        const i = rootStack[--top];
+        examined++;
+        const cx = i % COLS;
+        const cy = (i - cx) / COLS;
+
+        for (let dy = -1; dy <= 1; dy++) {
+            const ny = cy + dy;
+            if (ny < 0 || ny >= ROWS) continue;
+            for (let dx = -1; dx <= 1; dx++) {
+                if (dx === 0 && dy === 0) continue;
+                const nx = cx + dx;
+                if (nx < 0 || nx >= COLS) continue;
+
+                const ni = ny * COLS + nx;
+                const found = world.type[ni];
+                // Wet mud is the best there is, so there is nothing to gain by
+                // carrying on once it turns up.
+                if (found === wetMud) return ROOT_RICH;
+                if (found === wetSand) best = ROOT_POOR;
+                if (found === EMPTY || DEFS[found].growHeight <= 0) continue;
+                if (rootStamp[ni] === rootVisit) continue;
+                rootStamp[ni] = rootVisit;
+                if (top < rootStack.length) rootStack[top++] = ni;
+            }
+        }
+    }
+    return best;
+}
+
+// ------------------------------------------------------------------- lilies
+//
+// A seed that germinates on the bed of a pond comes up as something else
+// entirely. It climbs through the water as a loose net rather than as a stem,
+// opens out into a pad when it reaches the surface, creeps sideways across the
+// top of the water, and finishes with a broad white bloom in the middle.
+
+// How deep the open water standing over this spot is, or 0 when it is not under
+// open water at all - meaning there is no water directly above it, or none to
+// either side of that, or the column is capped by something other than air.
+//
+// This is the one question a germinating seed asks. Whether the answer is big
+// enough decides what kind of plant it becomes, for good; how big it is decides
+// how much climbing the stem is given, so a lily that starts in deep water has
+// the reach to make it up to the surface and one in the shallows does not waste
+// its growth overshooting.
+function openWaterDepth(x, y) {
+    const water = idOf('Water');
+    let depth = 0;
+    let inOpenWater = false;
+    let lookedSideways = false;
+
+    for (let ny = y - 1; ny >= 0; ny--) {
+        const found = typeAt(x, ny);
+        if (found === water) {
+            depth++;
+            // The test for a pond rather than a crack is made at the first
+            // water the column reaches, not down at the seed. A brushful lands
+            // as a heap, and a seed in the middle of one has nothing but other
+            // seeds to either side of it however wide the pond it is lying in.
+            if (!lookedSideways) {
+                lookedSideways = true;
+                inOpenWater = waterBeside(x, ny);
+            }
+            continue;
+        }
+        // Open air over the water is the surface, which is what a lily needs to
+        // reach.
+        if (found === EMPTY) break;
+        // Anything solid and fixed capping the column means this is not open
+        // water at all - a flooded cellar, say, rather than a pond.
+        if (capsWater(found)) return 0;
+        // Everything else in the column is looked straight through without
+        // being counted: the other seeds a brushful dropped in alongside this
+        // one, and any lily already growing there. A seed at the bottom of a
+        // pond is at the bottom of a pond whatever else happens to be floating
+        // between it and the sky, and it was mistaking its own neighbours for a
+        // lid that had it coming up as pondweed.
+    }
+    return inOpenWater ? depth : 0;
+}
+
+// How much elbow room a lily wants along the bed before another one takes root
+// beside it. A brushful of seeds lands as a solid row, and without this every
+// one of them would send up its own stem and the pond would come up as a green
+// wall rather than as a few plants with water between them.
+const LILY_SPACING = 3;
+
+function crowdedBy(x, y, id) {
+    for (let dx = -LILY_SPACING; dx <= LILY_SPACING; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+            if (typeAt(x + dx, y + dy) === id) return true;
+        }
+    }
+    return false;
+}
+
+// Something fixed and solid, which water cannot be open underneath.
+//
+// Growing things are see-through for this purpose, and that has to mean the
+// whole plant and not only the parts that are still growing: a flower has no
+// growth left in it, and counting it as a lid had a pond quietly stop producing
+// lilies as soon as the first few plants in it came into flower.
+function capsWater(id) {
+    const def = DEFS[id];
+    return def.category === 'static' && !def.isPlant;
+}
+
+// Is there water to one side of here as well, rather than only overhead? This
+// is what tells a pond from a water filled crack in the rock. It steps past
+// anything loose that happens to be floating alongside, and gives up at a wall.
+function waterBeside(x, y) {
+    const water = idOf('Water');
+    for (const dir of [-1, 1]) {
+        for (let n = 1; n <= 4; n++) {
+            const found = typeAt(x + dir * n, y);
+            if (found === OUT_OF_BOUNDS || found === EMPTY) break;
+            if (found === water) return true;
+            if (capsWater(found)) break;
+        }
+    }
+    return false;
+}
+
+// The netted climb. Rather than stacking one cell on the next, the growing tip
+// leans alternately left and right as it rises and forks off to the other side
+// now and then, so what comes up through the water is an open mesh instead of a
+// stalk. Only water is climbed through: the moment there is air overhead, the
+// tip has reached the surface and opens out into a pad.
+function weaveThroughWater(x, y, i, def, budget) {
+    const water = idOf('Water');
+    const above = typeAt(x, y - 1);
+
+    if (above === EMPTY) {
+        if (def.flowerInto === EMPTY) return false;
+        transform(i, def.flowerInto);
+        return true;
+    }
+
+    // No check on what is directly overhead beyond that: a tip with one of its
+    // own strands sitting on top of it can still climb up and around to either
+    // side, which is what keeps a net that has crossed itself from stalling
+    // halfway up the pond.
+    //
+    // Which way this row leans. Tying it to the row rather than to chance is
+    // what makes the mesh read as a weave rather than as a random scribble.
+    const lean = (y & 1) === 0 ? 1 : -1;
+
+    // A net is mostly holes. Somewhere with water to either side of it is
+    // always taken in preference to somewhere wedged up against the strand
+    // next door, and only now and then, when there is nowhere open left, does
+    // a strand squeeze in alongside another. That is what keeps the mesh open
+    // enough to see the pond through rather than filling in as a solid wall of
+    // green - without ever letting a strand stall short of the surface.
+    const squeeze = Math.random() < 0.15;
+
+    let grew = false;
+    for (const dx of [lean, 0, -lean]) {
+        const nx = x + dx;
+        if (typeAt(nx, y - 1) !== water) continue;
+        if (!squeeze && strandBeside(nx, y - 1, def.id)) continue;
+        const ni = (y - 1) * COLS + nx;
+        transform(ni, def.id);
+        // Never less than enough to carry on climbing. A lily reaches the
+        // surface however deep the water is: what stops it is running out of
+        // water, not running out of growth, so the budget it was given only
+        // governs how freely it forks on the way up.
+        world.data[ni] = Math.max(2, budget - 1);
+        grew = true;
+        break;
+    }
+    if (!grew) return false;
+
+    // The fork: a second strand off the other side, carrying half of what is
+    // left. Strands that cross and rejoin are what turn a line into a net, and
+    // it forks sparingly so that the net stays a net.
+    if (budget > 4 && Math.random() < 0.12) {
+        const nx = x - lean;
+        if (typeAt(nx, y - 1) === water && !strandBeside(nx, y - 1, def.id)) {
+            const ni = (y - 1) * COLS + nx;
+            transform(ni, def.id);
+            world.data[ni] = (budget - 1) >> 1;
+        }
+    }
+
+    world.data[i] = 1;
+    return false;
+}
+
+// Is there already a strand of this plant immediately to one side of here?
+// Refusing those spots is what leaves a cell of water between one strand of the
+// netting and the next.
+function strandBeside(x, y, id) {
+    return typeAt(x - 1, y) === id || typeAt(x + 1, y) === id;
+}
+
+// A pad creeps outwards along the top of the water, one cell at a time to
+// either side, until its share of the growth runs out. Once it has spread and
+// has a pad on either side of it, the middle one - the one sitting on top of
+// the stem that brought it up - opens into the bloom, taking its two
+// neighbours with it so that the flower is broader than the pads around it.
+function creepAcrossSurface(x, y, i, def) {
+    const budget = world.data[i];
+
+    if (budget > 1 && Math.random() < def.growChance) {
+        // Both ways at once. The side it came from is already a pad and so is
+        // never a candidate, which is what keeps it spreading outwards.
+        for (const dx of [-1, 1]) {
+            if (!floatsOnSurface(x + dx, y)) continue;
+            const ni = y * COLS + (x + dx);
+            transform(ni, def.id);
+            world.data[ni] = budget - 1;
+        }
+        world.data[i] = 1;
+        return false;
+    }
+
+    if (budget <= 1 && def.flowerInto !== EMPTY &&
+        typeAt(x - 1, y) === def.id && typeAt(x + 1, y) === def.id &&
+        standsOnItsOwnStem(x, y)) {
+        transform(i - 1, def.flowerInto);
+        transform(i + 1, def.flowerInto);
+        transform(i, def.flowerInto);
+        return true;
+    }
+    return false;
+}
+
+// Only the pad that the stem itself came up under blooms, so a lily has one
+// flower in the middle of it rather than one at each end. The stem is looked
+// for across the three cells underneath, because a netted stem leans as it
+// climbs and rarely finishes exactly under its own tip.
+function standsOnItsOwnStem(x, y) {
+    for (let dx = -1; dx <= 1; dx++) {
+        const below = typeAt(x + dx, y + 1);
+        if (below <= 0) continue;
+        if (DEFS[below].growStyle === 'netting') return true;
+    }
+    return false;
+}
+
+// Is this a spot a pad can sit in - open air directly overhead, nothing already
+// in the way, and either water or the lily's own netting directly underneath.
+// The netting counts because a stem that leaned as it climbed can easily finish
+// up under the cell next to the one it came out of, and a pad ought to be able
+// to spread straight over the top of it.
+function floatsOnSurface(x, y) {
+    const here = typeAt(x, y);
+    if (here !== EMPTY && here !== idOf('Water')) return false;
+    if (typeAt(x, y - 1) !== EMPTY) return false;
+
+    const below = typeAt(x, y + 1);
+    if (below === idOf('Water')) return true;
+    return below > 0 && DEFS[below].growStyle === 'netting';
 }
 
 // Is there any water within reach? The search reaches much further down than it
@@ -896,11 +1517,21 @@ function idOf(name) {
 // first, these two rules alone give sand sinking through water, ice floating up
 // through water and bubbles of steam rising out of a pond.
 
+// One powder never works its way down through another, wet or dry. Weighing
+// them against each other is what had a poured heap slowly sort itself into
+// neat bands - sand sinking under dry mud, dry mud under wet - which is not
+// what loose ground does. Grains that land on top of other grains stay on top
+// of them, and only fluids are pushed out of the way.
+function powdersTogether(def, other) {
+    return def.category === 'powder' && other.category === 'powder';
+}
+
 function canSinkInto(def, other) {
     if (other === OUT_OF_BOUNDS) return false;
     if (other === EMPTY) return true;
     const o = DEFS[other];
     if (o.category === 'static') return false;
+    if (powdersTogether(def, o)) return false;
     return o.density < def.density;
 }
 
@@ -909,20 +1540,43 @@ function canRiseInto(def, other) {
     if (other === EMPTY) return true;
     const o = DEFS[other];
     if (o.category === 'static') return false;
+    if (powdersTogether(def, o)) return false;
     return o.density > def.density;
 }
 
 function randomSign() { return Math.random() < 0.5 ? -1 : 1; }
 
+// How often a floating seed shifts one cell along the surface. Low on purpose:
+// it should wander to one side over a while, not scoot across the pond.
+const FLOAT_DRIFT_CHANCE = 0.03;
+
 // Powders: straight down, then diagonally down, and they push through any
 // lighter fluid on the way.
-function movePowder(x, y, i, def) {
+function movePowder(x, y, i, def, sluggish) {
+    // A buoyant one weighs less than water for as long as it is in the water,
+    // so it uses its lighter twin for every weight comparison below. Nothing
+    // else about it changes.
+    const body = def.buoyant !== null && world.data[i] === 1 ? def.buoyant : def;
+
+    if (body !== def) {
+        // Found itself under water: up it comes. Only ever through a liquid,
+        // never through another powder - partly because a floating seed has no
+        // business burrowing up through a bank of sand, and partly because two
+        // buoyant seeds resting on one another each look heavier than the other
+        // one does and would swap places for ever without falling.
+        const above = typeAt(x, y - 1);
+        if (above > 0 && DEFS[above].category === 'liquid' && canRiseInto(body, above)) {
+            swapCells(i, i - COLS);
+            return;
+        }
+    }
+
     let cy = y;
     let ci = i;
 
-    for (let step = 0; step < def.fallSpeed; step++) {
+    for (let step = 0; step < body.fallSpeed; step++) {
         const below = typeAt(x, cy + 1);
-        if (!canSinkInto(def, below)) break;
+        if (!canSinkInto(body, below)) break;
         const ni = ci + COLS;
         swapCells(ci, ni);
         ci = ni;
@@ -933,16 +1587,75 @@ function movePowder(x, y, i, def) {
     }
 
     if (cy !== y) return;
+    // It fell as fast as it was ever going to; what is left is settling, and
+    // that is what a low moveChance is meant to slow down.
+    if (sluggish) return;
 
-    if (def.slide > 0 && Math.random() < def.slide) {
+    if (body.slide > 0 && Math.random() < body.slide) {
         const dir = randomSign();
         for (const d of [dir, -dir]) {
-            if (!canSinkInto(def, typeAt(x + d, y + 1))) continue;
-            if (!groundFallsAway(def, x + d, y)) continue;
+            if (!canSinkInto(body, typeAt(x + d, y + 1))) continue;
+            if (!groundFallsAway(body, x + d, y)) continue;
             swapCells(i, i + COLS + d);
             return;
         }
     }
+
+    if (body !== def) driftOnSurface(x, y, i);
+}
+
+// Anything floating on open water works its way to one side over time, the way
+// anything adrift does, until it fetches up against a bank or something else in
+// the water. It only ever steps to another spot on the same surface, so it
+// cannot drift out over dry land.
+function driftOnSurface(x, y, i) {
+    if (Math.random() > FLOAT_DRIFT_CHANCE) return;
+    if (!isFloatingOn(x, y)) return;
+
+    const dir = randomSign();
+    for (const d of [dir, -dir]) {
+        if (typeAt(x + d, y) !== EMPTY) continue;
+        if (!isFloatingOn(x + d, y)) continue;
+        swapCells(i, i + d);
+        return;
+    }
+}
+
+// Is this cell sitting directly on top of a liquid?
+function isFloatingOn(x, y) {
+    const below = typeAt(x, y + 1);
+    if (below === OUT_OF_BOUNDS || below === EMPTY) return false;
+    return DEFS[below].category === 'liquid';
+}
+
+// How far down a body of liquid is still lively. Everything in the top
+// FLOW_FREE_DEPTH cells flows as freely as it ever did, which is where a pond
+// finds its level and where waves and ripples happen. Below that the chance of
+// a cell shuffling sideways falls away, and by FLOW_STILL_DEPTH it has stopped
+// altogether: the water down there is packed under the weight of everything
+// above it and simply sits.
+//
+// The depths are generous enough that ordinary ponds behave exactly as they did
+// before, and it is only genuinely deep water that goes quiet.
+const FLOW_FREE_DEPTH = 8;
+const FLOW_STILL_DEPTH = 18;
+
+// Should this cell of liquid stay where it is this frame, rather than joining in
+// with the flow? computeLiquidSurfaces has already worked out the top of the
+// body of liquid each cell belongs to, so its depth costs one subtraction.
+function settledByDepth(y, i) {
+    const top = world.surface[i];
+    if (top === NO_SURFACE) return false;
+
+    const depth = y - top;
+    if (depth <= FLOW_FREE_DEPTH) return false;
+    if (depth >= FLOW_STILL_DEPTH) return true;
+
+    // In between, it gets slower the deeper it is rather than stopping dead at
+    // one particular row, so there is no visible line across the water where
+    // the lively part ends.
+    const settled = (depth - FLOW_FREE_DEPTH) / (FLOW_STILL_DEPTH - FLOW_FREE_DEPTH);
+    return Math.random() < settled;
 }
 
 // How steep a slope a powder will sit on without slipping - its angle of
@@ -965,13 +1678,23 @@ function groundFallsAway(def, nx, y) {
 // is what made water take an age to settle: a pool levels out by shuffling
 // cells sideways one at a time, so letting each cell shuffle a few times per
 // frame is what makes a poured blob spread out at a believable speed.
-function moveLiquid(x, y, i, def) {
+function moveLiquid(x, y, i, def, sluggish) {
     // Gravity gets one go per frame. Only the sideways flow repeats: falling
     // fallSpeed cells several times over would have water dropping the height
     // of the screen between frames, which is both wrong and too fast for
     // anything it passes through to react to it.
     const landed = fallDown(x, y, i, def);
     if (landed !== i) return;
+    // Gravity has had its turn. Creeping sideways is the part a thick, sticky
+    // liquid is slow at, so that is the part moveChance holds back.
+    if (sluggish) return;
+
+    // Deep water is packed down by everything lying on top of it and has
+    // nowhere to go, so it lies still while the surface is still finding its
+    // level. Gravity above has already had its turn, so a hole opened at the
+    // bottom of a pond still fills; what stops is the endless sideways
+    // shuffling that had the whole body of it churning at once.
+    if (settledByDepth(y, i)) return;
 
     for (let step = 0; step < def.flowSteps; step++) {
         const before = i;
@@ -1018,6 +1741,127 @@ function fallDown(x, y, i, def) {
 
 // ----------------------------------------------------------------- the wind
 //
+// Two things blow in here. The wind tool blows wherever it is dragged, and the
+// ambient breeze - switched on from the toolbar - sends a soft gust across the
+// whole world of its own accord every few seconds.
+//
+// Both leave a trail in world.wind: a per-cell number that fades away over the
+// following frames and that game.js draws as a faint pale haze. Nothing in the
+// simulation ever reads it back. It exists purely so that moving air can be
+// seen, rather than only being guessed at from whatever it happens to be
+// pushing about at the time.
+
+// How much of a wind trail is left after a frame.
+const WIND_TRAIL_FADE = 0.86;
+
+// A breeze is a gentle thing: it lifts dry powders, seeds, ash, snow and smoke,
+// but anything at or below this lift - standing water, wet sand, wet mud, ice -
+// is too heavy or too stuck together for it to shift. The wind tool, being a
+// deliberate shove rather than a draught, is not held to this.
+const BREEZE_MIN_LIFT = 0.15;
+
+// Wind stops dead at anything solid. Where it meets wall, stone, glass or wood
+// it goes no further along that line: the rest of the row behind the obstacle
+// is still air, and the wind gets past only by way of the rows above and below
+// it. That is what makes a drawn box genuinely windproof, and what puts a long
+// calm streak in the lee of a wall rather than a small pocket.
+
+// Scratch space for working out where the wind reaches, reused between gusts so
+// that nothing is allocated per frame. The breeze shelters a row at a time; the
+// tool shelters the square its gust covers.
+let rowShelter = null;
+let gustShelter = null;
+
+// Non-zero while there is any trail left to fade, so that the fade pass can be
+// skipped entirely on the many frames where nothing is blowing.
+let windTrailsAlive = 0;
+
+export function getWindTrails() { return world ? world.wind : null; }
+
+function markWind(i, amount) {
+    if (amount <= 0) return;
+    const v = world.wind[i] + amount;
+    world.wind[i] = v > 255 ? 255 : v;
+    windTrailsAlive = 1;
+}
+
+// Called every frame from the game loop, whether or not the simulation is
+// running, so a gust blown while paused still fades instead of hanging there.
+export function decayWindTrails() {
+    if (!world || windTrailsAlive === 0) return;
+    const wind = world.wind;
+    let alive = 0;
+    for (let i = 0; i < wind.length; i++) {
+        const v = wind[i];
+        if (v === 0) continue;
+        const next = v * WIND_TRAIL_FADE - 1;
+        if (next <= 0) { wind[i] = 0; continue; }
+        wind[i] = next;
+        alive++;
+    }
+    windTrailsAlive = alive;
+}
+
+// A stable number between 0 and 1 for a given line across the flow, used to
+// break the haze into streaks rather than painting it on as a flat wash. The
+// seed shifts slowly so the streaks drift instead of standing still.
+function windStreak(line, seed) {
+    let h = Math.imul(line + 1, 374761393) + Math.imul(seed + 1, 668265263);
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
+// Does this cell stop the wind? Wall, stone, glass and wood do; plants do not,
+// because wind goes through a plant rather than round it, and nor does anything
+// loose, which gets carried along instead of sheltering what is behind it.
+function stopsWind(id) {
+    return id > 0 && DEFS[id].blocksWind;
+}
+
+// Works out which parts of a gust are in the lee of something solid.
+//
+// The wind is followed along its own flow lines - rows when it is blowing
+// mostly sideways, columns when it is blowing mostly up or down. The first
+// solid thing a line meets stops it, and nothing further along that line feels
+// the wind at all; it gets past only along the lines either side. The obstacle
+// itself is never counted as sheltered, only what is behind it, so a gust
+// dragged along the face of a wall still stirs the air right against the wall.
+//
+// The result is indexed by the gust's own offsets, so a cell at (dx, dy) from
+// the centre is at (dy + radius) * span + (dx + radius).
+function shelterGust(centreX, centreY, dirX, dirY, radius) {
+    const span = radius * 2 + 1;
+    if (!gustShelter || gustShelter.length < span * span) {
+        gustShelter = new Uint8Array(span * span);
+    }
+    gustShelter.fill(0, 0, span * span);
+
+    // With no drag there is no direction for anything to shelter from: a gust
+    // held still only stirs the air where it is.
+    if (dirX === 0 && dirY === 0) return gustShelter;
+
+    const alongRows = Math.abs(dirX) >= Math.abs(dirY);
+    // Which way the air is travelling along each flow line.
+    const step = alongRows ? (dirX > 0 ? 1 : -1) : (dirY > 0 ? 1 : -1);
+
+    for (let line = -radius; line <= radius; line++) {
+        let blocked = false;
+        for (let n = 0; n < span; n++) {
+            // Walk with the wind: start at the upwind edge and work downwind.
+            const along = step > 0 ? n - radius : radius - n;
+            const dx = alongRows ? along : line;
+            const dy = alongRows ? line : along;
+            const x = centreX + dx;
+            const y = centreY + dy;
+
+            if (blocked) gustShelter[(dy + radius) * span + (dx + radius)] = 1;
+            if (!inBounds(x, y)) continue;
+            if (stopsWind(world.type[y * COLS + x])) blocked = true;
+        }
+    }
+    return gustShelter;
+}
+
 // The wind tool. Dragging it across the world shoves whatever is light enough
 // to be picked up along with the drag, and stirs the air as it goes.
 //
@@ -1025,17 +1869,21 @@ function fallDown(x, y, i, def) {
 // way towards the average temperature of the gust, so dragging up and down
 // through the layered air mixes the cold at the top into the warm at the
 // bottom, exactly as a real draught would.
-
 export function applyWind(centreX, centreY, dirX, dirY, radius, strength) {
     if (!world) return;
 
     const reach = radius * radius;
+    const span = radius * 2 + 1;
+    const sheltered = shelterGust(centreX, centreY, dirX, dirY, radius);
+    const shelteredAt = (dx, dy) => sheltered[(dy + radius) * span + (dx + radius)] === 1;
+
     const cells = [];
     let total = 0;
 
     for (let dy = -radius; dy <= radius; dy++) {
         for (let dx = -radius; dx <= radius; dx++) {
             if (dx * dx + dy * dy > reach) continue;
+            if (shelteredAt(dx, dy)) continue;
             const x = centreX + dx;
             const y = centreY + dy;
             if (!inBounds(x, y)) continue;
@@ -1053,6 +1901,32 @@ export function applyWind(centreX, centreY, dirX, dirY, radius, strength) {
         world.temp[i] += (average - world.temp[i]) * mixing;
     }
 
+    // Show the gust. Streaks run along the way it is blowing, which is what
+    // makes a drag read as a draught rather than as a glowing circle; with no
+    // drag at all it is just a soft patch of stirred air.
+    const sideways = Math.abs(dirX) >= Math.abs(dirY);
+    const streakSeed = (frameCount / 6) | 0;
+    const brightness = 26 + 5 * strength;
+    for (let dy = -radius; dy <= radius; dy++) {
+        for (let dx = -radius; dx <= radius; dx++) {
+            const spread = dx * dx + dy * dy;
+            if (spread > reach) continue;
+            if (shelteredAt(dx, dy)) continue;
+            const x = centreX + dx;
+            const y = centreY + dy;
+            if (!inBounds(x, y)) continue;
+            const falloff = 1 - Math.sqrt(spread) / radius;
+            let weight = falloff * falloff;
+            if (dirX !== 0 || dirY !== 0) {
+                const line = sideways ? y : x;
+                weight *= windStreak(line, streakSeed) < 0.5 ? 0.25 : 1;
+            } else {
+                weight *= 0.4;
+            }
+            markWind(y * COLS + x, weight * brightness);
+        }
+    }
+
     if (dirX === 0 && dirY === 0) return;
 
     // Push things along. Working from the downwind side back means each
@@ -1065,6 +1939,7 @@ export function applyWind(centreX, centreY, dirX, dirY, radius, strength) {
         for (let dy = stepY > 0 ? radius : -radius; stepY > 0 ? dy >= -radius : dy <= radius; dy += stepY > 0 ? -1 : 1) {
             for (let dx = stepX > 0 ? radius : -radius; stepX > 0 ? dx >= -radius : dx <= radius; dx += stepX > 0 ? -1 : 1) {
                 if (dx * dx + dy * dy > reach) continue;
+                if (shelteredAt(dx, dy)) continue;
                 const x = centreX + dx;
                 const y = centreY + dy;
                 if (!inBounds(x, y)) continue;
@@ -1089,6 +1964,159 @@ export function applyWind(centreX, centreY, dirX, dirY, radius, strength) {
                 }
                 swapCells(i, ny * COLS + nx);
             }
+        }
+    }
+}
+
+// ------------------------------------------------------------ ambient breeze
+//
+// A gust is a soft band that crosses the world from one side to the other over
+// a few seconds and then dies away, leaving a quiet gap of several seconds
+// before the next one. It fades in and out over its crossing, and is strongest
+// down its middle, so there is no moment where the air snaps on or off.
+
+let ambientWindOn = false;
+let breeze = null;
+let breezeWait = 0;
+
+// Whatever the Wind dial on the toolbar is set to. The tool is handed its
+// strength per gust, but the breeze blows on its own and has to look it up.
+let windDial = 2;
+
+export function setWindDial(value) { windDial = value; }
+export function getWindDial() { return windDial; }
+
+export function setAmbientWindOn(value) {
+    ambientWindOn = !!value;
+    if (!ambientWindOn) {
+        breeze = null;
+        return;
+    }
+    // A short wait first, so switching it on does not immediately blow
+    // everything the person has just finished arranging across the screen.
+    if (!breeze) breezeWait = 60 + Math.floor(Math.random() * 180);
+}
+
+export function getAmbientWindOn() { return ambientWindOn; }
+
+// True while a gust is actually crossing, which the readout uses to say so.
+export function isBreezeBlowing() { return breeze !== null; }
+
+function updateAmbientWind() {
+    if (!ambientWindOn || !world) return;
+    if (!breeze) {
+        if (breezeWait > 0) { breezeWait--; return; }
+        startBreeze();
+    }
+    blowBreeze();
+
+    breeze.age++;
+    breeze.x += breeze.dir * breeze.speed;
+    if (breeze.age >= breeze.span) {
+        breeze = null;
+        breezeWait = 240 + Math.floor(Math.random() * 700);
+    }
+}
+
+function startBreeze() {
+    const dir = Math.random() < 0.5 ? -1 : 1;
+    const reach = Math.max(8, Math.round(COLS * (0.16 + Math.random() * 0.2)));
+    const speed = 0.7 + Math.random() * 1.1;
+    breeze = {
+        dir: dir,
+        reach: reach,
+        speed: speed,
+        // Where the middle of the band is. It starts wholly off one edge so the
+        // gust arrives rather than appearing.
+        x: dir > 0 ? -reach : COLS - 1 + reach,
+        // How hard it blows at its very strongest. It takes this from the Wind
+        // dial, at double what the tool blows with, so that turning the dial up
+        // gives weather to match - and no gust is quite as hard as the one
+        // before it.
+        peak: Math.min(0.9, (0.025 + Math.random() * 0.07) * windDial * 2),
+        span: (COLS + reach * 2) / speed,
+        age: 0,
+        seed: (Math.random() * 4096) | 0
+    };
+}
+
+function blowBreeze() {
+    const b = breeze;
+    // Fades in over the first half of the crossing and out over the second.
+    const life = Math.sin(Math.PI * Math.min(1, b.age / b.span));
+    const centre = Math.round(b.x);
+    const from = Math.max(0, centre - b.reach);
+    const to = Math.min(COLS - 1, centre + b.reach);
+    if (from > to) return;
+
+    if (!rowShelter || rowShelter.length !== COLS) rowShelter = new Uint8Array(COLS);
+
+    // The rows the haze picks out are shuffled every so often, so the streaks
+    // drift through the gust instead of standing as fixed bands.
+    const streakSeed = b.seed + ((b.age / 15) | 0);
+    const upwind = b.dir > 0 ? from : to;
+    const downwind = b.dir > 0 ? to : from;
+
+    for (let y = 0; y < ROWS; y++) {
+        const rowStart = y * COLS;
+
+        // First pass, walking with the wind: work out how far along the row the
+        // air actually reaches. The first solid thing in the way stops it, and
+        // everything behind that is still air for as long as the obstacle is
+        // there - the gust gets past only along the rows above and below it.
+        //
+        // The walk starts at the edge of the world rather than at the edge of
+        // the band, because a wall shelters what is behind it whether or not
+        // the gust has reached the wall yet.
+        const start = b.dir > 0 ? 0 : COLS - 1;
+        let blocked = false;
+        for (let x = start; x >= 0 && x < COLS; x += b.dir) {
+            rowShelter[x] = blocked ? 1 : 0;
+            if (stopsWind(world.type[rowStart + x])) blocked = true;
+        }
+
+        // Second pass, walking against it: downwind cells are dealt with first,
+        // so a grain is shoved one cell and left there rather than being
+        // carried the whole width of the gust in a single frame.
+        for (let x = downwind; b.dir > 0 ? x >= upwind : x <= upwind; x -= b.dir) {
+            if (rowShelter[x]) continue;
+
+            const offset = (x - centre) / b.reach;
+            const force = (0.5 + 0.5 * Math.cos(Math.PI * offset)) * life * b.peak;
+            if (force <= 0.002) continue;
+
+            const i = rowStart + x;
+
+            // A few rows of faint haze, so the gust can be seen crossing even
+            // over a stretch where there is nothing loose for it to pick up.
+            // Kept dim and sparse: it is there to be noticed out of the corner
+            // of the eye rather than looked at.
+            if (windStreak(y, streakSeed) > 0.93) markWind(i, force * 150);
+
+            const id = world.type[i];
+            if (id === EMPTY) continue;
+
+            const def = DEFS[id];
+            if (def.windLift < BREEZE_MIN_LIFT) continue;
+            if (Math.random() > force * def.windLift) continue;
+
+            // The very lightest things - smoke, snow, ash, seeds - get lifted a
+            // little as well as pushed along, which is what stops a gust
+            // looking like a conveyor belt.
+            const lift = def.windLift > 0.7 && Math.random() < 0.25 ? -1 : 0;
+            const nx = x + b.dir;
+            const ny = y + lift;
+            if (nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS) continue;
+
+            const ni = ny * COLS + nx;
+            const target = world.type[ni];
+            if (target !== EMPTY) {
+                const blocking = DEFS[target];
+                if (blocking.category === 'static') continue;
+                if (blocking.density >= def.density) continue;
+            }
+            swapCells(i, ni);
+            markWind(ni, force * 150);
         }
     }
 }
@@ -1283,7 +2311,46 @@ function computeLiquidSurfaces() {
 // Gases: the mirror image of a liquid. Up, then diagonally up, then a sideways
 // wander so that smoke and steam spread out under a ceiling instead of forming
 // a single tight column.
+// Is there anything alongside this cell that would burn? Flames themselves do
+// not count - fire has no ignition point of its own - so a wall of flame is not
+// mistaken for a wall of fuel.
+function nextToFuel(x, y) {
+    for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+            if (dx === 0 && dy === 0) continue;
+            const id = typeAt(x + dx, y + dy);
+            if (id <= 0) continue;
+            if (DEFS[id].ignitePoint !== undefined) return true;
+        }
+    }
+    return false;
+}
+
 function moveGas(x, y, i, def) {
+    // Flame clings to what it is burning. Without this a fire rises off its
+    // fuel the very frame it appears and is gone a cell later, which is why a
+    // pool of oil could sit under one and never light, and why a bank of plants
+    // only ever caught from underneath: nothing was ever next to anything for
+    // long enough to heat it. A flame with fuel beside it mostly stays put and
+    // works on it, and only wanders off once there is nothing left to burn.
+    if (def.clings > 0 && Math.random() < def.clings && nextToFuel(x, y)) return;
+
+    // A gas does not go straight up in a line. Some of the time it slides off to
+    // one side instead of climbing, which is what makes a plume billow out as
+    // it rises rather than going up as a thin column, and what lets a cloud of
+    // steam fill a room instead of hugging the ceiling above where it was made.
+    if (def.drift > 0 && Math.random() < def.drift) {
+        const d = randomSign();
+        if (canRiseInto(def, typeAt(x + d, y - 1))) {
+            swapCells(i, i - COLS + d);
+            return;
+        }
+        if (canRiseInto(def, typeAt(x + d, y))) {
+            swapCells(i, i + d);
+            return;
+        }
+    }
+
     let cy = y;
     let ci = i;
 
@@ -1306,12 +2373,13 @@ function moveGas(x, y, i, def) {
         }
     }
 
-    if (def.drift > 0 && Math.random() < def.drift) {
-        for (const d of [dir, -dir]) {
-            if (canRiseInto(def, typeAt(x + d, y))) {
-                swapCells(i, i + d);
-                return;
-            }
+    // Nothing doing upwards at all, so it is under a ceiling or under more of
+    // its own kind. It spreads out along whatever is stopping it rather than
+    // stacking up underneath it - gas fills the room it is in.
+    for (const d of [dir, -dir]) {
+        if (canRiseInto(def, typeAt(x + d, y))) {
+            swapCells(i, i + d);
+            return;
         }
     }
 }

@@ -58,11 +58,15 @@ export function setElements() {
         airTempLabel: document.getElementById('airTempLabel'),
         layerLapseInput: document.getElementById('layerLapse'),
         layerLapseLabel: document.getElementById('layerLapseLabel'),
+        airLayersCheckbox: document.getElementById('airLayers'),
         windStrengthInput: document.getElementById('windStrength'),
         windStrengthLabel: document.getElementById('windStrengthLabel'),
+        ambientWindCheckbox: document.getElementById('ambientWind'),
         floatingContainer: document.getElementById('floatingContainer'),
         particleButtons: document.getElementById('particleButtons'),
-        readout: document.getElementById('readout')
+        readout: document.getElementById('readout'),
+        themeSwatches: document.getElementById('themeSwatches'),
+        themeSelect: document.getElementById('themeSelect')
     };
 }
 

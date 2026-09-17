@@ -20,9 +20,12 @@ import {
     paintLine, paintCell, clearCanvasWorld, setHoverCell
 } from './game.js';
 import {
-    getDefinitions, setAmbientTarget, getAmbientTarget, setLayerLapse, getLayerLapse
+    getDefinitions, setAmbientTarget, getAmbientTarget, setLayerLapse, getLayerLapse,
+    setAmbientWindOn, getAmbientWindOn, setAirLayersOn, getAirLayersOn,
+    setWindDial
 } from './physics.js';
 import { initLocalization, localize } from './localization.js';
+import { loadSavedTheme, buildThemeSwatches, buildThemeSelect } from './themes.js';
 
 let isPainting = false;
 let lastCell = null;
@@ -36,6 +39,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     buildParticleButtons();
 
     const elements = getElements();
+
+    // The look comes first, before anything is on screen, so the page never
+    // shows a flash of the default theme on its way to the saved one.
+    loadSavedTheme();
+    buildThemeSwatches(elements.themeSwatches);
+    buildThemeSelect(elements.themeSelect);
 
     elements.newGameMenuButton.addEventListener('click', async () => {
         setBeginGameStatus(true);
@@ -81,6 +90,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     setUpAirTemperature();
     setUpAirLayers();
     setUpWindStrength();
+    setUpAmbientWind();
     setUpCanvasInput();
     setUpKeyboardShortcuts();
 });
@@ -185,36 +195,67 @@ function setUpAirTemperature() {
 }
 
 // How pronounced the layering of the air is: the number of degrees colder each
-// fifth of the height is than the one below it. Zero makes the air one even
-// temperature from top to bottom.
+// fifth of the height is than the one below it.
+//
+// The checkbox beside it turns layering off entirely, which makes the air one
+// even temperature everywhere and greys the slider out. Unlike dragging the
+// slider to zero it leaves the setting alone, so turning layers back on brings
+// back whatever was there before.
 function setUpAirLayers() {
     const slider = getElements().layerLapseInput;
     const label = getElements().layerLapseLabel;
+    const box = getElements().airLayersCheckbox;
 
     const apply = value => {
         setLayerLapse(value);
         label.textContent = `Layers ${value.toFixed(1)}`;
     };
 
+    const showEnabled = on => {
+        slider.disabled = !on;
+        slider.classList.toggle('disabled-control', !on);
+        label.classList.toggle('disabled-control', !on);
+    };
+
     slider.value = String(getLayerLapse());
     apply(getLayerLapse());
     slider.addEventListener('input', event => apply(parseFloat(event.target.value)));
+
+    box.checked = getAirLayersOn();
+    showEnabled(getAirLayersOn());
+    box.addEventListener('change', () => {
+        setAirLayersOn(box.checked);
+        showEnabled(box.checked);
+    });
 }
 
-// How hard the wind tool blows: how many cells it shoves things along, and how
-// vigorously it stirs the air.
+// How hard the wind blows: how many cells the tool shoves things along, how
+// vigorously it stirs the air, and how hard the natural breeze gusts. The
+// breeze blows at double this, being weather rather than a nudge from the
+// mouse, so the one dial covers both.
 function setUpWindStrength() {
     const slider = getElements().windStrengthInput;
     const label = getElements().windStrengthLabel;
 
     const apply = value => {
         setWindStrength(value);
+        setWindDial(value);
         label.textContent = `Wind ${value}`;
     };
 
     slider.value = String(getWindStrength());
     apply(getWindStrength());
     slider.addEventListener('input', event => apply(parseInt(event.target.value)));
+}
+
+// The natural breeze. Left to itself it sends a soft gust across the whole
+// world every few seconds, lifting seeds, dry powders and smoke but leaving
+// anything wet or heavy where it is. It is off to start with, since a world
+// that blows itself about is not what someone laying out a scene wants.
+function setUpAmbientWind() {
+    const box = getElements().ambientWindCheckbox;
+    box.checked = getAmbientWindOn();
+    box.addEventListener('change', () => setAmbientWindOn(box.checked));
 }
 
 function commitAirTemperature(apply, box) {

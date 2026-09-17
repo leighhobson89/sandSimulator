@@ -13,7 +13,9 @@ import { readFileSync } from 'fs';
 import {
     prepareDefinitions, createWorld, getWorld, clearWorld, stepSimulation,
     setCell, index, getDefinitions, setAmbientTarget, getAmbientTemp,
-    setLayerLapse, applyWind, EMPTY
+    setLayerLapse, getLayerLapse, getAirTempAt, setAirLayersOn,
+    applyWind, getWindTrails, decayWindTrails,
+    setAmbientWindOn, isBreezeBlowing, EMPTY
 } from '../physics.js';
 
 const json = JSON.parse(readFileSync(new URL('../particles.json', import.meta.url), 'utf8'));
@@ -213,15 +215,126 @@ check('water killed the flames far faster than they burn out',
 
 // ---------------------------------------------------------------------------
 
-section('Lava is quenched by water into stone and steam');
+section('Lava is quenched by water into scoria and steam, and sets later');
+// Lava does not go straight to stone. It chills into scoria - the dark red
+// first stage, loose enough to be a powder - which sinks to the bottom and only
+// hardens into stone once it has landed and cooled right down.
 for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
 fillRect(20, 38, 12, 4, ID.Lava);
 run(30);
 check('lava stays molten on its own', countOf(ID.Lava) > 40, `${countOf(ID.Lava)} lava`);
 fillRect(20, 26, 12, 8, ID.Water);
 run(120);
-check('the lava turned to stone', countOf(ID.Stone) > 10, `${countOf(ID.Stone)} stone`);
+check('the lava chilled into scoria rather than straight into stone',
+    countOf(ID.Scoria) > 10, `${countOf(ID.Scoria)} scoria, ${countOf(ID.Stone)} stone`);
 check('steam was given off', countOf(ID.Steam) > 0, `${countOf(ID.Steam)} steam`);
+
+section('A lump of lava dropped in water sinks as scoria before it sets');
+// The whole chain, with little enough lava that all of it quenches rather than
+// keeping a molten core under its own crust the way a pool of it does.
+for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
+fillRect(14, 18, 32, ROWS - 19, ID.Water);
+run(300);
+fillRect(28, 3, 3, 2, ID.Lava);
+
+// Follow it down, watching what it is and where it is on the way.
+let sawScoria = 0;
+let sankAsScoria = false;
+let setInMidWater = false;
+let deepest = 0;
+for (let f = 0; f < 400; f++) {
+    stepSimulation();
+    let scoriaLow = -1;
+    for (let y = 0; y < ROWS; y++) {
+        for (let x = 0; x < COLS; x++) {
+            if (typeAt(x, y) === ID.Scoria) scoriaLow = Math.max(scoriaLow, y);
+            // Stone with water under it would be a slab hanging in the pond.
+            if (typeAt(x, y) === ID.Stone && typeAt(x, y + 1) === ID.Water) setInMidWater = true;
+        }
+    }
+    if (scoriaLow >= 0) {
+        sawScoria++;
+        if (scoriaLow > deepest) deepest = scoriaLow;
+        if (deepest > 24) sankAsScoria = true;
+    }
+}
+
+// Scoria buried under more scoria holds its heat, so give the heap time to
+// finish setting before asking what it turned into.
+run(1500);
+
+check('it spent a good while as scoria rather than flashing straight to stone',
+    sawScoria > 40, `it was scoria for ${sawScoria} frames`);
+check('and it sank through the water while it was still scoria', sankAsScoria,
+    `the lowest scoria reached row ${deepest} of ${ROWS - 1}`);
+check('no stone was left hanging in the middle of the pond', !setInMidWater);
+check('it finished as stone on the bottom', countOf(ID.Stone) >= 5 && countOf(ID.Scoria) === 0,
+    `${countOf(ID.Stone)} stone, ${countOf(ID.Scoria)} scoria, ${countOf(ID.Lava)} lava`);
+check('and it is sitting on the floor', (() => {
+    for (let y = 0; y < ROWS; y++) {
+        for (let x = 0; x < COLS; x++) {
+            if (typeAt(x, y) !== ID.Stone) continue;
+            const below = typeAt(x, y + 1);
+            if (below !== ID.Wall && below !== ID.Stone) return false;
+        }
+    }
+    return true;
+})());
+
+section('A lava flow in the open air cools slowly and all of a piece');
+for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
+fillRect(18, ROWS - 5, 14, 4, ID.Lava);
+const pouredLava = countOf(ID.Lava);
+
+// Slowly: a flow does not set the moment it is poured. Nor does the air
+// temperature drive it - it starts far hotter than anything around it and gives
+// up its heat at its own rate.
+run(300);
+check('it is still molten five seconds later', countOf(ID.Lava) > pouredLava * 0.8,
+    `${countOf(ID.Lava)} of ${pouredLava} still lava`);
+
+run(900);
+check('and then chills into scoria', countOf(ID.Scoria) > 0,
+    `${countOf(ID.Scoria)} scoria, ${countOf(ID.Lava)} lava`);
+
+// All of a piece: the middle of a flow should not stay molten under a crust
+// while the edges have already set.
+run(4000);
+check('and given long enough the whole flow is stone',
+    countOf(ID.Lava) === 0 && countOf(ID.Scoria) === 0 && countOf(ID.Stone) > pouredLava * 0.8,
+    `${countOf(ID.Stone)} stone, ${countOf(ID.Scoria)} scoria, ${countOf(ID.Lava)} lava`);
+
+section('A lava flow cools at its own rate, not the weather\'s');
+// The same flow in bitterly cold air should take about as long as it did in
+// mild air, because lava at 1150C does not care what the weather is doing.
+setLayerLapse(0);
+setAmbientTarget(20);
+for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
+fillRect(18, ROWS - 5, 14, 4, ID.Lava);
+run(600);
+const mildLeft = countOf(ID.Lava);
+
+setAmbientTarget(-60);
+run(1500);
+clearWorld();
+for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
+fillRect(18, ROWS - 5, 14, 4, ID.Lava);
+run(600);
+const coldLeft = countOf(ID.Lava);
+// Not identical - the air still conducts a little heat away, and eighty degrees
+// colder air conducts a little more - but nothing like the difference it would
+// make if the weather were what drove the cooling.
+check('freezing air did not come close to halving the time it takes',
+    coldLeft > mildLeft * 0.5,
+    `${mildLeft} lava left at 20C, ${coldLeft} left at -60C`);
+
+// Put the weather back. The air drifts towards the dial rather than jumping to
+// it, so it has to be given the time to get there - otherwise every check after
+// this one would be run in a world that is still freezing, and the next pond
+// along would quietly turn to ice.
+clearWorld();
+setAmbientTarget(20);
+run(2500);
 
 // ---------------------------------------------------------------------------
 
@@ -261,13 +374,36 @@ check('water starts at 30C', Math.abs(tempAt(25, ROWS - 4) - 30) < 0.001,
 run(200);
 check('the water boiled into steam', countOf(ID.Steam) > 0, `${countOf(ID.Steam)} steam`);
 
-section('Steam cools as it rises and condenses back into water');
+section('Steam hangs about for a good while before it condenses');
 fillRect(20, 20, 14, 6, ID.Steam);           // steam on its own, no heat source
 const steamStart = countOf(ID.Steam);
-run(600);
-check('the steam condensed', countOf(ID.Steam) < steamStart / 2,
+run(400);
+check('it is still steam several seconds later', countOf(ID.Steam) === steamStart,
     `${steamStart} -> ${countOf(ID.Steam)}`);
-check('it came back as water', countOf(ID.Water) > 0, `${countOf(ID.Water)} water`);
+run(1400);
+check('but it does condense in the end', countOf(ID.Steam) < steamStart / 2,
+    `${steamStart} -> ${countOf(ID.Steam)}`);
+check('and it came back as water', countOf(ID.Water) > 0, `${countOf(ID.Water)} water`);
+
+section('Steam spreads out sideways and fills the room it is in');
+// A sealed stone room with a puff of steam let go in the middle of the floor.
+for (let x = 10; x < COLS - 10; x++) { setCell(x, 8, ID.Wall); setCell(x, ROWS - 4, ID.Wall); }
+for (let y = 8; y <= ROWS - 4; y++) { setCell(10, y, ID.Wall); setCell(COLS - 11, y, ID.Wall); }
+fillRect(28, ROWS - 7, 4, 2, ID.Steam);
+run(500);
+let steamLeft = COLS;
+let steamRight = -1;
+for (let y = 0; y < ROWS; y++) {
+    for (let x = 0; x < COLS; x++) {
+        if (typeAt(x, y) !== ID.Steam) continue;
+        steamLeft = Math.min(steamLeft, x);
+        steamRight = Math.max(steamRight, x);
+    }
+}
+const roomWidth = (COLS - 11) - 10 - 1;
+check('it spread right out across the room rather than stacking in a column',
+    steamRight - steamLeft + 1 > roomWidth / 2,
+    `steam spans ${steamRight - steamLeft + 1} of a ${roomWidth} wide room`);
 
 // ---------------------------------------------------------------------------
 
@@ -462,7 +598,9 @@ const powderLeft = countOf(ID.Gunpowder);
 check('the flash tore through the trail in a fraction of a second',
     powderLeft < 60, `${powderLeft} of 120 grains left after 12 frames`);
 run(60);
-check('all the gunpowder went up', countOf(ID.Gunpowder) <= 3,
+// Give or take the odd grain at the far end of the trail, which can be left
+// sitting there once the flame that would have reached it has burned out.
+check('all the gunpowder went up', countOf(ID.Gunpowder) <= 6,
     `${countOf(ID.Gunpowder)} of 120 left`);
 check('it blew a hole in the stone', countOf(ID.Stone) < stoneBefore - 40,
     `${stoneBefore} -> ${countOf(ID.Stone)} stone`);
@@ -587,7 +725,7 @@ setAmbientTarget(-15);
 run(600);                                    // let the cold set in
 clearWorld();
 for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
-const cold = ventSteam(700);
+const cold = ventSteam(1800);
 check('it came down as snow', cold.snow > 20, `${cold.snow} snow at its heaviest`);
 
 section('And as rain when the air is warm');
@@ -595,7 +733,7 @@ setAmbientTarget(25);
 run(900);
 clearWorld();
 for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
-const warm = ventSteam(700);
+const warm = ventSteam(1800);
 check('no snow in warm air', warm.snow === 0, `${warm.snow} snow`);
 check('it condensed as water instead', warm.water > 0, `${warm.water} water`);
 setAmbientTarget(20);
@@ -892,6 +1030,475 @@ const strongMove = centreOf(ID.Sand) - strongStart;
 check('turning the wind up moves things further', strongMove > gentleMove * 1.5,
     `moved ${gentleMove.toFixed(1)} cells at strength 1, ${strongMove.toFixed(1)} at strength 8`);
 setLayerLapse(2);
+
+section('The wind tool blows seeds about and shows where it has been');
+setLayerLapse(0);
+for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
+for (let n = 0; n < 12; n++) setCell(18 + n, ROWS - 2, ID.Seed);
+const seedStart = centreOf(ID.Seed);
+for (let gust = 0; gust < 60; gust++) {
+    applyWind(24, ROWS - 2, 1, 0, 8, 4);
+    stepSimulation();
+}
+check('seeds were blown downwind', centreOf(ID.Seed) > seedStart + 1,
+    `seeds moved from ${seedStart.toFixed(1)} to ${centreOf(ID.Seed).toFixed(1)}`);
+
+const trails = getWindTrails();
+let litCells = 0;
+for (let i = 0; i < trails.length; i++) if (trails[i] > 0) litCells++;
+check('the gust left a visible trail behind it', litCells > 20, `${litCells} cells lit`);
+for (let f = 0; f < 60; f++) decayWindTrails();
+let stillLit = 0;
+for (let i = 0; i < trails.length; i++) if (trails[i] > 0) stillLit++;
+check('and the trail fades away again', stillLit === 0, `${stillLit} cells still lit`);
+
+// The same heap of sand blown by the same gust three times over: once in the
+// open, once with a pane of glass standing in front of it, and once with a
+// plant there instead. Each gets a world to itself, because the wind is stopped
+// along a whole row and two scenes sharing rows would shelter each other.
+function blownSandMoves(putSomethingInTheWay) {
+    for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
+    fillRect(24, ROWS - 3, 4, 2, ID.Sand);
+    if (putSomethingInTheWay) putSomethingInTheWay();
+    for (let gust = 0; gust < 60; gust++) {
+        applyWind(14, ROWS - 3, 1, 0, 22, 6);
+        stepSimulation();
+    }
+    return centreOf(ID.Sand) - 25.5;
+}
+
+section('Solid things stop the wind; plants let it through');
+setLayerLapse(0);
+const inTheOpen = blownSandMoves(null);
+
+section('Solid things stop the wind (behind glass)');
+const behindGlass = blownSandMoves(() => {
+    for (let y = ROWS - 6; y < ROWS - 1; y++) setCell(20, y, ID.Glass);
+});
+
+section('Solid things stop the wind (behind a plant)');
+const behindPlant = blownSandMoves(() => {
+    for (let y = ROWS - 6; y < ROWS - 1; y++) setCell(20, y, ID.Plant);
+});
+
+check('sand out in the open was blown along', inTheOpen > 1,
+    `it moved ${inTheOpen.toFixed(1)} cells`);
+check('a pane of glass in the way stopped the wind dead', behindGlass < 0.5,
+    `it moved ${behindGlass.toFixed(1)} cells behind the glass`);
+check('a plant in the way let the wind straight through', behindPlant > inTheOpen * 0.5,
+    `${behindPlant.toFixed(1)} cells behind the plant against ${inTheOpen.toFixed(1)} in the open`);
+
+section('A sealed box keeps the breeze out');
+setLayerLapse(0);
+for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
+// A glass box with loose sand inside it, and the same sand out in the open.
+for (let x = 24; x <= 34; x++) { setCell(x, ROWS - 9, ID.Glass); setCell(x, ROWS - 2, ID.Glass); }
+for (let y = ROWS - 9; y <= ROWS - 2; y++) { setCell(24, y, ID.Glass); setCell(34, y, ID.Glass); }
+fillRect(26, ROWS - 4, 7, 2, ID.Sand);
+fillRect(44, ROWS - 3, 7, 2, ID.Sand);
+
+function spilledFrom(fromX, toX) {
+    let n = 0;
+    for (let y = 0; y < ROWS; y++) {
+        for (let x = 0; x < COLS; x++) {
+            if (typeAt(x, y) === ID.Sand && (x < fromX || x > toX)) n++;
+        }
+    }
+    return n;
+}
+const boxedBefore = spilledFrom(26, 32);
+setAmbientWindOn(true);
+run(5000);
+setAmbientWindOn(false);
+
+let insideTheBox = 0;
+for (let y = ROWS - 8; y <= ROWS - 3; y++) {
+    for (let x = 25; x <= 33; x++) if (typeAt(x, y) === ID.Sand) insideTheBox++;
+}
+check('the sand in the box is all still in the box', insideTheBox === 14,
+    `${insideTheBox} of 14 grains still inside`);
+check('while the sand in the open got blown about',
+    spilledFrom(44, 50) > 0,
+    `${spilledFrom(44, 50)} grains left the open heap`);
+check('and nothing escaped the box', spilledFrom(26, 32) - boxedBefore >= 0);
+
+section('The natural breeze carries the loose and leaves the wet alone');
+setLayerLapse(0);
+for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
+// Two banks side by side on the floor, so that each is only ever answering for
+// itself. Stacking one on the other would have the top bank slide as the breeze
+// ate the bank underneath it, which says nothing about whether the breeze can
+// pick it up.
+fillRect(26, ROWS - 3, 8, 2, ID.Sand);
+fillRect(44, ROWS - 3, 8, 2, ID['Wet Mud']);
+const breezeMudStart = centreOf(ID['Wet Mud']);
+
+// Gusts come from either side as the mood takes them, so over a long enough
+// stretch the middle of a sand bank ends up roughly where it started. What
+// shows the breeze has been at work is the bank spreading out past the edges it
+// was laid down between.
+function spilledOutside(id, fromX, toX) {
+    let n = 0;
+    for (let y = 0; y < ROWS; y++) {
+        for (let x = 0; x < COLS; x++) {
+            if (typeAt(x, y) === id && (x < fromX || x > toX)) n++;
+        }
+    }
+    return n;
+}
+setAmbientWindOn(true);
+let gustFrames = 0;
+for (let f = 0; f < 5000; f++) {
+    stepSimulation();
+    if (isBreezeBlowing()) gustFrames++;
+}
+setAmbientWindOn(false);
+check('gusts came and went rather than blowing without a break',
+    gustFrames > 200 && gustFrames < 4000, `${gustFrames} of 5000 frames were gusting`);
+check('the breeze carried dry sand off its bank',
+    spilledOutside(ID.Sand, 26, 33) > 0,
+    `${spilledOutside(ID.Sand, 26, 33)} grains ended up outside the bank`);
+check('the breeze left the wet mud where it was',
+    Math.abs(centreOf(ID['Wet Mud']) - breezeMudStart) < 0.5,
+    `wet mud moved from ${breezeMudStart.toFixed(1)} to ${centreOf(ID['Wet Mud']).toFixed(1)}`);
+check('and switching it off stops it', !isBreezeBlowing());
+
+section('Seeds settle it at birth: some float, the rest sink');
+fillRect(0, ROWS - 2, COLS, 2, ID.Wall);
+fillRect(6, ROWS - 18, COLS - 12, 16, ID.Water);
+run(200);
+for (let n = 0; n < 40; n++) setCell(10 + (n % 30), 3, ID.Seed);
+let floaters = 0;
+let sinkers = 0;
+for (let y = 0; y < ROWS; y++) {
+    for (let x = 0; x < COLS; x++) {
+        if (typeAt(x, y) !== ID.Seed) continue;
+        if (getWorld().data[index(x, y)] === 1) floaters++; else sinkers++;
+    }
+}
+check('some seeds came up buoyant and some did not', floaters > 3 && sinkers > 3,
+    `${floaters} floaters, ${sinkers} sinkers`);
+
+run(500);
+let riding = 0;
+let onTheBed = 0;
+for (let y = 0; y < ROWS; y++) {
+    for (let x = 0; x < COLS; x++) {
+        if (typeAt(x, y) !== ID.Seed) continue;
+        if (typeAt(x, y + 1) === ID.Water && typeAt(x, y - 1) === EMPTY) riding++;
+        else if (typeAt(x, y + 1) === ID.Wall) onTheBed++;
+    }
+}
+// Not every last one, since a seed can fetch up in a corner or on a ledge, but
+// the great majority should have found where they belong.
+check('the floaters ended up riding on the surface', riding >= floaters * 0.7,
+    `${riding} of ${floaters} floaters are on the surface`);
+check('and the sinkers ended up on the bottom', onTheBed >= sinkers * 0.7,
+    `${onTheBed} of ${sinkers} sinkers are on the bed`);
+
+section('No seed is ever left hanging in the air');
+// A blob of them dropped into open space, buoyant and not, the way a brushful
+// lands. Buoyancy is about water: away from it every one of them falls, and two
+// buoyant seeds resting on each other must not take turns swapping upwards
+// instead of coming down.
+for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
+for (let dy = 0; dy < 5; dy++) {
+    for (let dx = 0; dx < 9; dx++) setCell(24 + dx, 4 + dy, ID.Seed);
+}
+run(250);
+let hanging = 0;
+for (let y = 0; y < ROWS - 1; y++) {
+    for (let x = 0; x < COLS; x++) {
+        if (typeAt(x, y) === ID.Seed && typeAt(x, y + 1) === EMPTY) hanging++;
+    }
+}
+check('every one of them came to rest on something', hanging === 0,
+    `${hanging} seeds are still in mid air`);
+
+section('A seed on the bed of a pond comes up as a lily');
+fillRect(0, ROWS - 4, COLS, 4, ID['Wet Mud']);
+fillRect(4, ROWS - 22, COLS - 8, 18, ID.Water);
+run(60);
+// Keep trying until one of them comes up a sinker, since which it is, is the
+// seed's own business.
+// A handful of sinkers spread along the bed. One seed on its own is a coin
+// toss - it may come up buoyant and float off, or simply never germinate in the
+// time given - and none of that is what this section is about.
+for (let spot = 0; spot < 5; spot++) {
+    const x = 12 + spot * 8;
+    for (let attempt = 0; attempt < 200; attempt++) {
+        setCell(x, ROWS - 5, ID.Seed);
+        if (getWorld().data[index(x, ROWS - 5)] === 0) break;
+    }
+}
+run(2200);
+check('it climbed as a netted stem rather than as an ordinary plant',
+    countOf(ID['Lily Stem']) > 8,
+    `${countOf(ID['Lily Stem'])} stem cells, ${countOf(ID.Plant)} plant cells`);
+check('the stem weaves rather than going straight up like a stalk', (() => {
+    let left = COLS;
+    let right = -1;
+    for (let y = 0; y < ROWS; y++) {
+        for (let x = 0; x < COLS; x++) {
+            if (typeAt(x, y) !== ID['Lily Stem']) continue;
+            left = Math.min(left, x);
+            right = Math.max(right, x);
+        }
+    }
+    return right - left >= 1;
+})());
+check('it reached the surface and opened out',
+    countOf(ID['Lily Pad']) + countOf(ID['Lily Flower']) > 0,
+    `${countOf(ID['Lily Pad'])} pads, ${countOf(ID['Lily Flower'])} flower cells`);
+check('and finished with a bloom broader than one cell',
+    countOf(ID['Lily Flower']) === 0 || countOf(ID['Lily Flower']) >= 3,
+    `${countOf(ID['Lily Flower'])} flower cells`);
+
+section('A brushful of seeds in a pond all come up as lilies, not pondweed');
+// The scene as it actually gets built: a bed of wet mud, water over it, and a
+// brushful of seeds dropped in together. Each seed lands with others packed
+// around it, and used to mistake its own neighbours overhead for a lid and come
+// up as an ordinary plant.
+fillRect(0, ROWS - 6, COLS, 6, ID['Wet Mud']);
+fillRect(3, ROWS - 26, COLS - 6, 20, ID.Water);
+run(300);
+// A generous scattering: around two in five seeds come up buoyant and never
+// reach the bed at all, and the ones that do sink want elbow room from each
+// other, so a thin sprinkling makes for a flaky count.
+for (let dy = 0; dy < 4; dy++) {
+    for (let dx = 0; dx < 30; dx++) setCell(12 + dx, 2 + dy, ID.Seed);
+}
+run(3500);
+check('lilies came up out of the bed', countOf(ID['Lily Stem']) > 8,
+    `${countOf(ID['Lily Stem'])} lily stem cells against ${countOf(ID.Plant)} plant cells`);
+check('the lilies reached the top of the water',
+    countOf(ID['Lily Pad']) + countOf(ID['Lily Flower']) > 0,
+    `${countOf(ID['Lily Pad'])} pads and ${countOf(ID['Lily Flower'])} flower cells`);
+// A net is mostly holes. Measuring how much of the width it spans is actually
+// filled in is the difference between a mesh and a solid green wall.
+check('the netting is open enough to see the water through it', (() => {
+    let cells = 0;
+    let span = 0;
+    for (let y = 0; y < ROWS; y++) {
+        let first = -1;
+        let last = -1;
+        for (let x = 0; x < COLS; x++) {
+            if (typeAt(x, y) !== ID['Lily Stem']) continue;
+            if (first < 0) first = x;
+            last = x;
+            cells++;
+        }
+        if (first >= 0) span += last - first + 1;
+    }
+    return span === 0 || cells / span < 0.65;
+})());
+
+section('Acid gives off toxic fumes as it eats');
+for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
+fillRect(18, ROWS - 9, 22, 8, ID.Wood);
+fillRect(20, ROWS - 13, 18, 3, ID.Acid);
+let peakFumes = 0;
+for (let f = 0; f < 400; f++) { stepSimulation(); peakFumes = Math.max(peakFumes, countOf(ID['Toxic Gas'])); }
+check('fumes came off the dissolving wood', peakFumes > 10, `${peakFumes} at its thickest`);
+
+section('Toxic fumes rise and spread the way a gas should');
+for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
+fillRect(28, ROWS - 4, 4, 3, ID['Toxic Gas']);
+run(150);
+let fumeTop = ROWS;
+let fumeLeft = COLS;
+let fumeRight = -1;
+for (let y = 0; y < ROWS; y++) {
+    for (let x = 0; x < COLS; x++) {
+        if (typeAt(x, y) !== ID['Toxic Gas']) continue;
+        fumeTop = Math.min(fumeTop, y);
+        fumeLeft = Math.min(fumeLeft, x);
+        fumeRight = Math.max(fumeRight, x);
+    }
+}
+check('it rose', fumeTop < ROWS - 10, `the top of it reached row ${fumeTop}`);
+check('and it spread out sideways as it went', fumeRight - fumeLeft > 8,
+    `it spans ${fumeRight - fumeLeft + 1} cells`);
+
+section('Toxic fumes wither anything growing into bare sand');
+for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
+fillRect(0, ROWS - 3, COLS, 2, ID['Wet Mud']);
+// One of each green thing, standing in a row with room for the gas between.
+for (let x = 10; x < 46; x += 3) {
+    for (let y = ROWS - 8; y < ROWS - 3; y++) setCell(x, y, ID.Plant);
+    setCell(x, ROWS - 9, ID.Flower);
+    setCell(x + 1, ROWS - 4, ID.Grass);
+    setCell(x + 1, ROWS - 5, ID['Lily Pad']);
+}
+const greenBefore = countOf(ID.Plant) + countOf(ID.Flower) + countOf(ID.Grass) + countOf(ID['Lily Pad']);
+const sandBefore = countOf(ID.Sand);
+let fumesReleased = 0;
+for (let x = 10; x < 46; x++) {
+    for (let y = ROWS - 5; y < ROWS - 3; y++) {
+        if (typeAt(x, y) !== EMPTY) continue;
+        setCell(x, y, ID['Toxic Gas']);
+        fumesReleased++;
+    }
+}
+run(250);
+const withered = countOf(ID.Sand) - sandBefore;
+check('the fumes killed green things off', withered > 10,
+    `${withered} cells of green turned to sand, out of ${greenBefore}`);
+check('and they took plants, grass, flowers and lily alike', (() => {
+    // Whatever is left of each kind, something of each must have gone.
+    return countOf(ID.Flower) < greenBefore && countOf(ID['Lily Pad']) < 12;
+})(), `${countOf(ID.Flower)} flowers and ${countOf(ID['Lily Pad'])} pads left`);
+
+section('Toxic fumes are not used up by what they kill');
+for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
+fillRect(0, ROWS - 3, COLS, 2, ID['Wet Mud']);
+for (let x = 12; x < 44; x += 2) for (let y = ROWS - 7; y < ROWS - 3; y++) setCell(x, y, ID.Plant);
+let released = 0;
+for (let x = 12; x < 20; x++) {
+    for (let y = ROWS - 5; y < ROWS - 3; y++) {
+        if (typeAt(x, y) !== EMPTY) continue;
+        setCell(x, y, ID['Toxic Gas']);
+        released++;
+    }
+}
+const sandWas = countOf(ID.Sand);
+run(120);
+check('the gas is still there after doing its work',
+    countOf(ID['Toxic Gas']) >= released * 0.5 && countOf(ID.Sand) > sandWas,
+    `${released} released, ${countOf(ID['Toxic Gas'])} left, ` +
+    `${countOf(ID.Sand) - sandWas} cells withered`);
+
+section('Loose ground does not sort itself into bands');
+// Powders weighed against each other used to trade places until they lay in
+// order of weight. Poured on top of one another they should simply stay in the
+// order they landed in.
+for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
+fillRect(24, ROWS - 4, 12, 3, ID['Wet Mud']);
+fillRect(24, ROWS - 7, 12, 3, ID.Sand);
+fillRect(24, ROWS - 10, 12, 3, ID['Dry Mud']);
+run(600);
+
+function meanHeightOf(id) {
+    let total = 0;
+    let count = 0;
+    for (let y = 0; y < ROWS; y++) {
+        for (let x = 0; x < COLS; x++) if (typeAt(x, y) === id) { total += y; count++; }
+    }
+    return count === 0 ? null : total / count;
+}
+check('the heaviest did not sink to the bottom',
+    meanHeightOf(ID['Wet Mud']) > meanHeightOf(ID.Sand) &&
+    meanHeightOf(ID.Sand) > meanHeightOf(ID['Dry Mud']),
+    `wet mud ${meanHeightOf(ID['Wet Mud']).toFixed(1)}, sand ` +
+    `${meanHeightOf(ID.Sand).toFixed(1)}, dry mud ${meanHeightOf(ID['Dry Mud']).toFixed(1)}`);
+
+section('Powders still sink through water, which is a fluid and not a powder');
+for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
+fillRect(10, ROWS - 14, 20, 12, ID.Water);
+run(150);
+fillRect(14, ROWS - 18, 6, 3, ID.Sand);
+run(300);
+check('sand poured into water settled underneath it',
+    meanHeightOf(ID.Sand) > meanHeightOf(ID.Water),
+    `sand ${meanHeightOf(ID.Sand).toFixed(1)}, water ${meanHeightOf(ID.Water).toFixed(1)}`);
+
+section('The same seed on the same mud out of the water is an ordinary plant');
+fillRect(0, ROWS - 4, COLS, 4, ID['Wet Mud']);
+run(20);
+for (let attempt = 0; attempt < 400; attempt++) {
+    setCell(30, ROWS - 5, ID.Seed);
+    if (getWorld().data[index(30, ROWS - 5)] === 0) break;
+}
+run(900);
+check('a dry bank grows a plant, not a lily',
+    countOf(ID.Plant) > 0 && countOf(ID['Lily Stem']) === 0,
+    `${countOf(ID.Plant)} plant cells, ${countOf(ID['Lily Stem'])} stem cells`);
+
+section('A plant only grows while some part of it is in wet ground');
+for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
+setCell(12, ROWS - 2, ID['Dry Mud']);
+setCell(12, ROWS - 3, ID.Plant);
+getWorld().data[index(12, ROWS - 3)] = 14;
+setCell(34, ROWS - 2, ID['Wet Mud']);
+setCell(34, ROWS - 3, ID.Plant);
+getWorld().data[index(34, ROWS - 3)] = 14;
+run(1200);
+
+function highestPlantIn(fromX, toX) {
+    for (let y = 0; y < ROWS; y++) {
+        for (let x = fromX; x <= toX; x++) {
+            if (typeAt(x, y) === ID.Plant || typeAt(x, y) === ID.Flower) return y;
+        }
+    }
+    return ROWS;
+}
+check('the one in dry ground never put on a cell',
+    highestPlantIn(6, 20) === ROWS - 3, `it reached row ${highestPlantIn(6, 20)}`);
+check('the one in wet ground climbed',
+    highestPlantIn(28, 42) < ROWS - 6, `it reached row ${highestPlantIn(28, 42)}`);
+
+section('Grass that reaches wet mud grows on as a wet mud plant');
+for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
+setCell(20, ROWS - 2, ID['Wet Sand']);
+setCell(21, ROWS - 2, ID['Wet Mud']);
+setCell(20, ROWS - 3, ID.Grass);
+getWorld().data[index(20, ROWS - 3)] = 8;
+run(1200);
+check('the growth above it came up as the richer plant', countOf(ID.Plant) > 2,
+    `${countOf(ID.Grass)} grass cells, ${countOf(ID.Plant)} plant cells`);
+
+section('Lava has to land before it can set');
+setAmbientTarget(-60);
+setLayerLapse(0);
+for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
+// A drip let go from high up in freezing air. It passes the temperature it
+// would set at long before it lands.
+setCell(30, 2, ID.Lava);
+let setInMidAir = false;
+for (let f = 0; f < 400; f++) {
+    stepSimulation();
+    for (let y = 0; y < ROWS - 2; y++) {
+        if (typeAt(30, y) === ID.Stone && typeAt(30, y + 1) === EMPTY) setInMidAir = true;
+    }
+    if (typeAt(30, ROWS - 2) !== EMPTY) break;
+}
+check('it never turned to stone with nothing underneath it', !setInMidAir);
+run(900);
+// It may have crept a cell or two along the floor before it set.
+let stoneOnFloor = 0;
+for (let x = 0; x < COLS; x++) if (typeAt(x, ROWS - 2) === ID.Stone) stoneOnFloor++;
+check('and it set once it had landed', stoneOnFloor > 0 && countOf(ID.Lava) === 0,
+    `${stoneOnFloor} stone on the floor, ${countOf(ID.Lava)} lava left`);
+setAmbientTarget(20);
+setLayerLapse(2);
+
+section('Air layering can be switched off');
+setLayerLapse(6);
+setAmbientTarget(20);
+run(1200);
+const layeredGap = getAirTempAt(ROWS - 1) - getAirTempAt(0);
+check('layered air is warmer at the bottom than the top', layeredGap > 10,
+    `${layeredGap.toFixed(1)} degrees between floor and ceiling`);
+
+setAirLayersOn(false);
+check('switching layers off makes the air even everywhere',
+    getAirTempAt(0) === getAirTempAt(ROWS - 1),
+    `${getAirTempAt(0).toFixed(1)} at the top, ${getAirTempAt(ROWS - 1).toFixed(1)} at the bottom`);
+
+setAirLayersOn(true);
+check('and switching it back on leaves the slider setting where it was',
+    getLayerLapse() === 6 && getAirTempAt(ROWS - 1) - getAirTempAt(0) === layeredGap);
+setLayerLapse(2);
+
+section('Grass with only wet sand under it stays grass');
+for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
+setCell(20, ROWS - 2, ID['Wet Sand']);
+setCell(20, ROWS - 3, ID.Grass);
+getWorld().data[index(20, ROWS - 3)] = 8;
+run(1200);
+check('no wet mud nearby means no promotion',
+    countOf(ID.Grass) > 2 && countOf(ID.Plant) === 0,
+    `${countOf(ID.Grass)} grass cells, ${countOf(ID.Plant)} plant cells`);
 
 // ---------------------------------------------------------------------------
 

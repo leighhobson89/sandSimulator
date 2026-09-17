@@ -37,6 +37,9 @@ function makeElement(id) {
             toggle: (c, on) => { if (on === undefined) { classes.has(c) ? classes.delete(c) : classes.add(c); } else if (on) { classes.add(c); } else { classes.delete(c); } }
         },
         tagName: 'DIV',
+        attributes: {},
+        setAttribute(name, value) { this.attributes[name] = String(value); },
+        getAttribute(name) { return this.attributes[name]; },
         blur() { this.fire('blur', {}); },
         focus() {},
         addEventListener(type, handler) { (this.listeners[type] ||= []).push(handler); },
@@ -88,9 +91,17 @@ globalThis.document = {
     getElementById: byId,
     createElement: () => makeElement('created'),
     addEventListener: (type, handler) => { (documentListeners[type] ||= []).push(handler); },
-    querySelector: () => makeElement('q')
+    querySelector: () => makeElement('q'),
+    // The theme is applied by setting an attribute on the body.
+    body: makeElement('body')
 };
 globalThis.window = { addEventListener() {} };
+// Nowhere to remember the chosen theme, which is one of the cases themes.js has
+// to cope with - a page opened straight off disk gets the same treatment.
+globalThis.localStorage = {
+    getItem() { throw new Error('localStorage is not available'); },
+    setItem() { throw new Error('localStorage is not available'); }
+};
 globalThis.performance = { now: () => Date.now() };
 globalThis.requestAnimationFrame = cb => { frameCallbacks.push(cb); return frameCallbacks.length; };
 globalThis.fetch = async url => {
@@ -213,6 +224,59 @@ else fail(`out of range value was not clamped (target is ${getAmbientTarget()})`
 
 airBox.value = '20';
 airBox.fire('keydown', { key: 'Enter' });
+
+// The breeze checkbox.
+const { getAmbientWindOn, getAirLayersOn, getAirTempAt } = await import('../physics.js');
+const breezeBox = byId('ambientWind');
+breezeBox.checked = true;
+breezeBox.fire('change');
+if (getAmbientWindOn()) pass('the breeze checkbox turns the natural wind on');
+else fail('the breeze checkbox did nothing');
+breezeBox.checked = false;
+breezeBox.fire('change');
+if (!getAmbientWindOn()) pass('and turns it off again');
+else fail('the breeze could not be turned off');
+
+// The air layers checkbox, which also greys out the slider beside it.
+const layersBox = byId('airLayers');
+const lapseSlider = byId('layerLapse');
+lapseSlider.fire('input', { target: { value: '6' } });
+layersBox.checked = false;
+layersBox.fire('change');
+if (!getAirLayersOn() && getAirTempAt(0) === getAirTempAt(149)) {
+    pass('unchecking air layers makes the air one even temperature');
+} else {
+    fail(`air is still layered (${getAirTempAt(0)} at the top, ${getAirTempAt(149)} at the bottom)`);
+}
+if (lapseSlider.disabled) pass('and greys the layers slider out');
+else fail('the layers slider was left live with layering switched off');
+layersBox.checked = true;
+layersBox.fire('change');
+if (getAirLayersOn() && !lapseSlider.disabled) pass('and checking it puts both back');
+else fail('air layers could not be switched back on');
+
+// The theme controls, built from the list in themes.js.
+const { THEMES, getTheme } = await import('../themes.js');
+const swatches = byId('themeSwatches').querySelectorAll('.theme-swatch');
+if (swatches.length === THEMES.length) pass(`built ${swatches.length} theme swatches`);
+else fail(`expected ${THEMES.length} theme swatches, built ${swatches.length}`);
+
+const otherTheme = THEMES.find(t => t.id !== getTheme());
+swatches.find(s => s.dataset.themeId === otherTheme.id).click();
+if (getTheme() === otherTheme.id && document.body.dataset.theme === otherTheme.id) {
+    pass(`picking a swatch switched the page to ${otherTheme.id}`);
+} else {
+    fail(`swatch did not switch the theme (page is on ${document.body.dataset.theme})`);
+}
+
+const themeSelect = byId('themeSelect');
+if (themeSelect.value === otherTheme.id) pass('and the toolbar dropdown followed it');
+else fail(`the dropdown still shows ${themeSelect.value}`);
+
+themeSelect.value = THEMES[0].id;
+themeSelect.fire('change');
+if (getTheme() === THEMES[0].id) pass('and the dropdown switches it back');
+else fail(`the dropdown did nothing (theme is ${getTheme()})`);
 
 byId('returnToMenu').click();
 runFrames(3);
