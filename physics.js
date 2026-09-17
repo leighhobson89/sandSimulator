@@ -1768,11 +1768,32 @@ const BREEZE_MIN_LIFT = 0.15;
 // it. That is what makes a drawn box genuinely windproof, and what puts a long
 // calm streak in the lee of a wall rather than a small pocket.
 
+// Loose material stops it too, only not straight away. How many cells of buried
+// powder or liquid the wind works its way into before it is turned aside.
+//
+// Only buried cells count - ones with something sitting on top of them. The
+// exposed surface of a drift or a pool is always in the wind, which is what
+// lets a gust drive a thin sheet of sand along the ground for as long as it
+// likes. Get in under that surface, though, and the wind is into the body of
+// the pile: it works the first few layers and the rest of the line beyond them
+// is sheltered exactly as it would be behind glass. Without this a gust blows
+// clean through a bank of sand and stirs whatever is sitting on the far side.
+const WIND_PENETRATION = 3;
+
+// Air that has been through something it could shift does not carry straight
+// on: it is turned upwards by whatever it went through, and it keeps that kick
+// for this many cells before it levels out again. That is what makes a gust
+// curl over a drift rather than tunnel along it.
+const WIND_DEFLECT_RUN = 10;
+
 // Scratch space for working out where the wind reaches, reused between gusts so
 // that nothing is allocated per frame. The breeze shelters a row at a time; the
-// tool shelters the square its gust covers.
+// tool shelters the square its gust covers. The lift maps run alongside them,
+// marking where the flow has been deflected upwards.
 let rowShelter = null;
+let rowLift = null;
 let gustShelter = null;
+let gustLift = null;
 
 // Non-zero while there is any trail left to fade, so that the fade pass can be
 // skipped entirely on the many frames where nothing is blowing.
@@ -1820,6 +1841,44 @@ function stopsWind(id) {
     return id > 0 && DEFS[id].blocksWind;
 }
 
+// Does this cell hold the wind up without stopping it outright? Powders and
+// liquids do: the wind gets into the first few cells of a pile or a pool and is
+// turned aside by the rest of it. Gases and plants do not - the wind goes
+// straight through those - and a lone grain in mid-air is no obstruction
+// either, since the count is only kept up while the material is continuous.
+function slowsWind(id) {
+    if (id === EMPTY) return false;
+    const category = DEFS[id].category;
+    return category === 'powder' || category === 'liquid';
+}
+
+// Is this cell buried - does it have something resting on top of it? Smoke and
+// steam do not count as cover; they are blown away themselves. A cell open to
+// the air is part of the surface of a pile, and the wind works the surface no
+// matter how wide the pile is.
+function isBuried(i, y) {
+    if (y === 0) return false;
+    const above = world.type[i - COLS];
+    return above !== EMPTY && DEFS[above].category !== 'gas';
+}
+
+// Can the wind shove something of this definition into the cell holding
+// `target`? Air always gives way, anything solid never does, and a fluid or a
+// powder only gives way to something heavier than it is.
+function windCanEnter(def, target) {
+    if (target === EMPTY) return true;
+    const blocking = DEFS[target];
+    if (blocking.category === 'static') return false;
+    return blocking.density < def.density;
+}
+
+// The wind only climbs over things it could otherwise have moved. A wall turns
+// it back; a bank of sand turns it upwards, because the air has to go
+// somewhere and over the top is the way that is open.
+function deflectsUpward(target) {
+    return target !== EMPTY && DEFS[target].category !== 'static';
+}
+
 // Works out which parts of a gust are in the lee of something solid.
 //
 // The wind is followed along its own flow lines - rows when it is blowing
@@ -1835,8 +1894,10 @@ function shelterGust(centreX, centreY, dirX, dirY, radius) {
     const span = radius * 2 + 1;
     if (!gustShelter || gustShelter.length < span * span) {
         gustShelter = new Uint8Array(span * span);
+        gustLift = new Uint8Array(span * span);
     }
     gustShelter.fill(0, 0, span * span);
+    gustLift.fill(0, 0, span * span);
 
     // With no drag there is no direction for anything to shelter from: a gust
     // held still only stirs the air where it is.
@@ -1848,6 +1909,10 @@ function shelterGust(centreX, centreY, dirX, dirY, radius) {
 
     for (let line = -radius; line <= radius; line++) {
         let blocked = false;
+        // How far into the loose material this line has got, and how much of
+        // its upward kick is left over from the last thing it went through.
+        let depth = 0;
+        let liftLeft = 0;
         for (let n = 0; n < span; n++) {
             // Walk with the wind: start at the upwind edge and work downwind.
             const along = step > 0 ? n - radius : radius - n;
@@ -1856,9 +1921,24 @@ function shelterGust(centreX, centreY, dirX, dirY, radius) {
             const x = centreX + dx;
             const y = centreY + dy;
 
-            if (blocked) gustShelter[(dy + radius) * span + (dx + radius)] = 1;
+            const at = (dy + radius) * span + (dx + radius);
+            if (blocked) gustShelter[at] = 1;
+            // Only a sideways shove is deflected upwards. A gust driven down
+            // into a pile is already going the other way, and lifting what it
+            // meets would simply undo it.
+            else if (liftLeft > 0 && alongRows) gustLift[at] = 1;
+
             if (!inBounds(x, y)) continue;
-            if (stopsWind(world.type[y * COLS + x])) blocked = true;
+            const cell = y * COLS + x;
+            const id = world.type[cell];
+            if (stopsWind(id)) { blocked = true; continue; }
+            if (slowsWind(id)) {
+                liftLeft = WIND_DEFLECT_RUN;
+                if (isBuried(cell, y) && ++depth >= WIND_PENETRATION) blocked = true;
+            } else if (id === EMPTY) {
+                depth = 0;
+                if (liftLeft > 0) liftLeft--;
+            }
         }
     }
     return gustShelter;
@@ -1877,7 +1957,9 @@ export function applyWind(centreX, centreY, dirX, dirY, radius, strength) {
     const reach = radius * radius;
     const span = radius * 2 + 1;
     const sheltered = shelterGust(centreX, centreY, dirX, dirY, radius);
+    const lifted = gustLift;
     const shelteredAt = (dx, dy) => sheltered[(dy + radius) * span + (dx + radius)] === 1;
+    const liftedAt = (dx, dy) => lifted[(dy + radius) * span + (dx + radius)] === 1;
 
     const cells = [];
     let total = 0;
@@ -1908,7 +1990,7 @@ export function applyWind(centreX, centreY, dirX, dirY, radius, strength) {
     // drag at all it is just a soft patch of stirred air.
     const sideways = Math.abs(dirX) >= Math.abs(dirY);
     const streakSeed = (frameCount / 6) | 0;
-    const brightness = 26 + 5 * strength;
+    const brightness = 13 + 2.5 * strength;
     for (let dy = -radius; dy <= radius; dy++) {
         for (let dx = -radius; dx <= radius; dx++) {
             const spread = dx * dx + dy * dy;
@@ -1925,7 +2007,11 @@ export function applyWind(centreX, centreY, dirX, dirY, radius, strength) {
             } else {
                 weight *= 0.4;
             }
-            markWind(y * COLS + x, weight * brightness);
+            // Where the flow has been turned up, the haze is drawn a row above
+            // the cell it belongs to, so the gust visibly rides over whatever
+            // deflected it instead of running flat through it.
+            const rise = liftedAt(dx, dy) && y > 0 ? 1 : 0;
+            markWind((y - rise) * COLS + x, weight * brightness);
         }
     }
 
@@ -1955,16 +2041,17 @@ export function applyWind(centreX, centreY, dirX, dirY, radius, strength) {
                 if (Math.random() > def.windLift) continue;
 
                 const nx = x + stepX;
+                // The tool is a deliberate shove and drives straight along the
+                // drag. It is the breeze, not the tool, that curls up over what
+                // it has been through: a gust of weather has to go round a
+                // drift, whereas the tool is the person deciding where the air
+                // goes. The haze above still shows the deflection.
                 const ny = y + stepY;
                 if (!inBounds(nx, ny)) continue;
 
-                const target = world.type[ny * COLS + nx];
-                if (target !== EMPTY) {
-                    const blocking = DEFS[target];
-                    if (blocking.category === 'static') continue;
-                    if (blocking.density >= def.density) continue;
-                }
-                swapCells(i, ny * COLS + nx);
+                const ni = ny * COLS + nx;
+                if (!windCanEnter(def, world.type[ni])) continue;
+                swapCells(i, ni);
             }
         }
     }
@@ -2051,7 +2138,10 @@ function blowBreeze() {
     const to = Math.min(COLS - 1, centre + b.reach);
     if (from > to) return;
 
-    if (!rowShelter || rowShelter.length !== COLS) rowShelter = new Uint8Array(COLS);
+    if (!rowShelter || rowShelter.length !== COLS) {
+        rowShelter = new Uint8Array(COLS);
+        rowLift = new Uint8Array(COLS);
+    }
 
     // The rows the haze picks out are shuffled every so often, so the streaks
     // drift through the gust instead of standing as fixed bands.
@@ -2066,15 +2156,34 @@ function blowBreeze() {
         // air actually reaches. The first solid thing in the way stops it, and
         // everything behind that is still air for as long as the obstacle is
         // there - the gust gets past only along the rows above and below it.
+        // A pile of powder or a body of water stops it in the same way, only
+        // WIND_PENETRATION cells later, so the wind works the surface of a
+        // drift and is turned aside by the depth of it.
         //
         // The walk starts at the edge of the world rather than at the edge of
         // the band, because a wall shelters what is behind it whether or not
         // the gust has reached the wall yet.
         const start = b.dir > 0 ? 0 : COLS - 1;
         let blocked = false;
+        // How deep into the current run of loose material the wind has got, and
+        // how much upward kick is left from the last thing it went through.
+        let depth = 0;
+        let liftLeft = 0;
         for (let x = start; x >= 0 && x < COLS; x += b.dir) {
             rowShelter[x] = blocked ? 1 : 0;
-            if (stopsWind(world.type[rowStart + x])) blocked = true;
+            rowLift[x] = !blocked && liftLeft > 0 ? 1 : 0;
+
+            const id = world.type[rowStart + x];
+            if (stopsWind(id)) { blocked = true; continue; }
+            if (slowsWind(id)) {
+                liftLeft = WIND_DEFLECT_RUN;
+                if (isBuried(rowStart + x, y) && ++depth >= WIND_PENETRATION) blocked = true;
+            } else if (id === EMPTY) {
+                // Clear air: the run of material is over, and the kick the wind
+                // took from it levels out over the next few cells.
+                depth = 0;
+                if (liftLeft > 0) liftLeft--;
+            }
         }
 
         // Second pass, walking against it: downwind cells are dealt with first,
@@ -2092,8 +2201,11 @@ function blowBreeze() {
             // A few rows of faint haze, so the gust can be seen crossing even
             // over a stretch where there is nothing loose for it to pick up.
             // Kept dim and sparse: it is there to be noticed out of the corner
-            // of the eye rather than looked at.
-            if (windStreak(y, streakSeed) > 0.93) markWind(i, force * 150);
+            // of the eye rather than looked at. Where the flow has been turned
+            // up it is drawn a row higher, so the gust is seen riding over the
+            // drift that deflected it.
+            const rise = rowLift[x] && y > 0 ? 1 : 0;
+            if (windStreak(y, streakSeed) > 0.93) markWind(i - rise * COLS, force * 75);
 
             const id = world.type[i];
             if (id === EMPTY) continue;
@@ -2105,20 +2217,28 @@ function blowBreeze() {
             // The very lightest things - smoke, snow, ash, seeds - get lifted a
             // little as well as pushed along, which is what stops a gust
             // looking like a conveyor belt.
-            const lift = def.windLift > 0.7 && Math.random() < 0.25 ? -1 : 0;
+            let lift = def.windLift > 0.7 && Math.random() < 0.25 ? -1 : 0;
+            // Air that has just come through something it could move is still
+            // rising, and takes a little of what it carries up with it.
+            if (lift === 0 && rowLift[x] && Math.random() < 0.2) lift = -1;
             const nx = x + b.dir;
-            const ny = y + lift;
+            let ny = y + lift;
             if (nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS) continue;
 
-            const ni = ny * COLS + nx;
-            const target = world.type[ni];
-            if (target !== EMPTY) {
-                const blocking = DEFS[target];
-                if (blocking.category === 'static') continue;
-                if (blocking.density >= def.density) continue;
+            let ni = ny * COLS + nx;
+            const ahead = world.type[ni];
+            if (!windCanEnter(def, ahead)) {
+                // Blocked. If what is in the way is loose - the next grain
+                // along in the pile rather than a wall - the air is turned up
+                // and over it and the grain goes up with it. A wall just stops
+                // it dead, which is what keeps drawn boxes windproof.
+                if (!deflectsUpward(ahead) || ny < 1) continue;
+                ny -= 1;
+                ni = ny * COLS + nx;
+                if (!windCanEnter(def, world.type[ni])) continue;
             }
             swapCells(i, ni);
-            markWind(ni, force * 150);
+            markWind(ni, force * 75);
         }
     }
 }

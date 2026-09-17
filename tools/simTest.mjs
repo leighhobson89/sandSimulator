@@ -1163,11 +1163,27 @@ check('the breeze left the wet mud where it was',
     `wet mud moved from ${breezeMudStart.toFixed(1)} to ${centreOf(ID['Wet Mud']).toFixed(1)}`);
 check('and switching it off stops it', !isBreezeBlowing());
 
+section('Roughly one seed in ten is born buoyant');
+// Counted at the moment each one is placed, in open air, so nothing has had a
+// chance to move: this is the toss of the coin itself rather than where the
+// seeds ended up. A big sample, because the whole point is the proportion, and
+// generous bounds, because it is a random draw and this is not a test of luck.
+clearWorld();
+let bornBuoyant = 0;
+for (let n = 0; n < 400; n++) {
+    const x = 5 + (n % 50);
+    setCell(x, 5, ID.Seed);
+    if (getWorld().data[index(x, 5)] === 1) bornBuoyant++;
+}
+check('about a tenth of them came up buoyant', bornBuoyant > 15 && bornBuoyant < 70,
+    `${bornBuoyant} of 400 were born buoyant`);
+
 section('Seeds settle it at birth: some float, the rest sink');
+clearWorld();
 fillRect(0, ROWS - 2, COLS, 2, ID.Wall);
 fillRect(6, ROWS - 18, COLS - 12, 16, ID.Water);
 run(200);
-for (let n = 0; n < 40; n++) setCell(10 + (n % 30), 3, ID.Seed);
+for (let n = 0; n < 40; n++) setCell(10 + (n % 40), 3, ID.Seed);
 let floaters = 0;
 let sinkers = 0;
 for (let y = 0; y < ROWS; y++) {
@@ -1176,7 +1192,11 @@ for (let y = 0; y < ROWS; y++) {
         if (getWorld().data[index(x, y)] === 1) floaters++; else sinkers++;
     }
 }
-check('some seeds came up buoyant and some did not', floaters > 3 && sinkers > 3,
+// Buoyancy is a one in ten chance, so a batch this size is mostly sinkers and
+// may happen to hold no floaters at all. That the two kinds exist is settled by
+// the proportion check above; what matters here is that each kind ends up where
+// it belongs, which the two checks below measure.
+check('nearly all of them came up as sinkers', sinkers > 20,
     `${floaters} floaters, ${sinkers} sinkers`);
 
 run(500);

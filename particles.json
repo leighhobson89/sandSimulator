@@ -458,7 +458,7 @@
       "color": "rgb(158, 126, 48)",
       "category": "powder",
       "density": 1.15,
-      "floatChance": 0.4,
+      "floatChance": 0.1,
       "floatDensity": 0.55,
       "windLift": 0.75,
       "fallSpeed": 2,
