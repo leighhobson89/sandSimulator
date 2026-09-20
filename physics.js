@@ -29,8 +29,9 @@
 //   charge  persistent stored charge for materials that can retain it; this is
 //           floating point so a large connected mass can share one small input
 //   wind    how recently moving air passed through the cell, 0 to 255, fading a
-//           little every frame. Nothing in the simulation reads it back - it is
-//           there only so that the wind can be seen as well as felt
+//           little every frame. It is the visible haze, not air momentum
+//   airflowX/Y and airflowNextX/Y  decaying air momentum used by powered Fans;
+//           it carries loose particles beyond the visible cone before fading
 // -----------------------------------------------------------------------------
 
 export const EMPTY = 0;
@@ -187,6 +188,8 @@ export function prepareDefinitions(json) {
             electricalConductivity: p.conductive
                 ? Math.max(0.01, p.electricalConductivity || 1)
                 : 0,
+            machine: p.machine || null,
+            wireReach: p.wireReach || 0,
             energizesConductors: !!p.energizesConductors,
             chargeCapacity: p.chargeCapacity || 0,
             chargePerSpark: p.chargePerSpark || 0,
@@ -519,7 +522,11 @@ export function createWorld(cols, rows) {
         power: new Uint8Array(n),
         powerDelay: new Uint16Array(n),
         charge: new Float32Array(n),
-        wind: new Uint8Array(n)
+        wind: new Uint8Array(n),
+        airflowX: new Float32Array(n),
+        airflowY: new Float32Array(n),
+        airflowNextX: new Float32Array(n),
+        airflowNextY: new Float32Array(n)
     };
     world.temp.fill(AMBIENT);
     for (let i = 0; i < n; i++) world.shade[i] = Math.random() * 255;
@@ -591,6 +598,10 @@ export function clearWorld() {
     world.powerDelay.fill(0);
     world.charge.fill(0);
     world.wind.fill(0);
+    world.airflowX.fill(0);
+    world.airflowY.fill(0);
+    world.airflowNextX.fill(0);
+    world.airflowNextY.fill(0);
 }
 
 // What a freshly placed particle starts with in its data slot. A plant gets a
@@ -718,26 +729,18 @@ function energizeConnectedMetal(seeds, chargeStorage = true) {
 
     for (let head = 0; head < queue.length; head++) {
         const i = queue[head];
-        const x = i % COLS;
-        const y = Math.floor(i / COLS);
-
-        for (const [dx, dy] of ELECTRICAL_NEIGHBOURS) {
-            const nx = x + dx;
-            const ny = y + dy;
-            if (!inBounds(nx, ny)) continue;
-            const ni = ny * COLS + nx;
+        forEachConductiveConnection(i, ni => {
             const nextDef = DEFS[world.type[ni]];
-            if (!nextDef || !nextDef.conductive) continue;
-            if (!chargeStorage && nextDef.chargeCapacity > 0) continue;
+            if (!chargeStorage && nextDef.chargeCapacity > 0) return;
 
             const travelFrames = Math.max(1,
                 Math.ceil(1 / Math.max(0.01, nextDef.electricalConductivity)));
             const nextDistance = distance[i] + travelFrames;
-            if (distance[ni] !== -1 && distance[ni] <= nextDistance) continue;
+            if (distance[ni] !== -1 && distance[ni] <= nextDistance) return;
             if (distance[ni] === -1) touched.push(ni);
             distance[ni] = nextDistance;
             queue.push(ni);
-        }
+        });
     }
 
     const storageCells = [];
@@ -776,15 +779,32 @@ function energizeConnectedMetal(seeds, chargeStorage = true) {
 
 function conductiveNeighbours(x, y) {
     const neighbours = [];
-    for (const [dx, dy] of ELECTRICAL_NEIGHBOURS) {
-        const nx = x + dx;
-        const ny = y + dy;
-        if (!inBounds(nx, ny)) continue;
-        const ni = ny * COLS + nx;
-        const def = DEFS[world.type[ni]];
-        if (def && def.conductive) neighbours.push(ni);
-    }
+    const source = index(x, y);
+    forEachConductiveConnection(source, ni => neighbours.push(ni));
     return neighbours;
+}
+
+// Solid Copper and Iron wires can reach two cells beyond their physical end.
+// Empty cells may form that short electrical jump, but any material in the gap
+// stops it. The reach is directional along the eight neighbouring grid lines,
+// matching the simulator's existing eight-way wire connectivity.
+function forEachConductiveConnection(i, callback) {
+    const source = DEFS[world.type[i]];
+    const reach = Math.max(1, source?.wireReach || 0);
+    const x = i % COLS;
+    const y = Math.floor(i / COLS);
+
+    for (const [dx, dy] of ELECTRICAL_NEIGHBOURS) {
+        for (let distance = 1; distance <= reach; distance++) {
+            const nx = x + dx * distance;
+            const ny = y + dy * distance;
+            if (!inBounds(nx, ny)) break;
+            const ni = ny * COLS + nx;
+            const nextDef = DEFS[world.type[ni]];
+            if (nextDef && nextDef.conductive) callback(ni);
+            if (world.type[ni] !== EMPTY) break;
+        }
+    }
 }
 
 // Returns the total load of the conductive grid reached from an aluminum
@@ -810,19 +830,12 @@ function connectedGridConsumption(seeds) {
         if (!def || !def.conductive) continue;
         consumption += def.powerConsumption;
 
-        const x = i % COLS;
-        const y = Math.floor(i / COLS);
-        for (const [dx, dy] of ELECTRICAL_NEIGHBOURS) {
-            const nx = x + dx;
-            const ny = y + dy;
-            if (!inBounds(nx, ny)) continue;
-            const ni = ny * COLS + nx;
+        forEachConductiveConnection(i, ni => {
             const nextDef = DEFS[world.type[ni]];
-            if (visited[ni] || !nextDef || !nextDef.conductive ||
-                nextDef.chargeCapacity > 0) continue;
+            if (visited[ni] || nextDef.chargeCapacity > 0) return;
             visited[ni] = 1;
             queue.push(ni);
-        }
+        });
     }
 
     return consumption;
@@ -936,6 +949,9 @@ export function stepSimulation() {
     computeLiquidSurfaces();
     world.moved.fill(0);
     updateElectricalPower();
+    decayAndAdvectFanAir();
+    updateActiveFanWinds();
+    applyFanAirflowToParticles();
 
     // The breeze blows first, on the freshly cleared moved flags, so that
     // anything it shifts counts as having had its move for the frame and is
@@ -2334,11 +2350,11 @@ function canCompactColumn(x, y, def) {
 // ambient breeze - switched on from the toolbar - sends a soft gust across the
 // whole world of its own accord every few seconds.
 //
-// Both leave a trail in world.wind: a per-cell number that fades away over the
-// following frames and that game.js draws as a faint pale haze. Nothing in the
-// simulation ever reads it back. It exists purely so that moving air can be
-// seen, rather than only being guessed at from whatever it happens to be
-// pushing about at the time.
+// All wind leaves a trail in world.wind: a per-cell number that fades away over
+// the following frames and that game.js draws as a faint pale haze. Powered
+// Fans also write real air momentum into airflowX/Y. That field is advected and
+// decelerated after the cone ends, so a particle carried to the edge does not
+// suddenly lose all sideways motion and fall straight down.
 
 // How much of a wind trail is left after a frame.
 const WIND_TRAIL_FADE = 0.86;
@@ -2457,6 +2473,181 @@ function windCanEnter(def, target) {
     const blocking = DEFS[target];
     if (blocking.category === 'static') return false;
     return blocking.density < def.density;
+}
+
+const FAN_WIND_STRENGTH = 21;
+const FAN_WIND_RANGE = 28;
+const FAN_REFERENCE_STRENGTH = 7;
+const FAN_AIR_DECAY = 0.84;
+const FAN_AIR_ADVECT = 0.76;
+const FAN_AIR_STAY = 1 - FAN_AIR_ADVECT;
+const FAN_AIR_PUSH_THRESHOLD = 0.12;
+
+function decayAndAdvectFanAir() {
+    const currentX = world.airflowX;
+    const currentY = world.airflowY;
+    const nextX = world.airflowNextX;
+    const nextY = world.airflowNextY;
+    nextX.fill(0);
+    nextY.fill(0);
+
+    for (let i = 0; i < currentX.length; i++) {
+        const vx = currentX[i];
+        const vy = currentY[i];
+        if (Math.abs(vx) + Math.abs(vy) < 0.01) continue;
+
+        const x = i % COLS;
+        const y = Math.floor(i / COLS);
+        const dirX = Math.sign(vx);
+        const dirY = Math.sign(vy);
+        const nx = x + dirX;
+        const ny = y + dirY;
+        const decayedX = vx * FAN_AIR_DECAY;
+        const decayedY = vy * FAN_AIR_DECAY;
+
+        nextX[i] += decayedX * FAN_AIR_STAY;
+        nextY[i] += decayedY * FAN_AIR_STAY;
+        if (inBounds(nx, ny) && !stopsWind(world.type[ny * COLS + nx])) {
+            const ni = ny * COLS + nx;
+            nextX[ni] += decayedX * FAN_AIR_ADVECT;
+            nextY[ni] += decayedY * FAN_AIR_ADVECT;
+        }
+    }
+
+    world.airflowX = nextX;
+    world.airflowY = nextY;
+    world.airflowNextX = currentX;
+    world.airflowNextY = currentY;
+
+    for (let i = 0; i < nextX.length; i++) {
+        const amount = Math.abs(nextX[i]) + Math.abs(nextY[i]);
+        if (amount > FAN_AIR_PUSH_THRESHOLD * 0.25) {
+            markWind(i, Math.min(38, amount * 18));
+        }
+    }
+}
+
+function addFanAirflow(i, dirX, dirY, amount) {
+    world.airflowX[i] += dirX * amount;
+    world.airflowY[i] += dirY * amount;
+}
+
+function fanDirectionVector(direction) {
+    switch (direction & 7) {
+        case 1: return [-1, 0]; // left
+        case 2: return [0, -1]; // up
+        case 3: return [0, 1];  // down
+        case 4: return [1, -1]; // up-right
+        case 5: return [-1, -1]; // up-left
+        case 6: return [-1, 1]; // down-left
+        case 7: return [1, 1]; // down-right
+        default: return [1, 0]; // right
+    }
+}
+
+function fanIsActive(x, y, i) {
+    if (world.power[i] > 0 || world.powerDelay[i] > 0) return true;
+
+    // A live Spark or a Spark source touching the Fan is enough to start it.
+    // The source check is deliberate: a source does not need an empty cell on
+    // the Fan-facing side in order to energize a machine it is touching.
+    const spark = idOf('Spark');
+    for (const [dx, dy] of ELECTRICAL_NEIGHBOURS) {
+        const neighbour = typeAt(x + dx, y + dy);
+        if (neighbour === spark || DEFS[neighbour]?.sparkEmitterChance > 0) return true;
+    }
+    return false;
+}
+
+// A Fan's output is a widening 28-cell cone: power is 21, while reach is four
+// times the original seven-cell cone. It marks the whole cone as a persistent
+// wind trail, injects momentum into the air and gives each movable cell one
+// downwind shove per simulation frame.
+function applyFanWind(x, y, direction, strength = FAN_WIND_STRENGTH) {
+    const [dirX, dirY] = fanDirectionVector(direction);
+    const tangentX = -dirY;
+    const tangentY = dirX;
+    const range = Math.max(1, Math.round(FAN_WIND_RANGE));
+    const powerScale = strength / FAN_REFERENCE_STRENGTH;
+    const intensity = Math.min(1, powerScale);
+    const blocked = new Set();
+
+    for (let distance = range; distance >= 1; distance--) {
+        const halfWidth = Math.floor((distance - 1) * 0.5);
+        const falloff = 1 - (distance - 1) / (range + 1);
+        for (let offset = -halfWidth; offset <= halfWidth; offset++) {
+            if (blocked.has(offset)) continue;
+
+            const nx = x + dirX * distance + tangentX * offset;
+            const ny = y + dirY * distance + tangentY * offset;
+            if (!inBounds(nx, ny)) continue;
+
+            const ni = index(nx, ny);
+            const id = world.type[ni];
+            if (stopsWind(id)) {
+                blocked.add(offset);
+                continue;
+            }
+
+            const lateral = 1 - Math.abs(offset) / (halfWidth + 1) * 0.35;
+            markWind(ni, 16 + 32 * intensity * falloff * lateral);
+            addFanAirflow(ni, dirX, dirY, powerScale * falloff * lateral);
+
+            if (id === EMPTY || world.moved[ni]) continue;
+            const def = DEFS[id];
+            const pushChance = Math.min(1, powerScale * falloff * def.windLift);
+            if (def.windLift <= 0 || Math.random() > pushChance) continue;
+
+            const tx = nx + dirX;
+            const ty = ny + dirY;
+            if (!inBounds(tx, ty)) continue;
+            const target = index(tx, ty);
+            if (world.moved[target] || !windCanEnter(def, world.type[target])) continue;
+            swapCells(ni, target);
+        }
+    }
+}
+
+// Residual Fan air keeps nudging loose material after it leaves the visible
+// cone. The field itself is spatial air, not particle data, so it decays and
+// travels downwind even when the carried particle has moved to a new cell.
+function applyFanAirflowToParticles() {
+    for (let i = 0; i < world.type.length; i++) {
+        if (world.moved[i] || world.type[i] === EMPTY) continue;
+
+        const vx = world.airflowX[i];
+        const vy = world.airflowY[i];
+        const magnitude = Math.abs(vx) + Math.abs(vy);
+        if (magnitude < FAN_AIR_PUSH_THRESHOLD) continue;
+
+        const def = DEFS[world.type[i]];
+        if (def.windLift <= 0) continue;
+        const pushChance = Math.min(1, magnitude * 0.55 * def.windLift);
+        if (Math.random() > pushChance) continue;
+
+        const dirX = Math.sign(vx);
+        const dirY = Math.sign(vy);
+        const x = i % COLS;
+        const y = Math.floor(i / COLS);
+        const nx = x + dirX;
+        const ny = y + dirY;
+        if (!inBounds(nx, ny)) continue;
+
+        const target = index(nx, ny);
+        if (world.moved[target] || !windCanEnter(def, world.type[target])) continue;
+        swapCells(i, target);
+    }
+}
+
+function updateActiveFanWinds() {
+    const fan = idOf('Fan');
+    if (fan === EMPTY) return;
+    for (let i = 0; i < world.type.length; i++) {
+        if (world.type[i] !== fan) continue;
+        const x = i % COLS;
+        const y = Math.floor(i / COLS);
+        if (fanIsActive(x, y, i)) applyFanWind(x, y, world.data[i]);
+    }
 }
 
 // The wind only climbs over things it could otherwise have moved. A wall turns

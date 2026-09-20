@@ -7,7 +7,7 @@ repository documentation in the current working tree.
 ## Executive summary
 
 Elemental Foundry is a browser-based falling-sand simulation with a headless
-physics core. The current data file defines 44 material and tool entries:
+physics core. The current data file defines 45 material and tool entries:
 
 | Group | Entries |
 |---|---:|
@@ -16,13 +16,18 @@ physics core. The current data file defines 44 material and tool entries:
 | Gases | 4 |
 | Solids | 15 |
 | Metals | 7 |
+| Machines | 1 |
 | Tools | 3 |
 
 The simulator currently exposes six visual themes, a 150-row world, heat and
 state changes, flowing liquids, gases, fire, weather, plants, lilies, snow,
 gunpowder, electrical pulses, Aluminum charge storage, conductive power grids,
 Spark Dust and the longer-lived Spark Block. Spark Block lasts five times the
-Dust lifetime, becomes Dust in its final tenth and Dust expires into Ash.
+Dust lifetime, becomes Dust in its final tenth and Dust expires into Ash. The
+Machines section currently contains Fan, a one-cell directional wind machine
+with a fixed 30x30 SVG face, eight cardinal/diagonal orientations and a
+strength-21, 28-cell airflow cone whose residual air decelerates beyond the
+cone.
 
 No confirmed functional regression was found in this audit. The full headless
 suite and browser-oriented smoke suite both pass. The remaining findings are
@@ -46,12 +51,13 @@ The test suite covers conservation and movement, water leveling and infiltration
 heat transfer, melting, freezing, boiling, fire, lava/scoria/stone, gases,
 wind and breeze, plants and lilies, snow, seeds, gunpowder, metals, electrical
 pulses, Aluminum charge sharing and discharge, Spark Dust, Spark Block lifetime,
-liquid suppression around spark sources, and the UI controls exercised by the
-smoke test.
+liquid suppression around spark sources, Fan activation, its 28-cell reach,
+residual-air deceleration and eight-way orientation, plus the UI controls
+exercised by the smoke test.
 
 The audit also corrected documentation drift found in the source data:
 
-- the project now reports 44 entries rather than 36;
+- the project now reports 45 entries rather than 36;
 - the configured starting ambient temperature is 8°C rather than 20°C;
 - seed buoyancy is 10% rather than two in five;
 - the product is now named Elemental Foundry throughout the application.
@@ -62,8 +68,8 @@ All commands below were run from the repository root on the audit date.
 
 | Check | Outcome |
 |---|---|
-| `npm test` | **233 passed, 0 failed** |
-| `node tools/smokeTest.mjs` | **Passed**: startup, 44 material buttons, six groups, drawing tools, themes, charge rendering, temperature and breeze controls all passed |
+| `npm test` | **242 passed, 0 failed** |
+| `node tools/smokeTest.mjs` | **Passed**: startup, 45 material buttons, seven groups, canvas rendering, Fan placement/orientation, drawing tools, themes, charge rendering, temperature and breeze controls all passed |
 | `node --check physics.js` | Passed |
 | `node --check tools/simTest.mjs` | Passed |
 | JSON parse of `particles.json` | Passed |

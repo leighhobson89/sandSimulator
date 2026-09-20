@@ -72,7 +72,7 @@ export function startGame() {
 // material picker and tools panel on simulation columns.
 function fitGridToWorkspace() {
     const canvas = getElements().canvas;
-    const area = canvas.parentElement;
+    const area = getElements().canvasArea;
     const rows = getGridRows();
     const availableHeight = Math.max(1, area.clientHeight - 32);
     const targetWidth = Math.max(1, area.clientWidth - 32);
@@ -89,7 +89,7 @@ function fitGridToWorkspace() {
 // square. The canvas itself stays at one pixel per cell; this only stretches it.
 function fitCanvasToScreen() {
     const canvas = getElements().canvas;
-    const area = canvas.parentElement;
+    const area = getElements().canvasArea;
     const cols = getGridCols();
     const rows = getGridRows();
 
@@ -99,6 +99,11 @@ function fitCanvasToScreen() {
 
     canvas.style.width = Math.floor(cols * scale) + 'px';
     canvas.style.height = Math.floor(rows * scale) + 'px';
+    const stage = getElements().canvasStage || canvas.parentElement;
+    if (stage) {
+        stage.style.width = canvas.style.width;
+        stage.style.height = canvas.style.height;
+    }
 }
 
 export function gameLoop(now) {
@@ -241,8 +246,52 @@ function drawWorld() {
 
     drawGrabberPreview();
     context.putImageData(imageData, 0, 0);
+    drawFanOverlays();
     drawGrabberOutline();
     drawLinePreview();
+}
+
+const FAN_ICON_SVG_NS = 'http://www.w3.org/2000/svg';
+
+// Fans are still one simulation cell, but their machine face is a fixed-size
+// screen icon so it remains readable when the pixel canvas is scaled up.
+function drawFanOverlays() {
+    const overlay = getElements().fanOverlay;
+    if (!overlay) return;
+    if (typeof overlay.replaceChildren === 'function') overlay.replaceChildren();
+    else overlay.innerHTML = '';
+
+    const world = getWorld();
+    const fan = getDefinitions().findIndex(def => def && def.machine === 'fan');
+    if (fan < 0) return;
+
+    const canvas = getElements().canvas;
+    const cellWidth = canvas.clientWidth / world.cols;
+    const cellHeight = canvas.clientHeight / world.rows;
+    const rotations = [0, 180, -90, 90, -45, -135, 135, 45];
+    const iconMarkup = '<circle cx="11" cy="15" r="7" fill="none" stroke="currentColor" stroke-width="1.6"/>' +
+        '<circle cx="11" cy="15" r="2.2" fill="currentColor"/>' +
+        '<path d="M11 12.8C7 10 6.5 6 9.4 5.1c3.2-1 4.3 2.7 2.1 7.7Z" fill="currentColor"/>' +
+        '<path d="M13.2 15c2.8-4 6.8-4.5 7.7-1.6 1 3.2-2.7 4.3-7.7 2.1Z" fill="currentColor"/>' +
+        '<path d="M11 17.2c4 2.8 4.5 6.8 1.6 7.7-3.2 1-4.3-2.7-2.1-7.7Z" fill="currentColor"/>' +
+        '<path d="M17 10h7M18 15h9M17 20h7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>';
+
+    for (let i = 0; i < world.type.length; i++) {
+        if (world.type[i] !== fan) continue;
+        const x = i % world.cols;
+        const y = Math.floor(i / world.cols);
+        const icon = document.createElementNS(FAN_ICON_SVG_NS, 'svg');
+        icon.setAttribute('class', 'fan-overlay-icon');
+        icon.setAttribute('viewBox', '0 0 30 30');
+        icon.setAttribute('width', '30');
+        icon.setAttribute('height', '30');
+        icon.setAttribute('aria-hidden', 'true');
+        icon.style.left = `${(x + 0.5) * cellWidth - 15}px`;
+        icon.style.top = `${(y + 0.5) * cellHeight - 15}px`;
+        icon.style.transform = `rotate(${rotations[world.data[i] & 7]}deg)`;
+        icon.innerHTML = iconMarkup;
+        overlay.appendChild(icon);
+    }
 }
 
 function clampByte(v) {
@@ -427,6 +476,7 @@ export function paintCell(centreX, centreY, dragX, dragY) {
             if (id === EMPTY) {
                 world.type[i] = EMPTY;
                 world.life[i] = 0;
+                world.lifeMax[i] = 0;
                 world.residue[i] = EMPTY;
                 world.temp[i] = getAirTempAt(y);
                 world.power[i] = 0;
@@ -446,6 +496,34 @@ export function paintCell(centreX, centreY, dragX, dragY) {
             setCell(x, y, id);
         }
     }
+}
+
+function fanId() {
+    return getDefinitions().findIndex(def => def && def.machine === 'fan');
+}
+
+function normaliseFanDirection(direction) {
+    return ((Math.round(direction) % 8) + 8) % 8;
+}
+
+// Machines are placed as one cell, independently of brush size. Their
+// orientation lives in the cell's data byte so it travels with the Fan when
+// the grabber moves it and survives the normal world-state operations.
+export function placeFan(x, y, direction = 0) {
+    const id = fanId();
+    if (id <= 0 || !inBounds(x, y)) return false;
+    const i = index(x, y);
+    if (getWorld().type[i] !== EMPTY) return false;
+    setCell(x, y, id);
+    getWorld().data[i] = normaliseFanDirection(direction);
+    return true;
+}
+
+export function faceFan(x, y, direction = 0) {
+    const i = inBounds(x, y) ? index(x, y) : -1;
+    if (i < 0 || getWorld().type[i] !== fanId()) return false;
+    getWorld().data[i] = normaliseFanDirection(direction);
+    return true;
 }
 
 // Draws along the line between two mouse positions so that a fast drag leaves a
@@ -489,7 +567,7 @@ export function beginGrab(centreX, centreY, size = getGrabberSize()) {
             cells.push({
                 dx: x - centreX, dy: y - centreY,
                 x, y,
-                type: world.type[i], temp: world.temp[i], life: world.life[i],
+                type: world.type[i], temp: world.temp[i], life: world.life[i], lifeMax: world.lifeMax[i],
                 residue: world.residue[i], shade: world.shade[i],
                 heat: world.heat[i], data: world.data[i],
                 power: world.power[i], powerDelay: world.powerDelay[i],
@@ -547,6 +625,7 @@ function clearGrabbedCell(world, i, y) {
     world.type[i] = EMPTY;
     world.temp[i] = getAirTempAt(y);
     world.life[i] = 0;
+    world.lifeMax[i] = 0;
     world.residue[i] = EMPTY;
     world.heat[i] = 0;
     world.data[i] = 0;
@@ -561,6 +640,7 @@ function restoreGrabbedCell(world, i, cell) {
     world.type[i] = cell.type;
     world.temp[i] = cell.temp;
     world.life[i] = cell.life;
+    world.lifeMax[i] = cell.lifeMax;
     world.residue[i] = cell.residue;
     world.shade[i] = cell.shade;
     world.heat[i] = cell.heat;

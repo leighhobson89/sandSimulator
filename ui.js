@@ -19,7 +19,7 @@ import {
 import {
     loadParticleDefinitions, initializeWorld, setGameState, startGame,
     paintLine, paintCell, clearCanvasWorld, setHoverCell,
-    beginGrab, dropGrab, cancelGrab, setLinePreview, clearLinePreview
+    placeFan, faceFan, beginGrab, dropGrab, cancelGrab, setLinePreview, clearLinePreview
 } from './game.js';
 import {
     getDefinitions, setAmbientTarget, getAmbientTarget, setLayerLapse, getLayerLapse,
@@ -35,6 +35,7 @@ let lastCell = null;
 let paintTimer = null;
 let currentCell = { x: 0, y: 0 };
 let lineStart = null;
+let fanPlacement = null;
 
 document.addEventListener('DOMContentLoaded', async () => {
     await loadParticleDefinitions();
@@ -120,7 +121,7 @@ function buildParticleButtons() {
     const defs = getDefinitions();
     container.innerHTML = '';
 
-    const order = ['Powders', 'Liquids', 'Gases', 'Solids', 'Metals', 'Tools', 'Other'];
+    const order = ['Powders', 'Liquids', 'Gases', 'Solids', 'Metals', 'Machines', 'Tools', 'Other'];
     const groups = {};
     for (let id = 1; id < defs.length; id++) {
         if (!defs[id]) continue;
@@ -388,6 +389,13 @@ function setUpCanvasInput() {
         // Right button erases without having to switch tool.
         if (event.button === 2) setEraserOn(true);
         lastCell = null;
+        if (event.button === 0 && selectedFan()) {
+            fanPlacement = placeFan(currentCell.x, currentCell.y, 0)
+                ? { x: currentCell.x, y: currentCell.y }
+                : null;
+            isPainting = !!fanPlacement;
+            return;
+        }
         if (getDrawMode() === 'line') {
             lineStart = { x: currentCell.x, y: currentCell.y };
             setLinePreview(lineStart.x, lineStart.y, currentCell.x, currentCell.y);
@@ -402,6 +410,11 @@ function setUpCanvasInput() {
         setHoverCell(currentCell.x, currentCell.y);
         if (isGrabbing) return;
         if (!isPainting) return;
+        if (fanPlacement || selectedFan()) {
+            if (fanPlacement) faceFan(fanPlacement.x, fanPlacement.y,
+                fanDirection(currentCell.x - fanPlacement.x, currentCell.y - fanPlacement.y));
+            return;
+        }
         if (getDrawMode() === 'line' && lineStart) {
             setLinePreview(lineStart.x, lineStart.y, currentCell.x, currentCell.y);
         } else {
@@ -435,6 +448,13 @@ function setUpCanvasInput() {
         }
         isPainting = true;
         lastCell = null;
+        if (selectedFan()) {
+            fanPlacement = placeFan(currentCell.x, currentCell.y, 0)
+                ? { x: currentCell.x, y: currentCell.y }
+                : null;
+            isPainting = !!fanPlacement;
+            return;
+        }
         if (getDrawMode() === 'line') {
             lineStart = { x: currentCell.x, y: currentCell.y };
             setLinePreview(lineStart.x, lineStart.y, currentCell.x, currentCell.y);
@@ -449,6 +469,11 @@ function setUpCanvasInput() {
         currentCell = cellFromEvent(event.touches[0]);
         setHoverCell(currentCell.x, currentCell.y);
         if (isGrabbing) return;
+        if (fanPlacement || selectedFan()) {
+            if (fanPlacement) faceFan(fanPlacement.x, fanPlacement.y,
+                fanDirection(currentCell.x - fanPlacement.x, currentCell.y - fanPlacement.y));
+            return;
+        }
         if (getDrawMode() === 'line' && lineStart) {
             setLinePreview(lineStart.x, lineStart.y, currentCell.x, currentCell.y);
         } else {
@@ -467,6 +492,14 @@ function setUpCanvasInput() {
 }
 
 function finishPainting(button) {
+    if (fanPlacement) {
+        fanPlacement = null;
+        isPainting = false;
+        lastCell = null;
+        stopPaintTimer();
+        if (button === 2) setEraserOn(false);
+        return;
+    }
     if (getDrawMode() === 'line' && lineStart) {
         clearLinePreview();
         paintLine(lineStart.x, lineStart.y, currentCell.x, currentCell.y);
@@ -480,10 +513,29 @@ function finishPainting(button) {
 
 function cancelPainting() {
     isPainting = false;
+    fanPlacement = null;
     lineStart = null;
     lastCell = null;
     stopPaintTimer();
     clearLinePreview();
+}
+
+function selectedFan() {
+    const selected = getParticleTypeIdSelected();
+    const def = getDefinitions()[selected];
+    return !!def && def.machine === 'fan';
+}
+
+function fanDirection(dx, dy) {
+    if (dx === 0 && dy === 0) return 0; // right
+    const horizontal = Math.abs(dx);
+    const vertical = Math.abs(dy);
+    if (horizontal >= vertical * 2) return dx >= 0 ? 0 : 1;
+    if (vertical >= horizontal * 2) return dy < 0 ? 2 : 3; // up, down
+    if (dx >= 0 && dy < 0) return 4; // up-right
+    if (dx < 0 && dy < 0) return 5; // up-left
+    if (dx < 0 && dy >= 0) return 6; // down-left
+    return 7; // down-right
 }
 
 function setGrabberMode(on) {

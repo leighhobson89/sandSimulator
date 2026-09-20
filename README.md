@@ -1,6 +1,6 @@
 # Elemental Foundry
 
-A living elemental sandbox: 44 materials and tools on a 150-row grid that adds
+A living elemental sandbox: 45 materials and tools on a 150-row grid that adds
 enough columns to fill about 90% of the workspace beside the material picker,
 with heat that spreads from cell to cell so that things melt, boil, freeze and
 catch fire on their own, weather that blows across the world of its own accord,
@@ -14,7 +14,7 @@ The current code audit is recorded in [`docs/CODE_AUDIT.md`](docs/CODE_AUDIT.md)
 Active findings are kept in [`docs/ISSUES.md`](docs/ISSUES.md), while superseded
 documentation findings are kept in [`docs/archive/`](docs/archive/).
 
-The latest verification on 20 September 2026 is green: `npm test` reports 233
+The latest verification on 20 September 2026 is green: `npm test` reports 242
 passed and 0 failed, and `node tools/smokeTest.mjs` passes its browser-startup
 and interaction checks. The audit also includes the static syntax and JSON
 validation commands used alongside those suites.
@@ -129,6 +129,13 @@ from the Wind slider, at double what the tool blows with, being weather rather
 than a nudge from the mouse - so one dial covers both, and turning it up gives
 weather to match. It is off to start with, since a world that blows itself about
 is not what someone laying out a scene wants.
+
+**Fan** is a machine in the Metals section. Its picker button simply says Fan;
+clicking places one 30x30 on-canvas fan regardless of brush size or drawing mode.
+Drag while placing to face it in any of the eight cardinal or diagonal
+directions. A powered Fan blows a strength-21, 28-cell cone in the direction
+it faces; the airflow decelerates past the cone so loose particles do not drop
+vertically at its edge.
 
 ## Themes
 

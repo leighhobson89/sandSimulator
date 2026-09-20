@@ -19,7 +19,7 @@ function pass(message) { console.log(`  PASS  ${message}`); }
 
 // ------------------------------------------------------------ browser stand-in
 
-function makeElement(id) {
+function makeElement(id, tagName = 'DIV') {
     const classes = new Set(['d-none']);
     return {
         id,
@@ -36,7 +36,7 @@ function makeElement(id) {
             contains: c => classes.has(c),
             toggle: (c, on) => { if (on === undefined) { classes.has(c) ? classes.delete(c) : classes.add(c); } else if (on) { classes.add(c); } else { classes.delete(c); } }
         },
-        tagName: 'DIV',
+        tagName: String(tagName).toUpperCase(),
         attributes: {},
         setAttribute(name, value) { this.attributes[name] = String(value); },
         getAttribute(name) { return this.attributes[name]; },
@@ -50,6 +50,7 @@ function makeElement(id) {
         },
         click() { this.fire('click', { button: 0 }); },
         appendChild(child) { this.children.push(child); },
+        replaceChildren(...children) { this.children = children; },
         // Good enough for ".particle-button": walks the tree and matches on
         // class name, since the panel nests buttons inside group grids.
         querySelectorAll(selector) {
@@ -97,7 +98,8 @@ let frameCallbacks = [];
 
 globalThis.document = {
     getElementById: byId,
-    createElement: () => makeElement('created'),
+    createElement: tag => makeElement('created', tag),
+    createElementNS: (namespace, tag) => makeElement('created', tag),
     addEventListener: (type, handler) => { (documentListeners[type] ||= []).push(handler); },
     querySelector: () => makeElement('q'),
     // The theme is applied by setting an attribute on the body.
@@ -190,6 +192,12 @@ if (headings.some(heading => heading.textContent === 'Metals')) {
 } else {
     fail('the Metals material section is missing');
 }
+const fanButtonBeforeStart = materialButtons.find(button => button.textContent === 'Fan');
+if (fanButtonBeforeStart && fanButtonBeforeStart.children.length === 0) {
+    pass('the Fan picker button is text-only');
+} else {
+    fail('the Fan picker button should only say Fan');
+}
 
 byId('newGame').click();
 pass('New Game started without throwing');
@@ -277,6 +285,102 @@ if (windButton) {
     fail('no wind tool button was built');
 }
 window.fire('mouseup', { button: 0 });
+
+// Fans are single-cell machines: brush size and line mode affect neither their
+// footprint nor the direction stored in the cell. Their DOM face is a fixed
+// 30px icon layered over the scaled pixel canvas.
+const fanId = getDefinitions().findIndex(d => d && d.machine === 'fan');
+const fanButton = materialButtons.find(b => parseInt(b.dataset.particleId) === fanId);
+const fanClient = (x, y) => ({
+    clientX: ((x + 0.5) / startedCanvas.width) * 800,
+    clientY: ((y + 0.5) / startedCanvas.height) * 600
+});
+function countFans() {
+    const world = physicsForLine.getWorld();
+    let count = 0;
+    let direction = -1;
+    for (let i = 0; i < world.type.length; i++) {
+        if (world.type[i] === fanId) {
+            count++;
+            direction = world.data[i] & 7;
+        }
+    }
+    return { count, direction };
+}
+function placeOneFan(mode, start, end) {
+    physicsForLine.clearWorld();
+    if (mode === 'line') byId('lineModeButton').click();
+    else byId('brushModeButton').click();
+    fanButton.fire('click', {});
+    canvas.fire('mousedown', { button: 0, ...fanClient(start[0], start[1]) });
+    if (end) canvas.fire('mousemove', { button: 0, ...fanClient(end[0], end[1]) });
+    window.fire('mouseup', { button: 0 });
+    return countFans();
+}
+if (fanButton) {
+    byId('brushSize').fire('input', { target: { value: '31' } });
+    const noDrag = placeOneFan('brush', [50, 50]);
+    if (noDrag.count === 1 && noDrag.direction === 0) pass('a no-drag Fan defaults to facing right');
+    else fail(`no-drag Fan placed ${noDrag.count} cells with direction ${noDrag.direction}`);
+
+    const right = placeOneFan('brush', [70, 50], [90, 50]);
+    runFrames(1);
+    const fanIcon = byId('fanOverlay').children[0];
+    if (right.count === 1 && right.direction === 0) pass('a rightward Fan drag places exactly one Fan');
+    else fail(`rightward Fan drag placed ${right.count} cells with direction ${right.direction}`);
+    if (fanIcon && fanIcon.getAttribute('width') === '30' &&
+        fanIcon.getAttribute('height') === '30' && fanIcon.style.transform === 'rotate(0deg)') {
+        pass('the canvas Fan face is a 30x30 right-facing SVG overlay');
+    } else {
+        fail('the canvas Fan overlay is missing, mis-sized or mis-oriented');
+    }
+
+    const left = placeOneFan('brush', [110, 60], [90, 60]);
+    const up = placeOneFan('line', [130, 80], [130, 60]);
+    const down = placeOneFan('line', [150, 80], [150, 100]);
+    const upRight = placeOneFan('brush', [170, 80], [190, 60]);
+    const upLeft = placeOneFan('brush', [200, 80], [180, 60]);
+    const downLeft = placeOneFan('line', [210, 80], [190, 100]);
+    const downRight = placeOneFan('line', [180, 100], [200, 120]);
+    if (left.count === 1 && left.direction === 1 &&
+        up.count === 1 && up.direction === 2 &&
+        down.count === 1 && down.direction === 3 &&
+        upRight.count === 1 && upRight.direction === 4 &&
+        upLeft.count === 1 && upLeft.direction === 5 &&
+        downLeft.count === 1 && downLeft.direction === 6 &&
+        downRight.count === 1 && downRight.direction === 7) {
+        pass('Fan drags face in all eight directions without expanding the placement');
+    } else {
+        fail(`Fan drag directions were left=${left.direction}, up=${up.direction}, down=${down.direction}, diagonals=${upRight.direction}/${upLeft.direction}/${downLeft.direction}/${downRight.direction}`);
+    }
+
+    const copperId = getDefinitions().findIndex(d => d && d.name === 'Copper');
+    byId('brushModeButton').click();
+    physicsForLine.clearWorld();
+    physicsForLine.setCell(70, 50, copperId);
+    fanButton.fire('click', {});
+    canvas.fire('mousedown', { button: 0, ...fanClient(70, 50) });
+    canvas.fire('mousemove', { button: 0, ...fanClient(90, 50) });
+    window.fire('mouseup', { button: 0 });
+    const failedStart = countFans();
+    if (failedStart.count === 0) pass('a failed Fan placement over wire does not paint during the drag');
+    else fail(`a blocked Fan placement painted ${failedStart.count} Fan cells`);
+
+    physicsForLine.clearWorld();
+    physicsForLine.setCell(90, 50, copperId);
+    fanButton.fire('click', {});
+    canvas.fire('mousedown', { button: 0, ...fanClient(70, 50) });
+    canvas.fire('mousemove', { button: 0, ...fanClient(90, 50) });
+    window.fire('mouseup', { button: 0 });
+    const overWire = countFans();
+    if (overWire.count === 1 && overWire.direction === 0) {
+        pass('dragging a placed Fan over wire leaves only its original Fan');
+    } else {
+        fail(`dragging over wire left ${overWire.count} Fans with direction ${overWire.direction}`);
+    }
+} else {
+    fail('no Fan button was built');
+}
 
 // Stored charge is visible as a yellow tint on aluminum.
 const aluminumId = getDefinitions().findIndex(d => d && d.name === 'Aluminum');

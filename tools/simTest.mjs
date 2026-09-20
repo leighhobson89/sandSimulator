@@ -972,6 +972,19 @@ check('the attached metal stops receiving power once Aluminum is empty',
     !getWorld().power.some(value => value > 0) &&
     !getWorld().powerDelay.some(value => value > 0));
 
+for (const [wireId, wireName] of [[ID.Copper, 'Copper'], [ID.Iron, 'Iron']]) {
+    clearWorld();
+    setCell(10, 20, ID.Aluminum);
+    setCell(11, 20, wireId);
+    setCell(13, 20, ID.Fan);
+    getWorld().charge[index(10, 20)] = defs[ID.Aluminum].chargeCapacity;
+    stepSimulation();
+    const machine = index(13, 20);
+    check(`${wireName} can power a machine two cells beyond its end`,
+        getWorld().powerDelay[machine] > 0 || getWorld().power[machine] > 0,
+        `${wireName} wire reach is ${defs[wireId].wireReach}`);
+}
+
 section('Spark Dust emits around itself and wears out pixel by pixel');
 clearWorld();
 for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
@@ -1034,6 +1047,74 @@ check('a Spark Block becomes Spark Dust in its final tenth',
 sparkBlock.sparkEmitterChance = savedSparkBlockEmitterChance;
 Object.assign(sparkBlock, savedSparkBlockLifetime);
 sparkBlock.sparkEmitterChance = savedSparkBlockEmitterChance;
+
+// ---------------------------------------------------------------------------
+
+section('Fans activate from power and blow a directional cone');
+const fan = defs[ID.Fan];
+check('Fan is a 50-load conductive machine',
+    fan.machine === 'fan' && fan.conductive &&
+    fan.electricalConductivity === 50 && fan.powerConsumption === 50);
+
+const fanX = 30;
+const fanY = 20;
+clearWorld();
+setCell(fanX, fanY, ID.Fan);
+setCell(fanX - 1, fanY, ID.Aluminum);
+getWorld().charge[index(fanX - 1, fanY)] = defs[ID.Aluminum].chargeCapacity;
+stepSimulation();
+const fanWind = getWorld().wind;
+check('a charged Aluminum contact powers the Fan', isPowered(fanX, fanY));
+check('an active Fan marks its forward cone',
+    fanWind[index(fanX + 1, fanY)] > 0 && fanWind[index(fanX + 3, fanY)] > 0);
+check('the Fan cone widens away from the housing',
+    fanWind[index(fanX + 3, fanY - 1)] > 0 && fanWind[index(fanX + 3, fanY + 1)] > 0);
+
+const savedAshWindLift = defs[ID.Ash].windLift;
+clearWorld();
+const floorFanX = 20;
+const floorFanY = ROWS - 1;
+setCell(floorFanX, floorFanY, ID.Fan);
+setCell(floorFanX - 1, floorFanY, ID.Aluminum);
+getWorld().charge[index(floorFanX - 1, floorFanY)] = defs[ID.Aluminum].chargeCapacity;
+setCell(floorFanX + 28, floorFanY, ID.Ash);
+defs[ID.Ash].windLift = 100;
+stepSimulation();
+check('the Fan reaches particles four times farther away',
+    typeAt(floorFanX + 29, floorFanY) === ID.Ash &&
+    getWorld().wind[index(floorFanX + 28, floorFanY)] > 0 &&
+    getWorld().wind[index(floorFanX + 29, floorFanY)] === 0);
+stepSimulation();
+check('Fan air decelerates beyond the cone instead of stopping abruptly',
+    typeAt(floorFanX + 30, floorFanY) === ID.Ash &&
+    getWorld().airflowX[index(floorFanX + 29, floorFanY)] > 0 &&
+    getWorld().airflowX[index(floorFanX + 29, floorFanY)] <
+        getWorld().airflowX[index(floorFanX + 28, floorFanY)]);
+defs[ID.Ash].windLift = savedAshWindLift;
+
+clearWorld();
+setCell(fanX, fanY, ID.Fan);
+stepSimulation();
+check('an unpowered Fan is still', !getWorld().wind.some(value => value > 0));
+
+clearWorld();
+setCell(fanX, fanY, ID.Fan);
+getWorld().data[index(fanX, fanY)] = 1; // left
+setCell(fanX + 1, fanY, ID.Spark);
+stepSimulation();
+check('a touching Spark activates a Fan facing left',
+    getWorld().wind[index(fanX - 1, fanY)] > 0 &&
+    getWorld().wind[index(fanX + 1, fanY)] === 0);
+
+clearWorld();
+setCell(fanX, fanY, ID.Fan);
+getWorld().data[index(fanX, fanY)] = 4; // up-right
+setCell(fanX - 1, fanY, ID.Aluminum);
+getWorld().charge[index(fanX - 1, fanY)] = defs[ID.Aluminum].chargeCapacity;
+stepSimulation();
+check('a Fan can blow diagonally',
+    getWorld().wind[index(fanX + 1, fanY - 1)] > 0 &&
+    getWorld().wind[index(fanX + 1, fanY + 1)] === 0);
 
 // ---------------------------------------------------------------------------
 

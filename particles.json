@@ -25,12 +25,14 @@
     "cooling       how fast it drifts back to the air temperature on its own, as a fraction of the gap",
     "coolingVariance  +/- fraction applied to each particle's cooling speed, using its fixed variation",
     "conductive    whether Sparks can send a power pulse through this material",
-    "electricalConductivity  relative pulse speed through a conductor, from slow near 0 to fast at 1",
+    "electricalConductivity  relative pulse speed through a conductor; higher values move pulses faster",
+    "machine       specialized machine behavior, such as the directional Fan",
     "chargeCapacity  stored electrical charge; 0 means it cannot retain charge between pulses",
     "chargePerSpark  total charge one Spark adds, shared by the connected storage-metal mass",
     "chargeSparkChance  chance per frame at full charge of emitting a visual-only Spark",
     "dischargeBattery  draws stored charge from touching battery material and conducts its power",
     "powerConsumption  charge units this conductive cell draws from its connected Aluminum grid each tick",
+    "wireReach     extra grid cells of empty air a wire can bridge to reach another conductor",
     "bulkInsulation  how much slower buried cells exchange heat than exposed cells, from 0 to 1",
     "coolsBy       degrees given up per frame on its own account, whatever the air is doing, stopping",
     "              at the air temperature. This is how something that starts white hot cools: at its",
@@ -867,6 +869,7 @@
       "electricalConductivity": 1,
       "dischargeBattery": true,
       "powerConsumption": 1,
+      "wireReach": 2,
       "corrodible": true
     },
     "38": {
@@ -892,6 +895,7 @@
       "electricalConductivity": 0.75,
       "dischargeBattery": true,
       "powerConsumption": 1,
+      "wireReach": 2,
       "corrodible": true
     },
     "39": {
@@ -952,6 +956,7 @@
       "electricalConductivity": 0.45,
       "dischargeBattery": true,
       "powerConsumption": 0.5,
+      "wireReach": 2,
       "corrodible": true
     },
     "42": {
@@ -977,6 +982,7 @@
       "electricalConductivity": 0.3,
       "dischargeBattery": true,
       "powerConsumption": 0.5,
+      "wireReach": 2,
       "corrodible": true
     },
     "43": {
@@ -1009,6 +1015,25 @@
       "lifeVariance": 1200,
       "lifeTransitionAt": 0.1,
       "lifeTransitionInto": "Spark Dust",
+      "corrodible": true
+    },
+    "45": {
+      "name": "Fan",
+      "group": "Machines",
+      "color": "rgb(74, 137, 171)",
+      "category": "static",
+      "density": 7.8,
+      "conductivity": 0.35,
+      "cooling": 0.002,
+      "bulkInsulation": 0.12,
+      "meltPoint": 1538,
+      "meltsInto": "Molten Iron",
+      "latent": 1200,
+      "conductive": true,
+      "electricalConductivity": 50,
+      "dischargeBattery": true,
+      "powerConsumption": 50,
+      "machine": "fan",
       "corrodible": true
     }
   }
