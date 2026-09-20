@@ -350,7 +350,9 @@ button.disabled {
     display: flex;
     align-items: center;
     gap: var(--toolbar-gap);
-    flex-wrap: wrap;
+    /* These are two deliberate rows, not one wrapping row. Dynamic readout
+       text must never create a third row and change the canvas geometry. */
+    flex-wrap: nowrap;
     min-width: 0;
 }
 
@@ -367,6 +369,9 @@ button.disabled {
 
 .toolbar-end {
     margin-left: auto;
+    flex: 1 1 12rem;
+    min-width: 10rem;
+    overflow: hidden;
 }
 
 .toolbar-brand {
@@ -524,6 +529,12 @@ input[type="range"]::-moz-range-thumb {
 }
 
 .readout {
+    display: block;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-align: right;
+    text-overflow: ellipsis;
     font-family: var(--mono);
     font-size: 0.76rem;
     color: var(--text-dim);

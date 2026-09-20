@@ -137,12 +137,19 @@ for (const handler of ready) await handler();
 pass('page start-up ran without throwing');
 
 const indexMarkup = await readFile(root + 'index.html', 'utf8');
+const styleMarkup = await readFile(root + 'styles.css', 'utf8');
 if (!indexMarkup.includes('id="returnToMenu"')) pass('the simulator toolbar no longer has a Menu button');
 else fail('the Menu button is still present');
 if (indexMarkup.includes('toolbar-line-secondary') && indexMarkup.includes('class="grabber-icon"')) {
     pass('the lower toolbar uses a claw icon for Grabber mode');
 } else {
     fail('the Grabber claw is missing from the lower toolbar');
+}
+if (/\.toolbar-line\s*\{[^}]*flex-wrap:\s*nowrap/s.test(styleMarkup) &&
+    /\.readout\s*\{[^}]*text-overflow:\s*ellipsis/s.test(styleMarkup)) {
+    pass('dynamic Grabber status cannot add another toolbar row');
+} else {
+    fail('toolbar rows can still be resized by dynamic status text');
 }
 
 const panel = byId('particleButtons');
@@ -278,6 +285,14 @@ if (!byId('grabberButton').classList.contains('active-toggle')) {
     pass('pressing the Grabber button again exits the mode');
 } else {
     fail('the Grabber button could not exit its own mode');
+}
+byId('grabberButton').click();
+materialButtons[0].fire('click', {});
+const { getGrabberOn, getParticleTypeIdSelected } = await import('../constantsAndGlobalVars.js');
+if (!getGrabberOn() && getParticleTypeIdSelected() === parseInt(materialButtons[0].dataset.particleId)) {
+    pass('selecting a material exits Grabber mode and selects that material');
+} else {
+    fail('a material click did not leave Grabber mode cleanly');
 }
 
 const { airTintForTemperature } = await import('../game.js');

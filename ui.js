@@ -148,6 +148,10 @@ function makeParticleButton(def, id) {
     button.dataset.particleId = String(id);
 
     button.addEventListener('click', () => {
+        // Choosing a material always leaves Grabber mode first. If the claw is
+        // holding anything, setGrabberMode restores it before the new brush is
+        // selected, so changing tools can never make lifted pixels disappear.
+        setGrabberMode(false);
         setParticleTypeIdSelected(id);
         setEraserOn(false);
         getElements().eraserButton.classList.remove('active-toggle');

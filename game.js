@@ -312,7 +312,7 @@ function updateReadout() {
     for (let i = 0; i < type.length; i++) if (type[i] !== EMPTY) count++;
 
     const defs = getDefinitions();
-    const selected = getGrabberOn() ? `Grabber ${getGrabberSize()}px`
+    const selected = getGrabberOn() ? `Claw ${getGrabberSize()}px`
         : (getEraserOn() ? 'Eraser' : defs[getParticleTypeIdSelected()].name);
 
     let under = '';
