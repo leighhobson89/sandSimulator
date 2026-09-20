@@ -1,6 +1,3 @@
-//DEBUG
-export let debugFlag = false;
-export let debugOptionFlag = false;
 export let stateLoading = false;
 
 //ELEMENTS
@@ -30,7 +27,6 @@ let heatViewOn = false;
 let simulationPaused = false;
 
 //FLAGS
-let audioMuted;
 let beginGameState = true;
 let gameInProgress = false;
 
@@ -96,7 +92,8 @@ export function setElements() {
         autosaveChoiceDialog: document.getElementById('autosaveChoiceDialog'),
         autosaveChoiceDescription: document.getElementById('autosaveChoiceDescription'),
         autosaveChoiceYes: document.getElementById('autosaveChoiceYes'),
-        autosaveChoiceNo: document.getElementById('autosaveChoiceNo')
+        autosaveChoiceNo: document.getElementById('autosaveChoiceNo'),
+        autosaveChoiceCancel: document.getElementById('autosaveChoiceCancel')
     };
 }
 
@@ -116,14 +113,6 @@ export function resetAllVariables() {
     // GLOBAL VARIABLES
 
     // FLAGS
-}
-
-export function setAudioMuted(value) {
-    audioMuted = value;
-}
-
-export function getAudioMuted() {
-    return audioMuted;
 }
 
 export function getMenuState() {

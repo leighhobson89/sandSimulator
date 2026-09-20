@@ -39,7 +39,9 @@ export function createSaveString() {
     return compressToEncodedURIComponent(JSON.stringify(payload));
 }
 
-export function loadSaveString(compressed) {
+// Parsing is separate from restoration so callers can ask for confirmation
+// before an imported world replaces the one currently on screen.
+export function parseSaveString(compressed) {
     if (typeof compressed !== 'string' || !compressed.trim()) throw new Error('Paste a save string first.');
     let payload;
     try {
@@ -50,9 +52,19 @@ export function loadSaveString(compressed) {
     if (payload?.format !== 'elemental-foundry' || payload.version !== SAVE_VERSION) {
         throw new Error('This save was made by an unsupported version of Elemental Foundry.');
     }
+    // Validate the simulation now, while no live state has been changed.
+    decodeSimulation(payload.simulation);
+    return payload;
+}
+
+export function restoreSavePayload(payload) {
     restoreSimulationState(decodeSimulation(payload.simulation));
     restoreTools(payload.tools);
     return payload;
+}
+
+export function loadSaveString(compressed) {
+    return restoreSavePayload(parseSaveString(compressed));
 }
 
 export async function restoreAutosave() {

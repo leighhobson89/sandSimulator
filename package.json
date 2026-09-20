@@ -5,6 +5,11 @@
   "main": "index.html",
   "scripts": {
     "start": "node tools/serve.mjs",
-    "test": "node tools/simTest.mjs"
+    "test": "node tools/simTest.mjs",
+    "test:smoke": "node tools/smokeTest.mjs",
+    "test:browser": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0"
   }
 }

@@ -27,7 +27,7 @@ import {
 } from './physics.js';
 import { loadSavedTheme, buildThemeSwatches, buildThemeSelect } from './themes.js';
 import {
-    hasAutosave, createSaveString, loadSaveString, restoreAutosave,
+    hasAutosave, createSaveString, parseSaveString, restoreSavePayload, restoreAutosave,
     stopAutosave, replaceAutosaveWithCurrentGame, setSavingListener
 } from './saveLoadGame.js';
 
@@ -121,6 +121,7 @@ async function startNewGame() {
         ? await askToReplaceResume('Starting a new game will replace the saved resume game on this device.')
         : true;
 
+    if (useAsResumeGame === null) return;
     if (replacingExisting && !useAsResumeGame) stopAutosave();
     setBeginGameStatus(true);
     if (!getGameInProgress()) setGameInProgress(true);
@@ -197,6 +198,7 @@ function setUpSaveDialogs() {
     elements.loadSaveString.addEventListener('click', () => { void importFromDialog(); });
     elements.autosaveChoiceYes.addEventListener('click', () => settleAutosaveChoice(true));
     elements.autosaveChoiceNo.addEventListener('click', () => settleAutosaveChoice(false));
+    elements.autosaveChoiceCancel.addEventListener('click', () => settleAutosaveChoice(null));
 }
 
 function openExportDialog() {
@@ -245,15 +247,21 @@ async function copySaveString() {
 async function importFromDialog() {
     const elements = getElements();
     let payload;
-    try { payload = loadSaveString(elements.saveString.value); }
+    try { payload = parseSaveString(elements.saveString.value); }
     catch (error) { showSaveError(error.message || 'Unable to load this save.'); return; }
 
-    beginLoadedGame(payload);
-    closeSaveDialog();
     const replacingExisting = hasAutosave();
     const useAsResumeGame = replacingExisting
         ? await askToReplaceResume('This imported game will replace the saved resume game on this device.')
         : true;
+
+    // Cancel leaves both the current session and its existing autosave alone.
+    // The import dialog remains open so the pasted save can be reconsidered.
+    if (useAsResumeGame === null) return;
+
+    restoreSavePayload(payload);
+    beginLoadedGame(payload);
+    closeSaveDialog();
     if (useAsResumeGame) {
         try { await replaceAutosaveWithCurrentGame(); updateResumeButton(); }
         catch { /* The imported game is still loaded even if storage is unavailable. */ }
@@ -262,7 +270,7 @@ async function importFromDialog() {
 
 function askToReplaceResume(description) {
     const elements = getElements();
-    elements.autosaveChoiceDescription.textContent = description + ' Choose No to keep the existing resume game and play this session without autosave.';
+    elements.autosaveChoiceDescription.textContent = description + ' Choose No to keep the existing resume game and play this session without autosave, or Cancel to leave everything unchanged.';
     elements.autosaveChoiceDialog.hidden = false;
     return new Promise(resolve => { autosaveChoiceResolver = resolve; });
 }

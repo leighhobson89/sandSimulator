@@ -16,7 +16,7 @@ import {
     setLayerLapse, getLayerLapse, getAirTempAt, setAirLayersOn,
     applyWind, getWindTrails, decayWindTrails,
     setAmbientWindOn, isBreezeBlowing, isPowered, getStoredCharge,
-    getConnectedAluminumCharge, EMPTY
+    getConnectedAluminumCharge, setRandomSeed, getRandomSeed, EMPTY
 } from '../physics.js';
 
 const json = JSON.parse(readFileSync(new URL('../particles.json', import.meta.url), 'utf8'));
@@ -27,7 +27,16 @@ defs.forEach((d, i) => { if (d && i > 0) ID[d.name] = i; });
 
 const COLS = 60;
 const ROWS = 45;
+const seedArgument = process.argv.find(argument => argument.startsWith('--seed='));
+const requestedSeed = seedArgument?.slice('--seed='.length) ?? process.env.SIM_TEST_SEED ?? '0';
+const TEST_SEED = Number(requestedSeed);
+if (!Number.isInteger(TEST_SEED) || TEST_SEED < 0 || TEST_SEED > 0xFFFFFFFF) {
+    throw new Error(`Invalid simulation test seed: ${requestedSeed}`);
+}
+
+setRandomSeed(TEST_SEED);
 createWorld(COLS, ROWS);
+console.log(`Simulation test seed: ${getRandomSeed()}`);
 
 let passed = 0;
 let failed = 0;
@@ -38,7 +47,7 @@ function check(label, condition, detail) {
         console.log(`  PASS  ${label}`);
     } else {
         failed++;
-        console.log(`  FAIL  ${label}${detail ? '  ->  ' + detail : ''}`);
+        console.log(`  FAIL  ${label}${detail ? '  ->  ' + detail : ''}  [seed: ${getRandomSeed()}]`);
     }
 }
 

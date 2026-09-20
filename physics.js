@@ -56,6 +56,39 @@ let AMBIENT = 8;
 let ambientTarget = 8;
 let frameCount = 0;
 
+// Randomness is deliberately kept behind one tiny boundary. The browser uses
+// its usual source, while tests (and future replays) can supply a seed or a
+// custom source without patching global state.
+let randomSource = Math.random;
+let randomSeed = null;
+
+export function setRandomSource(source) {
+    if (typeof source !== 'function') throw new TypeError('Random source must be a function');
+    randomSource = source;
+    randomSeed = null;
+}
+
+export function setRandomSeed(seed) {
+    randomSeed = Number(seed) >>> 0;
+    let state = randomSeed;
+    randomSource = () => {
+        state = (state + 0x6D2B79F5) >>> 0;
+        let value = state;
+        value = Math.imul(value ^ (value >>> 15), value | 1);
+        value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+        return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+    };
+}
+
+export function getRandomSeed() { return randomSeed; }
+
+export function resetRandomSource() {
+    randomSource = Math.random;
+    randomSeed = null;
+}
+
+function random() { return randomSource(); }
+
 // The plant that wet mud grows, worked out from the sprout rules when the
 // definitions are prepared. A plant rooted in both wet mud and wet sand grows
 // as this one, wet mud being the richer of the two soils.
@@ -582,7 +615,7 @@ export function createWorld(cols, rows) {
         airflowNextY: new Float32Array(n)
     };
     world.temp.fill(AMBIENT);
-    for (let i = 0; i < n; i++) world.shade[i] = Math.random() * 255;
+    for (let i = 0; i < n; i++) world.shade[i] = random() * 255;
     return world;
 }
 
@@ -664,10 +697,10 @@ export function clearWorld() {
 // That is decided here, once, and never revisited, so a seed that came up a
 // floater is a floater for as long as it lasts.
 function startingData(def) {
-    if (def.floatChance > 0) return Math.random() < def.floatChance ? 1 : 0;
+    if (def.floatChance > 0) return random() < def.floatChance ? 1 : 0;
     if (def.growHeight <= 0) return 0;
     const spread = def.growHeight - def.growHeightMin;
-    return def.growHeightMin + Math.floor(Math.random() * (spread + 1));
+    return def.growHeightMin + Math.floor(random() * (spread + 1));
 }
 
 export function index(x, y) { return y * COLS + x; }
@@ -690,7 +723,7 @@ export function setCell(x, y, id, keepTemp) {
     world.type[i] = id;
     world.residue[i] = EMPTY;
     const lifetime = def.life > 0
-        ? def.life + Math.floor((Math.random() - 0.5) * def.lifeVariance)
+        ? def.life + Math.floor((random() - 0.5) * def.lifeVariance)
         : 0;
     world.life[i] = lifetime;
     world.lifeMax[i] = lifetime;
@@ -700,7 +733,7 @@ export function setCell(x, y, id, keepTemp) {
     world.power[i] = 0;
     world.powerDelay[i] = 0;
     world.charge[i] = 0;
-    world.shade[i] = Math.random() * 255;
+    world.shade[i] = random() * 255;
     world.moved[i] = 1;
 }
 
@@ -711,7 +744,7 @@ function transform(i, id, life, residue) {
     const def = DEFS[id];
     world.type[i] = id;
     const lifetime = life !== undefined ? life
-        : (def.life > 0 ? def.life + Math.floor((Math.random() - 0.5) * def.lifeVariance) : 0);
+        : (def.life > 0 ? def.life + Math.floor((random() - 0.5) * def.lifeVariance) : 0);
     world.life[i] = lifetime;
     world.lifeMax[i] = lifetime;
     world.residue[i] = residue || EMPTY;
@@ -720,7 +753,7 @@ function transform(i, id, life, residue) {
     world.power[i] = 0;
     world.powerDelay[i] = 0;
     world.charge[i] = 0;
-    world.shade[i] = Math.random() * 255;
+    world.shade[i] = random() * 255;
     world.moved[i] = 1;
 }
 
@@ -1038,7 +1071,7 @@ export function stepSimulation() {
             // crawl along the ground at the pace of treacle while still
             // dropping through open air like the heavy stuff it is, and what
             // stops wet ground looking like it is floating down.
-            const sluggish = def.moveChance < 1 && Math.random() > def.moveChance;
+            const sluggish = def.moveChance < 1 && random() > def.moveChance;
 
             if (def.category === 'powder') movePowder(x, y, i, def, sluggish);
             else if (def.category === 'liquid') moveLiquid(x, y, i, def, sluggish);
@@ -1282,7 +1315,7 @@ function applyStateChange(x, y, i, def) {
     // Make the escape decision at the actual condensation point, rather than
     // when the steam is placed or produced. This applies before either liquid
     // rain or solid snow is chosen.
-    if (def.condenseLossChance > 0 && Math.random() < def.condenseLossChance) {
+    if (def.condenseLossChance > 0 && random() < def.condenseLossChance) {
         removeParticle(i);
         return true;
     }
@@ -1318,7 +1351,7 @@ function hasGroundUnder(x, y) {
 }
 
 function findEmptyNeighbour(x, y) {
-    const start = Math.floor(Math.random() * 4);
+    const start = Math.floor(random() * 4);
     for (let n = 0; n < 4; n++) {
         const d = (start + n) % 4;
         const nx = x + (d === 0 ? -1 : d === 1 ? 1 : 0);
@@ -1332,7 +1365,7 @@ function findEmptyNeighbour(x, y) {
 // source charge Aluminum above, below, or beside it rather than making its
 // placement direction matter.
 function findEmptySparkSpace(x, y) {
-    const start = Math.floor(Math.random() * ELECTRICAL_NEIGHBOURS.length);
+    const start = Math.floor(random() * ELECTRICAL_NEIGHBOURS.length);
     for (let n = 0; n < ELECTRICAL_NEIGHBOURS.length; n++) {
         const [dx, dy] = ELECTRICAL_NEIGHBOURS[(start + n) % ELECTRICAL_NEIGHBOURS.length];
         if (typeAt(x + dx, y + dy) === EMPTY) return (y + dy) * COLS + x + dx;
@@ -1371,7 +1404,7 @@ function applyReactions(x, y, i, def) {
     // a future device can read the stored value and discharge it deliberately.
     if (def.chargeCapacity > 0 && world.charge[i] > 0 && def.chargeSparkChance > 0) {
         const fullness = world.charge[i] / def.chargeCapacity;
-        if (Math.random() < def.chargeSparkChance * fullness) {
+        if (random() < def.chargeSparkChance * fullness) {
             const spot = findEmptyNeighbour(x, y);
             if (spot >= 0) {
                 const spark = idOf('Spark');
@@ -1387,7 +1420,7 @@ function applyReactions(x, y, i, def) {
     // The Sparks are real particles, so they can charge Aluminum and conduct
     // its pulse normally before the source pixel eventually wears out.
     if (def.sparkEmitterChance > 0 && !hasLiquidNeighbour(x, y) &&
-        Math.random() < def.sparkEmitterChance) {
+        random() < def.sparkEmitterChance) {
         const spot = findEmptySparkSpace(x, y);
         if (spot >= 0) {
             const spark = idOf('Spark');
@@ -1419,9 +1452,9 @@ function applyReactions(x, y, i, def) {
             const residue = world.residue[i];
             if (residue !== EMPTY) {
                 transform(i, residue);
-            } else if (def.decaysInto !== EMPTY && Math.random() < def.decayChance) {
+            } else if (def.decaysInto !== EMPTY && random() < def.decayChance) {
                 transform(i, def.decaysInto);
-            } else if (def.smokeChance > 0 && Math.random() < def.smokeChance) {
+            } else if (def.smokeChance > 0 && random() < def.smokeChance) {
                 transform(i, idOf('Smoke'));
             } else removeParticle(i);
             return true;
@@ -1489,7 +1522,7 @@ function applyReactions(x, y, i, def) {
         const under = typeAt(x, y + 1);
         if (under > 0) {
             for (const rule of def.convertsBelow) {
-                if (under !== rule.on || Math.random() >= rule.chance) continue;
+                if (under !== rule.on || random() >= rule.chance) continue;
                 const below = i + COLS;
                 transform(below, rule.into);
                 if (rule.temp !== undefined) {
@@ -1519,7 +1552,7 @@ function applyReactions(x, y, i, def) {
         const below = typeAt(x, y + 1);
         if (below > 0) {
             const ground = DEFS[below];
-            if (ground.wetsInto !== EMPTY && Math.random() < ground.wetChance) {
+            if (ground.wetsInto !== EMPTY && random() < ground.wetChance) {
                 if (world.data[i] >= MAX_WATER_INFILTRATION_DEPTH) {
                     removeParticle(i);
                     return true;
@@ -1531,7 +1564,7 @@ function applyReactions(x, y, i, def) {
             const saturated = world.data[i] === 0 && ground.waterPermeability > 0 &&
                 saturatedPowderBelow(x, y + 1);
             if (!saturated && ground.waterPermeability > 0 &&
-                (world.data[i] > 0 || Math.random() < ground.waterPermeability)) {
+                (world.data[i] > 0 || random() < ground.waterPermeability)) {
                 if (world.data[i] >= MAX_WATER_INFILTRATION_DEPTH) {
                     removeParticle(i);
                     return true;
@@ -1557,7 +1590,7 @@ function applyReactions(x, y, i, def) {
                 if (dx === 0 && dy === 0) continue;
                 const n = typeAt(x + dx, y + dy);
                 if (n <= 0 || !DEFS[n].isPlant) continue;
-                if (Math.random() >= def.witherChance) continue;
+                if (random() >= def.witherChance) continue;
                 transform((y + dy) * COLS + (x + dx), def.withersPlants);
             }
         }
@@ -1569,14 +1602,14 @@ function applyReactions(x, y, i, def) {
             const nx = x + (d === 0 ? -1 : d === 1 ? 1 : 0);
             const ny = y + (d === 2 ? -1 : d === 3 ? 1 : 0);
             const n = typeAt(nx, ny);
-            if (n > 0 && DEFS[n].corrodible && Math.random() < def.corrosion) {
+            if (n > 0 && DEFS[n].corrodible && random() < def.corrosion) {
                 const ni = ny * COLS + nx;
                 if (def.corrodeEmits !== EMPTY) {
                     transform(ni, def.corrodeEmits);
                 } else removeParticle(ni);
                 // The acid is used up as it eats, otherwise one drop dissolves
                 // the whole world.
-                if (Math.random() < 0.5) {
+                if (random() < 0.5) {
                     transform(i, idOf('Smoke'));
                     return true;
                 }
@@ -1596,7 +1629,7 @@ function applyReactions(x, y, i, def) {
         if (under > 0) {
             for (const rule of def.contacts) {
                 if (under !== rule.on) continue;
-                if (Math.random() >= rule.chance) continue;
+                if (random() >= rule.chance) continue;
                 transform(i, rule.into);
                 if (rule.temp !== undefined) world.temp[i] = rule.temp;
                 return true;
@@ -1617,7 +1650,7 @@ function applyReactions(x, y, i, def) {
         const under = typeAt(x, y + 1);
         for (const rule of def.sprouts) {
             if (under !== rule.on) continue;
-            if (Math.random() >= rule.chance) break;
+            if (random() >= rule.chance) break;
 
             const depth = rule.submergedInto !== EMPTY ? openWaterDepth(x, y) : 0;
             if (depth >= def.submergedDepth) {
@@ -1650,7 +1683,7 @@ function applyReactions(x, y, i, def) {
         if (def.growStyle === 'surface') return creepAcrossSurface(x, y, i, def);
 
         const budget = world.data[i];
-        if (budget > 1 && Math.random() < def.growChance) {
+        if (budget > 1 && random() < def.growChance) {
             // Nothing grows out of dry ground. A plant only puts on another
             // cell while some part of it - anywhere in the plant, not just the
             // cell doing the growing - is still touching wet mud or wet sand,
@@ -1671,7 +1704,7 @@ function applyReactions(x, y, i, def) {
 
             // Straight up most of the time, off to one side now and then, which
             // is enough to make it look like a plant rather than a pole.
-            const sideways = Math.random() < 0.25 ? randomSign() : 0;
+            const sideways = random() < 0.25 ? randomSign() : 0;
             for (const dx of [sideways, 0]) {
                 const above = typeAt(x + dx, y - 1);
                 if (above !== EMPTY && above !== idOf('Water')) continue;
@@ -1701,7 +1734,7 @@ function applyReactions(x, y, i, def) {
     // Setting seed. Only within reach of water - a plant somewhere dry lives
     // out its life but never reproduces. The seed is dropped to one side so it
     // falls clear of the plant below rather than landing back on top of it.
-    if (def.seedChance > 0 && Math.random() < def.seedChance) {
+    if (def.seedChance > 0 && random() < def.seedChance) {
         if (def.seedWaterRange > 0 && !waterWithin(x, y, def.seedWaterRange)) return false;
         const side = randomSign();
         for (const dx of [side, -side]) {
@@ -1922,7 +1955,7 @@ function weaveThroughWater(x, y, i, def, budget) {
     // a strand squeeze in alongside another. That is what keeps the mesh open
     // enough to see the pond through rather than filling in as a solid wall of
     // green - without ever letting a strand stall short of the surface.
-    const squeeze = Math.random() < 0.15;
+    const squeeze = random() < 0.15;
 
     let grew = false;
     for (const dx of [lean, 0, -lean]) {
@@ -1944,7 +1977,7 @@ function weaveThroughWater(x, y, i, def, budget) {
     // The fork: a second strand off the other side, carrying half of what is
     // left. Strands that cross and rejoin are what turn a line into a net, and
     // it forks sparingly so that the net stays a net.
-    if (budget > 4 && Math.random() < 0.12) {
+    if (budget > 4 && random() < 0.12) {
         const nx = x - lean;
         if (typeAt(nx, y - 1) === water && !strandBeside(nx, y - 1, def.id)) {
             const ni = (y - 1) * COLS + nx;
@@ -1972,7 +2005,7 @@ function strandBeside(x, y, id) {
 function creepAcrossSurface(x, y, i, def) {
     const budget = world.data[i];
 
-    if (budget > 1 && Math.random() < def.growChance) {
+    if (budget > 1 && random() < def.growChance) {
         // Both ways at once. The side it came from is already a pad and so is
         // never a candidate, which is what keeps it spreading outwards.
         for (const dx of [-1, 1]) {
@@ -2081,7 +2114,7 @@ function explode(x, y, def) {
             // delay is what turns a heap into a racing flash instead of one
             // instant bang.
             if (id !== EMPTY && DEFS[id].blastRadius > 0) {
-                if (world.data[ni] === 0) world.data[ni] = 1 + Math.floor(Math.random() * 2);
+                if (world.data[ni] === 0) world.data[ni] = 1 + Math.floor(random() * 2);
                 continue;
             }
 
@@ -2097,8 +2130,8 @@ function explode(x, y, def) {
             world.temp[ni] = Math.max(world.temp[ni], 650);
 
             const onTheEdge = distance > furthest * 0.4;
-            if (onTheEdge && Math.random() < 0.55) transform(ni, spark);
-            else if (Math.random() < 0.3) transform(ni, fire);
+            if (onTheEdge && random() < 0.55) transform(ni, spark);
+            else if (random() < 0.3) transform(ni, fire);
         }
     }
 }
@@ -2153,7 +2186,7 @@ function canRiseInto(def, other) {
     return o.density > def.density;
 }
 
-function randomSign() { return Math.random() < 0.5 ? -1 : 1; }
+function randomSign() { return random() < 0.5 ? -1 : 1; }
 
 // How often a floating seed shifts one cell along the surface. Low on purpose:
 // it should wander to one side over a while, not scoot across the pond.
@@ -2180,7 +2213,7 @@ function movePowder(x, y, i, def, sluggish) {
         }
     }
 
-    if (body.fallChance < 1 && Math.random() > body.fallChance) return;
+    if (body.fallChance < 1 && random() > body.fallChance) return;
 
     let cy = y;
     let ci = i;
@@ -2202,7 +2235,7 @@ function movePowder(x, y, i, def, sluggish) {
     // that is what a low moveChance is meant to slow down.
     if (sluggish) return;
 
-    if (body.slide > 0 && Math.random() < body.slide) {
+    if (body.slide > 0 && random() < body.slide) {
         const dir = randomSign();
         for (const d of [dir, -dir]) {
             if (!canSinkInto(body, typeAt(x + d, y + 1))) continue;
@@ -2220,7 +2253,7 @@ function movePowder(x, y, i, def, sluggish) {
 // the water. It only ever steps to another spot on the same surface, so it
 // cannot drift out over dry land.
 function driftOnSurface(x, y, i) {
-    if (Math.random() > FLOAT_DRIFT_CHANCE) return;
+    if (random() > FLOAT_DRIFT_CHANCE) return;
     if (!isFloatingOn(x, y)) return;
 
     const dir = randomSign();
@@ -2266,7 +2299,7 @@ function settledByDepth(y, i) {
     // one particular row, so there is no visible line across the water where
     // the lively part ends.
     const settled = (depth - FLOW_FREE_DEPTH) / (FLOW_STILL_DEPTH - FLOW_FREE_DEPTH);
-    return Math.random() < settled;
+    return random() < settled;
 }
 
 // A deep liquid interior can sleep, but a cell on a free vertical face cannot:
@@ -2649,7 +2682,7 @@ function applyFanWind(x, y, direction, strength = FAN_WIND_STRENGTH) {
             if (id === EMPTY || world.moved[ni]) continue;
             const def = DEFS[id];
             const pushChance = Math.min(1, powerScale * falloff * def.windLift);
-            if (def.windLift <= 0 || Math.random() > pushChance) continue;
+            if (def.windLift <= 0 || random() > pushChance) continue;
 
             const tx = nx + dirX;
             const ty = ny + dirY;
@@ -2676,7 +2709,7 @@ function applyFanAirflowToParticles() {
         const def = DEFS[world.type[i]];
         if (def.windLift <= 0) continue;
         const pushChance = Math.min(1, magnitude * 0.55 * def.windLift);
-        if (Math.random() > pushChance) continue;
+        if (random() > pushChance) continue;
 
         const dirX = Math.sign(vx);
         const dirY = Math.sign(vy);
@@ -2869,7 +2902,7 @@ export function applyWind(centreX, centreY, dirX, dirY, radius, strength) {
 
                 const def = DEFS[id];
                 if (def.windLift <= 0) continue;
-                if (Math.random() > def.windLift) continue;
+                if (random() > def.windLift) continue;
 
                 const nx = x + stepX;
                 // The tool is a deliberate shove and drives straight along the
@@ -2914,7 +2947,7 @@ export function setAmbientWindOn(value) {
     }
     // A short wait first, so switching it on does not immediately blow
     // everything the person has just finished arranging across the screen.
-    if (!breeze) breezeWait = 60 + Math.floor(Math.random() * 180);
+    if (!breeze) breezeWait = 60 + Math.floor(random() * 180);
 }
 
 export function getAmbientWindOn() { return ambientWindOn; }
@@ -2934,14 +2967,14 @@ function updateAmbientWind() {
     breeze.x += breeze.dir * breeze.speed;
     if (breeze.age >= breeze.span) {
         breeze = null;
-        breezeWait = 240 + Math.floor(Math.random() * 700);
+        breezeWait = 240 + Math.floor(random() * 700);
     }
 }
 
 function startBreeze() {
-    const dir = Math.random() < 0.5 ? -1 : 1;
-    const reach = Math.max(8, Math.round(COLS * (0.16 + Math.random() * 0.2)));
-    const speed = 0.7 + Math.random() * 1.1;
+    const dir = random() < 0.5 ? -1 : 1;
+    const reach = Math.max(8, Math.round(COLS * (0.16 + random() * 0.2)));
+    const speed = 0.7 + random() * 1.1;
     breeze = {
         dir: dir,
         reach: reach,
@@ -2953,10 +2986,10 @@ function startBreeze() {
         // dial, at double what the tool blows with, so that turning the dial up
         // gives weather to match - and no gust is quite as hard as the one
         // before it.
-        peak: Math.min(0.9, (0.025 + Math.random() * 0.07) * windDial * 2),
+        peak: Math.min(0.9, (0.025 + random() * 0.07) * windDial * 2),
         span: (COLS + reach * 2) / speed,
         age: 0,
-        seed: (Math.random() * 4096) | 0
+        seed: (random() * 4096) | 0
     };
 }
 
@@ -3043,15 +3076,15 @@ function blowBreeze() {
 
             const def = DEFS[id];
             if (def.windLift < BREEZE_MIN_LIFT) continue;
-            if (Math.random() > force * def.windLift) continue;
+            if (random() > force * def.windLift) continue;
 
             // The very lightest things - smoke, snow, ash, seeds - get lifted a
             // little as well as pushed along, which is what stops a gust
             // looking like a conveyor belt.
-            let lift = def.windLift > 0.7 && Math.random() < 0.25 ? -1 : 0;
+            let lift = def.windLift > 0.7 && random() < 0.25 ? -1 : 0;
             // Air that has just come through something it could move is still
             // rising, and takes a little of what it carries up with it.
-            if (lift === 0 && rowLift[x] && Math.random() < 0.2) lift = -1;
+            if (lift === 0 && rowLift[x] && random() < 0.2) lift = -1;
             const nx = x + b.dir;
             let ny = y + lift;
             if (nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS) continue;
@@ -3144,7 +3177,7 @@ function pressureRise(x, y, i, def, preferred) {
     const level = world.surface[i];
     if (level >= NO_SURFACE) return i;
     if (y - 1 <= level) return i;
-    if (Math.random() > 0.5) return i;
+    if (random() > 0.5) return i;
 
     if (typeAt(x, y - 1) === EMPTY) {
         swapCells(i, i - COLS);
@@ -3286,13 +3319,13 @@ function moveGas(x, y, i, def) {
     // only ever caught from underneath: nothing was ever next to anything for
     // long enough to heat it. A flame with fuel beside it mostly stays put and
     // works on it, and only wanders off once there is nothing left to burn.
-    if (def.clings > 0 && Math.random() < def.clings && nextToFuel(x, y)) return;
+    if (def.clings > 0 && random() < def.clings && nextToFuel(x, y)) return;
 
     // A gas does not go straight up in a line. Some of the time it slides off to
     // one side instead of climbing, which is what makes a plume billow out as
     // it rises rather than going up as a thin column, and what lets a cloud of
     // steam fill a room instead of hugging the ceiling above where it was made.
-    if (def.drift > 0 && Math.random() < def.drift) {
+    if (def.drift > 0 && random() < def.drift) {
         const d = randomSign();
         if (canRiseInto(def, typeAt(x + d, y - 1))) {
             swapCells(i, i - COLS + d);

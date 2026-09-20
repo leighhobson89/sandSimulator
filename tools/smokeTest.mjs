@@ -172,6 +172,12 @@ if (indexMarkup.includes('id="toolTooltip"') &&
 } else {
     fail('tooltips can still be clipped inside the tools panel');
 }
+if (indexMarkup.includes('id="autosaveChoiceCancel"') &&
+    /id="autosaveChoiceCancel"[^>]*>Cancel</.test(indexMarkup)) {
+    pass('the autosave decision dialog has a Cancel action');
+} else {
+    fail('the autosave decision dialog has no Cancel action');
+}
 
 const panel = byId('particleButtons');
 const materialButtons = panel.querySelectorAll('.particle-button');
@@ -612,6 +618,43 @@ if (/^[A-Za-z0-9+\-$]+$/.test(portableSave) && matchingWorld) {
     pass('LZString export/import restores the complete typed-array world');
 } else {
     fail('LZString export/import did not restore the saved world');
+}
+
+// A pending autosave replacement must be genuinely cancellable. Use a tiny
+// in-memory store here because the regular stand-in deliberately has no
+// browser storage.
+const storedValues = new Map([[persistence.AUTOSAVE_STORAGE_KEY, portableSave]]);
+globalThis.localStorage = {
+    getItem: key => storedValues.get(key) ?? null,
+    setItem: (key, value) => storedValues.set(key, String(value)),
+    removeItem: key => storedValues.delete(key)
+};
+const autosaveBeforeCancel = localStorage.getItem(persistence.AUTOSAVE_STORAGE_KEY);
+byId('newGame').click();
+await Promise.resolve();
+const choiceDialog = byId('autosaveChoiceDialog');
+byId('autosaveChoiceCancel').click();
+await Promise.resolve();
+if (choiceDialog.hidden && localStorage.getItem(persistence.AUTOSAVE_STORAGE_KEY) === autosaveBeforeCancel) {
+    pass('cancelling a new game preserves the existing autosave');
+} else {
+    fail('cancelling a new game changed or left the existing autosave prompt open');
+}
+
+physicsForLine.clearWorld();
+const worldBeforeCancelledImport = Uint8Array.from(getWorld().type);
+byId('saveDialog').hidden = false;
+byId('saveString').value = portableSave;
+byId('loadSaveString').click();
+await Promise.resolve();
+byId('autosaveChoiceCancel').click();
+await Promise.resolve();
+const importStayedPut = worldBeforeCancelledImport.every((value, index) => value === getWorld().type[index]);
+if (choiceDialog.hidden && !byId('saveDialog').hidden && importStayedPut &&
+    localStorage.getItem(persistence.AUTOSAVE_STORAGE_KEY) === autosaveBeforeCancel) {
+    pass('cancelling an import preserves the world and existing autosave');
+} else {
+    fail('cancelling an import changed the world, autosave or import dialog');
 }
 
 runFrames(5);
