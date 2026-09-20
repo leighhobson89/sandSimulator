@@ -15,9 +15,10 @@ Active findings are kept in [`docs/ISSUES.md`](docs/ISSUES.md), while superseded
 documentation findings are kept in [`docs/archive/`](docs/archive/).
 
 The latest verification on 20 September 2026 is green: `npm test` reports 244
-passed and 0 failed, and `node tools/smokeTest.mjs` passes its browser-startup
-and interaction checks. The audit also includes the static syntax and JSON
-validation commands used alongside those suites.
+passed and 0 failed with the default reproducible seed, and
+`npm run test:smoke` passes its browser-startup, interaction and autosave
+cancel checks. A Playwright suite is also included for real-browser theme,
+mouse, touch, keyboard-focus and narrow-layout coverage.
 
 ## Running it
 
@@ -31,8 +32,13 @@ with no dependencies.
 
 ```
 npm test                   # physics checks, no browser needed
-node tools/smokeTest.mjs   # runs the real UI against a stand-in browser
+npm run test:smoke         # UI and persistence checks against a stand-in browser
+npx playwright install chromium
+npm run test:browser       # real-browser visual and interaction checks
 ```
+
+The physics checks use seed `0` by default. Pass `--seed=1234` to
+`tools/simTest.mjs`, or set `SIM_TEST_SEED`, when reproducing a failure.
 
 Two probes help with tuning awkward numbers. Both take an optional patch to
 `particles.json` on the command line, so settings can be compared without
@@ -81,7 +87,8 @@ paste that string anywhere to keep a portable snapshot. **Import** accepts the
 same string from either the menu or toolbar. If another Resume Game already
 exists, importing or starting a New Game asks whether to replace it. Choosing
 No keeps the existing resume save and plays the new/imported world without
-autosave for that session.
+autosave for that session. **Cancel** dismisses the choice and leaves the
+current world, import dialog and existing resume save unchanged.
 
 The **air temperature** runs from -60C to 2000C. Drag the slider for a rough
 setting, or type an exact number in the box beside it and press Enter - each one

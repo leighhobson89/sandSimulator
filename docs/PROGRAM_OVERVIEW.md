@@ -49,8 +49,10 @@ rule based on the surface of connected liquid, not a Navier–Stokes solution.
   pulses through conductive networks; Aluminum stores shared charge; Copper,
   Iron and machines consume it; a Fan converts power into directional airflow.
 - The simulator is testable outside the browser. The physics core has no DOM
-  dependency, and the headless suite checks 244 behavioural assertions plus a
-  260x150 performance budget. A second smoke suite covers startup and input.
+  dependency, and the headless suite checks 244 reproducibly seeded behavioural
+  assertions plus a 260x150 performance budget. A second smoke suite covers
+  startup, input and autosave decisions, while Playwright covers real-browser
+  themes, pointer/touch input, focus and narrow layouts.
 - The interaction design is polished for a small sandbox: brush and line
   modes, right-click erase, heat view, a move-only-one-material Grabber,
   environmental controls, tooltips, keyboard shortcuts and six persistent
@@ -89,7 +91,7 @@ community content, modding, advanced circuitry, or broader toybox variety.
 ## Verification basis
 
 The review read the source, data definitions, UI and tools; validated JavaScript
-syntax and JSON; and ran the headless and smoke suites. One initial headless run
-reported 243 passes and one steam-boundary failure, while reruns passed. That
-non-determinism is recorded as an outstanding test-quality issue, so this
-document does not claim a permanently green suite.
+syntax and JSON; and ran the seeded headless and smoke suites. A failing
+headless assertion now reports the seed needed to reproduce it. Real-browser
+checks are available through `npm run test:browser`; the remaining testing
+follow-up is broader manual device and assistive-technology coverage.

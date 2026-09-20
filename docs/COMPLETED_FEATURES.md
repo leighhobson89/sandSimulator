@@ -95,7 +95,10 @@ forms.
 - The complete world, environment and tool state can be exported as a portable
   LZString and imported from a pasted string. One local Resume Game autosaves
   every minute; New Game and Import protect an existing resume slot with an
-  explicit replace-or-play-without-autosave choice.
+  explicit replace-or-play-without-autosave choice, plus Cancel to leave the
+  current world and saved resume unchanged.
 - The source is separated into data, headless physics, rendering and UI.
-  Automated coverage includes 244 physics assertions, a 260x150 speed check,
-  syntax/JSON validation and a stand-in-browser UI smoke test.
+  Automated coverage includes 244 seeded physics assertions, a 260x150 speed
+  check, syntax/JSON validation, a stand-in-browser UI smoke test and a
+  Playwright real-browser suite for themes, pointer/touch input, focus and
+  narrow layouts.

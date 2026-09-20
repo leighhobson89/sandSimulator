@@ -3,16 +3,21 @@
 These are proposals, not promises. They are ordered to protect reliability
 before expanding the sandbox.
 
-## First: make the current product dependable
+## First: make the current product dependable — complete
 
-1. **Make simulation tests deterministic.** Inject a seeded random-number
-   generator into the physics core and print the seed when a test fails. Keep a
-   small number of seeded scenarios rather than relying on tolerances across
-   random runs.
-2. **Add real-browser visual/accessibility checks.** Test mouse, touch,
-   resizing, all six themes, keyboard focus and layout at mobile/narrow sizes.
-3. **Remove or reconnect remaining legacy code.** Review the audio/debug
-   scaffolding and regenerate the stale `package-lock.json` from `package.json`.
+Completed 20 September 2026:
+
+1. **Deterministic simulation tests.** The physics core accepts an injectable
+   random source. `tools/simTest.mjs` runs with a reproducible default seed,
+   accepts `--seed=` or `SIM_TEST_SEED`, and includes the seed in failures.
+2. **Real-browser visual/accessibility checks.** `tests/browser.spec.mjs`
+   covers the six themes, mouse and touch drawing, keyboard focus, and narrow
+   layouts. Run it with `npm run test:browser` after installing Chromium with
+   `npx playwright install chromium`. The stand-in smoke test remains useful
+   for fast startup and persistence checks.
+3. **Legacy cleanup and repository hygiene.** Unused audio/debug state was
+   removed, `package-lock.json` now matches `package.json`, and generated
+   dependencies/test output are excluded by `.gitignore`.
 
 ## Next: deepen the existing systems
 
