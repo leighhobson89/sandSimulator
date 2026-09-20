@@ -70,15 +70,20 @@
                 <div id="canvasStage">
                     <canvas id="canvas"></canvas>
                     <div id="machineOverlay" aria-hidden="true"></div>
+                    <div id="marqueeOverlay" aria-hidden="true" hidden></div>
+                    <div id="blueprintStampPreview" aria-hidden="true" hidden><canvas></canvas></div>
                 </div>
             </main>
 
             <aside id="toolsPanel" aria-label="Tools">
-                <div class="tools-panel-header">
-                    <span class="tools-kicker">Workspace</span>
-                    <h2>Tools</h2>
+                <div class="workspace-tabs" role="tablist" aria-label="Workspace">
+                    <button id="toolsTabButton" class="workspace-tab active-toggle" type="button"
+                            role="tab" aria-selected="true" aria-controls="toolsWorkspace">Tools</button>
+                    <button id="blueprintsTabButton" class="workspace-tab" type="button"
+                            role="tab" aria-selected="false" aria-controls="blueprintsWorkspace">Blueprints</button>
                 </div>
 
+                <div id="toolsWorkspace" class="workspace-pane" role="tabpanel">
                 <section class="tool-section">
                     <h3>Draw mode</h3>
                     <div class="tool-icon-grid" role="group" aria-label="Drawing mode">
@@ -238,6 +243,39 @@
                         </div>
                     </div>
                 </section>
+                </div>
+
+                <div id="blueprintsWorkspace" class="workspace-pane blueprints-workspace" role="tabpanel" hidden>
+                    <div class="blueprints-heading">
+                        <span class="tools-kicker">Workspace</span>
+                        <h2>Blueprints</h2>
+                    </div>
+                    <p class="blueprints-description">Capture an area of the world, then select its preview to stamp it anywhere.</p>
+                    <section class="tool-section blueprint-actions">
+                        <button id="marqueeButton" class="btn tool-icon-button" type="button"
+                                aria-label="Marquee selection" aria-pressed="false">
+                            <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true">
+                                <rect x="4" y="4" width="16" height="16" rx="1"></rect>
+                                <path d="M8 4v2M12 4v2M16 4v2M8 18v2M12 18v2M16 18v2M4 8h2M4 12h2M4 16h2M18 8h2M18 12h2M18 16h2"></path>
+                            </svg>
+                            <span>Marquee</span>
+                        </button>
+                        <button id="copyBlueprintButton" class="btn btn-primary blueprint-copy" type="button" disabled>Copy selection</button>
+                    </section>
+                    <section class="tool-section blueprint-library" aria-label="Blueprint library">
+                        <h3>Stored blueprints</h3>
+                        <div id="blueprintSlots" class="blueprint-slots">
+                            <button class="blueprint-slot" type="button" data-blueprint-slot="0" hidden aria-label="Blueprint 1"><canvas width="56" height="56"></canvas><span>1</span></button>
+                            <button class="blueprint-slot" type="button" data-blueprint-slot="1" hidden aria-label="Blueprint 2"><canvas width="56" height="56"></canvas><span>2</span></button>
+                            <button class="blueprint-slot" type="button" data-blueprint-slot="2" hidden aria-label="Blueprint 3"><canvas width="56" height="56"></canvas><span>3</span></button>
+                            <button class="blueprint-slot" type="button" data-blueprint-slot="3" hidden aria-label="Blueprint 4"><canvas width="56" height="56"></canvas><span>4</span></button>
+                            <button class="blueprint-slot" type="button" data-blueprint-slot="4" hidden aria-label="Blueprint 5"><canvas width="56" height="56"></canvas><span>5</span></button>
+                            <button class="blueprint-slot" type="button" data-blueprint-slot="5" hidden aria-label="Blueprint 6"><canvas width="56" height="56"></canvas><span>6</span></button>
+                            <button class="blueprint-slot" type="button" data-blueprint-slot="6" hidden aria-label="Blueprint 7"><canvas width="56" height="56"></canvas><span>7</span></button>
+                            <button class="blueprint-slot" type="button" data-blueprint-slot="7" hidden aria-label="Blueprint 8"><canvas width="56" height="56"></canvas><span>8</span></button>
+                        </div>
+                    </section>
+                </div>
             </aside>
         </div>
     </div>

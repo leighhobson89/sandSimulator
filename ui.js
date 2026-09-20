@@ -19,7 +19,8 @@ import {
     loadParticleDefinitions, initializeWorld, setGameState, startGame,
     paintLine, paintCell, clearCanvasWorld, setHoverCell,
     canPlaceMachine, placeMachine, setMachinePlacementPreview, clearMachinePlacementPreview,
-    beginGrab, dropGrab, cancelGrab, setLinePreview, clearLinePreview
+    beginGrab, dropGrab, cancelGrab, setLinePreview, clearLinePreview,
+    captureBlueprint, stampBlueprint
 } from './game.js';
 import {
     getDefinitions, setAmbientTarget, getAmbientTarget, setLayerLapse, getLayerLapse,
@@ -29,7 +30,8 @@ import {
 import { loadSavedTheme, buildThemeSwatches, buildThemeSelect } from './themes.js';
 import {
     hasAutosave, createSaveString, parseSaveString, restoreSavePayload, restoreAutosave,
-    stopAutosave, replaceAutosaveWithCurrentGame, setSavingListener
+    stopAutosave, replaceAutosaveWithCurrentGame, setSavingListener, setBlueprintSaveHandlers,
+    writeAutosave
 } from './saveLoadGame.js';
 
 let isPainting = false;
@@ -40,6 +42,13 @@ let currentCell = { x: 0, y: 0 };
 let lineStart = null;
 let machinePlacement = null;
 let autosaveChoiceResolver = null;
+let marqueeMode = false;
+let isMarqueeDrawing = false;
+let marqueeStart = null;
+let marqueeSelection = null;
+let blueprints = Array(8).fill(null);
+let nextBlueprintSlot = 0;
+let activeBlueprintSlot = null;
 
 document.addEventListener('DOMContentLoaded', async () => {
     await loadParticleDefinitions();
@@ -48,6 +57,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     buildParticleButtons();
 
     const elements = getElements();
+    setBlueprintSaveHandlers({
+        capture: captureBlueprintLibrary,
+        restore: restoreBlueprintLibrary
+    });
 
     // The look comes first, before anything is on screen, so the page never
     // shows a flash of the default theme on its way to the saved one.
@@ -71,6 +84,17 @@ document.addEventListener('DOMContentLoaded', async () => {
         elements.pauseButton.textContent = getSimulationPaused() ? 'Play' : 'Pause';
     });
 
+    elements.toolsTabButton.addEventListener('click', () => {
+        cancelBlueprintModes();
+        setWorkspace('tools');
+    });
+    elements.blueprintsTabButton.addEventListener('click', () => setWorkspace('blueprints'));
+    elements.marqueeButton.addEventListener('click', beginMarqueeMode);
+    elements.copyBlueprintButton.addEventListener('click', copyMarqueeSelection);
+    elements.blueprintSlots.querySelectorAll('.blueprint-slot').forEach(slot => {
+        slot.addEventListener('click', () => selectBlueprintForStamp(parseInt(slot.dataset.blueprintSlot)));
+    });
+
     elements.clearButton.addEventListener('click', () => {
         openClearDialog();
     });
@@ -82,6 +106,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     elements.eraserButton.addEventListener('click', () => {
+        cancelBlueprintModes();
         if (!getEraserOn()) setGrabberMode(false);
         setEraserOn(!getEraserOn());
         elements.eraserButton.classList.toggle('active-toggle', getEraserOn());
@@ -97,6 +122,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     selectDrawingMode(getDrawMode());
 
     elements.grabberButton.addEventListener('click', () => {
+        cancelBlueprintModes();
         setGrabberMode(!getGrabberOn());
     });
 
@@ -126,6 +152,7 @@ async function startNewGame() {
 
     if (useAsResumeGame === null) return;
     if (replacingExisting && !useAsResumeGame) stopAutosave();
+    resetBlueprintLibrary();
     setBeginGameStatus(true);
     if (!getGameInProgress()) setGameInProgress(true);
     setGameState(getGameVisibleActive());
@@ -299,6 +326,7 @@ function confirmClearWorld() {
     // Stop any deferred stroke or Grabber operation before clearing the arrays,
     // so no input state can write material back into the freshly empty world.
     cancelPainting();
+    cancelBlueprintModes();
     setGrabberMode(false);
     clearCanvasWorld();
     closeClearDialog();
@@ -364,6 +392,7 @@ function makeParticleButton(def, id) {
         // holding anything, setGrabberMode restores it before the new brush is
         // selected, so changing tools can never make lifted pixels disappear.
         cancelPainting();
+        cancelBlueprintModes();
         setGrabberMode(false);
         setParticleTypeIdSelected(id);
         setEraserOn(false);
@@ -677,6 +706,7 @@ function setUpTooltips() {
 
 function selectDrawingMode(mode) {
     const next = mode === 'line' ? 'line' : 'brush';
+    cancelBlueprintModes();
     setDrawMode(next);
     setGrabberMode(false);
     cancelPainting();
@@ -687,6 +717,263 @@ function selectDrawingMode(mode) {
     elements.lineModeButton.classList.toggle('active-toggle', !brushOn);
     elements.brushModeButton.setAttribute('aria-pressed', String(brushOn));
     elements.lineModeButton.setAttribute('aria-pressed', String(!brushOn));
+}
+
+// --------------------------------------------------------------- blueprints
+
+function setWorkspace(workspace) {
+    const elements = getElements();
+    const showingBlueprints = workspace === 'blueprints';
+    elements.toolsWorkspace.hidden = showingBlueprints;
+    elements.blueprintsWorkspace.hidden = !showingBlueprints;
+    elements.toolsTabButton.classList.toggle('active-toggle', !showingBlueprints);
+    elements.blueprintsTabButton.classList.toggle('active-toggle', showingBlueprints);
+    elements.toolsTabButton.setAttribute('aria-selected', String(!showingBlueprints));
+    elements.blueprintsTabButton.setAttribute('aria-selected', String(showingBlueprints));
+}
+
+function beginMarqueeMode() {
+    // Clicking the active Marquee control is a cancellation just like using a
+    // different tool, so it also resumes the world.
+    if (marqueeMode) {
+        cancelBlueprintModes();
+        return;
+    }
+    // A marquee takes ownership of canvas input, so finish any ordinary stroke
+    // and return a held Grabber payload before its first corner is placed.
+    cancelPainting();
+    setGrabberMode(false);
+    setEraserOn(false);
+    getElements().eraserButton.classList.remove('active-toggle');
+    activeBlueprintSlot = null;
+    marqueeMode = true;
+    isMarqueeDrawing = false;
+    marqueeStart = null;
+    marqueeSelection = null;
+    updateMarqueeOverlay();
+    hideStampPreview();
+    updateBlueprintControls();
+}
+
+function cancelBlueprintModes() {
+    const wasMarqueeMode = marqueeMode;
+    marqueeMode = false;
+    isMarqueeDrawing = false;
+    marqueeStart = null;
+    marqueeSelection = null;
+    activeBlueprintSlot = null;
+    updateMarqueeOverlay();
+    hideStampPreview();
+    updateBlueprintControls();
+    // A marquee pauses the world for capture. Every route that cancels that
+    // marquee deliberately returns the simulation to play, including a
+    // material/tool change and a right-click on the canvas.
+    if (wasMarqueeMode && getSimulationPaused()) {
+        setSimulationPaused(false);
+        getElements().pauseButton.textContent = 'Pause';
+    }
+}
+
+function hasBlueprintMode() {
+    return marqueeMode || activeBlueprintSlot !== null;
+}
+
+function beginMarqueeAt(cell) {
+    marqueeStart = clampCell(cell);
+    marqueeSelection = rectangularSelection(marqueeStart, marqueeStart);
+    isMarqueeDrawing = true;
+    // Capturing a stable snapshot is important, and this only changes a
+    // running simulation. A game the player already paused stays paused.
+    if (!getSimulationPaused()) {
+        setSimulationPaused(true);
+        getElements().pauseButton.textContent = 'Play';
+    }
+    updateMarqueeOverlay();
+    updateBlueprintControls();
+}
+
+function updateMarqueeAt(cell) {
+    if (!marqueeStart) return;
+    marqueeSelection = rectangularSelection(marqueeStart, clampCell(cell));
+    updateMarqueeOverlay();
+    updateBlueprintControls();
+}
+
+function rectangularSelection(start, end) {
+    return {
+        left: Math.min(start.x, end.x),
+        right: Math.max(start.x, end.x),
+        top: Math.min(start.y, end.y),
+        bottom: Math.max(start.y, end.y)
+    };
+}
+
+function clampCell(cell) {
+    return {
+        x: Math.max(0, Math.min(getGridCols() - 1, cell.x)),
+        y: Math.max(0, Math.min(getGridRows() - 1, cell.y))
+    };
+}
+
+function updateMarqueeOverlay() {
+    const overlay = getElements().marqueeOverlay;
+    if (!marqueeSelection || !marqueeMode) {
+        overlay.hidden = true;
+        return;
+    }
+    const { left, right, top, bottom } = marqueeSelection;
+    overlay.style.left = `${(left / getGridCols()) * 100}%`;
+    overlay.style.top = `${(top / getGridRows()) * 100}%`;
+    overlay.style.width = `${((right - left + 1) / getGridCols()) * 100}%`;
+    overlay.style.height = `${((bottom - top + 1) / getGridRows()) * 100}%`;
+    overlay.hidden = false;
+}
+
+function copyMarqueeSelection() {
+    if (!marqueeSelection) return;
+    const { left, right, top, bottom } = marqueeSelection;
+    const blueprint = captureBlueprint(left, top, right, bottom);
+    if (!blueprint) return;
+
+    const slot = nextBlueprintSlot;
+    blueprints[slot] = blueprint;
+    nextBlueprintSlot = (nextBlueprintSlot + 1) % blueprints.length;
+    const button = getElements().blueprintSlots.querySelector(`[data-blueprint-slot="${slot}"]`);
+    button.hidden = false;
+    drawBlueprintPreview(button, blueprint);
+    updateBlueprintControls();
+    // The regular minute-by-minute autosave also carries blueprints, but a
+    // newly captured design is important enough to save immediately when this
+    // playthrough has a local resume slot.
+    void writeAutosave();
+}
+
+function captureBlueprintLibrary() {
+    return { slots: blueprints, nextSlot: nextBlueprintSlot };
+}
+
+function restoreBlueprintLibrary(state) {
+    blueprints = Array.from({ length: 8 }, (_, slot) => state.slots[slot] || null);
+    nextBlueprintSlot = state.nextSlot;
+    marqueeMode = false;
+    isMarqueeDrawing = false;
+    marqueeStart = null;
+    marqueeSelection = null;
+    activeBlueprintSlot = null;
+    updateMarqueeOverlay();
+    hideStampPreview();
+    renderBlueprintLibrary();
+    updateBlueprintControls();
+}
+
+function resetBlueprintLibrary() {
+    restoreBlueprintLibrary({ slots: Array(8).fill(null), nextSlot: 0 });
+}
+
+function renderBlueprintLibrary() {
+    getElements().blueprintSlots.querySelectorAll('.blueprint-slot').forEach(button => {
+        const slot = parseInt(button.dataset.blueprintSlot);
+        const blueprint = blueprints[slot];
+        button.hidden = !blueprint;
+        if (blueprint) drawBlueprintPreview(button, blueprint);
+    });
+}
+
+function drawBlueprintPreview(button, blueprint) {
+    const canvas = button.querySelector('canvas');
+    const preview = canvas.getContext('2d');
+    preview.clearRect(0, 0, canvas.width, canvas.height);
+    const source = document.createElement('canvas');
+    source.width = blueprint.width;
+    source.height = blueprint.height;
+    const sourceContext = source.getContext('2d');
+    const image = sourceContext.createImageData(blueprint.width, blueprint.height);
+    const defs = getDefinitions();
+    for (let i = 0; i < blueprint.cells.type.length; i++) {
+        const def = defs[blueprint.cells.type[i]];
+        if (!def) continue;
+        const p = i * 4;
+        image.data[p] = def.rgb[0];
+        image.data[p + 1] = def.rgb[1];
+        image.data[p + 2] = def.rgb[2];
+        image.data[p + 3] = Math.round(255 * (def.alpha === undefined ? 1 : def.alpha));
+    }
+    sourceContext.putImageData(image, 0, 0);
+    preview.imageSmoothingEnabled = false;
+    const scale = Math.min(canvas.width / blueprint.width, canvas.height / blueprint.height);
+    const width = Math.max(1, Math.floor(blueprint.width * scale));
+    const height = Math.max(1, Math.floor(blueprint.height * scale));
+    preview.drawImage(source, Math.floor((canvas.width - width) / 2), Math.floor((canvas.height - height) / 2), width, height);
+}
+
+function selectBlueprintForStamp(slot) {
+    if (!blueprints[slot]) return;
+    marqueeMode = false;
+    isMarqueeDrawing = false;
+    marqueeStart = null;
+    marqueeSelection = null;
+    activeBlueprintSlot = slot;
+    // Selecting a stored blueprint immediately returns the world to play, as
+    // requested, so the stamped result rejoins the living simulation.
+    if (getSimulationPaused()) {
+        setSimulationPaused(false);
+        getElements().pauseButton.textContent = 'Pause';
+    }
+    updateMarqueeOverlay();
+    updateStampPreview(currentCell);
+    updateBlueprintControls();
+}
+
+function updateStampPreview(cell) {
+    const blueprint = blueprints[activeBlueprintSlot];
+    const preview = getElements().blueprintStampPreview;
+    if (!blueprint) {
+        preview.hidden = true;
+        return;
+    }
+    const target = clampCell(cell);
+    const startX = Math.round(target.x - (blueprint.width - 1) / 2);
+    const startY = Math.round(target.y - (blueprint.height - 1) / 2);
+    preview.style.left = `${(startX / getGridCols()) * 100}%`;
+    preview.style.top = `${(startY / getGridRows()) * 100}%`;
+    preview.style.width = `${(blueprint.width / getGridCols()) * 100}%`;
+    preview.style.height = `${(blueprint.height / getGridRows()) * 100}%`;
+
+    const canvas = preview.querySelector('canvas');
+    if (canvas.width !== blueprint.width || canvas.height !== blueprint.height ||
+        canvas.dataset.blueprintSlot !== String(activeBlueprintSlot)) {
+        canvas.width = blueprint.width;
+        canvas.height = blueprint.height;
+        const context = canvas.getContext('2d');
+        const image = context.createImageData(blueprint.width, blueprint.height);
+        const defs = getDefinitions();
+        for (let i = 0; i < blueprint.cells.type.length; i++) {
+            const def = defs[blueprint.cells.type[i]];
+            if (!def) continue;
+            const p = i * 4;
+            image.data[p] = def.rgb[0];
+            image.data[p + 1] = def.rgb[1];
+            image.data[p + 2] = def.rgb[2];
+            image.data[p + 3] = Math.round(255 * (def.alpha === undefined ? 1 : def.alpha));
+        }
+        context.putImageData(image, 0, 0);
+        canvas.dataset.blueprintSlot = String(activeBlueprintSlot);
+    }
+    preview.hidden = false;
+}
+
+function hideStampPreview() {
+    getElements().blueprintStampPreview.hidden = true;
+}
+
+function updateBlueprintControls() {
+    const elements = getElements();
+    elements.marqueeButton.classList.toggle('active-toggle', marqueeMode);
+    elements.marqueeButton.setAttribute('aria-pressed', String(marqueeMode));
+    elements.copyBlueprintButton.disabled = !marqueeSelection;
+    elements.blueprintSlots.querySelectorAll('.blueprint-slot').forEach(button => {
+        button.classList.toggle('active-toggle', parseInt(button.dataset.blueprintSlot) === activeBlueprintSlot);
+    });
 }
 
 function commitAirTemperature(apply, box) {
@@ -708,6 +995,22 @@ function setUpCanvasInput() {
     canvas.addEventListener('mousedown', event => {
         currentCell = cellFromEvent(event);
         setHoverCell(currentCell.x, currentCell.y);
+
+        // Blueprint modes have first claim on a click. A right click always
+        // exits them, without performing the normal temporary eraser action.
+        if (event.button === 2 && hasBlueprintMode()) {
+            cancelBlueprintModes();
+            return;
+        }
+        if (event.button === 0 && activeBlueprintSlot !== null) {
+            updateStampPreview(currentCell);
+            stampBlueprint(blueprints[activeBlueprintSlot], currentCell.x, currentCell.y);
+            return;
+        }
+        if (marqueeMode) {
+            if (event.button === 0) beginMarqueeAt(currentCell);
+            return;
+        }
 
         if (getGrabberOn()) {
             // Right click is the quick way out of Grabber mode. If something
@@ -748,6 +1051,11 @@ function setUpCanvasInput() {
     canvas.addEventListener('mousemove', event => {
         currentCell = cellFromEvent(event);
         setHoverCell(currentCell.x, currentCell.y);
+        if (activeBlueprintSlot !== null) updateStampPreview(currentCell);
+        if (isMarqueeDrawing) {
+            updateMarqueeAt(currentCell);
+            return;
+        }
         if (isGrabbing) return;
         if (!isPainting) return;
         if (machinePlacement || selectedMachine()) {
@@ -767,6 +1075,11 @@ function setUpCanvasInput() {
     });
 
     window.addEventListener('mouseup', event => {
+        if (isMarqueeDrawing) {
+            if (event.button === 0) updateMarqueeAt(currentCell);
+            isMarqueeDrawing = false;
+            return;
+        }
         if (isGrabbing) {
             if (event.button === 0) dropGrab(currentCell.x, currentCell.y);
             isGrabbing = false;
@@ -779,6 +1092,7 @@ function setUpCanvasInput() {
     canvas.addEventListener('mouseleave', () => {
         lastCell = null;
         setHoverCell(-1, -1);
+        hideStampPreview();
     });
 
     // Touch support, so it works on a tablet as well.
@@ -786,6 +1100,14 @@ function setUpCanvasInput() {
         event.preventDefault();
         currentCell = cellFromEvent(event.touches[0]);
         setHoverCell(currentCell.x, currentCell.y);
+        if (activeBlueprintSlot !== null) {
+            stampBlueprint(blueprints[activeBlueprintSlot], currentCell.x, currentCell.y);
+            return;
+        }
+        if (marqueeMode) {
+            beginMarqueeAt(currentCell);
+            return;
+        }
         if (getGrabberOn()) {
             isGrabbing = beginGrab(currentCell.x, currentCell.y, getGrabberSize()) > 0;
             return;
@@ -815,6 +1137,10 @@ function setUpCanvasInput() {
         event.preventDefault();
         currentCell = cellFromEvent(event.touches[0]);
         setHoverCell(currentCell.x, currentCell.y);
+        if (isMarqueeDrawing) {
+            updateMarqueeAt(currentCell);
+            return;
+        }
         if (isGrabbing) return;
         if (machinePlacement || selectedMachine()) {
             if (machinePlacement) {
@@ -833,6 +1159,11 @@ function setUpCanvasInput() {
     }, { passive: false });
 
     canvas.addEventListener('touchend', () => {
+        if (isMarqueeDrawing) {
+            updateMarqueeAt(currentCell);
+            isMarqueeDrawing = false;
+            return;
+        }
         if (isGrabbing) {
             dropGrab(currentCell.x, currentCell.y);
             isGrabbing = false;

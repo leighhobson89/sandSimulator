@@ -37,6 +37,15 @@ let grabbedPixels = null;
 let linePreview = null;
 let machinePlacementPreview = null;
 
+// A blueprint is a compact, rectangular copy of the persistent cell state.
+// Transient frame bookkeeping (moved and tempNext) is intentionally excluded:
+// it belongs to the current simulation tick, not to the material being copied.
+export const BLUEPRINT_FIELDS = [
+    'type', 'temp', 'life', 'lifeMax', 'residue', 'shade', 'heat', 'surface',
+    'data', 'power', 'powerDelay', 'charge', 'wind', 'airflowX', 'airflowY',
+    'airflowNextX', 'airflowNextY'
+];
+
 //--------------------------------------------------------------------------------------------------------
 
 export function startGame({ preserveWorldSize = false } = {}) {
@@ -666,6 +675,60 @@ export function paintLine(x0, y0, x1, y1) {
         const t = s / steps;
         paintCell(Math.round(x0 + dragX * t), Math.round(y0 + dragY * t), dragX, dragY);
     }
+}
+
+// --------------------------------------------------------------- blueprints
+
+// Copying through every listed field lets a blueprint retain such details as a
+// hot ember's remaining life, a charged conductor, and a machine's direction.
+export function captureBlueprint(x0, y0, x1, y1) {
+    const world = getWorld();
+    const left = Math.max(0, Math.min(x0, x1));
+    const right = Math.min(world.cols - 1, Math.max(x0, x1));
+    const top = Math.max(0, Math.min(y0, y1));
+    const bottom = Math.min(world.rows - 1, Math.max(y0, y1));
+    if (left > right || top > bottom) return null;
+
+    const width = right - left + 1;
+    const height = bottom - top + 1;
+    const cells = {};
+    for (const field of BLUEPRINT_FIELDS) {
+        const copy = new world[field].constructor(width * height);
+        let target = 0;
+        for (let y = top; y <= bottom; y++) {
+            const source = index(left, y);
+            copy.set(world[field].subarray(source, source + width), target);
+            target += width;
+        }
+        cells[field] = copy;
+    }
+    return { left, top, width, height, cells };
+}
+
+// The copied area is centred on the click. Cells beyond an edge are clipped,
+// while every reachable destination is replaced -- including air -- so a stamp
+// always overrides the existing world rather than acting like the brush.
+export function stampBlueprint(blueprint, centreX, centreY) {
+    if (!blueprint?.cells || !Number.isInteger(blueprint.width) || !Number.isInteger(blueprint.height)) return 0;
+    const world = getWorld();
+    const startX = Math.round(centreX - (blueprint.width - 1) / 2);
+    const startY = Math.round(centreY - (blueprint.height - 1) / 2);
+    let stamped = 0;
+    for (let sy = 0; sy < blueprint.height; sy++) {
+        const y = startY + sy;
+        if (y < 0 || y >= world.rows) continue;
+        for (let sx = 0; sx < blueprint.width; sx++) {
+            const x = startX + sx;
+            if (x < 0 || x >= world.cols) continue;
+            const source = sy * blueprint.width + sx;
+            const destination = index(x, y);
+            for (const field of BLUEPRINT_FIELDS) world[field][destination] = blueprint.cells[field][source];
+            world.tempNext[destination] = world.temp[destination];
+            world.moved[destination] = 0;
+            stamped++;
+        }
+    }
+    return stamped;
 }
 
 // Removes every cell matching the single material directly under the cursor,

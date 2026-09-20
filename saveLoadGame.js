@@ -7,6 +7,7 @@ import {
     getHeatViewOn, setHeatViewOn, getSimulationPaused, setSimulationPaused
 } from './constantsAndGlobalVars.js';
 import { captureSimulationState, restoreSimulationState } from './physics.js';
+import { BLUEPRINT_FIELDS } from './game.js';
 import { compressToEncodedURIComponent, decompressFromEncodedURIComponent } from './lzString.js';
 
 export const AUTOSAVE_STORAGE_KEY = 'elemental-foundry.autosave.v1';
@@ -14,19 +15,37 @@ const SAVE_VERSION = 1;
 const AUTOSAVE_INTERVAL_MS = 60_000;
 const MAX_WORLD_CELLS = 2_000_000;
 const ARRAY_TYPES = { Uint8Array, Uint16Array, Int16Array, Float32Array };
+const BLUEPRINT_FIELD_TYPES = {
+    type: Uint8Array, temp: Float32Array, life: Int16Array, lifeMax: Int16Array,
+    residue: Uint8Array, shade: Uint8Array, heat: Float32Array, surface: Int16Array,
+    data: Uint8Array, power: Uint8Array, powerDelay: Uint16Array, charge: Float32Array,
+    wind: Uint8Array, airflowX: Float32Array, airflowY: Float32Array,
+    airflowNextX: Float32Array, airflowNextY: Float32Array
+};
 
 let autosaveTimer = null;
 let autosaveEnabled = false;
 let autosaveWriting = false;
 let savingListener = () => {};
+let blueprintStateProvider = () => null;
+let blueprintStateRestorer = () => {};
 
 export function setSavingListener(listener) { savingListener = typeof listener === 'function' ? listener : () => {}; }
+
+// The blueprint library belongs to the UI, whereas this module owns the save
+// wire format. These hooks keep that boundary clean while including the same
+// library in both the local resume slot and portable save strings.
+export function setBlueprintSaveHandlers({ capture, restore } = {}) {
+    blueprintStateProvider = typeof capture === 'function' ? capture : () => null;
+    blueprintStateRestorer = typeof restore === 'function' ? restore : () => {};
+}
 
 export function hasAutosave() {
     try { return !!localStorage.getItem(AUTOSAVE_STORAGE_KEY); } catch { return false; }
 }
 
 export function createSaveString() {
+    const blueprints = encodeBlueprintState(blueprintStateProvider());
     const payload = {
         format: 'elemental-foundry', version: SAVE_VERSION, savedAt: new Date().toISOString(),
         simulation: encodeSimulation(captureSimulationState()),
@@ -36,6 +55,7 @@ export function createSaveString() {
             grabberOn: getGrabberOn(), heatViewOn: getHeatViewOn(), paused: getSimulationPaused()
         }
     };
+    if (blueprints) payload.blueprints = blueprints;
     return compressToEncodedURIComponent(JSON.stringify(payload));
 }
 
@@ -54,12 +74,14 @@ export function parseSaveString(compressed) {
     }
     // Validate the simulation now, while no live state has been changed.
     decodeSimulation(payload.simulation);
+    decodeBlueprintState(payload.blueprints);
     return payload;
 }
 
 export function restoreSavePayload(payload) {
     restoreSimulationState(decodeSimulation(payload.simulation));
     restoreTools(payload.tools);
+    blueprintStateRestorer(decodeBlueprintState(payload.blueprints));
     return payload;
 }
 
@@ -159,6 +181,61 @@ function decodeSimulation(simulation) {
         arrays[name] = base64ToArray(encoded.data, Type);
     }
     return { ...simulation, arrays };
+}
+
+function encodeBlueprintState(state) {
+    if (!state?.slots) return null;
+    const slots = Array.from({ length: 8 }, (_, slot) => {
+        const blueprint = state.slots[slot];
+        if (!blueprint) return null;
+        const cells = {};
+        for (const field of BLUEPRINT_FIELDS) {
+            const array = blueprint.cells?.[field];
+            if (!(array instanceof BLUEPRINT_FIELD_TYPES[field])) {
+                throw new Error(`Blueprint ${slot + 1} has invalid ${field} data.`);
+            }
+            cells[field] = { type: array.constructor.name, data: arrayToBase64(array) };
+        }
+        return { width: blueprint.width, height: blueprint.height, cells };
+    });
+    return {
+        nextSlot: Number.isInteger(state.nextSlot) ? state.nextSlot : 0,
+        slots
+    };
+}
+
+// Blueprint data was added as an optional part of version 1 saves, so older
+// strings restore to an empty library rather than becoming incompatible.
+function decodeBlueprintState(state) {
+    if (state === undefined || state === null) return { nextSlot: 0, slots: Array(8).fill(null) };
+    if (!Array.isArray(state.slots) || state.slots.length > 8 ||
+        !Number.isInteger(state.nextSlot) || state.nextSlot < 0 || state.nextSlot > 7) {
+        throw new Error('This save has invalid blueprint data.');
+    }
+    const slots = Array(8).fill(null);
+    for (let slot = 0; slot < state.slots.length; slot++) {
+        const blueprint = state.slots[slot];
+        if (blueprint === null) continue;
+        if (!blueprint || !Number.isInteger(blueprint.width) || !Number.isInteger(blueprint.height) ||
+            blueprint.width < 1 || blueprint.height < 1 || blueprint.width * blueprint.height > MAX_WORLD_CELLS) {
+            throw new Error('This save has invalid blueprint dimensions.');
+        }
+        const cells = {};
+        for (const field of BLUEPRINT_FIELDS) {
+            const encoded = blueprint.cells?.[field];
+            const Type = BLUEPRINT_FIELD_TYPES[field];
+            if (encoded?.type !== Type.name || typeof encoded.data !== 'string') {
+                throw new Error(`This save has invalid blueprint ${field} data.`);
+            }
+            const array = base64ToArray(encoded.data, Type);
+            if (array.length !== blueprint.width * blueprint.height) {
+                throw new Error(`This save has invalid blueprint ${field} data.`);
+            }
+            cells[field] = array;
+        }
+        slots[slot] = { width: blueprint.width, height: blueprint.height, cells };
+    }
+    return { nextSlot: state.nextSlot, slots };
 }
 
 function arrayToBase64(array) {
