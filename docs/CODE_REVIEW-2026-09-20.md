@@ -17,7 +17,7 @@ existing resume slot untouched.
 
 | Area | Assessment | Evidence |
 |---|---|---|
-| Data-driven materials | Strong | `particles.json` provides 45 entries and `prepareDefinitions` resolves named references once at load time. |
+| Data-driven materials | Strong | `particles.json` provides 47 entries and `prepareDefinitions` resolves named references once at load time. |
 | Simulation | Strong, but dense | Typed arrays retain per-cell state; heat, reactions, movement, wind and power are headless and covered by seeded tests. |
 | Rendering/UI | Good | Pixel canvas rendering, fitting, painting, Grabber, themed persistence dialogs and responsive panels are separated from physics. |
 | Persistence | Healthy | Export/import uses copy/paste LZString saves. The local resume slot autosaves once per minute; New Game/Import offer replace, play-without-autosave or Cancel when a slot already exists. |
@@ -28,7 +28,7 @@ existing resume slot untouched.
 ### Medium - the physics module has reached a maintenance threshold
 
 `physics.js` contains definitions, heat, reactions, plants, movement, wind,
-Fans and power in one large module. Split by concern only after the current
+machine effects and power in one large module. Split by concern only after the current
 seeded regression tests are stable, with a narrow world-state interface.
 
 ### Low - broader browser QA remains useful

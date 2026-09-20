@@ -6,7 +6,7 @@ real-world model.
 
 ## Materials and motion
 
-The material picker is generated from 45 `particles.json` entries in seven
+The material picker is generated from 47 `particles.json` entries in seven
 groups: Powders, Liquids, Gases, Solids, Metals, Machines and Tools. Materials
 have category, density, colour, fall/slide/spread behaviour, lifespan and
 optional reaction properties.
@@ -65,9 +65,9 @@ can be divided into five altitude layers.
   gas along the corroded face.
 - Toxic gas rises, spreads and withers vegetation; it later settles as acid.
   Smoke similarly persists then settles as ash.
-- Spark Dust and Spark Block emit sparks until their lifetimes expire; a liquid
-  neighbour suppresses their spark output. Spark Block transitions into Dust
-  near the end of its life.
+- Spark Dust and Spark Block emit less frequent, half-opacity sparks until their
+  lifetimes expire; a liquid neighbour suppresses their spark output. Spark
+  Block transitions into Dust near the end of its life.
 
 ## Electricity and machines
 
@@ -82,9 +82,15 @@ forms.
 - Copper and Iron connected to charged Aluminum draw charge by their configured
   grid load and repeatedly energise the reachable non-Aluminum grid. Their
   wiring can bridge up to two empty cells in a straight grid direction.
-- Fan is the first powered machine. It stores one of eight directions, only
-  produces airflow when powered, applies a widening 28-cell cone, and leaves
-  decaying residual airflow so movement does not stop abruptly at the cone edge.
+- Fan stores one of eight directions and only produces airflow when powered;
+  it applies a widening 28-cell cone and leaves decaying residual airflow so
+  movement does not stop abruptly at the cone edge.
+- Heater and Cooler are directional powered machines with the same eight-way
+  placement and 28-cell cone. Each draws 100 load (twice the Fan's 50), stays
+  off without power, and drives its cone toward 2000 C or -60 C respectively.
+  While powered they launch matching Heat Ray or Cold Ray particles along the
+  cone centreline. Machine placement previews the facing icon and cone while
+  dragging, but commits the machine and its effects only on mouse-up.
 
 ## Reliability, discovery and project quality
 
@@ -104,9 +110,12 @@ forms.
   E for eraser, H for heat view and brackets for brush size.
 - Grabber lifts and moves only one material type in an adjustable square, with
   an on-canvas preview and safe cancel/restore.
-- Air temperature, thermal layers, wind, breeze, heat view and brush/fan
-  controls are available in the UI. Fan placement ignores brush size and can be
-  aimed by dragging.
+- Air temperature, thermal layers, wind, breeze, heat view and machine controls
+  are available in the UI. Fan, Heater and Cooler placement ignores brush size
+  and can be aimed by dragging.
+- Clear is a confirmation-first destructive action: Cancel preserves the active
+  world, while Clear World wipes it without directly changing the saved Resume
+  Game.
 - Six responsive visual themes are remembered with local storage.
 - The complete world, environment and tool state can be exported as a portable
   LZString and imported from a pasted string. One local Resume Game autosaves
@@ -114,7 +123,7 @@ forms.
   explicit replace-or-play-without-autosave choice, plus Cancel to leave the
   current world and saved resume unchanged.
 - The source is separated into data, headless physics, rendering and UI.
-  Automated coverage includes 244 seeded physics assertions, a 260x150 speed
+  Automated coverage includes 250 seeded physics assertions, a 260x150 speed
   check, syntax/JSON validation, a stand-in-browser UI smoke test and a
   Playwright real-browser suite for themes, pointer/touch input, focus and
   narrow layouts.

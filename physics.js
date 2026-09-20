@@ -22,8 +22,9 @@
 //           latent heat note further down)
 //   surface for liquids, the top of the body of liquid this cell is joined to
 //   data    a spare number per cell that a few particles use for their own
-//           purposes: the fuse on a lit bomb, and how much growing a plant has
-//           left in it
+//           purposes: the fuse on a lit bomb, how much growing a plant has
+//           left in it, or a machine's facing direction. Emitted ray particles
+//           use bit 3 as a directional-projectile marker.
 //   power   frames of visible electrical power left in a conductive cell
 //   powerDelay  frames until an electrical pulse reaches a conductive cell
 //   charge  persistent stored charge for materials that can retain it; this is
@@ -180,6 +181,9 @@ export function prepareDefinitions(json) {
         radiates: 0,
         clings: 0,
         glowTemp: 0,
+        alpha: 1,
+        projectile: false,
+        projectileSpeed: 0,
         rgb: [0, 0, 0],
         rgb2: [0, 0, 0]
     }];
@@ -193,6 +197,7 @@ export function prepareDefinitions(json) {
             id: id,
             name: p.name,
             description: p.description.trim(),
+            alpha: p.alpha === undefined ? 1 : Math.max(0, Math.min(1, p.alpha)),
             group: p.group || 'Other',
             category: p.category,
             density: p.density || 0,
@@ -226,6 +231,10 @@ export function prepareDefinitions(json) {
                 ? Math.max(0.01, p.electricalConductivity || 1)
                 : 0,
             machine: p.machine || null,
+            machineTemp: p.machineTemp,
+            machineRange: p.machineRange || 0,
+            machineRate: p.machineRate || 0,
+            machineEmits: toId(p.machineEmits),
             wireReach: p.wireReach || 0,
             energizesConductors: !!p.energizesConductors,
             chargeCapacity: p.chargeCapacity || 0,
@@ -279,6 +288,8 @@ export function prepareDefinitions(json) {
             glowTemp: p.glowTemp !== undefined ? p.glowTemp : (p.emit || 0),
             forceTemp: p.forceTemp,
             forceRate: p.forceRate || 0,
+            projectile: !!p.projectile,
+            projectileSpeed: p.projectile ? Math.max(1, p.projectileSpeed || 1) : 0,
 
             blastRadius: p.blastRadius || 0,
             fuse: p.fuse || 0,
@@ -979,7 +990,7 @@ function balanceStoredCharge() {
 
         // Every conductive cell in the connected grid draws its configured
         // amount on every simulation tick. A bare copper wire therefore drains
-        // very slowly, while a future machine can make the same grid consume
+        // very slowly, while powered machines can make the same grid consume
         // hundreds of charge units per tick.
         const gridConsumption = connectedGridConsumption(dischargeContacts) /
             BATTERY_DISCHARGE_SCALE;
@@ -1040,7 +1051,7 @@ export function stepSimulation() {
     world.moved.fill(0);
     updateElectricalPower();
     decayAndAdvectFanAir();
-    updateActiveFanWinds();
+    updateActiveMachines();
     applyFanAirflowToParticles();
 
     // The breeze blows first, on the freshly cleared moved flags, so that
@@ -1065,6 +1076,15 @@ export function stepSimulation() {
             // A particle that changed into something else this frame is done.
             if (def.hasStateChange && applyStateChange(x, y, i, def)) continue;
             if (def.hasReaction && applyReactions(x, y, i, def)) continue;
+
+            // Heat Ray and Cold Ray are directional projectiles when emitted by
+            // a powered machine. Their cell data stores the machine's eight-way
+            // direction, so they travel along the same centreline as its cone
+            // instead of falling or drifting like a hand-painted ray.
+            if (def.projectile && (world.data[i] & 8)) {
+                moveProjectile(x, y, i, def);
+                continue;
+            }
 
             if (!def.moves) continue;
 
@@ -2635,18 +2655,98 @@ function fanDirectionVector(direction) {
     }
 }
 
-function fanIsActive(x, y, i) {
+function moveProjectile(x, y, i, def) {
+    const [dirX, dirY] = fanDirectionVector(world.data[i]);
+    let nx = x;
+    let ny = y;
+    for (let step = 0; step < def.projectileSpeed; step++) {
+        nx += dirX;
+        ny += dirY;
+        if (!inBounds(nx, ny)) {
+            removeParticle(i);
+            return;
+        }
+        if (world.type[index(nx, ny)] !== EMPTY) {
+            // A ray heats or chills the occupied cell from its current spot;
+            // leave it in place until it expires rather than replacing matter.
+            world.moved[i] = 1;
+            return;
+        }
+    }
+    swapCells(i, index(nx, ny));
+}
+
+function machineIsPowered(x, y, i) {
     if (world.power[i] > 0 || world.powerDelay[i] > 0) return true;
 
-    // A live Spark or a Spark source touching the Fan is enough to start it.
+    // A live Spark or a Spark source touching a machine is enough to start it.
     // The source check is deliberate: a source does not need an empty cell on
-    // the Fan-facing side in order to energize a machine it is touching.
+    // the machine-facing side in order to energize a machine it is touching.
     const spark = idOf('Spark');
     for (const [dx, dy] of ELECTRICAL_NEIGHBOURS) {
         const neighbour = typeAt(x + dx, y + dy);
         if (neighbour === spark || DEFS[neighbour]?.sparkEmitterChance > 0) return true;
     }
     return false;
+}
+
+function emitMachineProjectile(x, y, direction, def) {
+    if (def.machineEmits === EMPTY) return;
+    const [dirX, dirY] = fanDirectionVector(direction);
+    const nx = x + dirX;
+    const ny = y + dirY;
+    if (!inBounds(nx, ny)) return;
+    const spot = index(nx, ny);
+    if (world.type[spot] !== EMPTY) return;
+
+    const projectile = DEFS[def.machineEmits];
+    transform(spot, def.machineEmits);
+    // Keep bit 3 as the emitted-projectile marker; the lower three bits retain
+    // the eight-way direction while hand-painted ray tools remain ordinary
+    // falling/rising particles.
+    world.data[spot] = (direction & 7) | 8;
+    world.temp[spot] = projectile.defaultTemp;
+}
+
+// Rendering uses the same power rule to show or hide a machine's active cone.
+export function isMachinePoweredAt(x, y) {
+    if (!world || !inBounds(x, y)) return false;
+    const i = index(x, y);
+    return !!DEFS[world.type[i]]?.machine && machineIsPowered(x, y, i);
+}
+
+// Heater and Cooler use the same widening, directional cone as a Fan, but
+// replace airflow with a temperature force. Near cells receive almost the
+// complete Heat Ray/Cold Ray strength; the force fades gently at the edge so
+// the full 28-cell range still has a visible effect.
+function applyMachineTemperature(x, y, direction, targetTemp, range, machineRate) {
+    const [dirX, dirY] = fanDirectionVector(direction);
+    const tangentX = -dirY;
+    const tangentY = dirX;
+    const reach = Math.max(1, Math.round(range));
+    const blocked = new Set();
+
+    for (let distance = 1; distance <= reach; distance++) {
+        const halfWidth = Math.floor((distance - 1) * 0.5);
+        const falloff = 1 - (distance - 1) / (reach + 1);
+        for (let offset = -halfWidth; offset <= halfWidth; offset++) {
+            if (blocked.has(offset)) continue;
+
+            const nx = x + dirX * distance + tangentX * offset;
+            const ny = y + dirY * distance + tangentY * offset;
+            if (!inBounds(nx, ny)) continue;
+
+            const ni = index(nx, ny);
+            if (stopsWind(world.type[ni])) {
+                blocked.add(offset);
+                continue;
+            }
+
+            const rate = Math.max(0, Math.min(1,
+                machineRate * (0.35 + 0.65 * falloff)));
+            world.temp[ni] += (targetTemp - world.temp[ni]) * rate;
+        }
+    }
 }
 
 // A Fan's output is a widening 28-cell cone: power is 21, while reach is four
@@ -2729,14 +2829,20 @@ function applyFanAirflowToParticles() {
     }
 }
 
-function updateActiveFanWinds() {
-    const fan = idOf('Fan');
-    if (fan === EMPTY) return;
+function updateActiveMachines() {
     for (let i = 0; i < world.type.length; i++) {
-        if (world.type[i] !== fan) continue;
+        const def = DEFS[world.type[i]];
+        if (!def?.machine) continue;
         const x = i % COLS;
         const y = Math.floor(i / COLS);
-        if (fanIsActive(x, y, i)) applyFanWind(x, y, world.data[i]);
+        if (!machineIsPowered(x, y, i)) continue;
+        if (def.machine === 'fan') applyFanWind(x, y, world.data[i]);
+        else if ((def.machine === 'heater' || def.machine === 'cooler') &&
+            def.machineTemp !== undefined) {
+            applyMachineTemperature(x, y, world.data[i], def.machineTemp,
+                def.machineRange, def.machineRate);
+            emitMachineProjectile(x, y, world.data[i], def);
+        }
     }
 }
 

@@ -21,7 +21,7 @@ import {
     prepareDefinitions, createWorld, getWorld, clearWorld, stepSimulation,
     setCell, inBounds, index, getDefinitions, getAmbientTemp, getAirTempAt,
     getAmbientTarget, getTemperature, getFrameCount, applyWind, decayWindTrails,
-    getConnectedAluminumCharge, EMPTY
+    getConnectedAluminumCharge, isMachinePoweredAt, EMPTY
 } from './physics.js';
 
 let context = null;
@@ -35,6 +35,7 @@ let gridFittedToWorkspace = false;
 let resizeListenerAttached = false;
 let grabbedPixels = null;
 let linePreview = null;
+let machinePlacementPreview = null;
 
 //--------------------------------------------------------------------------------------------------------
 
@@ -161,7 +162,7 @@ function drawWorld() {
         const id = type[i];
 
         if (heatView) {
-            writeHeatColour(pixels, p, temp[i], id);
+            writeHeatColour(pixels, p, temp[i], id, defs[id]?.alpha);
             continue;
         }
 
@@ -172,7 +173,7 @@ function drawWorld() {
             // extremes. Wind adds its pale haze on top.
             const blown = wind[i];
             const f = blown / 255;
-            // Keep Fan cones visible without washing out the air behind them.
+            // Keep machine cones visible without washing out the air behind them.
             pixels[p] = clampByte(airTint[0] + 12 * f);
             pixels[p + 1] = clampByte(airTint[1] + 19 * f);
             pixels[p + 2] = clampByte(airTint[2] + 28 * f);
@@ -247,47 +248,81 @@ function drawWorld() {
         pixels[p] = clampByte(r + wobble);
         pixels[p + 1] = clampByte(g + wobble);
         pixels[p + 2] = clampByte(b + wobble);
-        pixels[p + 3] = 255;
+        pixels[p + 3] = Math.round(255 * (def.alpha === undefined ? 1 : def.alpha));
     }
 
     drawGrabberPreview();
     context.putImageData(imageData, 0, 0);
-    drawFanOverlays();
+    drawMachineOverlays();
     drawGrabberOutline();
     drawLinePreview();
 }
 
-const FAN_ICON_SVG_NS = 'http://www.w3.org/2000/svg';
+// A pending machine is only a visual preview. It is deliberately kept outside
+// the physics world until mouse-up commits the final facing direction.
+export function setMachinePlacementPreview(x, y, machine, direction = 0) {
+    machinePlacementPreview = { x, y, machine, direction: direction & 7 };
+}
 
-// Fans are still one simulation cell, but their machine face is a fixed-size
-// screen icon so it remains readable when the pixel canvas is scaled up.
-function drawFanOverlays() {
-    const overlay = getElements().fanOverlay;
+export function clearMachinePlacementPreview() {
+    machinePlacementPreview = null;
+}
+
+const MACHINE_ICON_SVG_NS = 'http://www.w3.org/2000/svg';
+
+// Machines are still one simulation cell, but their face is a fixed-size
+// screen icon so it remains readable when the pixel canvas is scaled up. Every
+// face includes a small right-pointing arrow in its base artwork; rotating the
+// whole SVG makes the output direction obvious even for symmetric symbols such
+// as the Cooler snowflake.
+function drawMachineOverlays() {
+    const overlay = getElements().machineOverlay;
     if (!overlay) return;
     if (typeof overlay.replaceChildren === 'function') overlay.replaceChildren();
     else overlay.innerHTML = '';
 
     const world = getWorld();
-    const fan = getDefinitions().findIndex(def => def && def.machine === 'fan');
-    if (fan < 0) return;
-
     const canvas = getElements().canvas;
     const cellWidth = canvas.clientWidth / world.cols;
     const cellHeight = canvas.clientHeight / world.rows;
     const rotations = [0, 180, -90, 90, -45, -135, 135, 45];
-    const iconMarkup = '<circle cx="11" cy="15" r="7" fill="none" stroke="currentColor" stroke-width="1.6"/>' +
+    const coneLayer = document.createElementNS(MACHINE_ICON_SVG_NS, 'svg');
+    coneLayer.setAttribute('class', 'machine-cone-overlay');
+    coneLayer.setAttribute('viewBox', `0 0 ${canvas.clientWidth} ${canvas.clientHeight}`);
+    coneLayer.setAttribute('width', '100%');
+    coneLayer.setAttribute('height', '100%');
+    coneLayer.setAttribute('aria-hidden', 'true');
+    overlay.appendChild(coneLayer);
+    const icons = {
+        fan: '<circle cx="11" cy="15" r="7" fill="none" stroke="currentColor" stroke-width="1.6"/>' +
         '<circle cx="11" cy="15" r="2.2" fill="currentColor"/>' +
         '<path d="M11 12.8C7 10 6.5 6 9.4 5.1c3.2-1 4.3 2.7 2.1 7.7Z" fill="currentColor"/>' +
         '<path d="M13.2 15c2.8-4 6.8-4.5 7.7-1.6 1 3.2-2.7 4.3-7.7 2.1Z" fill="currentColor"/>' +
         '<path d="M11 17.2c4 2.8 4.5 6.8 1.6 7.7-3.2 1-4.3-2.7-2.1-7.7Z" fill="currentColor"/>' +
-        '<path d="M17 10h7M18 15h9M17 20h7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>';
+        '<path d="M17 10h7M18 15h9M17 20h7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>' +
+        '<path d="M3 27h11m0 0-3-2.5m3 2.5-3 2.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>',
+        heater: '<path d="M15 26c-5.6 0-8.8-3.1-8.8-7.1 0-3.1 2-5.3 4.7-7.7-.2 2.7 1.2 3.9 2.4 4.8-.2-4.6 2.4-7.3 4.8-10 2.6 3.1 5.1 6.4 5.1 10.8C23.2 22.3 19.8 26 15 26Z" fill="currentColor"/>' +
+            '<path d="M10.7 21.5c.3-2 1.6-3.1 3.6-4.7-.1 2.5.8 3.5 1.8 4.7" fill="none" stroke="#fff" stroke-width="1.3" stroke-linecap="round"/>' +
+            '<path d="M3 27h11m0 0-3-2.5m3 2.5-3 2.5" fill="none" stroke="#fff" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>',
+        cooler: '<path d="M15 4v22M6 9.5l18 11M6 20.5l18-11M15 4l-3 3M15 4l3 3M15 26l-3-3M15 26l3-3M6 9.5l.5 4M6 9.5l4 .6M24 20.5l-.5-4M24 20.5l-4-.6M6 20.5l4-.6M6 20.5l.5-4M24 9.5l-4 .6M24 9.5l-.5 4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>' +
+            '<path d="M3 27h11m0 0-3-2.5m3 2.5-3 2.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>'
+    };
 
     for (let i = 0; i < world.type.length; i++) {
-        if (world.type[i] !== fan) continue;
+        const def = getDefinitions()[world.type[i]];
+        const machine = def?.machine;
+        if (!machine || !icons[machine]) continue;
         const x = i % world.cols;
         const y = Math.floor(i / world.cols);
-        const icon = document.createElementNS(FAN_ICON_SVG_NS, 'svg');
-        icon.setAttribute('class', 'fan-overlay-icon');
+        if ((machine === 'heater' || machine === 'cooler') && isMachinePoweredAt(x, y)) {
+            const cone = document.createElementNS(MACHINE_ICON_SVG_NS, 'path');
+            cone.setAttribute('class', `machine-cone machine-cone-${machine}`);
+            cone.setAttribute('d', machineConePath(x, y, world.data[i] & 7,
+                cellWidth, cellHeight, def.machineRange || 28));
+            coneLayer.appendChild(cone);
+        }
+        const icon = document.createElementNS(MACHINE_ICON_SVG_NS, 'svg');
+        icon.setAttribute('class', `machine-overlay-icon machine-${machine}`);
         icon.setAttribute('viewBox', '0 0 30 30');
         icon.setAttribute('width', '30');
         icon.setAttribute('height', '30');
@@ -295,9 +330,78 @@ function drawFanOverlays() {
         icon.style.left = `${(x + 0.5) * cellWidth - 15}px`;
         icon.style.top = `${(y + 0.5) * cellHeight - 15}px`;
         icon.style.transform = `rotate(${rotations[world.data[i] & 7]}deg)`;
-        icon.innerHTML = iconMarkup;
+        icon.innerHTML = icons[machine];
         overlay.appendChild(icon);
     }
+
+    if (machinePlacementPreview) {
+        const preview = machinePlacementPreview;
+        const def = getDefinitions().find(candidate => candidate?.machine === preview.machine);
+        if (def && icons[preview.machine] && inBounds(preview.x, preview.y)) {
+            if (preview.machine === 'heater' || preview.machine === 'cooler') {
+                const cone = document.createElementNS(MACHINE_ICON_SVG_NS, 'path');
+                cone.setAttribute('class', `machine-cone machine-cone-${preview.machine} machine-cone-preview`);
+                cone.setAttribute('d', machineConePath(preview.x, preview.y, preview.direction,
+                    cellWidth, cellHeight, def.machineRange || 28));
+                coneLayer.appendChild(cone);
+            }
+            const icon = document.createElementNS(MACHINE_ICON_SVG_NS, 'svg');
+            icon.setAttribute('class', `machine-overlay-icon machine-${preview.machine} machine-placement-preview`);
+            icon.setAttribute('viewBox', '0 0 30 30');
+            icon.setAttribute('width', '30');
+            icon.setAttribute('height', '30');
+            icon.setAttribute('aria-hidden', 'true');
+            icon.style.left = `${(preview.x + 0.5) * cellWidth - 15}px`;
+            icon.style.top = `${(preview.y + 0.5) * cellHeight - 15}px`;
+            icon.style.transform = `rotate(${rotations[preview.direction]}deg)`;
+            icon.innerHTML = icons[preview.machine];
+            overlay.appendChild(icon);
+        }
+    }
+}
+
+function machineDirectionVector(direction) {
+    switch (direction & 7) {
+        case 1: return [-1, 0];
+        case 2: return [0, -1];
+        case 3: return [0, 1];
+        case 4: return [1, -1];
+        case 5: return [-1, -1];
+        case 6: return [-1, 1];
+        case 7: return [1, 1];
+        default: return [1, 0];
+    }
+}
+
+// Draw the same expanding 28-cell cone used by Heater and Cooler. The visual
+// is intentionally translucent: it shows the affected area without hiding the
+// particles and temperature view underneath it.
+function machineConePath(x, y, direction, cellWidth, cellHeight, range) {
+    const [dirX, dirY] = machineDirectionVector(direction);
+    const centreX = (x + 0.5) * cellWidth;
+    const centreY = (y + 0.5) * cellHeight;
+    const stepX = dirX * cellWidth;
+    const stepY = dirY * cellHeight;
+    const stepLength = Math.max(1, Math.hypot(stepX, stepY));
+    const unitX = stepX / stepLength;
+    const unitY = stepY / stepLength;
+    const tangentX = -unitY;
+    const tangentY = unitX;
+    const reach = Math.max(1, Math.round(range));
+    const cellSize = Math.min(cellWidth, cellHeight);
+    const nearX = centreX + stepX * 0.5;
+    const nearY = centreY + stepY * 0.5;
+    const farX = centreX + stepX * reach;
+    const farY = centreY + stepY * reach;
+    const nearHalf = cellSize * 0.35;
+    const farHalf = cellSize * (reach - 1) * 0.5;
+    const points = [
+        [nearX + tangentX * nearHalf, nearY + tangentY * nearHalf],
+        [farX + tangentX * farHalf, farY + tangentY * farHalf],
+        [farX - tangentX * farHalf, farY - tangentY * farHalf],
+        [nearX - tangentX * nearHalf, nearY - tangentY * nearHalf]
+    ];
+    return `M ${points.map(([px, py]) => `${px.toFixed(2)} ${py.toFixed(2)}`).join(' L ')} Z`;
 }
 
 function clampByte(v) {
@@ -319,7 +423,7 @@ export function airTintForTemperature(t) {
 
 // Temperature overlay: deep blue when frozen, through green at room
 // temperature, to white hot.
-function writeHeatColour(out, p, t, id) {
+function writeHeatColour(out, p, t, id, alpha = 1) {
     let r, g, b;
     if (t < 0) {
         const f = Math.max(0, (t + 60) / 60);
@@ -338,7 +442,7 @@ function writeHeatColour(out, p, t, id) {
     out[p] = clampByte(r);
     out[p + 1] = clampByte(g);
     out[p + 2] = clampByte(b);
-    out[p + 3] = 255;
+    out[p + 3] = Math.round(255 * (alpha === undefined ? 1 : alpha));
 }
 
 // Where the mouse is, so the readout can show what is under it. Set from ui.js.
@@ -393,7 +497,7 @@ function drawGrabberPreview() {
         pixels[p] = cell.previewR;
         pixels[p + 1] = cell.previewG;
         pixels[p + 2] = cell.previewB;
-        pixels[p + 3] = 255;
+        pixels[p + 3] = cell.previewA === undefined ? 255 : cell.previewA;
     }
 }
 
@@ -504,32 +608,47 @@ export function paintCell(centreX, centreY, dragX, dragY) {
     }
 }
 
-function fanId() {
-    return getDefinitions().findIndex(def => def && def.machine === 'fan');
+function machineId(machine) {
+    return getDefinitions().findIndex(def => def && def.machine === machine);
 }
 
-function normaliseFanDirection(direction) {
+function normaliseMachineDirection(direction) {
     return ((Math.round(direction) % 8) + 8) % 8;
 }
 
+export function canPlaceMachine(x, y, machine) {
+    const id = machineId(machine);
+    return id > 0 && inBounds(x, y) && getWorld().type[index(x, y)] === EMPTY;
+}
+
 // Machines are placed as one cell, independently of brush size. Their
-// orientation lives in the cell's data byte so it travels with the Fan when
-// the grabber moves it and survives the normal world-state operations.
-export function placeFan(x, y, direction = 0) {
-    const id = fanId();
+// orientation lives in the cell's data byte so it travels with the machine
+// when the grabber moves it and survives normal world-state operations.
+export function placeMachine(x, y, machine, direction = 0) {
+    const id = machineId(machine);
     if (id <= 0 || !inBounds(x, y)) return false;
     const i = index(x, y);
     if (getWorld().type[i] !== EMPTY) return false;
     setCell(x, y, id);
-    getWorld().data[i] = normaliseFanDirection(direction);
+    getWorld().data[i] = normaliseMachineDirection(direction);
     return true;
 }
 
-export function faceFan(x, y, direction = 0) {
+export function faceMachine(x, y, machine, direction = 0) {
     const i = inBounds(x, y) ? index(x, y) : -1;
-    if (i < 0 || getWorld().type[i] !== fanId()) return false;
-    getWorld().data[i] = normaliseFanDirection(direction);
+    if (i < 0 || getWorld().type[i] !== machineId(machine)) return false;
+    getWorld().data[i] = normaliseMachineDirection(direction);
     return true;
+}
+
+// Compatibility wrappers for callers that still refer to the original Fan
+// helpers. New machines use the generic functions above.
+export function placeFan(x, y, direction = 0) {
+    return placeMachine(x, y, 'fan', direction);
+}
+
+export function faceFan(x, y, direction = 0) {
+    return faceMachine(x, y, 'fan', direction);
 }
 
 // Draws along the line between two mouse positions so that a fast drag leaves a
@@ -580,7 +699,8 @@ export function beginGrab(centreX, centreY, size = getGrabberSize()) {
                 charge: world.charge[i], wind: world.wind[i],
                 previewR: pixels ? pixels[p] : def.rgb[0],
                 previewG: pixels ? pixels[p + 1] : def.rgb[1],
-                previewB: pixels ? pixels[p + 2] : def.rgb[2]
+                previewB: pixels ? pixels[p + 2] : def.rgb[2],
+                previewA: Math.round(255 * (def.alpha === undefined ? 1 : def.alpha))
             });
             clearGrabbedCell(world, i, y);
         }

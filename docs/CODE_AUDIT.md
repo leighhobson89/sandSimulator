@@ -10,9 +10,10 @@ Persistence is a first-class feature. The complete world and tool/environment
 state export as a versioned LZString, and one local Resume Game autosaves every
 minute. Importing or creating a new game can replace the existing resume slot,
 continue without autosave, or be canceled without changing the current world.
+The destructive Clear action also requires confirmation and offers Cancel.
 
 Elemental Foundry is a browser-based falling-sand simulation with a headless
-physics core. The current data file defines 45 material and tool entries:
+physics core. The current data file defines 47 material and tool entries:
 
 | Group | Entries |
 |---|---:|
@@ -21,13 +22,13 @@ physics core. The current data file defines 45 material and tool entries:
 | Gases | 4 |
 | Solids | 15 |
 | Metals | 7 |
-| Machines | 1 |
+| Machines | 3 |
 | Tools | 3 |
 
 The simulator exposes six visual themes, a 150-row world, heat and state
 changes, flowing liquids, gases, fire, weather, plants, lilies, snow,
 gunpowder, electrical pulses, Aluminum charge storage, conductive power grids,
-Spark Dust, Spark Block and the directional Fan machine.
+Spark Dust, Spark Block and the directional Fan, Heater and Cooler machines.
 
 No confirmed functional regression was found in this audit. The seeded headless
 suite and browser-oriented smoke suite pass. A Playwright suite now covers the
@@ -53,10 +54,12 @@ heat transfer, melting, freezing, boiling, fire, lava/scoria/stone, gases,
 wind and breeze, plants and lilies, snow, seeds, gunpowder, metals, electrical
 pulses, Aluminum charge sharing and discharge, Spark Dust, Spark Block lifetime,
 liquid suppression around spark sources, Fan activation, its 28-cell reach,
-residual-air deceleration and eight-way orientation, Copper/Iron two-cell
-machine reach, UI controls, and autosave replacement/cancellation behavior.
+residual-air deceleration and eight-way orientation, Heater/Cooler activation,
+temperature cones, centreline ray projectiles, power load and drag previews,
+Copper/Iron two-cell machine reach, UI controls, Clear confirmation, and
+autosave replacement/cancellation behavior.
 
-The audit also keeps documentation aligned with the source data: 45 entries,
+The audit also keeps documentation aligned with the source data: 47 entries,
 an 8C starting ambient temperature, 10% seed buoyancy and the Elemental Foundry
 product name.
 
@@ -66,8 +69,8 @@ All commands below were run from the repository root on the audit date.
 
 | Check | Outcome |
 |---|---|
-| `npm test` | **244 passed, 0 failed** with the default seed |
-| `npm run test:smoke` | **Passed**: startup, 45 material buttons, seven groups, canvas rendering, Fan placement/orientation, drawing tools, themes, charge rendering, temperature, breeze and autosave Cancel behavior |
+| `npm test` | **250 passed, 0 failed** with the default seed |
+| `npm run test:smoke` | **Passed**: startup, 47 material buttons, seven groups, canvas rendering, Fan/Heater/Cooler placement, orientation, previews, icons and active cones, drawing tools, themes, charge rendering, temperature, Clear confirmation, breeze and autosave Cancel behavior |
 | `npm run test:browser` | Playwright suite available for real-browser visual and interaction checks; install Chromium first with `npx playwright install chromium` |
 | `node --check physics.js` | Passed |
 | `node --check tools/simTest.mjs` | Passed |

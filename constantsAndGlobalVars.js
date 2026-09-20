@@ -41,7 +41,7 @@ export function setElements() {
         canvas: document.getElementById('canvas'),
         canvasArea: document.getElementById('canvasArea'),
         canvasStage: document.getElementById('canvasStage'),
-        fanOverlay: document.getElementById('fanOverlay'),
+        machineOverlay: document.getElementById('machineOverlay'),
         canvasContainer: document.getElementById('canvasContainer'),
         buttonRow: document.getElementById('buttonRow'),
         overlay: document.getElementById('overlay'),
@@ -93,7 +93,10 @@ export function setElements() {
         autosaveChoiceDescription: document.getElementById('autosaveChoiceDescription'),
         autosaveChoiceYes: document.getElementById('autosaveChoiceYes'),
         autosaveChoiceNo: document.getElementById('autosaveChoiceNo'),
-        autosaveChoiceCancel: document.getElementById('autosaveChoiceCancel')
+        autosaveChoiceCancel: document.getElementById('autosaveChoiceCancel'),
+        clearDialog: document.getElementById('clearDialog'),
+        clearDialogConfirm: document.getElementById('clearDialogConfirm'),
+        clearDialogCancel: document.getElementById('clearDialogCancel')
     };
 }
 

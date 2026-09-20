@@ -14,8 +14,8 @@ recorded in [`COMPLETED_FEATURES.md`](COMPLETED_FEATURES.md).
   and overload/short-circuit feedback. Decide whether to remain a gameplay
   pulse system or introduce voltage/resistance deliberately; avoid a confusing
   half-step.
-- Add more machines that reuse the power interface: heater/cooler, pump,
-  valve, conveyor, sprinkler, pressure source and light.
+- Add more machines that reuse the power interface: pump, valve, conveyor,
+  sprinkler, pressure source, light and other specialized devices.
 - Improve environmental feedback: an airflow or power overlay, material
   inspector at the hover cell, chart/readout for temperature and charge, and
   optional pause/single-step/reset-world tools.

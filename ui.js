@@ -18,7 +18,8 @@ import {
 import {
     loadParticleDefinitions, initializeWorld, setGameState, startGame,
     paintLine, paintCell, clearCanvasWorld, setHoverCell,
-    placeFan, faceFan, beginGrab, dropGrab, cancelGrab, setLinePreview, clearLinePreview
+    canPlaceMachine, placeMachine, setMachinePlacementPreview, clearMachinePlacementPreview,
+    beginGrab, dropGrab, cancelGrab, setLinePreview, clearLinePreview
 } from './game.js';
 import {
     getDefinitions, setAmbientTarget, getAmbientTarget, setLayerLapse, getLayerLapse,
@@ -37,7 +38,7 @@ let lastCell = null;
 let paintTimer = null;
 let currentCell = { x: 0, y: 0 };
 let lineStart = null;
-let fanPlacement = null;
+let machinePlacement = null;
 let autosaveChoiceResolver = null;
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -60,6 +61,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     elements.exportGameButton.addEventListener('click', openExportDialog);
     elements.importGameButton.addEventListener('click', openImportDialog);
     setUpSaveDialogs();
+    elements.clearDialogConfirm.addEventListener('click', confirmClearWorld);
+    elements.clearDialogCancel.addEventListener('click', closeClearDialog);
     setSavingListener(saving => { elements.autosaveStatus.hidden = !saving; });
     updateResumeButton();
 
@@ -69,7 +72,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     elements.clearButton.addEventListener('click', () => {
-        clearCanvasWorld();
+        openClearDialog();
     });
 
     elements.heatViewButton.addEventListener('click', () => {
@@ -282,6 +285,25 @@ function settleAutosaveChoice(choice) {
     if (resolve) resolve(choice);
 }
 
+function openClearDialog() {
+    const elements = getElements();
+    elements.clearDialog.hidden = false;
+    elements.clearDialogConfirm.focus();
+}
+
+function closeClearDialog() {
+    getElements().clearDialog.hidden = true;
+}
+
+function confirmClearWorld() {
+    // Stop any deferred stroke or Grabber operation before clearing the arrays,
+    // so no input state can write material back into the freshly empty world.
+    cancelPainting();
+    setGrabberMode(false);
+    clearCanvasWorld();
+    closeClearDialog();
+}
+
 function showSaveError(message) {
     const error = getElements().saveDialogError;
     error.textContent = message;
@@ -341,6 +363,7 @@ function makeParticleButton(def, id) {
         // Choosing a material always leaves Grabber mode first. If the claw is
         // holding anything, setGrabberMode restores it before the new brush is
         // selected, so changing tools can never make lifted pixels disappear.
+        cancelPainting();
         setGrabberMode(false);
         setParticleTypeIdSelected(id);
         setEraserOn(false);
@@ -372,6 +395,7 @@ function formatMaterialTooltip(def) {
     if (def.defaultTemp !== 8) properties.push(`starts at ${formatTemperature(def.defaultTemp)}`);
     if (def.forceTemp !== undefined) properties.push(`forces ${formatTemperature(def.forceTemp)}`);
     if (def.forceRate > 0) properties.push(`force rate ${formatNumber(def.forceRate)}`);
+    if (def.projectile) properties.push(`machine projectile speed ${formatNumber(def.projectileSpeed)} cells/frame`);
     if (def.coolsBy > 0) properties.push(`cools ${formatNumber(def.coolsBy)} C/frame`);
     if (def.conductivity !== undefined && def.conductivity !== 0.06) {
         properties.push(`heat conductivity ${formatNumber(def.conductivity)}`);
@@ -395,6 +419,13 @@ function formatMaterialTooltip(def) {
     if (def.chargeSparkChance > 0) properties.push(`full-charge spark chance ${formatPercent(def.chargeSparkChance)}`);
     if (def.powerConsumption > 0) properties.push(`draws ${formatNumber(def.powerConsumption)} power/tick`);
     if (def.machine) properties.push(`machine: ${titleCase(def.machine)}`);
+    if (def.machineTemp !== undefined) properties.push(`outputs ${formatTemperature(def.machineTemp)} over ${formatNumber(def.machineRange)} cells`);
+    if (def.machineRate > 0) properties.push(`output rate ${formatPercent(def.machineRate)}`);
+    if (def.machineEmits > 0) {
+        const emitted = getDefinitions()[def.machineEmits];
+        if (emitted) properties.push(`launches ${emitted.name} along its facing direction while powered`);
+    }
+    if (def.alpha < 1) properties.push(`opacity ${formatPercent(def.alpha)}`);
     if (def.blastProof) properties.push('blast-proof');
     if (def.fuse > 0) properties.push(`fuse ${formatNumber(def.fuse)} frames`);
     if (def.life > 0) properties.push(`lifetime ${formatNumber(def.life)} frames`);
@@ -695,11 +726,14 @@ function setUpCanvasInput() {
         // Right button erases without having to switch tool.
         if (event.button === 2) setEraserOn(true);
         lastCell = null;
-        if (event.button === 0 && selectedFan()) {
-            fanPlacement = placeFan(currentCell.x, currentCell.y, 0)
-                ? { x: currentCell.x, y: currentCell.y }
+        const machine = selectedMachine();
+        if (event.button === 0 && machine) {
+            machinePlacement = canPlaceMachine(currentCell.x, currentCell.y, machine)
+                ? { x: currentCell.x, y: currentCell.y, machine, direction: 0 }
                 : null;
-            isPainting = !!fanPlacement;
+            isPainting = !!machinePlacement;
+            if (machinePlacement) setMachinePlacementPreview(
+                machinePlacement.x, machinePlacement.y, machinePlacement.machine, 0);
             return;
         }
         if (getDrawMode() === 'line') {
@@ -716,9 +750,13 @@ function setUpCanvasInput() {
         setHoverCell(currentCell.x, currentCell.y);
         if (isGrabbing) return;
         if (!isPainting) return;
-        if (fanPlacement || selectedFan()) {
-            if (fanPlacement) faceFan(fanPlacement.x, fanPlacement.y,
-                fanDirection(currentCell.x - fanPlacement.x, currentCell.y - fanPlacement.y));
+        if (machinePlacement || selectedMachine()) {
+            if (machinePlacement) {
+                machinePlacement.direction = fanDirection(
+                    currentCell.x - machinePlacement.x, currentCell.y - machinePlacement.y);
+                setMachinePlacementPreview(machinePlacement.x, machinePlacement.y,
+                    machinePlacement.machine, machinePlacement.direction);
+            }
             return;
         }
         if (getDrawMode() === 'line' && lineStart) {
@@ -754,11 +792,14 @@ function setUpCanvasInput() {
         }
         isPainting = true;
         lastCell = null;
-        if (selectedFan()) {
-            fanPlacement = placeFan(currentCell.x, currentCell.y, 0)
-                ? { x: currentCell.x, y: currentCell.y }
+        const machine = selectedMachine();
+        if (machine) {
+            machinePlacement = canPlaceMachine(currentCell.x, currentCell.y, machine)
+                ? { x: currentCell.x, y: currentCell.y, machine, direction: 0 }
                 : null;
-            isPainting = !!fanPlacement;
+            isPainting = !!machinePlacement;
+            if (machinePlacement) setMachinePlacementPreview(
+                machinePlacement.x, machinePlacement.y, machinePlacement.machine, 0);
             return;
         }
         if (getDrawMode() === 'line') {
@@ -775,9 +816,13 @@ function setUpCanvasInput() {
         currentCell = cellFromEvent(event.touches[0]);
         setHoverCell(currentCell.x, currentCell.y);
         if (isGrabbing) return;
-        if (fanPlacement || selectedFan()) {
-            if (fanPlacement) faceFan(fanPlacement.x, fanPlacement.y,
-                fanDirection(currentCell.x - fanPlacement.x, currentCell.y - fanPlacement.y));
+        if (machinePlacement || selectedMachine()) {
+            if (machinePlacement) {
+                machinePlacement.direction = fanDirection(
+                    currentCell.x - machinePlacement.x, currentCell.y - machinePlacement.y);
+                setMachinePlacementPreview(machinePlacement.x, machinePlacement.y,
+                    machinePlacement.machine, machinePlacement.direction);
+            }
             return;
         }
         if (getDrawMode() === 'line' && lineStart) {
@@ -798,11 +843,15 @@ function setUpCanvasInput() {
 }
 
 function finishPainting(button) {
-    if (fanPlacement) {
-        fanPlacement = null;
+    if (machinePlacement) {
+        const placement = machinePlacement;
+        machinePlacement = null;
+        clearMachinePlacementPreview();
         isPainting = false;
         lastCell = null;
         stopPaintTimer();
+        if (button === 0) placeMachine(placement.x, placement.y,
+            placement.machine, placement.direction);
         if (button === 2) setEraserOn(false);
         return;
     }
@@ -819,17 +868,18 @@ function finishPainting(button) {
 
 function cancelPainting() {
     isPainting = false;
-    fanPlacement = null;
+    machinePlacement = null;
+    clearMachinePlacementPreview();
     lineStart = null;
     lastCell = null;
     stopPaintTimer();
     clearLinePreview();
 }
 
-function selectedFan() {
+function selectedMachine() {
     const selected = getParticleTypeIdSelected();
     const def = getDefinitions()[selected];
-    return !!def && def.machine === 'fan';
+    return def?.machine || null;
 }
 
 function fanDirection(dx, dy) {

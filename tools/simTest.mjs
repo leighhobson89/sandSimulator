@@ -998,6 +998,10 @@ section('Spark Dust emits around itself and wears out pixel by pixel');
 clearWorld();
 for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
 const sparkDust = defs[ID['Spark Dust']];
+const sparkBlockDefinition = defs[ID['Spark Block']];
+check('spark sources use the quieter half-opacity settings',
+    sparkDust.sparkEmitterChance === 0.02 &&
+    sparkBlockDefinition.sparkEmitterChance === 0.02 && defs[ID.Spark].alpha === 0.5);
 const savedSparkDustSettings = {
     sparkEmitterChance: sparkDust.sparkEmitterChance,
     life: sparkDust.life,
@@ -1124,6 +1128,47 @@ stepSimulation();
 check('a Fan can blow diagonally',
     getWorld().wind[index(fanX + 1, fanY - 1)] > 0 &&
     getWorld().wind[index(fanX + 1, fanY + 1)] === 0);
+
+// ---------------------------------------------------------------------------
+
+section('Heater and Cooler launch directional ray particles when powered');
+const heater = defs[ID.Heater];
+const cooler = defs[ID.Cooler];
+check('Heater and Cooler are configured to emit the matching rays',
+    heater.machineEmits === ID['Heat Ray'] && cooler.machineEmits === ID['Cold Ray'] &&
+    defs[ID['Heat Ray']].projectile && defs[ID['Cold Ray']].projectile);
+
+const machineX = 30;
+const machineY = 20;
+clearWorld();
+setCell(machineX, machineY, ID.Heater);
+setCell(machineX - 1, machineY, ID.Aluminum);
+getWorld().charge[index(machineX - 1, machineY)] = defs[ID.Aluminum].chargeCapacity;
+stepSimulation();
+const firstHeatRay = index(machineX + 1, machineY);
+check('a powered Heater launches a right-facing Heat Ray',
+    typeAt(machineX + 1, machineY) === ID['Heat Ray'] &&
+    (getWorld().data[firstHeatRay] & 8) !== 0 &&
+    (getWorld().data[firstHeatRay] & 7) === 0);
+stepSimulation();
+check('the emitted Heat Ray advances along the cone centreline',
+    typeAt(machineX + 3, machineY) === ID['Heat Ray']);
+
+clearWorld();
+setCell(machineX, machineY, ID.Cooler);
+setCell(machineX - 1, machineY, ID.Aluminum);
+getWorld().charge[index(machineX - 1, machineY)] = defs[ID.Aluminum].chargeCapacity;
+stepSimulation();
+const firstColdRay = index(machineX + 1, machineY);
+check('a powered Cooler launches a right-facing Cold Ray',
+    typeAt(machineX + 1, machineY) === ID['Cold Ray'] &&
+    (getWorld().data[firstColdRay] & 8) !== 0 &&
+    (getWorld().data[firstColdRay] & 7) === 0);
+
+clearWorld();
+setCell(machineX, machineY, ID.Heater);
+stepSimulation();
+check('an unpowered Heater launches no Heat Ray', countOf(ID['Heat Ray']) === 0);
 
 // ---------------------------------------------------------------------------
 

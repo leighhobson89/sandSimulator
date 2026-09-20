@@ -69,7 +69,7 @@
             <main id="canvasArea">
                 <div id="canvasStage">
                     <canvas id="canvas"></canvas>
-                    <div id="fanOverlay" aria-hidden="true"></div>
+                    <div id="machineOverlay" aria-hidden="true"></div>
                 </div>
             </main>
 
@@ -278,6 +278,18 @@
                 <button id="autosaveChoiceYes" class="btn btn-primary" type="button">Yes, replace it</button>
                 <button id="autosaveChoiceNo" class="btn btn-ghost" type="button">No, play without autosave</button>
                 <button id="autosaveChoiceCancel" class="btn btn-ghost" type="button">Cancel</button>
+            </div>
+        </div>
+    </section>
+
+    <section id="clearDialog" class="save-dialog" hidden role="dialog" aria-modal="true" aria-labelledby="clearDialogTitle">
+        <div class="save-dialog-card save-dialog-card-small">
+            <span class="tools-kicker">Destructive action</span>
+            <h2 id="clearDialogTitle">Clear this world?</h2>
+            <p class="save-dialog-description">This permanently removes every particle from the current canvas. Your existing autosave is not changed.</p>
+            <div class="save-dialog-actions">
+                <button id="clearDialogConfirm" class="btn btn-primary" type="button">Clear World</button>
+                <button id="clearDialogCancel" class="btn btn-ghost" type="button">Cancel</button>
             </div>
         </div>
     </section>

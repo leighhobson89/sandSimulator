@@ -178,6 +178,12 @@ if (indexMarkup.includes('id="autosaveChoiceCancel"') &&
 } else {
     fail('the autosave decision dialog has no Cancel action');
 }
+if (indexMarkup.includes('id="clearDialogConfirm"') &&
+    indexMarkup.includes('id="clearDialogCancel"')) {
+    pass('the Clear action has a confirmation dialog with Cancel');
+} else {
+    fail('the Clear action has no confirmation dialog with Cancel');
+}
 
 const panel = byId('particleButtons');
 const materialButtons = panel.querySelectorAll('.particle-button');
@@ -353,12 +359,14 @@ if (fanButton) {
 
     const right = placeOneFan('brush', [70, 50], [90, 50]);
     runFrames(1);
-    const fanIcon = byId('fanOverlay').children[0];
+    const fanIcon = byId('machineOverlay').children.find(child =>
+        String(child.getAttribute('class')).includes('machine-fan'));
     if (right.count === 1 && right.direction === 0) pass('a rightward Fan drag places exactly one Fan');
     else fail(`rightward Fan drag placed ${right.count} cells with direction ${right.direction}`);
     if (fanIcon && fanIcon.getAttribute('width') === '30' &&
-        fanIcon.getAttribute('height') === '30' && fanIcon.style.transform === 'rotate(0deg)') {
-        pass('the canvas Fan face is a 30x30 right-facing SVG overlay');
+        fanIcon.getAttribute('height') === '30' && fanIcon.style.transform === 'rotate(0deg)' &&
+        fanIcon.innerHTML.includes('M3 27h11')) {
+        pass('the canvas Fan face is a 30x30 right-facing SVG overlay with an arrow');
     } else {
         fail('the canvas Fan overlay is missing, mis-sized or mis-oriented');
     }
@@ -410,6 +418,145 @@ if (fanButton) {
     fail('no Fan button was built');
 }
 
+// Heater and Cooler use the same one-cell, eight-way machine placement as the
+// Fan. They consume twice the Fan load and only emit a directional temperature
+// cone while a nearby power source keeps them energized.
+const heaterId = getDefinitions().findIndex(d => d && d.machine === 'heater');
+const coolerId = getDefinitions().findIndex(d => d && d.machine === 'cooler');
+const sparkBlockId = getDefinitions().findIndex(d => d && d.name === 'Spark Block');
+const heaterButton = materialButtons.find(b => parseInt(b.dataset.particleId) === heaterId);
+const coolerButton = materialButtons.find(b => parseInt(b.dataset.particleId) === coolerId);
+function countMachine(machineId) {
+    const world = physicsForLine.getWorld();
+    let count = 0;
+    let direction = -1;
+    for (let i = 0; i < world.type.length; i++) {
+        if (world.type[i] === machineId) {
+            count++;
+            direction = world.data[i] & 7;
+        }
+    }
+    return { count, direction };
+}
+function placeOneMachine(button, machineId, start, end) {
+    physicsForLine.clearWorld();
+    byId('brushModeButton').click();
+    button.fire('click', {});
+    canvas.fire('mousedown', { button: 0, ...fanClient(start[0], start[1]) });
+    if (end) canvas.fire('mousemove', { button: 0, ...fanClient(end[0], end[1]) });
+    window.fire('mouseup', { button: 0 });
+    return countMachine(machineId);
+}
+if (heaterButton && coolerButton) {
+    physicsForLine.clearWorld();
+    heaterButton.fire('click', {});
+    canvas.fire('mousedown', { button: 0, ...fanClient(30, 75) });
+    runFrames(1);
+    const pendingCount = countMachine(heaterId).count;
+    canvas.fire('mousemove', { button: 0, ...fanClient(10, 75) });
+    runFrames(1);
+    const pendingIcon = byId('machineOverlay').children.find(child =>
+        String(child.getAttribute('class')).includes('machine-placement-preview'));
+    const pendingCone = byId('machineOverlay').children.find(child =>
+        child.getAttribute('class') === 'machine-cone-overlay');
+    if (pendingCount === 0 && pendingIcon?.style.transform === 'rotate(180deg)' &&
+        pendingCone?.children.some(child => String(child.getAttribute('class')).includes('machine-cone-preview'))) {
+        pass('Heater direction previews during a drag without activating the world');
+    } else {
+        fail(`Heater preview count=${pendingCount}, transform=${pendingIcon?.style.transform || 'missing'}`);
+    }
+    window.fire('mouseup', { button: 0 });
+
+    const heaterPlacement = placeOneMachine(heaterButton, heaterId, [40, 75], [60, 75]);
+    runFrames(1);
+    const heaterIcon = byId('machineOverlay').children.find(child =>
+        String(child.getAttribute('class')).includes('machine-heater'));
+    if (heaterPlacement.count === 1 && heaterPlacement.direction === 0) pass('Heater places as one right-facing machine');
+    else fail(`Heater placement created ${heaterPlacement.count} cells with direction ${heaterPlacement.direction}`);
+    if (heaterIcon && heaterIcon.getAttribute('class').includes('machine-heater') &&
+        heaterIcon.innerHTML.includes('M3 27h11')) {
+        pass('the Heater has a directional SVG overlay icon with an arrow');
+    } else {
+        fail('the Heater SVG overlay icon is missing');
+    }
+
+    const heaterNear = physicsForLine.index(41, 75);
+    const heaterFar = physicsForLine.index(68, 75);
+    const baseline = physicsForLine.getWorld().temp[heaterNear];
+    physicsForLine.setCell(39, 75, sparkBlockId);
+    runFrames(1);
+    const heatedNear = physicsForLine.getWorld().temp[heaterNear];
+    const heatedFar = physicsForLine.getWorld().temp[heaterFar];
+    const heaterCone = byId('machineOverlay').children.find(child =>
+        child.getAttribute('class') === 'machine-cone-overlay');
+    if (heatedNear > baseline + 500 && heatedFar > baseline + 10) {
+        pass('a powered Heater heats its 28-cell cone');
+    } else {
+        fail(`powered Heater temperatures were near=${heatedNear.toFixed(1)}, far=${heatedFar.toFixed(1)}`);
+    }
+    if (heaterCone && heaterCone.children.some(child =>
+        String(child.getAttribute('class')).includes('machine-cone-heater'))) {
+        pass('a powered Heater shows a translucent orange cone');
+    } else {
+        fail('the powered Heater cone overlay is missing');
+    }
+
+    physicsForLine.clearWorld();
+    physicsForLine.setCell(40, 75, heaterId);
+    const offTemp = physicsForLine.getWorld().temp[heaterNear];
+    runFrames(1);
+    const offHeaterCone = byId('machineOverlay').children.find(child =>
+        child.getAttribute('class') === 'machine-cone-overlay');
+    if (Math.abs(physicsForLine.getWorld().temp[heaterNear] - offTemp) < 0.1 &&
+        (!offHeaterCone || offHeaterCone.children.length === 0)) pass('an unpowered Heater is off');
+    else fail('an unpowered Heater changed temperatures');
+
+    const coolerPlacement = placeOneMachine(coolerButton, coolerId, [40, 75], [60, 75]);
+    runFrames(1);
+    const coolerIcon = byId('machineOverlay').children.find(child =>
+        String(child.getAttribute('class')).includes('machine-cooler'));
+    if (coolerPlacement.count === 1 && coolerPlacement.direction === 0) pass('Cooler places as one right-facing machine');
+    else fail(`Cooler placement created ${coolerPlacement.count} cells with direction ${coolerPlacement.direction}`);
+    if (coolerIcon && coolerIcon.getAttribute('class').includes('machine-cooler') &&
+        coolerIcon.innerHTML.includes('M3 27h11')) {
+        pass('the Cooler has a directional SVG overlay icon with an arrow');
+    } else {
+        fail('the Cooler SVG overlay icon is missing');
+    }
+
+    const coolerNear = physicsForLine.index(41, 75);
+    const coolerFar = physicsForLine.index(68, 75);
+    const coolBaseline = physicsForLine.getWorld().temp[coolerNear];
+    physicsForLine.setCell(39, 75, sparkBlockId);
+    runFrames(1);
+    const cooledNear = physicsForLine.getWorld().temp[coolerNear];
+    const cooledFar = physicsForLine.getWorld().temp[coolerFar];
+    const coolerCone = byId('machineOverlay').children.find(child =>
+        child.getAttribute('class') === 'machine-cone-overlay');
+    if (cooledNear < coolBaseline - 20 && cooledFar < coolBaseline - 0.5) {
+        pass('a powered Cooler chills its 28-cell cone');
+    } else {
+        fail(`powered Cooler temperatures were near=${cooledNear.toFixed(1)}, far=${cooledFar.toFixed(1)}`);
+    }
+    if (coolerCone && coolerCone.children.some(child =>
+        String(child.getAttribute('class')).includes('machine-cone-cooler'))) {
+        pass('a powered Cooler shows a translucent blue cone');
+    } else {
+        fail('the powered Cooler cone overlay is missing');
+    }
+
+    const fanLoad = getDefinitions()[fanId].powerConsumption;
+    const heaterLoad = getDefinitions()[heaterId].powerConsumption;
+    const coolerLoad = getDefinitions()[coolerId].powerConsumption;
+    if (heaterLoad === fanLoad * 2 && coolerLoad === fanLoad * 2) {
+        pass('Heater and Cooler consume twice the Fan load');
+    } else {
+        fail(`machine loads are Fan=${fanLoad}, Heater=${heaterLoad}, Cooler=${coolerLoad}`);
+    }
+} else {
+    fail('Heater or Cooler picker button was not built');
+}
+
 // Stored charge is visible as a yellow tint on aluminum.
 const aluminumId = getDefinitions().findIndex(d => d && d.name === 'Aluminum');
 physicsForLine.clearWorld();
@@ -427,13 +574,39 @@ if (lastImageData && lastImageData.data[chargedPixel] > 190 &&
     fail('stored aluminum charge is not visible on the canvas');
 }
 
-// Every toolbar control should be clickable without blowing up.
-for (const id of ['pauseButton', 'clearButton', 'heatViewButton', 'eraserButton']) {
+// Clear is destructive, so it must ask before changing the world. Cancel keeps
+// the world intact; confirmation clears every particle and closes the dialog.
+physicsForLine.clearWorld();
+const clearTestId = parseInt(materialButtons[0].dataset.particleId);
+physicsForLine.setCell(20, 20, clearTestId);
+byId('clearButton').click();
+const clearDialog = byId('clearDialog');
+const worldBeforeClearCancel = Uint8Array.from(physicsForLine.getWorld().type);
+if (!clearDialog.hidden && worldBeforeClearCancel.some(value => value === clearTestId)) {
+    pass('Clear opens a confirmation dialog without changing the world');
+} else {
+    fail('Clear changed the world before confirmation');
+}
+byId('clearDialogCancel').click();
+if (clearDialog.hidden && worldBeforeClearCancel.every((value, index) => value === physicsForLine.getWorld().type[index])) {
+    pass('cancelling Clear preserves the world');
+} else {
+    fail('cancelling Clear changed the world or left the dialog open');
+}
+byId('clearButton').click();
+byId('clearDialogConfirm').click();
+let remainingAfterClear = 0;
+for (const value of physicsForLine.getWorld().type) if (value !== 0) remainingAfterClear++;
+if (clearDialog.hidden && remainingAfterClear === 0) pass('confirming Clear wipes the world');
+else fail(`confirming Clear left ${remainingAfterClear} particles behind`);
+
+// Every non-destructive toolbar control should be clickable without blowing up.
+for (const id of ['pauseButton', 'heatViewButton', 'eraserButton']) {
     byId(id).click();
     byId(id).click();
 }
 runFrames(5);
-pass('pause, clear, heat view and eraser all work');
+pass('pause, heat view and eraser all work');
 
 byId('brushSize').value = '9';
 byId('brushSize').fire('input', { target: { value: '9' } });

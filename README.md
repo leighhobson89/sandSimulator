@@ -1,6 +1,6 @@
 # Elemental Foundry
 
-A living elemental sandbox: 45 materials and tools on a 150-row grid that adds
+A living elemental sandbox: 47 materials and tools on a 150-row grid that adds
 enough columns to fill about 90% of the workspace beside the material picker,
 with heat that spreads from cell to cell so that things melt, boil, freeze and
 catch fire on their own, weather that blows across the world of its own accord,
@@ -14,7 +14,7 @@ The current code audit is recorded in [`docs/CODE_AUDIT.md`](docs/CODE_AUDIT.md)
 Active findings are kept in [`docs/ISSUES.md`](docs/ISSUES.md), while superseded
 documentation findings are kept in [`docs/archive/`](docs/archive/).
 
-The latest verification on 20 September 2026 is green: `npm test` reports 244
+The latest verification on 21 September 2026 is green: `npm test` reports 250
 passed and 0 failed with the default reproducible seed, and
 `npm run test:smoke` passes its browser-startup, interaction and autosave
 cancel checks. A Playwright suite is also included for real-browser theme,
@@ -60,6 +60,10 @@ node tools/tuneIce.mjs                             # ice: lasts at room temperat
 | E | eraser |
 | H | heat view (shows temperature instead of materials) |
 | `[` `]` | brush size |
+
+**Clear** is deliberately confirm-first: the toolbar button opens a warning,
+Cancel leaves the current world untouched, and Clear World removes all
+particles. It does not change the saved Resume Game until a later autosave.
 
 The top toolbar carries the play controls, readout and theme. Materials sit to
 the left of the canvas; the icon-based Tools panel to its right contains
@@ -154,14 +158,18 @@ than a nudge from the mouse - so one dial covers both, and turning it up gives
 weather to match. It is off to start with, since a world that blows itself about
 is not what someone laying out a scene wants.
 
-**Fan** is a machine in the Metals section. Its picker button simply says Fan;
-clicking places one 30x30 on-canvas fan regardless of brush size or drawing mode.
-Drag while placing to face it in any of the eight cardinal or diagonal
-directions. A powered Fan blows a strength-21, 28-cell cone in the direction
-it faces; the airflow decelerates past the cone so loose particles do not drop
-vertically at its edge. Copper and Iron wire can reach conductive machines
-through up to two empty cells beyond the physical wire end, making it possible
-to place a machine beside a wire without touching the drawn pixels.
+**Fan, Heater and Cooler** are powered machines in the Machines section. Their
+picker buttons place one machine cell regardless of brush size or drawing mode;
+drag while placing to face any of the eight cardinal or diagonal directions.
+A powered Fan blows a strength-21, 28-cell cone, while a powered Heater and
+Cooler drive 28-cell cones toward 2000 C and -60 C and launch matching ray
+particles along their centreline. Their faint cone and directional icon preview
+the facing while dragging; the machine is committed, and starts affecting the
+world, only when the mouse is released. The Heater and Cooler each draw 100
+power load, twice the Fan's 50, and all three switch off when they are not
+powered. Copper and Iron wire can reach conductive machines through up to two
+empty cells beyond the physical wire end, making it possible to place a machine
+beside a wire without touching the drawn pixels.
 
 ## Themes
 
@@ -269,8 +277,9 @@ for future powered machines.
 Each conductive cell can also declare `powerConsumption`, which is summed across
 the whole connected power grid and then drawn from the battery at one hundredth
 of that rate per simulation tick. Copper wire is rated 1 per cell and Iron 0.5;
-a future machine can use the same field for a much larger load. **Spark Dust** is a purple powder
-that emits Sparks into empty neighboring cells while each pixel's finite lifetime runs down, making
+the Heater and Cooler use the same field for their larger 100-unit load.
+**Spark Dust** is a purple powder whose half-opacity Sparks are emitted less frequently
+into empty neighboring cells while each pixel's finite lifetime runs down, making
 it useful as a disposable charger around Aluminum. **Spark Block** is the solid version and lasts
 five times longer before becoming Spark Dust during its final tenth; Spark Dust expires into Ash.
 Either source stops emitting while a liquid touches it.

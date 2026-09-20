@@ -59,6 +59,20 @@ test('material buttons expose glossary tooltips on hover and focus', async ({ pa
     await expect(tooltip).toBeVisible();
 });
 
+test('clear requires confirmation and supports cancel', async ({ page }) => {
+    await startSandbox(page);
+    const clear = page.getByRole('button', { name: 'Clear', exact: true });
+    await clear.click();
+    const dialog = page.locator('#clearDialog');
+    await expect(dialog).toBeVisible();
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(dialog).toBeHidden();
+
+    await clear.click();
+    await page.getByRole('button', { name: 'Clear World', exact: true }).click();
+    await expect(dialog).toBeHidden();
+});
+
 test.describe('touch and narrow screens', () => {
     test.use({ hasTouch: true, viewport: { width: 390, height: 844 } });
 

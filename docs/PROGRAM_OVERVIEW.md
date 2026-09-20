@@ -26,7 +26,7 @@ Each active frame broadly does this:
 ambient temperature eases toward its setting
   -> heat diffuses and radiates
   -> connected liquid surfaces are calculated
-  -> electricity and Fan airflow update
+  -> electricity and powered machine effects update
   -> ambient breeze moves material
   -> particles react, change state, and move bottom-to-top
   -> canvas draws the resulting world
@@ -47,9 +47,11 @@ rule based on the surface of connected liquid, not a Navier–Stokes solution.
   and bulk insulation make thick material and heat sources feel distinct.
 - The electrical system is more than a colour change. Sparks launch visible
   pulses through conductive networks; Aluminum stores shared charge; Copper,
-  Iron and machines consume it; a Fan converts power into directional airflow.
+  Iron and machines consume it; a Fan converts power into directional airflow,
+  while Heater and Cooler convert it into directional temperature forces and
+  matching centreline Heat Ray/Cold Ray projectiles.
 - The simulator is testable outside the browser. The physics core has no DOM
-  dependency, and the headless suite checks 244 reproducibly seeded behavioural
+  dependency, and the headless suite checks 250 reproducibly seeded behavioural
   assertions plus a 260x150 performance budget. A second smoke suite covers
   startup, input and autosave decisions, while Playwright covers real-browser
   themes, pointer/touch input, focus and narrow layouts.
@@ -67,7 +69,7 @@ rule based on the surface of connected liquid, not a Navier–Stokes solution.
 - It favours readable, game-like rules over physical accuracy. There is no
   continuous pressure field, momentum-conserving liquid solver, real chemical
   stoichiometry, voltage/current/resistance calculation, or rigid-body physics.
-- It is currently a focused 45-entry material set with one powered machine.
+- It is currently a focused 47-entry material set with three powered machines.
   That makes it approachable, but limits complex construction compared with
   mature sandboxes.
 - Saves are browser-local or copy/paste strings rather than an online gallery,
