@@ -25,6 +25,7 @@ export const GRID_ROWS = 150;
 let particleDefinitions = null;
 let particleTypeIdSelected = 1; //starting particle sand
 let brushSize = 3;
+let drawMode = 'brush';
 let grabberSize = 15;
 let windStrength = 2;
 let eraserOn = false;
@@ -56,20 +57,27 @@ export function setElements() {
         heatViewButton: document.getElementById('heatViewButton'),
         eraserButton: document.getElementById('eraserButton'),
         grabberButton: document.getElementById('grabberButton'),
+        brushModeButton: document.getElementById('brushModeButton'),
+        lineModeButton: document.getElementById('lineModeButton'),
         brushSizeInput: document.getElementById('brushSize'),
         brushSizeLabel: document.getElementById('brushSizeLabel'),
+        brushSizeValue: document.getElementById('brushSizeValue'),
         grabberSizeInput: document.getElementById('grabberSize'),
         grabberSizeLabel: document.getElementById('grabberSizeLabel'),
+        grabberSizeValue: document.getElementById('grabberSizeValue'),
         airTempInput: document.getElementById('airTemp'),
         airTempValue: document.getElementById('airTempValue'),
         airTempLabel: document.getElementById('airTempLabel'),
         layerLapseInput: document.getElementById('layerLapse'),
         layerLapseLabel: document.getElementById('layerLapseLabel'),
+        layerLapseValue: document.getElementById('layerLapseValue'),
         airLayersCheckbox: document.getElementById('airLayers'),
         windStrengthInput: document.getElementById('windStrength'),
         windStrengthLabel: document.getElementById('windStrengthLabel'),
+        windStrengthValue: document.getElementById('windStrengthValue'),
         ambientWindCheckbox: document.getElementById('ambientWind'),
         floatingContainer: document.getElementById('floatingContainer'),
+        toolsPanel: document.getElementById('toolsPanel'),
         particleButtons: document.getElementById('particleButtons'),
         readout: document.getElementById('readout'),
         themeSwatches: document.getElementById('themeSwatches'),
@@ -237,6 +245,14 @@ export function getBrushSize() {
 
 export function setBrushSize(value) {
     brushSize = value;
+}
+
+export function getDrawMode() {
+    return drawMode;
+}
+
+export function setDrawMode(value) {
+    drawMode = value === 'line' ? 'line' : 'brush';
 }
 
 export function getGrabberSize() {

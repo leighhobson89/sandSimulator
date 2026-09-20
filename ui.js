@@ -11,7 +11,7 @@ import {
     getGridCols, getGridRows, getLanguage, setElements, getElements,
     setBeginGameStatus, getGameInProgress, setGameInProgress, getMenuState,
     getLanguageSelected, setLanguageSelected, setLanguage,
-    getBrushSize, setBrushSize, getEraserOn, setEraserOn,
+    getBrushSize, setBrushSize, getDrawMode, setDrawMode, getEraserOn, setEraserOn,
     getHeatViewOn, setHeatViewOn, getSimulationPaused, setSimulationPaused,
     getWindStrength, setWindStrength, getGrabberSize, setGrabberSize,
     getGrabberOn, setGrabberOn
@@ -19,7 +19,7 @@ import {
 import {
     loadParticleDefinitions, initializeWorld, setGameState, startGame,
     paintLine, paintCell, clearCanvasWorld, setHoverCell,
-    beginGrab, dropGrab, cancelGrab
+    beginGrab, dropGrab, cancelGrab, setLinePreview, clearLinePreview
 } from './game.js';
 import {
     getDefinitions, setAmbientTarget, getAmbientTarget, setLayerLapse, getLayerLapse,
@@ -34,6 +34,7 @@ let isGrabbing = false;
 let lastCell = null;
 let paintTimer = null;
 let currentCell = { x: 0, y: 0 };
+let lineStart = null;
 
 document.addEventListener('DOMContentLoaded', async () => {
     await loadParticleDefinitions();
@@ -70,6 +71,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     elements.heatViewButton.addEventListener('click', () => {
         setHeatViewOn(!getHeatViewOn());
         elements.heatViewButton.classList.toggle('active-toggle', getHeatViewOn());
+        elements.heatViewButton.setAttribute('aria-pressed', String(getHeatViewOn()));
     });
 
     elements.eraserButton.addEventListener('click', () => {
@@ -80,8 +82,12 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     elements.brushSizeInput.addEventListener('input', event => {
         setBrushSize(parseInt(event.target.value));
-        elements.brushSizeLabel.textContent = `Brush ${getBrushSize()}`;
+        elements.brushSizeValue.textContent = String(getBrushSize());
     });
+
+    elements.brushModeButton.addEventListener('click', () => selectDrawingMode('brush'));
+    elements.lineModeButton.addEventListener('click', () => selectDrawingMode('line'));
+    selectDrawingMode(getDrawMode());
 
     elements.grabberButton.addEventListener('click', () => {
         setGrabberMode(!getGrabberOn());
@@ -90,7 +96,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     elements.grabberSizeInput.addEventListener('input', event => {
         const size = Math.max(1, Math.min(60, parseInt(event.target.value)));
         setGrabberSize(size);
-        elements.grabberSizeLabel.textContent = `Grab ${size}`;
+        elements.grabberSizeValue.textContent = String(size);
     });
 
     setGameState(getMenuState());
@@ -101,6 +107,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     setUpAirLayers();
     setUpWindStrength();
     setUpAmbientWind();
+    setUpTooltips();
     setUpCanvasInput();
     setUpKeyboardShortcuts();
 });
@@ -236,11 +243,12 @@ function setUpAirTemperature() {
 function setUpAirLayers() {
     const slider = getElements().layerLapseInput;
     const label = getElements().layerLapseLabel;
+    const valueReadout = getElements().layerLapseValue;
     const box = getElements().airLayersCheckbox;
 
     const apply = value => {
         setLayerLapse(value);
-        label.textContent = `Layers ${value.toFixed(1)}`;
+        valueReadout.textContent = value.toFixed(1);
     };
 
     const showEnabled = on => {
@@ -267,12 +275,12 @@ function setUpAirLayers() {
 // mouse, so the one dial covers both.
 function setUpWindStrength() {
     const slider = getElements().windStrengthInput;
-    const label = getElements().windStrengthLabel;
+    const valueReadout = getElements().windStrengthValue;
 
     const apply = value => {
         setWindStrength(value);
         setWindDial(value);
-        label.textContent = `Wind ${value}`;
+        valueReadout.textContent = String(value);
     };
 
     slider.value = String(getWindStrength());
@@ -288,6 +296,59 @@ function setUpAmbientWind() {
     const box = getElements().ambientWindCheckbox;
     box.checked = getAmbientWindOn();
     box.addEventListener('change', () => setAmbientWindOn(box.checked));
+}
+
+// Tooltips live at document level instead of inside the scrolling tools panel.
+// A high z-index alone cannot escape an ancestor's overflow clipping, whereas
+// this fixed layer can sit over the canvas and every panel.
+function setUpTooltips() {
+    const panel = getElements().toolsPanel;
+    const tooltip = document.getElementById('toolTooltip');
+    const controls = panel.querySelectorAll('.tooltip-control');
+
+    const hide = () => { tooltip.hidden = true; };
+    const show = control => {
+        tooltip.textContent = control.dataset.tooltip || control.title || '';
+        tooltip.hidden = false;
+
+        const controlRect = control.getBoundingClientRect();
+        const tooltipRect = tooltip.getBoundingClientRect();
+        const gap = 10;
+        const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+        const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+
+        let left = controlRect.left - tooltipRect.width - gap;
+        if (left < gap) left = Math.min(viewportWidth - tooltipRect.width - gap, controlRect.right + gap);
+        let top = controlRect.top + (controlRect.height - tooltipRect.height) / 2;
+        top = Math.max(gap, Math.min(viewportHeight - tooltipRect.height - gap, top));
+
+        tooltip.style.left = `${Math.round(left)}px`;
+        tooltip.style.top = `${Math.round(top)}px`;
+    };
+
+    controls.forEach(control => {
+        control.setAttribute('aria-describedby', 'toolTooltip');
+        control.addEventListener('mouseenter', () => show(control));
+        control.addEventListener('mouseleave', hide);
+        control.addEventListener('focusin', () => show(control));
+        control.addEventListener('focusout', hide);
+    });
+    panel.addEventListener('scroll', hide);
+    window.addEventListener('resize', hide);
+}
+
+function selectDrawingMode(mode) {
+    const next = mode === 'line' ? 'line' : 'brush';
+    setDrawMode(next);
+    setGrabberMode(false);
+    cancelPainting();
+
+    const elements = getElements();
+    const brushOn = next === 'brush';
+    elements.brushModeButton.classList.toggle('active-toggle', brushOn);
+    elements.lineModeButton.classList.toggle('active-toggle', !brushOn);
+    elements.brushModeButton.setAttribute('aria-pressed', String(brushOn));
+    elements.lineModeButton.setAttribute('aria-pressed', String(!brushOn));
 }
 
 function commitAirTemperature(apply, box) {
@@ -327,15 +388,25 @@ function setUpCanvasInput() {
         // Right button erases without having to switch tool.
         if (event.button === 2) setEraserOn(true);
         lastCell = null;
-        paintAtCurrentCell();
-        startPaintTimer();
+        if (getDrawMode() === 'line') {
+            lineStart = { x: currentCell.x, y: currentCell.y };
+            setLinePreview(lineStart.x, lineStart.y, currentCell.x, currentCell.y);
+        } else {
+            paintAtCurrentCell();
+            startPaintTimer();
+        }
     });
 
     canvas.addEventListener('mousemove', event => {
         currentCell = cellFromEvent(event);
         setHoverCell(currentCell.x, currentCell.y);
         if (isGrabbing) return;
-        if (isPainting) paintAtCurrentCell();
+        if (!isPainting) return;
+        if (getDrawMode() === 'line' && lineStart) {
+            setLinePreview(lineStart.x, lineStart.y, currentCell.x, currentCell.y);
+        } else {
+            paintAtCurrentCell();
+        }
     });
 
     window.addEventListener('mouseup', event => {
@@ -345,10 +416,7 @@ function setUpCanvasInput() {
             return;
         }
         if (!isPainting) return;
-        isPainting = false;
-        lastCell = null;
-        stopPaintTimer();
-        if (event.button === 2) setEraserOn(false);
+        finishPainting(event.button);
     });
 
     canvas.addEventListener('mouseleave', () => {
@@ -367,8 +435,13 @@ function setUpCanvasInput() {
         }
         isPainting = true;
         lastCell = null;
-        paintAtCurrentCell();
-        startPaintTimer();
+        if (getDrawMode() === 'line') {
+            lineStart = { x: currentCell.x, y: currentCell.y };
+            setLinePreview(lineStart.x, lineStart.y, currentCell.x, currentCell.y);
+        } else {
+            paintAtCurrentCell();
+            startPaintTimer();
+        }
     }, { passive: false });
 
     canvas.addEventListener('touchmove', event => {
@@ -376,7 +449,11 @@ function setUpCanvasInput() {
         currentCell = cellFromEvent(event.touches[0]);
         setHoverCell(currentCell.x, currentCell.y);
         if (isGrabbing) return;
-        paintAtCurrentCell();
+        if (getDrawMode() === 'line' && lineStart) {
+            setLinePreview(lineStart.x, lineStart.y, currentCell.x, currentCell.y);
+        } else {
+            paintAtCurrentCell();
+        }
     }, { passive: false });
 
     canvas.addEventListener('touchend', () => {
@@ -385,10 +462,28 @@ function setUpCanvasInput() {
             isGrabbing = false;
             return;
         }
-        isPainting = false;
-        lastCell = null;
-        stopPaintTimer();
+        if (isPainting) finishPainting(0);
     });
+}
+
+function finishPainting(button) {
+    if (getDrawMode() === 'line' && lineStart) {
+        clearLinePreview();
+        paintLine(lineStart.x, lineStart.y, currentCell.x, currentCell.y);
+    }
+    isPainting = false;
+    lineStart = null;
+    lastCell = null;
+    stopPaintTimer();
+    if (button === 2) setEraserOn(false);
+}
+
+function cancelPainting() {
+    isPainting = false;
+    lineStart = null;
+    lastCell = null;
+    stopPaintTimer();
+    clearLinePreview();
 }
 
 function setGrabberMode(on) {
@@ -401,6 +496,7 @@ function setGrabberMode(on) {
     }
     setGrabberOn(on);
     getElements().grabberButton.classList.toggle('active-toggle', on);
+    getElements().grabberButton.setAttribute('aria-pressed', String(on));
 }
 
 // The canvas is one pixel per cell but is stretched by CSS, so the on screen
@@ -462,7 +558,7 @@ function adjustBrush(delta) {
     const size = Math.max(1, Math.min(31, getBrushSize() + delta));
     setBrushSize(size);
     getElements().brushSizeInput.value = String(size);
-    getElements().brushSizeLabel.textContent = `Brush ${size}`;
+    getElements().brushSizeValue.textContent = String(size);
 }
 
 //------------------------------------------------------------- localization

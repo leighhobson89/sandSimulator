@@ -34,19 +34,21 @@ node tools/tuneIce.mjs                             # ice: lasts at room temperat
 
 | | |
 |---|---|
-| Left click / drag | pour the selected material |
+| Left click / drag | paint continuously in Brush mode |
+| Drag and release | preview and commit a straight stroke in Line mode |
 | Right click | erase, or exit Grabber mode |
 | Space | pause |
 | E | eraser |
 | H | heat view (shows temperature instead of materials) |
 | `[` `]` | brush size |
 
-The toolbar also carries the brush size, the air temperature, the air layering,
-the wind strength, the natural breeze and the theme. All of them are described
-below.
+The top toolbar carries the play controls, readout and theme. Materials sit to
+the left of the canvas; the icon-based Tools panel to its right contains
+Brush/Line mode and size, Grabber, air temperature, Heat View, air layering,
+wind strength and the natural breeze. Hover an icon for a short explanation.
 
 **Grabber** moves existing material instead of painting more. Its fairground
-claw button and separate 1-to-60-pixel square size sit on the lower toolbar row.
+claw button and separate 1-to-60-pixel square size sit in the Tools panel.
 Activate the claw, then hold the left mouse button over a material. It lifts
 every pixel of that one type inside the outlined square while leaving all other
 materials there. A copy of the lifted shape follows the pointer inside the
@@ -174,8 +176,8 @@ being special-cased:
 - water above 100C becomes steam; steam below 95C condenses back to water, so
   steam rises, cools and rains
 - wood, oil and plants above their ignition point catch fire
-- sand next to lava melts into glass, and glass that lava has got right around
-  melts in its turn and becomes lava itself
+- sand next to lava melts into glass, and sustained lava contact heats that
+  glass past its lower 375C melting point until it becomes lava itself
 - lava below 700C chills into scoria, and scoria below 100C hardens into stone;
   heating reverses that path, from stone to scoria and then back to lava
 
@@ -184,10 +186,11 @@ heat every frame it is past the threshold, by how far past, and only changes
 once it has banked its `latent` amount. That is why ice floats in a puddle for a
 few seconds rather than vanishing, but melts almost at once against a flame.
 
-Three things are handled directly rather than through heat, because heat alone
+Some contact effects are handled directly rather than through heat, because heat alone
 gives the wrong answer: water puts out fire on contact, lava chills to scoria
 the moment water touches it (otherwise the water boils off before it can chill
-it), and water soaks into sand to make mud.
+it), lava resting on wet or dry mud gradually compacts the contacted layer into
+hot scoria, and water soaks into sand to make mud.
 
 ### Fire, and how it spreads
 
@@ -233,9 +236,12 @@ Two things make it last far longer than that:
   the bottom row never sets by cooling at all. A lava lake on the bedrock stays
   a lava lake, and only water will put it out.
 
-Lava is heavier than scoria, so scoria dropped on a pool of lava floats on top
-of it and lava poured over scoria sinks underneath - the flow works its way back
-down through its own crust.
+Lava falls through open air but does not swap down through occupied cells. It
+rests on top and heats, burns or melts what is underneath; when that material
+eventually becomes lava or leaves an air gap, the flow can continue down.
+On glass, the sustained contact can reach the glass's 375C melting point even
+through a thick insulated slab. On wet or dry mud, it gradually bakes only the
+contacted layer into hot scoria.
 
 The path also works uphill. Stone heated past 100C loosens back into scoria;
 keep heating that scoria past 900C and it melts into lava again.

@@ -71,7 +71,11 @@ function makeElement(id) {
                 imageSmoothingEnabled: true,
                 createImageData: (w, h) => ({ width: w, height: h, data: new Uint8ClampedArray(w * h * 4) }),
                 putImageData(data) { putCount++; lastImageData = data; },
-                strokeRect() { strokeCount++; }
+                strokeRect() { strokeCount++; },
+                beginPath() {},
+                moveTo() {},
+                lineTo() {},
+                stroke() { lineStrokeCount++; }
             };
         }
     };
@@ -79,6 +83,7 @@ function makeElement(id) {
 
 let putCount = 0;
 let strokeCount = 0;
+let lineStrokeCount = 0;
 let lastImageData = null;
 const elements = {};
 function byId(id) {
@@ -140,16 +145,30 @@ const indexMarkup = await readFile(root + 'index.html', 'utf8');
 const styleMarkup = await readFile(root + 'styles.css', 'utf8');
 if (!indexMarkup.includes('id="returnToMenu"')) pass('the simulator toolbar no longer has a Menu button');
 else fail('the Menu button is still present');
-if (indexMarkup.includes('toolbar-line-secondary') && indexMarkup.includes('class="grabber-icon"')) {
-    pass('the lower toolbar uses a claw icon for Grabber mode');
+if (indexMarkup.includes('id="toolsPanel"') &&
+    indexMarkup.indexOf('id="canvasArea"') < indexMarkup.indexOf('id="toolsPanel"')) {
+    pass('the tools panel sits to the right of the canvas');
 } else {
-    fail('the Grabber claw is missing from the lower toolbar');
+    fail('the right-hand tools panel is missing or misplaced');
 }
-if (/\.toolbar-line\s*\{[^}]*flex-wrap:\s*nowrap/s.test(styleMarkup) &&
-    /\.readout\s*\{[^}]*text-overflow:\s*ellipsis/s.test(styleMarkup)) {
-    pass('dynamic Grabber status cannot add another toolbar row');
+if (indexMarkup.includes('id="brushModeButton"') && indexMarkup.includes('id="lineModeButton"') &&
+    (indexMarkup.match(/class="tool-icon"/g) || []).length >= 7) {
+    pass('the tools use SVG icons and include Brush and Line modes');
 } else {
-    fail('toolbar rows can still be resized by dynamic status text');
+    fail('the icon tools or drawing mode controls are missing');
+}
+const toolsMarkup = indexMarkup.slice(indexMarkup.indexOf('id="toolsPanel"'));
+if (toolsMarkup.includes('id="brushSize"') && toolsMarkup.includes('id="airTemp"') &&
+    toolsMarkup.includes('id="grabberSize"')) {
+    pass('brush size, air temperature and Grabber controls are ordered in the tools panel');
+} else {
+    fail('a requested slider is still outside the tools panel');
+}
+if (indexMarkup.includes('id="toolTooltip"') &&
+    /\.tool-tooltip\s*\{[^}]*position:\s*fixed[^}]*z-index:\s*2000/s.test(styleMarkup)) {
+    pass('tooltips render in a fixed layer above the workspace');
+} else {
+    fail('tooltips can still be clipped inside the tools panel');
 }
 
 const panel = byId('particleButtons');
@@ -174,10 +193,10 @@ const startedCanvas = byId('canvas');
 const canvasShare = parseInt(startedCanvas.style.width) / (elements.canvasArea.clientWidth - 32);
 if (startedCanvas.width > 200) pass(`expanded the world to ${startedCanvas.width} columns`);
 else fail(`expected more than 200 columns, got ${startedCanvas.width}`);
-if (canvasShare >= 0.89 && canvasShare <= 0.9) {
+if (canvasShare >= 0.99 && canvasShare <= 1) {
     pass(`canvas fills ${(canvasShare * 100).toFixed(1)}% of the workspace width`);
 } else {
-    fail(`canvas fills ${(canvasShare * 100).toFixed(1)}% instead of 90%`);
+    fail(`canvas fills ${(canvasShare * 100).toFixed(1)}% instead of the available middle column`);
 }
 
 runFrames(30);
@@ -197,6 +216,42 @@ const type = getWorld().type;
 for (let i = 0; i < type.length; i++) if (type[i] !== 0) painted++;
 if (painted > 0) pass(`painting with the mouse put ${painted} particles into the world`);
 else fail('clicking the canvas did not paint anything');
+
+// Line mode previews without changing the world, then commits on release.
+const physicsForLine = await import('../physics.js');
+physicsForLine.clearWorld();
+const stoneButtonForLine = materialButtons.find(button => button.textContent === 'Stone');
+stoneButtonForLine.fire('click', {});
+byId('brushSize').fire('input', { target: { value: '9' } });
+byId('lineModeButton').click();
+const linePreviewBefore = lineStrokeCount;
+canvas.fire('mousedown', { button: 0, clientX: 120, clientY: 180 });
+canvas.fire('mousemove', { button: 0, clientX: 360, clientY: 180 });
+let lineCellsBeforeRelease = 0;
+for (const id of physicsForLine.getWorld().type) if (id !== 0) lineCellsBeforeRelease++;
+runFrames(1);
+window.fire('mouseup', { button: 0 });
+let lineCellsAfterRelease = 0;
+for (const id of physicsForLine.getWorld().type) if (id !== 0) lineCellsAfterRelease++;
+const lineMidX = Math.floor((240 / 800) * startedCanvas.width);
+const lineMidY = Math.floor((180 / 600) * 150);
+const lineMaterial = parseInt(stoneButtonForLine.dataset.particleId);
+const lineUsesBrushWidth = physicsForLine.getWorld().type[
+    physicsForLine.index(lineMidX, lineMidY + 3)
+] === lineMaterial;
+if (lineCellsBeforeRelease === 0 && lineStrokeCount > linePreviewBefore &&
+    lineCellsAfterRelease > 0 && lineUsesBrushWidth) {
+    pass('Line mode previews while dragging and draws only on release');
+} else {
+    fail(`Line mode drew ${lineCellsBeforeRelease} cells early and ${lineCellsAfterRelease} after release`);
+}
+if (byId('lineModeButton').classList.contains('active-toggle') &&
+    !byId('brushModeButton').classList.contains('active-toggle')) {
+    pass('Line and Brush modes are mutually exclusive');
+} else {
+    fail('Line and Brush were not switched exclusively');
+}
+byId('brushModeButton').click();
 
 // The wind is a tool, not a material: dragging it must not leave Wind behind.
 const { getDefinitions } = await import('../physics.js');
@@ -274,7 +329,7 @@ if (!byId('grabberButton').classList.contains('active-toggle')) {
 }
 byId('grabberSize').fire('input', { target: { value: '60' } });
 const { getGrabberSize } = await import('../constantsAndGlobalVars.js');
-if (getGrabberSize() === 60 && byId('grabberSizeLabel').textContent === 'Grab 60') {
+if (getGrabberSize() === 60 && byId('grabberSizeValue').textContent === '60') {
     pass('grabber size reaches the full 60-pixel square');
 } else {
     fail(`grabber size stopped at ${getGrabberSize()}`);
@@ -295,7 +350,7 @@ if (!getGrabberOn() && getParticleTypeIdSelected() === parseInt(materialButtons[
     fail('a material click did not leave Grabber mode cleanly');
 }
 
-const { airTintForTemperature } = await import('../game.js');
+const { airTintForTemperature, paintCell } = await import('../game.js');
 const coldTint = airTintForTemperature(-60);
 const mildTint = airTintForTemperature(20);
 const hotTint = airTintForTemperature(600);
@@ -303,6 +358,28 @@ if (coldTint[2] > coldTint[0] && hotTint[0] > hotTint[2] && mildTint.every(v => 
     pass('air tint is blue when cold, subtle when mild and orange-red when hot');
 } else {
     fail(`unexpected air tints: cold ${coldTint}, mild ${mildTint}, hot ${hotTint}`);
+}
+
+// Painting fills only air, even when a large brush overlaps existing cells.
+const brushState = await import('../constantsAndGlobalVars.js');
+physicsForGrab.clearWorld();
+physicsForGrab.setCell(50, 50, glassId);
+physicsForGrab.setCell(51, 50, stoneId);
+brushState.setParticleTypeIdSelected(stoneId);
+brushState.setBrushSize(5);
+brushState.setEraserOn(false);
+paintCell(50, 50);
+const occupiedClickPreserved = physicsForGrab.getWorld().type[physicsForGrab.index(50, 50)] === glassId;
+physicsForGrab.clearWorld();
+physicsForGrab.setCell(51, 50, glassId);
+paintCell(50, 50);
+const paintedWorld = physicsForGrab.getWorld().type;
+if (occupiedClickPreserved &&
+    paintedWorld[physicsForGrab.index(50, 50)] === stoneId &&
+    paintedWorld[physicsForGrab.index(51, 50)] === glassId) {
+    pass('a material brush fills air without replacing occupied cells');
+} else {
+    fail('a material brush replaced an occupied cell or failed to fill air');
 }
 
 const { getAmbientTarget } = await import('../physics.js');

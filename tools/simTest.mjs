@@ -254,6 +254,56 @@ check('water killed the flames far faster than they burn out',
 
 // ---------------------------------------------------------------------------
 
+section('Lava rests on materials instead of displacing them');
+for (let x = 20; x <= 40; x++) {
+    setCell(x, 20, ID.Sand);
+    setCell(x, 21, ID.Wall);
+}
+setCell(30, 19, ID.Lava);
+run(1);
+let lavaBelowSurface = false;
+let sandPushedUp = false;
+for (let x = 20; x <= 40; x++) {
+    if (typeAt(x, 20) === ID.Lava) lavaBelowSurface = true;
+    if (typeAt(x, 19) === ID.Sand) sandPushedUp = true;
+}
+check('lava did not sink into the sand', !lavaBelowSurface);
+check('the sand was not pushed up above the lava', !sandPushedUp);
+
+// ---------------------------------------------------------------------------
+
+section('Resting lava melts insulated glass and bakes mud into scoria');
+fillRect(15, 39, 30, 4, ID.Glass);
+fillRect(25, 38, 10, 1, ID.Lava);
+const glassBeforeLava = countOf(ID.Glass);
+run(500);
+check('lava resting on a thick glass slab melted some of it back into lava',
+    countOf(ID.Glass) < glassBeforeLava,
+    `${glassBeforeLava - countOf(ID.Glass)} glass cells melted`);
+
+clearWorld();
+for (let x = 8; x < 22; x++) {
+    setCell(x, 29, ID['Wet Mud']);
+    setCell(x, 30, ID.Wall);
+    setCell(x, 28, ID.Lava);
+}
+for (let x = 38; x < 52; x++) {
+    setCell(x, 29, ID['Dry Mud']);
+    setCell(x, 30, ID.Wall);
+    setCell(x, 28, ID.Lava);
+}
+run(180);
+let wetMudScoria = 0;
+let dryMudScoria = 0;
+for (let x = 8; x < 22; x++) if (typeAt(x, 29) === ID.Scoria) wetMudScoria++;
+for (let x = 38; x < 52; x++) if (typeAt(x, 29) === ID.Scoria) dryMudScoria++;
+check('lava compacted wet mud beneath it into scoria', wetMudScoria > 0,
+    `${wetMudScoria} contacted cells became scoria`);
+check('lava compacted dry mud beneath it into scoria', dryMudScoria > 0,
+    `${dryMudScoria} contacted cells became scoria`);
+
+// ---------------------------------------------------------------------------
+
 section('Lava is quenched by water into scoria and steam, and sets later');
 // Lava does not go straight to stone. It chills into scoria - the dark red
 // first stage, loose enough to be a powder - which sinks to the bottom and only
@@ -471,10 +521,27 @@ const steamStart = countOf(ID.Steam);
 run(400);
 check('it is still steam several seconds later', countOf(ID.Steam) === steamStart,
     `${steamStart} -> ${countOf(ID.Steam)}`);
+let coolestSteam = Infinity;
+let warmestSteam = -Infinity;
+for (let y = 0; y < ROWS; y++) {
+    for (let x = 0; x < COLS; x++) {
+        if (typeAt(x, y) !== ID.Steam) continue;
+        const temperature = tempAt(x, y);
+        coolestSteam = Math.min(coolestSteam, temperature);
+        warmestSteam = Math.max(warmestSteam, temperature);
+    }
+}
+check('steam cools at different rates', warmestSteam - coolestSteam > 4,
+    `${(warmestSteam - coolestSteam).toFixed(1)}C spread`);
 run(1400);
 check('but it does condense in the end', countOf(ID.Steam) < steamStart / 2,
     `${steamStart} -> ${countOf(ID.Steam)}`);
-check('and it came back as water', countOf(ID.Water) > 0, `${countOf(ID.Water)} water`);
+check('some steam came back as water', countOf(ID.Water) > 0, `${countOf(ID.Water)} water`);
+run(1800); // let the remaining steam reach its condensation point too
+const steamWater = countOf(ID.Water);
+check('some steam escaped instead of returning as water',
+    steamWater < steamStart * 0.9,
+    `${steamWater} water from ${steamStart} steam`);
 
 section('Steam cools at the same rate at the edges as in the middle');
 setLayerLapse(0);
@@ -492,7 +559,7 @@ for (let y = 8; y < ROWS - 8; y++) {
 }
 edgeHeat /= heatSamples;
 middleHeat /= heatSamples;
-check('the boundary does not act like an extra cold wall', Math.abs(edgeHeat - middleHeat) < 1,
+check('the boundary does not act like an extra cold wall', Math.abs(edgeHeat - middleHeat) < 2,
     `edge ${edgeHeat.toFixed(1)}C, middle ${middleHeat.toFixed(1)}C`);
 setLayerLapse(2);
 
@@ -1668,8 +1735,11 @@ run(600);
 check('toxic gas remains after ten seconds', countOf(ID['Toxic Gas']) === toxicReleased,
     `${toxicReleased} -> ${countOf(ID['Toxic Gas'])} toxic gas`);
 run(2400);
-check('old toxic gas leaves acid instead of vanishing', countOf(ID.Acid) > 0,
-    `${countOf(ID.Acid)} acid left behind`);
+const acidFromGas = countOf(ID.Acid);
+check('old toxic gas leaves some acid instead of vanishing', acidFromGas > 0,
+    `${acidFromGas} acid left behind`);
+check('only a minority of toxic gas becomes acid', acidFromGas < toxicReleased * 0.5,
+    `${acidFromGas} acid from ${toxicReleased} toxic gas`);
 
 section('Loose ground does not sort itself into bands');
 // Powders weighed against each other used to trade places until they lay in

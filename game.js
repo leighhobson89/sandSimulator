@@ -14,7 +14,7 @@ import {
     setBeginGameStatus, setGameStateVariable, getBeginGameStatus,
     getMenuState, getGameVisiblePaused, getGameVisibleActive,
     getParticleTypeIdSelected, setParticleDefinitions,
-    getBrushSize, getEraserOn, getHeatViewOn, getSimulationPaused, getWindStrength,
+    getBrushSize, getDrawMode, getEraserOn, getHeatViewOn, getSimulationPaused, getWindStrength,
     getGrabberOn, getGrabberSize
 } from './constantsAndGlobalVars.js';
 import {
@@ -32,6 +32,7 @@ let fps = 0;
 let loopRunning = false;
 let gridFittedToWorkspace = false;
 let grabbedPixels = null;
+let linePreview = null;
 
 //--------------------------------------------------------------------------------------------------------
 
@@ -66,15 +67,14 @@ export function startGame() {
     requestAnimationFrame(gameLoop);
 }
 
-// Keep the original cell size and spend the extra horizontal room on more
-// simulation columns. The canvas area already excludes the material picker,
-// so ninety percent here means ninety percent of the usable workspace.
+// Keep the original cell size and spend the horizontal room between the
+// material picker and tools panel on simulation columns.
 function fitGridToWorkspace() {
     const canvas = getElements().canvas;
     const area = canvas.parentElement;
     const rows = getGridRows();
     const availableHeight = Math.max(1, area.clientHeight - 32);
-    const targetWidth = Math.max(1, (area.clientWidth - 32) * 0.9);
+    const targetWidth = Math.max(1, area.clientWidth - 32);
     const cellSize = Math.max(1, availableHeight / rows);
     const cols = Math.max(200, Math.floor(targetWidth / cellSize));
 
@@ -92,7 +92,7 @@ function fitCanvasToScreen() {
     const cols = getGridCols();
     const rows = getGridRows();
 
-    const availableWidth = (area.clientWidth - 32) * 0.9;
+    const availableWidth = area.clientWidth - 32;
     const availableHeight = area.clientHeight - 32;
     const scale = Math.max(1, Math.min(availableWidth / cols, availableHeight / rows));
 
@@ -223,6 +223,7 @@ function drawWorld() {
     drawGrabberPreview();
     context.putImageData(imageData, 0, 0);
     drawGrabberOutline();
+    drawLinePreview();
 }
 
 function clampByte(v) {
@@ -275,6 +276,25 @@ export function setHoverCell(x, y) {
     hoverY = y;
 }
 
+export function setLinePreview(x0, y0, x1, y1) {
+    linePreview = { x0, y0, x1, y1 };
+}
+
+export function clearLinePreview() {
+    linePreview = null;
+}
+
+function drawLinePreview() {
+    if (!linePreview || !context) return;
+    context.beginPath();
+    context.strokeStyle = '#8bdcff';
+    context.lineWidth = Math.max(1, getBrushSize());
+    context.lineCap = 'round';
+    context.moveTo(linePreview.x0 + 0.5, linePreview.y0 + 0.5);
+    context.lineTo(linePreview.x1 + 0.5, linePreview.y1 + 0.5);
+    context.stroke();
+}
+
 function drawGrabberOutline() {
     if (!getGrabberOn() || !inBounds(hoverX, hoverY)) return;
     const size = getGrabberSize();
@@ -314,6 +334,7 @@ function updateReadout() {
     const defs = getDefinitions();
     const selected = getGrabberOn() ? `Claw ${getGrabberSize()}px`
         : (getEraserOn() ? 'Eraser' : defs[getParticleTypeIdSelected()].name);
+    const drawing = getDrawMode() === 'line' ? 'Line' : 'Brush';
 
     let under = '';
     if (inBounds(hoverX, hoverY)) {
@@ -322,14 +343,14 @@ function updateReadout() {
     }
 
     readout.textContent = `${fps} fps   ${count} particles   air ` +
-        `${Math.round(getAmbientTemp())}°C   ${selected} ${getBrushSize()}px${under}`;
+        `${Math.round(getAmbientTemp())}°C   ${drawing} ${selected} ${getBrushSize()}px${under}`;
 }
 
 //---------------------------------------------------------------------- brush
 
-// Paints a blob of the selected particle. Existing particles are only painted
-// over when the brush is a solid one, so that dropping water onto sand does not
-// erase the sand.
+// Paints a blob of the selected particle. A material can only be added to air;
+// cells already occupied by any material are left untouched. The eraser is the
+// explicit exception and can clear any cell.
 //
 // dragX and dragY are which way the mouse was moving, which only the wind tool
 // cares about.
@@ -367,15 +388,15 @@ export function paintCell(centreX, centreY, dragX, dragY) {
                 continue;
             }
 
+            if (world.type[i] !== EMPTY) continue;
+
             // Sprinkle rather than fill for loose materials, which looks better
             // and stops the brush dumping a solid block of sand.
             const def = getDefinitions()[id];
             const loose = def.category === 'powder' || def.category === 'gas';
             if (loose && size > 1 && Math.random() < 0.45) continue;
 
-            if (world.type[i] === EMPTY || def.category === 'static' || Math.random() < 0.3) {
-                setCell(x, y, id);
-            }
+            setCell(x, y, id);
         }
     }
 }

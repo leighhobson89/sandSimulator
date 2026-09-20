@@ -36,66 +36,12 @@
                 <div class="toolbar-group">
                     <button id="pauseButton" class="btn btn-tool">Pause</button>
                     <button id="clearButton" class="btn btn-tool">Clear</button>
-                    <button id="heatViewButton" class="btn btn-tool">Heat View</button>
                     <button id="eraserButton" class="btn btn-tool">Eraser</button>
-                </div>
-
-                <div class="toolbar-group brush-group">
-                    <label id="brushSizeLabel" for="brushSize">Brush 3</label>
-                    <input id="brushSize" type="range" min="1" max="31" step="2" value="3">
-                </div>
-
-                <div class="toolbar-group brush-group">
-                    <label id="airTempLabel" for="airTemp">Air</label>
-                    <input id="airTemp" type="range" min="-60" max="600" step="1" value="8">
-                    <input id="airTempValue" class="number-input" type="number"
-                           min="-60" max="600" step="1" value="8"
-                           title="Type a temperature, then click away or press Enter">
-                    <span class="unit">&deg;C</span>
                 </div>
 
                 <div class="toolbar-group toolbar-end">
                     <span id="readout" class="readout">&nbsp;</span>
                     <select id="themeSelect" class="select-input" title="Change the look"></select>
-                </div>
-            </div>
-
-            <div class="toolbar-line toolbar-line-secondary">
-                <div class="toolbar-group brush-group grabber-controls">
-                    <button id="grabberButton" class="btn btn-tool icon-button"
-                            aria-label="Grabber" title="Grab one material type inside the outlined square">
-                        <svg class="grabber-icon" viewBox="0 0 24 24" aria-hidden="true">
-                            <path d="M12 2v5M8.5 7h7M9 7.5l-4 6.2 1.7 4.1M15 7.5l4 6.2-1.7 4.1M12 8v6.5"/>
-                            <path d="M6.7 17.8c1.1 2.2 2.8 3.2 5.3 3.2s4.2-1 5.3-3.2M10.2 14.5 12 17l1.8-2.5"/>
-                        </svg>
-                    </button>
-                    <label id="grabberSizeLabel" for="grabberSize">Grab 15</label>
-                    <input id="grabberSize" type="range" min="1" max="60" step="1" value="15">
-                </div>
-
-                <div class="toolbar-group brush-group">
-                    <label class="toggle" for="airLayers"
-                           title="Unchecked, the air is one even temperature from top to bottom">
-                        <input id="airLayers" type="checkbox" checked>
-                        <span class="sr-only">Air layers</span>
-                    </label>
-                    <label id="layerLapseLabel" for="layerLapse"
-                           title="How much colder each fifth of the height is than the one below it">Layers 2.0</label>
-                    <input id="layerLapse" type="range" min="0" max="10" step="0.5" value="2">
-                </div>
-
-                <div class="toolbar-group brush-group">
-                    <label id="windStrengthLabel" for="windStrength"
-                           title="How hard the wind tool blows">Wind 2</label>
-                    <input id="windStrength" type="range" min="1" max="8" step="1" value="2">
-                </div>
-
-                <div class="toolbar-group">
-                    <label class="toggle" for="ambientWind"
-                           title="A soft breeze that gusts across the world every few seconds, carrying seeds, dry powders and smoke with it">
-                        <input id="ambientWind" type="checkbox">
-                        <span>Breeze</span>
-                    </label>
                 </div>
             </div>
         </header>
@@ -108,9 +54,177 @@
             <main id="canvasArea">
                 <canvas id="canvas"></canvas>
             </main>
+
+            <aside id="toolsPanel" aria-label="Tools">
+                <div class="tools-panel-header">
+                    <span class="tools-kicker">Workspace</span>
+                    <h2>Tools</h2>
+                </div>
+
+                <section class="tool-section">
+                    <h3>Draw mode</h3>
+                    <div class="tool-icon-grid" role="group" aria-label="Drawing mode">
+                        <button id="brushModeButton" class="btn tool-icon-button active-toggle tooltip-control"
+                                type="button" aria-label="Brush mode" aria-pressed="true"
+                                data-tooltip="Paint continuously while dragging">
+                            <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="m14.8 4.2 5 5L10 19H5v-5Z"/>
+                                <path d="m12.5 6.5 5 5M5 19c-1.3 0-2 .7-2 2 1.3 0 2-.7 2-2Z"/>
+                            </svg>
+                            <span>Brush</span>
+                        </button>
+                        <button id="lineModeButton" class="btn tool-icon-button tooltip-control"
+                                type="button" aria-label="Line mode" aria-pressed="false"
+                                data-tooltip="Drag to preview; release to draw">
+                            <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true">
+                                <circle cx="5" cy="19" r="2"/>
+                                <circle cx="19" cy="5" r="2"/>
+                                <path d="m6.5 17.5 11-11"/>
+                            </svg>
+                            <span>Line</span>
+                        </button>
+                    </div>
+
+                    <div class="tool-slider-row">
+                        <label id="brushSizeLabel" class="tool-slider-icon tooltip-control" for="brushSize"
+                               data-tooltip="Width used by both drawing modes">
+                            <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true">
+                                <circle cx="7" cy="12" r="2"/>
+                                <circle cx="17" cy="12" r="5"/>
+                                <path d="M9 12h3"/>
+                            </svg>
+                            <span class="sr-only">Brush size</span>
+                        </label>
+                        <div class="tool-slider-block">
+                            <div class="tool-slider-heading">
+                                <span>Brush size</span>
+                                <output id="brushSizeValue" for="brushSize">3</output>
+                            </div>
+                            <input id="brushSize" type="range" min="1" max="31" step="2" value="3">
+                        </div>
+                    </div>
+                </section>
+
+                <section class="tool-section">
+                    <h3>Move</h3>
+                    <div class="tool-control-row">
+                        <button id="grabberButton" class="btn tool-square-button tooltip-control"
+                                type="button" aria-label="Grabber" aria-pressed="false"
+                                data-tooltip="Lift and move one material type">
+                            <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M12 2v5M8.5 7h7M9 7.5l-4 6.2 1.7 4.1M15 7.5l4 6.2-1.7 4.1M12 8v6.5"/>
+                                <path d="M6.7 17.8c1.1 2.2 2.8 3.2 5.3 3.2s4.2-1 5.3-3.2M10.2 14.5 12 17l1.8-2.5"/>
+                            </svg>
+                        </button>
+                        <div class="tool-slider-block">
+                            <div class="tool-slider-heading">
+                                <label id="grabberSizeLabel" for="grabberSize">Grab size</label>
+                                <output id="grabberSizeValue" for="grabberSize">15</output>
+                            </div>
+                            <input id="grabberSize" type="range" min="1" max="60" step="1" value="15">
+                        </div>
+                    </div>
+                </section>
+
+                <section class="tool-section">
+                    <h3>Environment</h3>
+                    <div class="tool-slider-row tool-slider-row-first">
+                        <label id="airTempLabel" class="tool-slider-icon tooltip-control" for="airTemp"
+                               data-tooltip="Set the world's air temperature">
+                            <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M10 14.8V5a2 2 0 1 1 4 0v9.8a4.5 4.5 0 1 1-4 0Z"/>
+                                <path d="M12 9v8"/>
+                            </svg>
+                            <span class="sr-only">Air temperature</span>
+                        </label>
+                        <div class="tool-slider-block">
+                            <div class="tool-slider-heading">
+                                <span>Air temperature</span>
+                                <span class="tool-number-wrap">
+                                    <input id="airTempValue" class="number-input tool-number-input" type="number"
+                                           min="-60" max="600" step="1" value="8"
+                                           title="Type a temperature, then click away or press Enter">
+                                    <span class="unit">&deg;C</span>
+                                </span>
+                            </div>
+                            <input id="airTemp" type="range" min="-60" max="600" step="1" value="8">
+                        </div>
+                    </div>
+
+                    <div class="tool-icon-grid tool-icon-grid-three">
+                        <button id="heatViewButton" class="btn tool-icon-button tooltip-control"
+                                type="button" aria-label="Heat view" aria-pressed="false"
+                                data-tooltip="Show the world's temperature">
+                            <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M10 14.8V5a2 2 0 1 1 4 0v9.8a4.5 4.5 0 1 1-4 0Z"/>
+                                <path d="M12 8v9M9 10H6M9 6H7"/>
+                            </svg>
+                            <span>Heat</span>
+                        </button>
+
+                        <label class="tool-icon-toggle tooltip-control"
+                               data-tooltip="Toggle colder air at higher levels">
+                            <input id="airLayers" type="checkbox" checked>
+                            <span class="tool-icon-face">
+                                <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true">
+                                    <path d="M4 6h16M6 12h12M8 18h8"/>
+                                    <path d="m17 15 3 3-3 3"/>
+                                </svg>
+                                <span>Layers</span>
+                            </span>
+                        </label>
+
+                        <label class="tool-icon-toggle tooltip-control"
+                               data-tooltip="Let natural gusts cross the world">
+                            <input id="ambientWind" type="checkbox">
+                            <span class="tool-icon-face">
+                                <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true">
+                                    <path d="M3 8h11c2.7 0 2.7-4 0-4-1.2 0-2 .6-2.4 1.4M3 12h16c2.7 0 2.7 4 0 4-1.2 0-2-.6-2.4-1.4M3 16h7"/>
+                                </svg>
+                                <span>Breeze</span>
+                            </span>
+                        </label>
+                    </div>
+
+                    <div class="tool-slider-row">
+                        <label id="layerLapseLabel" class="tool-slider-icon tooltip-control" for="layerLapse"
+                               data-tooltip="Temperature drop between air layers">
+                            <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M5 5h14M7 10h10M9 15h6M11 20h2"/>
+                            </svg>
+                            <span class="sr-only">Layer strength</span>
+                        </label>
+                        <div class="tool-slider-block">
+                            <div class="tool-slider-heading">
+                                <span>Layer strength</span>
+                                <output id="layerLapseValue" for="layerLapse">2.0</output>
+                            </div>
+                            <input id="layerLapse" type="range" min="0" max="10" step="0.5" value="2">
+                        </div>
+                    </div>
+
+                    <div class="tool-slider-row">
+                        <label id="windStrengthLabel" class="tool-slider-icon tooltip-control" for="windStrength"
+                               data-tooltip="Strength of wind tools and gusts">
+                            <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M3 7h11c3 0 3-4 0-4-1.3 0-2.2.7-2.6 1.6M3 12h17M3 17h12c3 0 3 4 0 4-1.3 0-2.2-.7-2.6-1.6"/>
+                            </svg>
+                            <span class="sr-only">Wind strength</span>
+                        </label>
+                        <div class="tool-slider-block">
+                            <div class="tool-slider-heading">
+                                <span>Wind strength</span>
+                                <output id="windStrengthValue" for="windStrength">2</output>
+                            </div>
+                            <input id="windStrength" type="range" min="1" max="8" step="1" value="2">
+                        </div>
+                    </div>
+                </section>
+            </aside>
         </div>
     </div>
 
+    <div id="toolTooltip" class="tool-tooltip" role="tooltip" hidden></div>
     <div id="overlay" class="d-none overlay"></div>
 
     <script type="module" src="ui.js"></script>

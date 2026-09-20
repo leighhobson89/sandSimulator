@@ -15,7 +15,8 @@
 //   moved   set to 1 once a particle has moved this frame, so that no particle
 //           can move twice in the same frame
 //   shade   a fixed random number per cell used to vary the colour slightly, so
-//           sand looks grainy instead of flat
+//           sand looks grainy instead of flat, and to give cooling speeds a
+//           stable per-particle variation where a material asks for it
 //   heat    how much heat has built up towards the next state change (see the
 //           latent heat note further down)
 //   surface for liquids, the top of the body of liquid this cell is joined to
@@ -148,9 +149,16 @@ export function prepareDefinitions(json) {
             flowSteps: p.flowSteps || 1,
             moveChance: p.moveChance === undefined ? 1 : p.moveChance,
             drift: p.drift || 0,
+            // Some liquids (lava) rest on occupied cells and rely on heat or
+            // reactions to consume them instead of swapping underneath them.
+            displacesMaterials: p.displacesMaterials !== false,
 
             conductivity: p.conductivity === undefined ? 0.06 : p.conductivity,
             cooling: p.cooling === undefined ? 0.004 : p.cooling,
+            // A stable per-particle +/- fraction of the normal cooling rate.
+            // The shade value supplies the variation without making it flicker
+            // from frame to frame.
+            coolingVariance: p.coolingVariance === undefined ? 0 : p.coolingVariance,
             // How strongly a cell is protected when it is buried inside more
             // of the same material. Exposed faces keep most of their normal
             // response; fully surrounded cells retain heat or cold longer.
@@ -245,10 +253,24 @@ export function prepareDefinitions(json) {
             boilEmits: toId(p.boilEmits),
             depositPoint: p.depositPoint,
             depositsInto: toId(p.depositsInto),
+            // Some gases can escape instead of becoming a liquid or deposit.
+            // This is checked only once the gas has actually reached its
+            // condensation point, so placement and production do not decide
+            // its fate early.
+            condenseLossChance: p.condenseLossChance === undefined ? 0 : p.condenseLossChance,
             // What this turns into when it comes to rest against something
             // else: snow melting the moment it lands in water, or packing down
             // into ice where it settles on ice.
             contacts: (p.contacts || []).map(rule => ({
+                on: toId(rule.on),
+                into: toId(rule.into),
+                chance: rule.chance === undefined ? 1 : rule.chance,
+                temp: rule.temp
+            })),
+            // A slow contact reaction applied to the cell immediately below
+            // this one. Lava uses it to bake loose mud into compact scoria
+            // without replacing or sinking through the mud.
+            convertsBelow: (p.convertsBelow || []).map(rule => ({
                 on: toId(rule.on),
                 into: toId(rule.into),
                 chance: rule.chance === undefined ? 1 : rule.chance,
@@ -263,6 +285,10 @@ export function prepareDefinitions(json) {
             life: p.life || 0,
             lifeVariance: p.lifeVariance || 0,
             decaysInto: toId(p.decaysInto),
+            // Most particles that expire leave their by-product every time;
+            // a material such as toxic gas can instead have a diminishing
+            // conversion rate so its cycle cannot feed itself forever.
+            decayChance: p.decayChance === undefined ? 1 : p.decayChance,
             smokeChance: p.smokeChance || 0,
 
             // wetsInto/wetChance describe how readily this dry powder soaks up
@@ -318,7 +344,7 @@ export function prepareDefinitions(json) {
             def.growChance > 0 || def.emit > 0 || def.quenchedInto !== EMPTY ||
             def.blastRadius > 0 || def.sprouts.length > 0 || def.seedChance > 0 ||
             def.douses || def.contacts.length > 0 || def.withersPlants !== EMPTY ||
-            def.compactsInto !== EMPTY;
+            def.compactsInto !== EMPTY || def.convertsBelow.length > 0;
         def.moves = def.category !== 'static';
 
         // A second, lighter copy of anything that can come up buoyant. The
@@ -656,7 +682,12 @@ function diffuseHeat() {
             const coolingScale = 1 - def.bulkInsulation * buried * 0.7;
 
             let result = t + (average - t) * def.conductivity * conductionScale;
-            result += (rowAir + airOffset[shade[i]] - result) * def.cooling * coolingScale;
+            let coolingRate = def.cooling;
+            if (def.coolingVariance > 0) {
+                const variation = (shade[i] / 255 - 0.5) * 2;
+                coolingRate *= 1 + variation * def.coolingVariance;
+            }
+            result += (rowAir + airOffset[shade[i]] - result) * coolingRate * coolingScale;
 
             // Heat sources (fire, lava) push themselves back up towards their
             // own temperature. emitRate decides how hard that is to fight:
@@ -833,6 +864,14 @@ function applyStateChange(x, y, i, def) {
         return true;
     }
 
+    // Make the escape decision at the actual condensation point, rather than
+    // when the steam is placed or produced. This applies before either liquid
+    // rain or solid snow is chosen.
+    if (def.condenseLossChance > 0 && Math.random() < def.condenseLossChance) {
+        removeParticle(i);
+        return true;
+    }
+
     // Freezing. A gas that would normally condense to a liquid turns straight
     // into a solid instead when the air around it is cold enough - which is
     // steam falling as snow rather than as rain.
@@ -896,9 +935,11 @@ function applyReactions(x, y, i, def) {
     if (def.life > 0) {
         world.life[i]--;
         if (world.life[i] <= 0) {
-            const leftover = world.residue[i] || def.decaysInto;
-            if (leftover !== EMPTY) {
-                transform(i, leftover);
+            const residue = world.residue[i];
+            if (residue !== EMPTY) {
+                transform(i, residue);
+            } else if (def.decaysInto !== EMPTY && Math.random() < def.decayChance) {
+                transform(i, def.decaysInto);
             } else if (def.smokeChance > 0 && Math.random() < def.smokeChance) {
                 transform(i, idOf('Smoke'));
             } else {
@@ -960,6 +1001,25 @@ function applyReactions(x, y, i, def) {
             transform(i, def.quenchedInto);
             world.temp[i] = Math.min(world.temp[i], 400);
             return true;
+        }
+    }
+
+    // Some hot materials alter only what they are resting on. This is kept
+    // separate from ordinary temperature changes because it is the sustained
+    // weight and contact of the lava that compacts mud into scoria; a warm mud
+    // cell elsewhere should remain mud.
+    if (def.convertsBelow.length > 0) {
+        const under = typeAt(x, y + 1);
+        if (under > 0) {
+            for (const rule of def.convertsBelow) {
+                if (under !== rule.on || Math.random() >= rule.chance) continue;
+                const below = i + COLS;
+                transform(below, rule.into);
+                if (rule.temp !== undefined) {
+                    world.temp[below] = Math.max(world.temp[below], rule.temp);
+                }
+                break;
+            }
         }
     }
 
@@ -1602,6 +1662,7 @@ function powdersTogether(def, other) {
 function canSinkInto(def, other) {
     if (other === OUT_OF_BOUNDS) return false;
     if (other === EMPTY) return true;
+    if (!def.displacesMaterials) return false;
     const o = DEFS[other];
     if (o.category === 'static') return false;
     if (powdersTogether(def, o)) return false;
