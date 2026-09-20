@@ -1,199 +1,178 @@
-import {captureGameStatusForSaving, restoreGameStatus, getElements, getLanguage, setLanguageChangedFlag, getLanguageChangedFlag} from './constantsAndGlobalVars.js';
-import {localize} from './localization.js';
-import { handleLanguageChange } from './ui.js';
+// Portable saves and the single local resume slot. Typed arrays are base64
+// encoded inside JSON, then compressed with LZString's URI-safe codec.
+import {
+    getParticleTypeIdSelected, setParticleTypeIdSelected, getBrushSize, setBrushSize,
+    getDrawMode, setDrawMode, getGrabberSize, setGrabberSize, getWindStrength,
+    setWindStrength, getEraserOn, setEraserOn, getGrabberOn, setGrabberOn,
+    getHeatViewOn, setHeatViewOn, getSimulationPaused, setSimulationPaused
+} from './constantsAndGlobalVars.js';
+import { captureSimulationState, restoreSimulationState } from './physics.js';
+import { compressToEncodedURIComponent, decompressFromEncodedURIComponent } from './lzString.js';
 
-export function saveGame(isManualSave) {
-    const gameState = captureGameStatusForSaving();
-    const serializedGameState = JSON.stringify(gameState);
-    let compressed = LZString.compressToEncodedURIComponent(serializedGameState);
-    const blob = new Blob([compressed], {
-        type: 'text/plain'
-    });
-    const url = URL.createObjectURL(blob);
+export const AUTOSAVE_STORAGE_KEY = 'elemental-foundry.autosave.v1';
+const SAVE_VERSION = 1;
+const AUTOSAVE_INTERVAL_MS = 60_000;
+const MAX_WORLD_CELLS = 2_000_000;
+const ARRAY_TYPES = { Uint8Array, Uint16Array, Int16Array, Float32Array };
 
-    if (isManualSave) {
-        document.querySelector('.save-load-header').innerHTML = `${localize('headerStringSave', getLanguage())}`;
-        document.getElementById('copyButtonSavePopup').classList.remove('d-none');
-        document.getElementById('loadStringButton').classList.add('d-none');
-        getElements().saveLoadPopup.classList.remove('d-none');
-        //document.getElementById('overlay').classList.remove('d-none');
+let autosaveTimer = null;
+let autosaveEnabled = false;
+let autosaveWriting = false;
+let savingListener = () => {};
 
-        const reader = new FileReader();
-        reader.onload = function(event) {
-            getElements().loadSaveGameStringTextArea.value = `${event.target.result}`;
-            getElements().loadSaveGameStringTextArea.readOnly = true;
-        };
-        reader.readAsText(blob);
-    } else {
-        const a = document.createElement('a');
-        // Generate the filename with "AUTO_" prefix for auto save
-        const timestamp = getCurrentTimestamp();
-        const prefix = isManualSave ? "" : "AUTO_";
-        a.href = url;
-        a.download = `${prefix}ChipShopSave_${timestamp}.txt`;
-        a.style.display = 'none';
+export function setSavingListener(listener) { savingListener = typeof listener === 'function' ? listener : () => {}; }
 
-        document.body.appendChild(a);
-        a.click();
-        URL.revokeObjectURL(url);
-        a.remove();
-    }
+export function hasAutosave() {
+    try { return !!localStorage.getItem(AUTOSAVE_STORAGE_KEY); } catch { return false; }
 }
 
-
-function getCurrentTimestamp() {
-    const now = new Date();
-    return `${now.getFullYear()}_${padZero(now.getMonth() + 1)}_${padZero(now.getDate())}_${padZero(now.getHours())}_${padZero(now.getMinutes())}_${padZero(now.getSeconds())}`;
+export function createSaveString() {
+    const payload = {
+        format: 'elemental-foundry', version: SAVE_VERSION, savedAt: new Date().toISOString(),
+        simulation: encodeSimulation(captureSimulationState()),
+        tools: {
+            particleId: getParticleTypeIdSelected(), brushSize: getBrushSize(), drawMode: getDrawMode(),
+            grabberSize: getGrabberSize(), windStrength: getWindStrength(), eraserOn: getEraserOn(),
+            grabberOn: getGrabberOn(), heatViewOn: getHeatViewOn(), paused: getSimulationPaused()
+        }
+    };
+    return compressToEncodedURIComponent(JSON.stringify(payload));
 }
 
-function padZero(num) {
-    return num.toString().padStart(2, '0');
-}
-
-export function copySaveStringToClipBoard() {
-    const textArea = getElements().loadSaveGameStringTextArea;
-    textArea.select();
-    textArea.setSelectionRange(0, 99999);
-
+export function loadSaveString(compressed) {
+    if (typeof compressed !== 'string' || !compressed.trim()) throw new Error('Paste a save string first.');
+    let payload;
     try {
-        navigator.clipboard.writeText(textArea.value)
-            .then(() => {
-                alert('Text copied to clipboard!');
-            })
-            .catch(err => {
-                alert(err);
-            })
-            .finally(() => {
-                textArea.setSelectionRange(0, 0);
-            })
-    } catch (err) {
-        alert(err);
+        const json = decompressFromEncodedURIComponent(compressed.trim().replace(/\s/g, ''));
+        if (!json) throw new Error('Cannot decompress');
+        payload = JSON.parse(json);
+    } catch { throw new Error('That is not a valid Elemental Foundry save string.'); }
+    if (payload?.format !== 'elemental-foundry' || payload.version !== SAVE_VERSION) {
+        throw new Error('This save was made by an unsupported version of Elemental Foundry.');
+    }
+    restoreSimulationState(decodeSimulation(payload.simulation));
+    restoreTools(payload.tools);
+    return payload;
+}
+
+export async function restoreAutosave() {
+    let compressed;
+    try { compressed = localStorage.getItem(AUTOSAVE_STORAGE_KEY); }
+    catch { throw new Error('Local storage is not available in this browser.'); }
+    if (!compressed) throw new Error('There is no resume game saved on this device.');
+    const payload = loadSaveString(compressed);
+    startAutosave();
+    return payload;
+}
+
+// The regular autosave always runs once per minute. saveNow is only used when
+// a player explicitly chooses a new resume target, so that choice is durable.
+export function startAutosave({ saveNow = false } = {}) {
+    if (!storageWorks()) return false;
+    autosaveEnabled = true;
+    if (autosaveTimer) clearInterval(autosaveTimer);
+    autosaveTimer = setInterval(() => { void writeAutosave(); }, AUTOSAVE_INTERVAL_MS);
+    if (saveNow) void writeAutosave();
+    return true;
+}
+
+export function stopAutosave() {
+    autosaveEnabled = false;
+    if (autosaveTimer) clearInterval(autosaveTimer);
+    autosaveTimer = null;
+}
+
+export function clearAutosave() {
+    try { localStorage.removeItem(AUTOSAVE_STORAGE_KEY); } catch { /* unavailable storage */ }
+}
+
+export function isAutosaveEnabled() { return autosaveEnabled; }
+
+export async function replaceAutosaveWithCurrentGame() {
+    clearAutosave();
+    if (!startAutosave()) throw new Error('Local storage is not available in this browser.');
+    await writeAutosave();
+}
+
+export async function writeAutosave() {
+    if (!autosaveEnabled || autosaveWriting || !storageWorks()) return false;
+    autosaveWriting = true;
+    savingListener(true);
+    await nextPaint();
+    try {
+        localStorage.setItem(AUTOSAVE_STORAGE_KEY, createSaveString());
+        return true;
+    } catch (error) {
+        console.warn('Could not autosave Elemental Foundry game:', error);
+        stopAutosave();
+        return false;
+    } finally {
+        autosaveWriting = false;
+        savingListener(false);
     }
 }
 
-export function loadGameOption() {
-    getElements().loadSaveGameStringTextArea.readOnly = false;
-    document.querySelector('.save-load-header').innerHTML = `${localize('headerStringLoad', getLanguage())}`;
-    document.getElementById('loadStringButton').classList.remove('d-none');
-    document.getElementById('copyButtonSavePopup').classList.add('d-none');
-    getElements().saveLoadPopup.classList.remove('d-none');
-    document.getElementById('overlay').classList.remove('d-none');
-    getElements().loadSaveGameStringTextArea.value = "";
-    getElements().loadSaveGameStringTextArea.placeholder = `${localize('textAreaLabel', getLanguage())}`;
+function storageWorks() {
+    try {
+        const probe = `${AUTOSAVE_STORAGE_KEY}.probe`;
+        localStorage.setItem(probe, '1'); localStorage.removeItem(probe);
+        return true;
+    } catch { return false; }
 }
 
-export function loadGame(string) {
-    if (!string) {
-        return new Promise((resolve, reject) => {
-            const input = document.createElement('input');
-            input.type = 'file';
-            input.accept = '.txt';
-
-            input.addEventListener('change', (event) => {
-                handleFileSelectAndInitialiseLoadedGame(event, false, null)
-                    .then(() => {
-                        resolve();
-                    })
-                    .catch(reject);
-            });
-
-            input.click();
-        });
-    } else {
-        const textArea = document.getElementById('loadSaveGameStringTextArea');
-        if (textArea) {
-            const string = {
-                target: {
-                    result: textArea.value
-                }
-            };
-            return handleFileSelectAndInitialiseLoadedGame(null, true, string);
-        } else {
-            return Promise.reject("Text area not found.");
-        }
-    }
-}
-
-function handleFileSelectAndInitialiseLoadedGame(event, stringLoad, string) {
-    return new Promise((resolve, reject) => {
-        const processGameData = (compressed) => {
-            try {
-                // Validate the compressed string before processing
-                if (!validateSaveString(compressed)) {
-                    alert('Invalid game data string. Please check and try again.');
-                    return reject('Invalid game data string');
-                }
-
-                let decompressedJson = LZString.decompressFromEncodedURIComponent(compressed);
-                let gameState = JSON.parse(decompressedJson);
-
-                getElements().overlay.classList.add('d-none');
-
-                initialiseLoadedGame(gameState).then(() => {
-                    setLanguageChangedFlag(true);
-                    checkForLanguageChange();
-                    alert('Game loaded successfully!');
-                    resolve();
-                }).catch(error => {
-                    console.error('Error initializing game:', error);
-                    alert('Error initializing game. Please make sure the data is correct.');
-                    reject(error);
-                });
-
-            } catch (error) {
-                console.error('Error loading game:', error);
-                alert('Error loading game. Please make sure the file contains valid game data.');
-                reject(error);
-            }
-        };
-
-        if (stringLoad) {
-            try {
-                processGameData(string.target.result);
-            } catch (error) {
-                console.error('Error processing string:', error);
-                alert('Error processing string. Please make sure the string is valid.');
-                reject(error);
-            }
-        } else {
-            const file = event.target.files[0];
-            if (!file) {
-                return reject('No file selected');
-            }
-
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                try {
-                    processGameData(e.target.result);
-                } catch (error) {
-                    console.error('Error reading file:', error);
-                    alert('Error reading file. Please make sure the file contains valid game data.');
-                    reject(error);
-                }
-            };
-
-            reader.onerror = () => {
-                reject('Error reading file');
-            };
-
-            reader.readAsText(file);
-        }
+function nextPaint() {
+    return new Promise(resolve => {
+        if (typeof requestAnimationFrame === 'function') requestAnimationFrame(resolve);
+        else setTimeout(resolve, 0);
     });
 }
 
-function validateSaveString(compressed) {
-    let decompressedJson = LZString.decompressFromEncodedURIComponent(compressed);
-    JSON.parse(decompressedJson);
-    return decompressedJson !== null;
-}
-
-async function initialiseLoadedGame(gameState) {    
-    await restoreGameStatus(gameState);
-}
-
-export function checkForLanguageChange() {
-    if (getLanguageChangedFlag()) {
-        handleLanguageChange(getLanguage());
+function encodeSimulation(simulation) {
+    const arrays = {};
+    for (const [name, value] of Object.entries(simulation.arrays)) {
+        arrays[name] = { type: value.constructor.name, data: arrayToBase64(value) };
     }
-    setLanguageChangedFlag(false);
+    return { ...simulation, arrays };
+}
+
+function decodeSimulation(simulation) {
+    if (!simulation || !Number.isInteger(simulation.cols) || !Number.isInteger(simulation.rows) ||
+        simulation.cols < 1 || simulation.rows < 1 || simulation.cols * simulation.rows > MAX_WORLD_CELLS) {
+        throw new Error('This save has invalid world dimensions.');
+    }
+    const arrays = {};
+    for (const [name, encoded] of Object.entries(simulation.arrays || {})) {
+        const Type = ARRAY_TYPES[encoded?.type];
+        if (!Type || typeof encoded.data !== 'string') throw new Error(`This save has invalid ${name} data.`);
+        arrays[name] = base64ToArray(encoded.data, Type);
+    }
+    return { ...simulation, arrays };
+}
+
+function arrayToBase64(array) {
+    const bytes = new Uint8Array(array.buffer, array.byteOffset, array.byteLength);
+    let binary = '';
+    for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+        binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+    }
+    return btoa(binary);
+}
+
+function base64ToArray(value, Type) {
+    let binary;
+    try { binary = atob(value); } catch { throw new Error('This save contains malformed binary data.'); }
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    if (bytes.byteLength % Type.BYTES_PER_ELEMENT !== 0) throw new Error('This save contains malformed binary data.');
+    return new Type(bytes.buffer);
+}
+
+function restoreTools(tools = {}) {
+    if (Number.isInteger(tools.particleId)) setParticleTypeIdSelected(tools.particleId);
+    if (Number.isFinite(tools.brushSize)) setBrushSize(tools.brushSize);
+    setDrawMode(tools.drawMode);
+    if (Number.isFinite(tools.grabberSize)) setGrabberSize(tools.grabberSize);
+    if (Number.isFinite(tools.windStrength)) setWindStrength(tools.windStrength);
+    setEraserOn(!!tools.eraserOn); setGrabberOn(!!tools.grabberOn);
+    setHeatViewOn(!!tools.heatViewOn); setSimulationPaused(!!tools.paused);
 }

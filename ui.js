@@ -8,9 +8,8 @@
 
 import {
     setParticleTypeIdSelected, getParticleTypeIdSelected, getGameVisibleActive,
-    getGridCols, getGridRows, getLanguage, setElements, getElements,
+    getGridCols, setGridCols, getGridRows, setGridRows, setElements, getElements,
     setBeginGameStatus, getGameInProgress, setGameInProgress, getMenuState,
-    getLanguageSelected, setLanguageSelected, setLanguage,
     getBrushSize, setBrushSize, getDrawMode, setDrawMode, getEraserOn, setEraserOn,
     getHeatViewOn, setHeatViewOn, getSimulationPaused, setSimulationPaused,
     getWindStrength, setWindStrength, getGrabberSize, setGrabberSize,
@@ -26,8 +25,11 @@ import {
     setAmbientWindOn, getAmbientWindOn, setAirLayersOn, getAirLayersOn,
     setWindDial
 } from './physics.js';
-import { initLocalization, localize } from './localization.js';
 import { loadSavedTheme, buildThemeSwatches, buildThemeSelect } from './themes.js';
+import {
+    hasAutosave, createSaveString, loadSaveString, restoreAutosave,
+    stopAutosave, replaceAutosaveWithCurrentGame, setSavingListener
+} from './saveLoadGame.js';
 
 let isPainting = false;
 let isGrabbing = false;
@@ -36,6 +38,7 @@ let paintTimer = null;
 let currentCell = { x: 0, y: 0 };
 let lineStart = null;
 let fanPlacement = null;
+let autosaveChoiceResolver = null;
 
 document.addEventListener('DOMContentLoaded', async () => {
     await loadParticleDefinitions();
@@ -51,14 +54,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     buildThemeSwatches(elements.themeSwatches);
     buildThemeSelect(elements.themeSelect);
 
-    elements.newGameMenuButton.addEventListener('click', async () => {
-        setBeginGameStatus(true);
-        if (!getGameInProgress()) {
-            setGameInProgress(true);
-        }
-        setGameState(getGameVisibleActive());
-        startGame();
-    });
+    elements.newGameMenuButton.addEventListener('click', () => { void startNewGame(); });
+    elements.resumeGameButton.addEventListener('click', () => { void resumeGame(); });
+    elements.importGameMenuButton.addEventListener('click', openImportDialog);
+    elements.exportGameButton.addEventListener('click', openExportDialog);
+    elements.importGameButton.addEventListener('click', openImportDialog);
+    setUpSaveDialogs();
+    setSavingListener(saving => { elements.autosaveStatus.hidden = !saving; });
+    updateResumeButton();
 
     elements.pauseButton.addEventListener('click', () => {
         setSimulationPaused(!getSimulationPaused());
@@ -101,9 +104,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     setGameState(getMenuState());
-    // Awaited: the New Game label is looked up as soon as the page starts,
-    // so clicking New Game before this finished used to throw.
-    await handleLanguageChange(getLanguageSelected());
     setUpAirTemperature();
     setUpAirLayers();
     setUpWindStrength();
@@ -112,6 +112,179 @@ document.addEventListener('DOMContentLoaded', async () => {
     setUpCanvasInput();
     setUpKeyboardShortcuts();
 });
+
+// ---------------------------------------------------------------- save/load
+
+async function startNewGame() {
+    const replacingExisting = hasAutosave();
+    const useAsResumeGame = replacingExisting
+        ? await askToReplaceResume('Starting a new game will replace the saved resume game on this device.')
+        : true;
+
+    if (replacingExisting && !useAsResumeGame) stopAutosave();
+    setBeginGameStatus(true);
+    if (!getGameInProgress()) setGameInProgress(true);
+    setGameState(getGameVisibleActive());
+    startGame();
+
+    if (useAsResumeGame) {
+        try { await replaceAutosaveWithCurrentGame(); updateResumeButton(); }
+        catch { /* The simulation remains playable when storage is blocked. */ }
+    }
+}
+
+async function resumeGame() {
+    try {
+        const payload = await restoreAutosave();
+        beginLoadedGame(payload);
+    } catch (error) {
+        updateResumeButton();
+        openImportDialog();
+        showSaveError(error.message || 'The saved game could not be loaded.');
+    }
+}
+
+function beginLoadedGame(payload) {
+    setGridCols(payload.simulation.cols);
+    setGridRows(payload.simulation.rows);
+    setBeginGameStatus(false);
+    setGameInProgress(true);
+    synchroniseRestoredControls();
+    setGameState(getGameVisibleActive());
+    startGame({ preserveWorldSize: true });
+}
+
+function synchroniseRestoredControls() {
+    const elements = getElements();
+    elements.pauseButton.textContent = getSimulationPaused() ? 'Play' : 'Pause';
+    elements.eraserButton.classList.toggle('active-toggle', getEraserOn());
+    elements.grabberButton.classList.toggle('active-toggle', getGrabberOn());
+    elements.grabberButton.setAttribute('aria-pressed', String(getGrabberOn()));
+    elements.heatViewButton.classList.toggle('active-toggle', getHeatViewOn());
+    elements.heatViewButton.setAttribute('aria-pressed', String(getHeatViewOn()));
+    elements.brushSizeInput.value = String(getBrushSize());
+    elements.brushSizeValue.textContent = String(getBrushSize());
+    elements.grabberSizeInput.value = String(getGrabberSize());
+    elements.grabberSizeValue.textContent = String(getGrabberSize());
+    elements.airTempInput.value = String(Math.round(getAmbientTarget()));
+    elements.airTempValue.value = String(Math.round(getAmbientTarget()));
+    elements.layerLapseInput.value = String(getLayerLapse());
+    elements.layerLapseValue.textContent = getLayerLapse().toFixed(1);
+    elements.airLayersCheckbox.checked = getAirLayersOn();
+    elements.layerLapseInput.disabled = !getAirLayersOn();
+    elements.layerLapseInput.classList.toggle('disabled-control', !getAirLayersOn());
+    elements.layerLapseLabel.classList.toggle('disabled-control', !getAirLayersOn());
+    elements.windStrengthInput.value = String(getWindStrength());
+    elements.windStrengthValue.textContent = String(getWindStrength());
+    elements.ambientWindCheckbox.checked = getAmbientWindOn();
+    setWindDial(getWindStrength());
+    const brushOn = getDrawMode() === 'brush';
+    elements.brushModeButton.classList.toggle('active-toggle', brushOn);
+    elements.lineModeButton.classList.toggle('active-toggle', !brushOn);
+    elements.brushModeButton.setAttribute('aria-pressed', String(brushOn));
+    elements.lineModeButton.setAttribute('aria-pressed', String(!brushOn));
+    highlightSelectedParticle();
+}
+
+function updateResumeButton() {
+    getElements().resumeGameButton.classList.toggle('d-none', !hasAutosave());
+}
+
+function setUpSaveDialogs() {
+    const elements = getElements();
+    elements.closeSaveDialog.addEventListener('click', closeSaveDialog);
+    elements.copySaveString.addEventListener('click', () => { void copySaveString(); });
+    elements.loadSaveString.addEventListener('click', () => { void importFromDialog(); });
+    elements.autosaveChoiceYes.addEventListener('click', () => settleAutosaveChoice(true));
+    elements.autosaveChoiceNo.addEventListener('click', () => settleAutosaveChoice(false));
+}
+
+function openExportDialog() {
+    const elements = getElements();
+    try {
+        elements.saveDialogTitle.textContent = 'Export Game';
+        elements.saveDialogDescription.textContent = 'Copy this LZString save to keep or share a portable snapshot of this world.';
+        elements.saveString.value = createSaveString();
+        elements.saveString.readOnly = true;
+        elements.copySaveString.classList.remove('d-none');
+        elements.loadSaveString.classList.add('d-none');
+        clearSaveError();
+        elements.saveDialog.hidden = false;
+        elements.saveString.focus();
+        elements.saveString.select();
+    } catch (error) { showSaveError(error.message || 'Unable to export this game.'); }
+}
+
+function openImportDialog() {
+    const elements = getElements();
+    elements.saveDialogTitle.textContent = 'Import Game';
+    elements.saveDialogDescription.textContent = 'Paste an Elemental Foundry LZString save here to load it.';
+    elements.saveString.value = '';
+    elements.saveString.readOnly = false;
+    elements.copySaveString.classList.add('d-none');
+    elements.loadSaveString.classList.remove('d-none');
+    clearSaveError();
+    elements.saveDialog.hidden = false;
+    elements.saveString.focus();
+}
+
+function closeSaveDialog() { getElements().saveDialog.hidden = true; }
+
+async function copySaveString() {
+    const { saveString, saveDialogDescription } = getElements();
+    try {
+        if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(saveString.value);
+        else {
+            saveString.select();
+            if (!document.execCommand || !document.execCommand('copy')) throw new Error('Clipboard access was denied.');
+        }
+        saveDialogDescription.textContent = 'Save string copied. Keep it somewhere safe before sharing it.';
+    } catch { showSaveError('Could not copy automatically. Select the string and copy it manually.'); }
+}
+
+async function importFromDialog() {
+    const elements = getElements();
+    let payload;
+    try { payload = loadSaveString(elements.saveString.value); }
+    catch (error) { showSaveError(error.message || 'Unable to load this save.'); return; }
+
+    beginLoadedGame(payload);
+    closeSaveDialog();
+    const replacingExisting = hasAutosave();
+    const useAsResumeGame = replacingExisting
+        ? await askToReplaceResume('This imported game will replace the saved resume game on this device.')
+        : true;
+    if (useAsResumeGame) {
+        try { await replaceAutosaveWithCurrentGame(); updateResumeButton(); }
+        catch { /* The imported game is still loaded even if storage is unavailable. */ }
+    } else stopAutosave();
+}
+
+function askToReplaceResume(description) {
+    const elements = getElements();
+    elements.autosaveChoiceDescription.textContent = description + ' Choose No to keep the existing resume game and play this session without autosave.';
+    elements.autosaveChoiceDialog.hidden = false;
+    return new Promise(resolve => { autosaveChoiceResolver = resolve; });
+}
+
+function settleAutosaveChoice(choice) {
+    getElements().autosaveChoiceDialog.hidden = true;
+    const resolve = autosaveChoiceResolver;
+    autosaveChoiceResolver = null;
+    if (resolve) resolve(choice);
+}
+
+function showSaveError(message) {
+    const error = getElements().saveDialogError;
+    error.textContent = message;
+    error.hidden = false;
+}
+
+function clearSaveError() {
+    const error = getElements().saveDialogError;
+    error.textContent = '';
+    error.hidden = true;
+}
 
 // Builds one button per particle, coloured to match the particle itself and
 // filed under the heading it names in particles.json. Adding a material to that
@@ -611,25 +784,6 @@ function adjustBrush(delta) {
     setBrushSize(size);
     getElements().brushSizeInput.value = String(size);
     getElements().brushSizeValue.textContent = String(size);
-}
-
-//------------------------------------------------------------- localization
-
-async function setElementsLanguageText() {
-    // The big heading on the menu screen is the name of the game and stays put.
-    // Only the labels that have a localized string get replaced.
-    getElements().newGameMenuButton.innerHTML = `${localize('newGame', getLanguage())}`;
-}
-
-export async function handleLanguageChange(languageCode) {
-    setLanguageSelected(languageCode);
-    await setupLanguageAndLocalization();
-    setElementsLanguageText();
-}
-
-async function setupLanguageAndLocalization() {
-    setLanguage(getLanguageSelected());
-    await initLocalization(getLanguage());
 }
 
 export function disableActivateButton(button, action, activeClass) {

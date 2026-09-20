@@ -69,6 +69,20 @@ square to show exactly what will be dropped and where; release to place it.
 Right-click or press the claw again to leave the mode. Cancelling while
 something is held restores it to its original position.
 
+## Saving, resuming and sharing
+
+The simulator keeps one **Resume Game** on this device. It autosaves the full
+world to browser local storage every minute; the spinning status chip in the
+bottom-right appears while that write is in progress. When a local save exists,
+the menu offers **Resume Game**.
+
+Use **Export** in the simulator to display a compact LZString save. Copy and
+paste that string anywhere to keep a portable snapshot. **Import** accepts the
+same string from either the menu or toolbar. If another Resume Game already
+exists, importing or starting a New Game asks whether to replace it. Choosing
+No keeps the existing resume save and plays the new/imported world without
+autosave for that session.
+
 The **air temperature** runs from -60C to 2000C. Drag the slider for a rough
 setting, or type an exact number in the box beside it and press Enter - each one
 fills in the other. The world drifts towards whatever is set slowly rather than

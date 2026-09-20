@@ -6,6 +6,11 @@ repository documentation in the current working tree.
 
 ## Executive summary
 
+Update: persistence is now a first-class feature. The complete world and
+tool/environment state export as a versioned LZString, and one local Resume
+Game autosaves every minute. Importing or creating a new game can preserve an
+existing resume slot by continuing without autosave for that session.
+
 Elemental Foundry is a browser-based falling-sand simulation with a headless
 physics core. The current data file defines 45 material and tool entries:
 
@@ -42,7 +47,7 @@ repository-maintenance gaps, recorded in [`ISSUES.md`](ISSUES.md).
 | Electrical model | Conductivity, temporary pulses, connected Aluminum reservoirs, battery indicators and grid consumption are separate from thermal conductivity. Copper draws 1 and Iron 0.5 per cell, with a 100× discharge scale. | Healthy |
 | Rendering and loop | `game.js` owns the canvas, frame scheduling, drawing, hover state and charge indicator. | Healthy |
 | Controls and layout | `ui.js`, `index.html` and `styles.css` provide material selection, drawing modes, tools, weather controls, themes and responsive workspace layout. | Healthy |
-| Theme and persistence | `themes.js` applies six themes and stores the selected theme under the Elemental Foundry key. `saveLoadGame.js` handles simulation saves. | Healthy |
+| Theme and persistence | `themes.js` applies six themes. `saveLoadGame.js` serializes durable typed-array world fields plus tool/environment settings into a versioned LZString and manages the local once-per-minute resume slot. | Healthy |
 | Test tooling | `tools/simTest.mjs` covers physics and performance; `tools/smokeTest.mjs` exercises startup and UI behavior through a stand-in browser environment. | Passing |
 
 ## Behavior coverage checked

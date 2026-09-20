@@ -596,6 +596,24 @@ themeSelect.fire('change');
 if (getTheme() === THEMES[0].id) pass('and the dropdown switches it back');
 else fail(`the dropdown did nothing (theme is ${getTheme()})`);
 
+// A portable save must restore the live typed-array world, not merely toolbar
+// settings. This exercises the real LZString string used by export/import.
+const persistence = await import('../saveLoadGame.js');
+const worldBeforeSave = getWorld();
+const savedType = Uint8Array.from(worldBeforeSave.type);
+const savedTemp = Float32Array.from(worldBeforeSave.temp);
+const portableSave = persistence.createSaveString();
+physicsForLine.clearWorld();
+persistence.loadSaveString(portableSave);
+const worldAfterLoad = getWorld();
+const matchingWorld = savedType.every((value, index) => value === worldAfterLoad.type[index]) &&
+    savedTemp.every((value, index) => value === worldAfterLoad.temp[index]);
+if (/^[A-Za-z0-9+\-$]+$/.test(portableSave) && matchingWorld) {
+    pass('LZString export/import restores the complete typed-array world');
+} else {
+    fail('LZString export/import did not restore the saved world');
+}
+
 runFrames(5);
 pass('the simulation keeps running without the old Menu control');
 

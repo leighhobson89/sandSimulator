@@ -32,14 +32,16 @@ let lastFpsCheck = 0;
 let fps = 0;
 let loopRunning = false;
 let gridFittedToWorkspace = false;
+let resizeListenerAttached = false;
 let grabbedPixels = null;
 let linePreview = null;
 
 //--------------------------------------------------------------------------------------------------------
 
-export function startGame() {
+export function startGame({ preserveWorldSize = false } = {}) {
     const canvas = getElements().canvas;
-    if (!gridFittedToWorkspace) fitGridToWorkspace();
+    if (!gridFittedToWorkspace && !preserveWorldSize) fitGridToWorkspace();
+    if (preserveWorldSize) gridFittedToWorkspace = true;
     const cols = getGridCols();
     const rows = getGridRows();
 
@@ -53,7 +55,10 @@ export function startGame() {
     pixels = imageData.data;
 
     fitCanvasToScreen();
-    window.addEventListener('resize', fitCanvasToScreen);
+    if (!resizeListenerAttached) {
+        window.addEventListener('resize', fitCanvasToScreen);
+        resizeListenerAttached = true;
+    }
 
     if (getBeginGameStatus()) {
         setBeginGameStatus(false);

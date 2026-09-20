@@ -1,22 +1,26 @@
-# Active issues and follow-ups
+# Active issues and improvements
 
-Last reviewed: 20 September 2026
+Last reviewed: 20 September 2026. Detailed evidence is in
+[`CODE_REVIEW-2026-09-20.md`](CODE_REVIEW-2026-09-20.md).
 
-This file contains current findings only. Closed or superseded documentation
-findings belong in [`archive/`](archive/).
+## Confirmed defects
 
-## Confirmed application defects
+- [ ] **Headless results can be non-deterministic.** The review observed one
+  243/1 physics test run followed by passing reruns; the steam-boundary
+  assertion crossed its random tolerance. Introduce a seeded injectable RNG,
+  record failed seeds and run deterministic scenarios in CI.
 
-None found in the current audit. `npm test` and the UI smoke suite are green.
+## Code-quality and security improvements
 
-## Maintenance follow-ups
+- [ ] Regenerate `package-lock.json`; it lists Express dependencies despite the
+  dependency-free manifest and built-in HTTP server.
+- [ ] Review the remaining debug and audio scaffolding; legacy save code has
+  been removed, and autosave is now a supported user feature.
+- [ ] Add a real-browser suite for canvas, CSS, themes, mobile/touch, resize,
+  keyboard focus and accessibility. The existing smoke test is a useful
+  stand-in DOM test but not visual browser coverage.
+- [ ] Split `physics.js` by stable domain boundaries after deterministic tests
+  are in place; it is now over 3,000 lines and carries several systems.
 
-- [ ] Refresh `package-lock.json` so its root dependency metadata matches the
-  dependency-free `package.json`. The running server uses Node's built-in HTTP
-  module, so the stale lock metadata does not currently block the application.
-- [ ] Add a real-browser visual check to complement `tools/smokeTest.mjs`, which
-  intentionally runs against a stand-in browser environment. This is a QA
-  coverage improvement, not a currently failing behavior.
-
-Do not move these items to the archive until the underlying repository or QA
-workflow has actually changed.
+Do not archive an item until the underlying implementation and its verification
+have changed.

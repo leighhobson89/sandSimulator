@@ -499,6 +499,59 @@ export function getAmbientTemp() { return AMBIENT; }
 export function setAmbientTarget(value) { ambientTarget = value; }
 export function getAmbientTarget() { return ambientTarget; }
 
+// The persistence layer owns the wire format, while physics owns which parts
+// of a world are durable. Keeping this boundary here means a restored world is
+// always built with the same typed arrays as a newly-created one.
+const PERSISTED_WORLD_FIELDS = [
+    'type', 'temp', 'life', 'lifeMax', 'residue', 'shade', 'heat', 'data',
+    'power', 'powerDelay', 'charge', 'wind', 'airflowX', 'airflowY',
+    'airflowNextX', 'airflowNextY'
+];
+
+export function captureSimulationState() {
+    if (!world) throw new Error('There is no world to save.');
+    const arrays = {};
+    for (const field of PERSISTED_WORLD_FIELDS) arrays[field] = world[field];
+    return {
+        version: 1,
+        cols: COLS,
+        rows: ROWS,
+        ambient: AMBIENT,
+        ambientTarget,
+        layerLapse,
+        airLayersOn,
+        ambientWindOn,
+        windDial,
+        frameCount,
+        arrays
+    };
+}
+
+export function restoreSimulationState(state) {
+    if (!state || !Number.isInteger(state.cols) || !Number.isInteger(state.rows) ||
+        state.cols < 1 || state.rows < 1 || !state.arrays) {
+        throw new Error('This save does not contain a valid world.');
+    }
+
+    const cells = state.cols * state.rows;
+    createWorld(state.cols, state.rows);
+    for (const field of PERSISTED_WORLD_FIELDS) {
+        const source = state.arrays[field];
+        if (!source || source.length !== cells) {
+            throw new Error(`This save has invalid ${field} data.`);
+        }
+        world[field].set(source);
+    }
+
+    AMBIENT = Number.isFinite(state.ambient) ? state.ambient : AMBIENT;
+    ambientTarget = Number.isFinite(state.ambientTarget) ? state.ambientTarget : AMBIENT;
+    layerLapse = Number.isFinite(state.layerLapse) ? state.layerLapse : layerLapse;
+    airLayersOn = state.airLayersOn !== false;
+    windDial = Number.isFinite(state.windDial) ? state.windDial : windDial;
+    frameCount = Number.isSafeInteger(state.frameCount) ? state.frameCount : 0;
+    setAmbientWindOn(!!state.ambientWindOn);
+}
+
 // --------------------------------------------------------------------- world
 
 export function createWorld(cols, rows) {
