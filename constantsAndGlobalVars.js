@@ -80,6 +80,9 @@ export function setElements() {
         toolsPanel: document.getElementById('toolsPanel'),
         particleButtons: document.getElementById('particleButtons'),
         readout: document.getElementById('readout'),
+        chargeIndicator: document.getElementById('chargeIndicator'),
+        chargeIndicatorFill: document.getElementById('chargeIndicatorFill'),
+        chargeIndicatorValue: document.getElementById('chargeIndicatorValue'),
         themeSwatches: document.getElementById('themeSwatches'),
         themeSelect: document.getElementById('themeSelect')
     };

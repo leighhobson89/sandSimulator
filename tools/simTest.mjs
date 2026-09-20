@@ -15,7 +15,8 @@ import {
     setCell, index, getDefinitions, setAmbientTarget, getAmbientTemp,
     setLayerLapse, getLayerLapse, getAirTempAt, setAirLayersOn,
     applyWind, getWindTrails, decayWindTrails,
-    setAmbientWindOn, isBreezeBlowing, EMPTY
+    setAmbientWindOn, isBreezeBlowing, isPowered, getStoredCharge,
+    getConnectedAluminumCharge, EMPTY
 } from '../physics.js';
 
 const json = JSON.parse(readFileSync(new URL('../particles.json', import.meta.url), 'utf8'));
@@ -797,6 +798,205 @@ for (let y = 20; y < 40; y++) if (typeAt(30, y) === ID.Wall) wallLeft++;
 check('the wall survived the blast', wallLeft === 20, `${wallLeft} of 20 wall cells left`);
 check('glass and ceramic use the same blast protection',
     defs[ID.Glass].blastProof && defs[ID.Ceramic].blastProof);
+
+// ---------------------------------------------------------------------------
+
+section('Metals melt into their own liquid forms and solidify again');
+const metalPairs = [
+    ['Copper', 'Molten Copper'],
+    ['Aluminum', 'Molten Aluminum'],
+    ['Iron', 'Molten Iron']
+];
+check('the three solid metals have distinct electrical conductivities',
+    new Set(metalPairs.map(([solid]) => defs[ID[solid]].electricalConductivity)).size === 3);
+check('ordinary materials are explicitly non-conductive',
+    defs[ID.Stone].conductive === false && defs[ID.Water].conductive === false);
+check('wire cells draw their configured grid load',
+    defs[ID.Copper].powerConsumption === 1 &&
+    defs[ID['Molten Copper']].powerConsumption === 1 &&
+    defs[ID.Iron].powerConsumption === 0.5 &&
+    defs[ID['Molten Iron']].powerConsumption === 0.5);
+check('only non-aluminum metals can discharge a battery',
+    defs[ID.Copper].dischargeBattery && defs[ID['Molten Copper']].dischargeBattery &&
+    defs[ID.Iron].dischargeBattery && defs[ID['Molten Iron']].dischargeBattery &&
+    !defs[ID.Aluminum].dischargeBattery && !defs[ID.Stone].dischargeBattery);
+
+for (let n = 0; n < metalPairs.length; n++) {
+    const [solid, liquid] = metalPairs[n];
+    const x = 15 + n * 15;
+    setCell(x, 15, ID[solid]);
+    const i = index(x, 15);
+    getWorld().temp[i] = defs[ID[solid]].meltPoint + 1000;
+    getWorld().heat[i] = defs[ID[solid]].latent - 1;
+    stepSimulation();
+    check(`${solid} melts into ${liquid}`, typeAt(x, 15) === ID[liquid]);
+}
+
+clearWorld();
+for (let x = 0; x < COLS; x++) setCell(x, 30, ID.Wall);
+for (let n = 0; n < metalPairs.length; n++) {
+    const [solid, liquid] = metalPairs[n];
+    const x = 15 + n * 15;
+    setCell(x, 29, ID[liquid]);
+    const i = index(x, 29);
+    getWorld().temp[i] = defs[ID[liquid]].freezePoint - 100;
+    getWorld().heat[i] = defs[ID[liquid]].latent - 1;
+    stepSimulation();
+    check(`${liquid} cools back into ${solid}`, typeAt(x, 29) === ID[solid]);
+}
+
+clearWorld();
+for (let x = 0; x < COLS; x++) setCell(x, 30, ID.Wall);
+const rayMelted = new Set();
+for (let n = 0; n < metalPairs.length; n++) {
+    const [solid] = metalPairs[n];
+    setCell(15 + n * 15, 29, ID[solid]);
+}
+for (let f = 0; f < 30; f++) {
+    for (let n = 0; n < metalPairs.length; n++) {
+        const [solid] = metalPairs[n];
+        const liquid = `Molten ${solid}`;
+        setCell(15 + n * 15, 28, ID['Heat Ray']);
+        if (countOf(ID[liquid]) > 0) rayMelted.add(solid);
+    }
+    stepSimulation();
+    for (const [solid, liquid] of metalPairs) {
+        if (countOf(ID[liquid]) > 0) rayMelted.add(solid);
+    }
+}
+check('the stronger Heat Ray can melt Aluminum, Copper and Iron',
+    metalPairs.every(([solid]) => rayMelted.has(solid)));
+
+// ---------------------------------------------------------------------------
+
+section('A Spark sends a temporary power pulse to both ends of a metal wire');
+check('Spark does not produce smoke when it expires', defs[ID.Spark].smokeChance === 0);
+for (let x = 10; x <= 50; x++) setCell(x, 20, ID.Copper);
+setCell(30, 19, ID.Spark);
+stepSimulation();
+check('the Spark is absorbed when it touches the wire', typeAt(30, 19) === EMPTY);
+check('the contact point registers as powered', isPowered(30, 20));
+let reachedLeft = false;
+let reachedRight = false;
+for (let f = 0; f < 35; f++) {
+    stepSimulation();
+    reachedLeft ||= isPowered(10, 20);
+    reachedRight ||= isPowered(50, 20);
+}
+check('the pulse travelled away from the contact to both extremes', reachedLeft && reachedRight);
+check('the power disappears after the pulse reaches the ends',
+    !getWorld().power.some(value => value > 0) &&
+    !getWorld().powerDelay.some(value => value > 0));
+
+// ---------------------------------------------------------------------------
+
+section('Aluminum stores and shares repeated Spark charge');
+clearWorld();
+for (let x = 10; x < 20; x++) setCell(x, 20, ID.Aluminum);
+for (let n = 0; n < 5; n++) {
+    setCell(15, 19, ID.Spark);
+    stepSimulation();
+}
+const storedCharge = getStoredCharge(10, 20);
+const expectedCharge = defs[ID.Aluminum].chargePerSpark * 5 / 10;
+const connectedBattery = getConnectedAluminumCharge(10, 20);
+check('the charge indicator reads the whole connected aluminum entity',
+    connectedBattery && connectedBattery.capacity === defs[ID.Aluminum].chargeCapacity * 10 &&
+    Math.abs(connectedBattery.charge - storedCharge * 10) < 0.001);
+setCell(25, 20, ID.Aluminum);
+const separateBattery = getConnectedAluminumCharge(25, 20);
+check('a disconnected aluminum entity has its own battery reservoir',
+    separateBattery && separateBattery.capacity === defs[ID.Aluminum].chargeCapacity &&
+    separateBattery.charge === 0);
+check('each Spark adds a fixed total charge shared across connected aluminum',
+    Math.abs(storedCharge - expectedCharge) < 0.001,
+    `${storedCharge.toFixed(2)} charge per cell`);
+check('a larger aluminum mass has proportionally more total capacity',
+    defs[ID.Aluminum].chargeCapacity * 10 ===
+        defs[ID.Aluminum].chargeCapacity * 2 * 5);
+
+setCell(20, 20, ID.Aluminum);
+stepSimulation();
+const balancedCharge = defs[ID.Aluminum].chargePerSpark * 5 / 11;
+check('new aluminum draws from touching charged aluminum until charge is balanced',
+    Math.abs(getStoredCharge(10, 20) - balancedCharge) < 0.001 &&
+    Math.abs(getStoredCharge(20, 20) - balancedCharge) < 0.001,
+    `${getStoredCharge(10, 20).toFixed(2)} old, ${getStoredCharge(20, 20).toFixed(2)} new`);
+let emittedChargeSpark = false;
+clearWorld();
+for (let x = 10; x < 20; x++) {
+    setCell(x, 20, ID.Aluminum);
+    getWorld().charge[index(x, 20)] = defs[ID.Aluminum].chargeCapacity;
+}
+for (let f = 0; f < 1200; f++) {
+    stepSimulation();
+    emittedChargeSpark ||= countOf(ID.Spark) > 0;
+}
+check('charged aluminum occasionally emits visual sparks', emittedChargeSpark);
+check('stored charge persists when no discharge metal is attached',
+    Math.abs(getStoredCharge(10, 20) - defs[ID.Aluminum].chargeCapacity) < 0.001);
+check('visual charge Sparks do not create smoke', countOf(ID.Smoke) === 0);
+
+// ---------------------------------------------------------------------------
+
+section('Copper and Iron draw power from touching charged Aluminum');
+clearWorld();
+setCell(10, 20, ID.Aluminum);
+setCell(11, 20, ID.Copper);
+setCell(12, 20, ID.Iron);
+getWorld().charge[index(10, 20)] = 10;
+stepSimulation();
+check('the grid discharges its total copper-plus-iron load every tick',
+    Math.abs(getStoredCharge(10, 20) - 8.5) < 0.001,
+    `${getStoredCharge(10, 20).toFixed(1)} charge remains after a 1.5-unit tick`);
+
+clearWorld();
+for (let x = 10; x < 15; x++) setCell(x, 20, ID.Aluminum);
+for (let x = 15; x <= 30; x++) setCell(x, 20, ID.Copper);
+for (let x = 10; x < 15; x++) getWorld().charge[index(x, 20)] = 4;
+const batteryChargeBefore = Array.from({ length: 5 }, (_, n) =>
+    getStoredCharge(10 + n, 20)).reduce((sum, value) => sum + value, 0);
+let batteryPoweredFarEnd = false;
+for (let f = 0; f < 160; f++) {
+    stepSimulation();
+    batteryPoweredFarEnd ||= isPowered(30, 20);
+}
+const batteryChargeAfter = Array.from({ length: 5 }, (_, n) =>
+    getStoredCharge(10 + n, 20)).reduce((sum, value) => sum + value, 0);
+check('touching Copper slowly drains the Aluminum reservoir',
+    batteryChargeAfter < batteryChargeBefore && batteryChargeAfter === 0,
+    `${batteryChargeBefore.toFixed(1)} -> ${batteryChargeAfter.toFixed(1)} total charge`);
+check('battery power repeatedly reaches the far end of attached metal', batteryPoweredFarEnd);
+run(50);
+check('the attached metal stops receiving power once Aluminum is empty',
+    !getWorld().power.some(value => value > 0) &&
+    !getWorld().powerDelay.some(value => value > 0));
+
+section('Spark Dust emits upward sparks and wears out pixel by pixel');
+clearWorld();
+for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
+const sparkDust = defs[ID['Spark Dust']];
+const savedSparkDustSettings = {
+    sparkEmitterChance: sparkDust.sparkEmitterChance,
+    life: sparkDust.life,
+    lifeVariance: sparkDust.lifeVariance
+};
+sparkDust.sparkEmitterChance = 1;
+sparkDust.life = 4;
+sparkDust.lifeVariance = 0;
+setCell(30, ROWS - 2, ID['Spark Dust']);
+stepSimulation();
+let sparkAboveDust = false;
+for (let y = 0; y < ROWS - 2; y++) {
+    if (typeAt(30, y) === ID.Spark || typeAt(29, y) === ID.Spark || typeAt(31, y) === ID.Spark) {
+        sparkAboveDust = true;
+        break;
+    }
+}
+check('Spark Dust emits real Sparks above itself', sparkAboveDust);
+run(8);
+check('each Spark Dust pixel eventually disappears', countOf(ID['Spark Dust']) === 0);
+Object.assign(sparkDust, savedSparkDustSettings);
 
 // ---------------------------------------------------------------------------
 

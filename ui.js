@@ -120,7 +120,7 @@ function buildParticleButtons() {
     const defs = getDefinitions();
     container.innerHTML = '';
 
-    const order = ['Powders', 'Liquids', 'Gases', 'Solids', 'Tools', 'Other'];
+    const order = ['Powders', 'Liquids', 'Gases', 'Solids', 'Metals', 'Tools', 'Other'];
     const groups = {};
     for (let id = 1; id < defs.length; id++) {
         if (!defs[id]) continue;
@@ -184,7 +184,7 @@ function highlightSelectedParticle() {
 // whatever is set rather than jumping to it, so turning it down feels like the
 // weather changing.
 const MIN_AIR_TEMP = -60;
-const MAX_AIR_TEMP = 600;
+const MAX_AIR_TEMP = 2000;
 
 function setUpAirTemperature() {
     const slider = getElements().airTempInput;

@@ -20,7 +20,8 @@ import {
 import {
     prepareDefinitions, createWorld, getWorld, clearWorld, stepSimulation,
     setCell, inBounds, index, getDefinitions, getAmbientTemp, getAirTempAt,
-    getAmbientTarget, getTemperature, getFrameCount, applyWind, decayWindTrails, EMPTY
+    getAmbientTarget, getTemperature, getFrameCount, applyWind, decayWindTrails,
+    getConnectedAluminumCharge, EMPTY
 } from './physics.js';
 
 let context = null;
@@ -136,6 +137,8 @@ function drawWorld() {
     const life = world.life;
     const shade = world.shade;
     const data = world.data;
+    const power = world.power;
+    const charge = world.charge;
     const wind = world.wind;
     const total = type.length;
     const heatView = getHeatViewOn();
@@ -200,6 +203,22 @@ function drawWorld() {
             r = def.rgb2[0] + (def.rgb[0] - def.rgb2[0]) * mix;
             g = def.rgb2[1] + (def.rgb[1] - def.rgb2[1]) * mix;
             b = def.rgb2[2] + (def.rgb[2] - def.rgb2[2]) * mix;
+        }
+
+        // Stored charge gives aluminum a persistent yellow tint. A live power
+        // pulse is brighter, producing the moving yellow dots/line along any
+        // connected conductor.
+        if (def.chargeCapacity > 0 && charge[i] > 0) {
+            const f = (charge[i] / def.chargeCapacity) * 0.65;
+            r += (255 - r) * f;
+            g += (214 - g) * f;
+            b += (42 - b) * f;
+        }
+        if (def.conductive && power[i] > 0) {
+            const f = 0.68 + (power[i] / 7) * 0.25;
+            r += (255 - r) * f;
+            g += (232 - g) * f;
+            b += (48 - b) * f;
         }
 
         // Anything the wind is passing over catches a little of its pale light,
@@ -344,6 +363,31 @@ function updateReadout() {
 
     readout.textContent = `${fps} fps   ${count} particles   air ` +
         `${Math.round(getAmbientTemp())}°C   ${drawing} ${selected} ${getBrushSize()}px${under}`;
+    updateChargeIndicator(getElements());
+}
+
+function updateChargeIndicator(elements) {
+    const indicator = elements.chargeIndicator;
+    if (!indicator) return;
+
+    const charge = inBounds(hoverX, hoverY)
+        ? getConnectedAluminumCharge(hoverX, hoverY)
+        : null;
+    if (!charge) {
+        indicator.hidden = true;
+        return;
+    }
+
+    const ratio = charge.ratio;
+    const percent = Math.round(ratio * 100);
+    const state = ratio <= 0.25 ? 'red' : ratio < 0.75 ? 'orange' : 'green';
+    indicator.hidden = false;
+    indicator.classList.remove('charge-green', 'charge-orange', 'charge-red');
+    indicator.classList.add(`charge-${state}`);
+    indicator.setAttribute('aria-label', `Aluminum charge ${percent}%`);
+    indicator.title = `Aluminum charge: ${percent}%`;
+    elements.chargeIndicatorFill.setAttribute('width', String(ratio * 17));
+    elements.chargeIndicatorValue.textContent = `${percent}%`;
 }
 
 //---------------------------------------------------------------------- brush
@@ -385,6 +429,9 @@ export function paintCell(centreX, centreY, dragX, dragY) {
                 world.life[i] = 0;
                 world.residue[i] = EMPTY;
                 world.temp[i] = getAirTempAt(y);
+                world.power[i] = 0;
+                world.powerDelay[i] = 0;
+                world.charge[i] = 0;
                 continue;
             }
 
@@ -444,7 +491,9 @@ export function beginGrab(centreX, centreY, size = getGrabberSize()) {
                 x, y,
                 type: world.type[i], temp: world.temp[i], life: world.life[i],
                 residue: world.residue[i], shade: world.shade[i],
-                heat: world.heat[i], data: world.data[i], wind: world.wind[i],
+                heat: world.heat[i], data: world.data[i],
+                power: world.power[i], powerDelay: world.powerDelay[i],
+                charge: world.charge[i], wind: world.wind[i],
                 previewR: pixels ? pixels[p] : def.rgb[0],
                 previewG: pixels ? pixels[p + 1] : def.rgb[1],
                 previewB: pixels ? pixels[p + 2] : def.rgb[2]
@@ -501,6 +550,9 @@ function clearGrabbedCell(world, i, y) {
     world.residue[i] = EMPTY;
     world.heat[i] = 0;
     world.data[i] = 0;
+    world.power[i] = 0;
+    world.powerDelay[i] = 0;
+    world.charge[i] = 0;
     world.wind[i] = 0;
     world.moved[i] = 1;
 }
@@ -513,6 +565,9 @@ function restoreGrabbedCell(world, i, cell) {
     world.shade[i] = cell.shade;
     world.heat[i] = cell.heat;
     world.data[i] = cell.data;
+    world.power[i] = cell.power;
+    world.powerDelay[i] = cell.powerDelay;
+    world.charge[i] = cell.charge;
     world.wind[i] = cell.wind;
     world.moved[i] = 1;
 }

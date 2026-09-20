@@ -185,6 +185,11 @@ if (materialButtons.length === expectedButtons) {
 }
 if (headings.length >= 4) pass(`grouped them under ${headings.length} headings`);
 else fail(`expected the materials to be grouped, got ${headings.length} headings`);
+if (headings.some(heading => heading.textContent === 'Metals')) {
+    pass('built the Metals material section');
+} else {
+    fail('the Metals material section is missing');
+}
 
 byId('newGame').click();
 pass('New Game started without throwing');
@@ -272,6 +277,23 @@ if (windButton) {
     fail('no wind tool button was built');
 }
 window.fire('mouseup', { button: 0 });
+
+// Stored charge is visible as a yellow tint on aluminum.
+const aluminumId = getDefinitions().findIndex(d => d && d.name === 'Aluminum');
+physicsForLine.clearWorld();
+physicsForLine.setCell(50, 50, aluminumId);
+const chargedIndex = physicsForLine.index(50, 50);
+physicsForLine.getWorld().charge[chargedIndex] = getDefinitions()[aluminumId].chargeCapacity;
+runFrames(1);
+const chargedPixel = chargedIndex * 4;
+if (lastImageData && lastImageData.data[chargedPixel] > 190 &&
+    lastImageData.data[chargedPixel + 1] > 175 &&
+    lastImageData.data[chargedPixel + 2] < 150 &&
+    lastImageData.data[chargedPixel] - lastImageData.data[chargedPixel + 2] > 70) {
+    pass('stored aluminum charge renders with a yellow tint');
+} else {
+    fail('stored aluminum charge is not visible on the canvas');
+}
 
 // Every toolbar control should be clickable without blowing up.
 for (const id of ['pauseButton', 'clearButton', 'heatViewButton', 'eraserButton']) {
@@ -385,6 +407,13 @@ if (occupiedClickPreserved &&
 const { getAmbientTarget } = await import('../physics.js');
 const airSlider = byId('airTemp');
 const airBox = byId('airTempValue');
+if (indexMarkup.includes('id="airTempValue"') &&
+    /id="airTempValue"[^>]*max="2000"/.test(indexMarkup) &&
+    /id="airTemp"[^>]*max="2000"/.test(indexMarkup)) {
+    pass('the air temperature controls reach 2000C');
+} else {
+    fail('the air temperature controls do not reach 2000C');
+}
 
 // Sliding should fill in the box.
 airSlider.fire('input', { target: { value: '-40' } });
@@ -404,7 +433,7 @@ else fail(`slider did not follow the number box (shows ${airSlider.value})`);
 // Out of range typing should be pulled back into range, not accepted.
 airBox.value = '9999';
 airBox.fire('keydown', { key: 'Enter' });
-if (getAmbientTarget() === 600) pass('a silly number is clamped to the top of the range');
+if (getAmbientTarget() === 2000) pass('a silly number is clamped to the top of the range');
 else fail(`out of range value was not clamped (target is ${getAmbientTarget()})`);
 
 airBox.value = '20';

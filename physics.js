@@ -23,6 +23,10 @@
 //   data    a spare number per cell that a few particles use for their own
 //           purposes: the fuse on a lit bomb, and how much growing a plant has
 //           left in it
+//   power   frames of visible electrical power left in a conductive cell
+//   powerDelay  frames until an electrical pulse reaches a conductive cell
+//   charge  persistent stored charge for materials that can retain it; this is
+//           floating point so a large connected mass can share one small input
 //   wind    how recently moving air passed through the cell, 0 to 255, fading a
 //           little every frame. Nothing in the simulation reads it back - it is
 //           there only so that the wind can be seen as well as felt
@@ -32,6 +36,12 @@ export const EMPTY = 0;
 const OUT_OF_BOUNDS = -1;
 const NO_SURFACE = 32000;
 const MAX_WATER_INFILTRATION_DEPTH = 50;
+const POWER_GLOW_FRAMES = 7;
+const ELECTRICAL_NEIGHBOURS = [
+    [-1, -1], [0, -1], [1, -1],
+    [-1, 0],           [1, 0],
+    [-1, 1],  [0, 1],  [1, 1]
+];
 
 let COLS = 0;
 let ROWS = 0;
@@ -116,6 +126,15 @@ export function prepareDefinitions(json) {
         defaultTemp: AMBIENT,
         emit: 0,
         emitRate: 0,
+        conductive: false,
+        electricalConductivity: 0,
+        energizesConductors: false,
+        chargeCapacity: 0,
+        chargePerSpark: 0,
+        chargeSparkChance: 0,
+        dischargeBattery: false,
+        powerConsumption: 0,
+        sparkEmitterChance: 0,
         // Air is built here by hand rather than from particles.json, so every
         // field the per-frame code reads has to be spelled out. Leaving one off
         // does not read as zero: a test like "radiates <= 0" is false for
@@ -159,6 +178,23 @@ export function prepareDefinitions(json) {
             // The shade value supplies the variation without making it flicker
             // from frame to frame.
             coolingVariance: p.coolingVariance === undefined ? 0 : p.coolingVariance,
+            // Electrical conduction is separate from heat conduction. Every
+            // ordinary material receives false/zero defaults; metals opt in
+            // and use the numeric value to set pulse speed.
+            conductive: !!p.conductive,
+            electricalConductivity: p.conductive
+                ? Math.max(0.01, p.electricalConductivity || 1)
+                : 0,
+            energizesConductors: !!p.energizesConductors,
+            chargeCapacity: p.chargeCapacity || 0,
+            chargePerSpark: p.chargePerSpark || 0,
+            chargeSparkChance: p.chargeSparkChance || 0,
+            dischargeBattery: !!p.dischargeBattery,
+            // Power draw is summed across every conductive cell in a battery's
+            // connected grid once per simulation tick. This leaves room for
+            // machines to draw hundreds of units while a wire draws very little.
+            powerConsumption: p.powerConsumption || 0,
+            sparkEmitterChance: p.sparkEmitterChance || 0,
             // How strongly a cell is protected when it is buried inside more
             // of the same material. Exposed faces keep most of their normal
             // response; fully surrounded cells retain heat or cold longer.
@@ -344,7 +380,9 @@ export function prepareDefinitions(json) {
             def.growChance > 0 || def.emit > 0 || def.quenchedInto !== EMPTY ||
             def.blastRadius > 0 || def.sprouts.length > 0 || def.seedChance > 0 ||
             def.douses || def.contacts.length > 0 || def.withersPlants !== EMPTY ||
-            def.compactsInto !== EMPTY || def.convertsBelow.length > 0;
+            def.compactsInto !== EMPTY || def.convertsBelow.length > 0 ||
+            def.energizesConductors || def.chargeCapacity > 0 ||
+            def.sparkEmitterChance > 0;
         def.moves = def.category !== 'static';
 
         // A second, lighter copy of anything that can come up buoyant. The
@@ -469,6 +507,9 @@ export function createWorld(cols, rows) {
         heat: new Float32Array(n),
         surface: new Int16Array(n),
         data: new Uint8Array(n),
+        power: new Uint8Array(n),
+        powerDelay: new Uint16Array(n),
+        charge: new Float32Array(n),
         wind: new Uint8Array(n)
     };
     world.temp.fill(AMBIENT);
@@ -478,6 +519,57 @@ export function createWorld(cols, rows) {
 
 export function getWorld() { return world; }
 
+// Public electrical state for later devices as well as the current renderer.
+export function isPowered(x, y) {
+    return inBounds(x, y) && world.power[index(x, y)] > 0;
+}
+
+export function getStoredCharge(x, y) {
+    return inBounds(x, y) ? world.charge[index(x, y)] : 0;
+}
+
+// Returns the shared charge level for the connected aluminum entity under the
+// cursor. The UI needs the whole reservoir rather than just one cell, since
+// adding or discharging charge affects every connected aluminum cell equally.
+export function getConnectedAluminumCharge(x, y) {
+    if (!inBounds(x, y)) return null;
+
+    const start = index(x, y);
+    const aluminum = DEFS[world.type[start]];
+    if (!aluminum || aluminum.name !== 'Aluminum') return null;
+
+    const visited = new Uint8Array(world.type.length);
+    const queue = [start];
+    visited[start] = 1;
+    let totalCharge = 0;
+    let totalCapacity = 0;
+
+    for (let head = 0; head < queue.length; head++) {
+        const i = queue[head];
+        const def = DEFS[world.type[i]];
+        totalCharge += world.charge[i];
+        totalCapacity += def.chargeCapacity;
+
+        const cellX = i % COLS;
+        const cellY = Math.floor(i / COLS);
+        for (const [dx, dy] of ELECTRICAL_NEIGHBOURS) {
+            const nx = cellX + dx;
+            const ny = cellY + dy;
+            if (!inBounds(nx, ny)) continue;
+            const ni = ny * COLS + nx;
+            if (visited[ni] || world.type[ni] !== world.type[start]) continue;
+            visited[ni] = 1;
+            queue.push(ni);
+        }
+    }
+
+    return {
+        charge: totalCharge,
+        capacity: totalCapacity,
+        ratio: totalCapacity > 0 ? Math.min(1, Math.max(0, totalCharge / totalCapacity)) : 0
+    };
+}
+
 export function clearWorld() {
     world.type.fill(EMPTY);
     world.life.fill(0);
@@ -485,6 +577,9 @@ export function clearWorld() {
     world.temp.fill(AMBIENT);
     world.heat.fill(0);
     world.data.fill(0);
+    world.power.fill(0);
+    world.powerDelay.fill(0);
+    world.charge.fill(0);
     world.wind.fill(0);
 }
 
@@ -526,6 +621,9 @@ export function setCell(x, y, id, keepTemp) {
     if (!keepTemp) world.temp[i] = def.defaultTemp;
     world.heat[i] = 0;
     world.data[i] = startingData(def);
+    world.power[i] = 0;
+    world.powerDelay[i] = 0;
+    world.charge[i] = 0;
     world.shade[i] = Math.random() * 255;
     world.moved[i] = 1;
 }
@@ -541,6 +639,9 @@ function transform(i, id, life, residue) {
     world.residue[i] = residue || EMPTY;
     world.heat[i] = 0;
     world.data[i] = startingData(def);
+    world.power[i] = 0;
+    world.powerDelay[i] = 0;
+    world.charge[i] = 0;
     world.shade[i] = Math.random() * 255;
     world.moved[i] = 1;
 }
@@ -558,6 +659,9 @@ function removeParticle(i) {
     world.residue[i] = EMPTY;
     world.heat[i] = 0;
     world.data[i] = 0;
+    world.power[i] = 0;
+    world.powerDelay[i] = 0;
+    world.charge[i] = 0;
     world.moved[i] = 1;
 }
 
@@ -570,8 +674,232 @@ function swapCells(i1, i2) {
     let q = world.heat[i1]; world.heat[i1] = world.heat[i2]; world.heat[i2] = q;
     let f = world.surface[i1]; world.surface[i1] = world.surface[i2]; world.surface[i2] = f;
     let d = world.data[i1]; world.data[i1] = world.data[i2]; world.data[i2] = d;
+    let p = world.power[i1]; world.power[i1] = world.power[i2]; world.power[i2] = p;
+    let pd = world.powerDelay[i1]; world.powerDelay[i1] = world.powerDelay[i2]; world.powerDelay[i2] = pd;
+    let c = world.charge[i1]; world.charge[i1] = world.charge[i2]; world.charge[i2] = c;
     world.moved[i1] = 1;
     world.moved[i2] = 1;
+}
+
+// A Spark schedules a travelling wave over the whole connected conductor. The
+// delay is the weighted distance from the contact point, so the visible yellow
+// front moves away in both directions and reaches every branch and endpoint.
+// Each cell is only visibly powered while the front passes over it.
+function energizeConnectedMetal(seeds, chargeStorage = true) {
+    if (seeds.length === 0) return;
+
+    const distance = new Int32Array(world.type.length);
+    distance.fill(-1);
+    const queue = [];
+    const touched = [];
+
+    for (const seed of seeds) {
+        if (distance[seed] !== -1) continue;
+        distance[seed] = 0;
+        queue.push(seed);
+        touched.push(seed);
+    }
+
+    for (let head = 0; head < queue.length; head++) {
+        const i = queue[head];
+        const x = i % COLS;
+        const y = Math.floor(i / COLS);
+
+        for (const [dx, dy] of ELECTRICAL_NEIGHBOURS) {
+            const nx = x + dx;
+            const ny = y + dy;
+            if (!inBounds(nx, ny)) continue;
+            const ni = ny * COLS + nx;
+            const nextDef = DEFS[world.type[ni]];
+            if (!nextDef || !nextDef.conductive) continue;
+            if (!chargeStorage && nextDef.chargeCapacity > 0) continue;
+
+            const travelFrames = Math.max(1,
+                Math.ceil(1 / Math.max(0.01, nextDef.electricalConductivity)));
+            const nextDistance = distance[i] + travelFrames;
+            if (distance[ni] !== -1 && distance[ni] <= nextDistance) continue;
+            if (distance[ni] === -1) touched.push(ni);
+            distance[ni] = nextDistance;
+            queue.push(ni);
+        }
+    }
+
+    const storageCells = [];
+    let stored = 0;
+    let storageCapacity = 0;
+    let chargePerSpark = 0;
+
+    for (const i of touched) {
+        const delay = Math.min(65535, distance[i]);
+        if (delay === 0) {
+            world.power[i] = POWER_GLOW_FRAMES;
+        } else if (world.powerDelay[i] === 0 || delay < world.powerDelay[i]) {
+            world.powerDelay[i] = delay;
+        }
+
+        const def = DEFS[world.type[i]];
+        if (def.chargeCapacity > 0 && def.chargePerSpark > 0) {
+            storageCells.push(i);
+            stored += world.charge[i];
+            storageCapacity += def.chargeCapacity;
+            chargePerSpark = Math.max(chargePerSpark, def.chargePerSpark);
+        }
+    }
+
+    // A Spark carries a fixed amount of energy. Sharing it across every
+    // storage cell means a larger aluminum mass has proportionally more total
+    // capacity, but needs proportionally more Sparks (or a Spark brush held on
+    // it for longer) to reach the same yellow charge level.
+    if (chargeStorage && storageCells.length > 0 && storageCapacity > 0) {
+        const fullness = Math.min(1, (stored + chargePerSpark) / storageCapacity);
+        for (const i of storageCells) {
+            world.charge[i] = DEFS[world.type[i]].chargeCapacity * fullness;
+        }
+    }
+}
+
+function conductiveNeighbours(x, y) {
+    const neighbours = [];
+    for (const [dx, dy] of ELECTRICAL_NEIGHBOURS) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (!inBounds(nx, ny)) continue;
+        const ni = ny * COLS + nx;
+        const def = DEFS[world.type[ni]];
+        if (def && def.conductive) neighbours.push(ni);
+    }
+    return neighbours;
+}
+
+// Returns the total load of the conductive grid reached from an aluminum
+// battery. Aluminum cells are deliberately not traversed here: two separate
+// batteries may touch the same wire grid, but neither battery should become a
+// bridge into the other battery's reservoir.
+function connectedGridConsumption(seeds) {
+    if (seeds.length === 0) return 0;
+
+    const visited = new Uint8Array(world.type.length);
+    const queue = [];
+    let consumption = 0;
+
+    for (const seed of seeds) {
+        if (visited[seed]) continue;
+        visited[seed] = 1;
+        queue.push(seed);
+    }
+
+    for (let head = 0; head < queue.length; head++) {
+        const i = queue[head];
+        const def = DEFS[world.type[i]];
+        if (!def || !def.conductive) continue;
+        consumption += def.powerConsumption;
+
+        const x = i % COLS;
+        const y = Math.floor(i / COLS);
+        for (const [dx, dy] of ELECTRICAL_NEIGHBOURS) {
+            const nx = x + dx;
+            const ny = y + dy;
+            if (!inBounds(nx, ny)) continue;
+            const ni = ny * COLS + nx;
+            const nextDef = DEFS[world.type[ni]];
+            if (visited[ni] || !nextDef || !nextDef.conductive ||
+                nextDef.chargeCapacity > 0) continue;
+            visited[ni] = 1;
+            queue.push(ni);
+        }
+    }
+
+    return consumption;
+}
+
+// Directly touching storage metals behave as one reservoir. This conserves
+// their total charge while equalising fullness, so fresh aluminum painted onto
+// a charged piece draws charge from the old cells immediately on the next
+// simulation frame. Eight-way contact matches electrical wire connectivity.
+function balanceStoredCharge() {
+    const visited = new Uint8Array(world.type.length);
+
+    for (let start = 0; start < world.type.length; start++) {
+        const startDef = DEFS[world.type[start]];
+        if (visited[start] || !startDef || !(startDef.chargeCapacity > 0)) continue;
+
+        const cells = [start];
+        const queue = [start];
+        visited[start] = 1;
+        let totalCharge = 0;
+        let totalCapacity = 0;
+        const dischargeContacts = [];
+        const seenContacts = new Set();
+
+        for (let head = 0; head < queue.length; head++) {
+            const i = queue[head];
+            const def = DEFS[world.type[i]];
+            totalCharge += world.charge[i];
+            totalCapacity += def.chargeCapacity;
+
+            const x = i % COLS;
+            const y = Math.floor(i / COLS);
+            for (const [dx, dy] of ELECTRICAL_NEIGHBOURS) {
+                const nx = x + dx;
+                const ny = y + dy;
+                if (!inBounds(nx, ny)) continue;
+                const ni = ny * COLS + nx;
+                if (visited[ni]) continue;
+                const nextDef = DEFS[world.type[ni]];
+                if (nextDef && nextDef.conductive && nextDef.chargeCapacity <= 0 &&
+                    !seenContacts.has(ni)) {
+                    seenContacts.add(ni);
+                    dischargeContacts.push(ni);
+                }
+                if (!nextDef || !(nextDef.chargeCapacity > 0)) continue;
+                visited[ni] = 1;
+                cells.push(ni);
+                queue.push(ni);
+            }
+        }
+
+        // Every conductive cell in the connected grid draws its configured
+        // amount on every simulation tick. A bare copper wire therefore drains
+        // very slowly, while a future machine can make the same grid consume
+        // hundreds of charge units per tick.
+        const gridConsumption = connectedGridConsumption(dischargeContacts);
+        if (totalCharge > 0 && gridConsumption > 0) {
+            totalCharge = Math.max(0, totalCharge - gridConsumption);
+            energizeConnectedMetal(dischargeContacts, false);
+        }
+
+        const fullness = totalCapacity > 0 ? Math.min(1, totalCharge / totalCapacity) : 0;
+        for (const i of cells) {
+            world.charge[i] = DEFS[world.type[i]].chargeCapacity * fullness;
+        }
+    }
+}
+
+function updateElectricalPower() {
+    for (let i = 0; i < world.type.length; i++) {
+        const id = world.type[i];
+        if (id === EMPTY) {
+            world.power[i] = 0;
+            world.powerDelay[i] = 0;
+            world.charge[i] = 0;
+            continue;
+        }
+
+        const def = DEFS[id];
+        if (!def.conductive) {
+            world.power[i] = 0;
+            world.powerDelay[i] = 0;
+        }
+        if (def.chargeCapacity <= 0) world.charge[i] = 0;
+
+        if (world.power[i] > 0) world.power[i]--;
+        if (world.powerDelay[i] > 0) {
+            world.powerDelay[i]--;
+            if (world.powerDelay[i] === 0) world.power[i] = POWER_GLOW_FRAMES;
+        }
+    }
+
+    balanceStoredCharge();
 }
 
 // ------------------------------------------------------------------ main step
@@ -590,6 +918,7 @@ export function stepSimulation() {
     radiateHeat();
     computeLiquidSurfaces();
     world.moved.fill(0);
+    updateElectricalPower();
 
     // The breeze blows first, on the freshly cleared moved flags, so that
     // anything it shifts counts as having had its move for the frame and is
@@ -913,6 +1242,22 @@ function findEmptyNeighbour(x, y) {
     return -1;
 }
 
+// Spark Dust throws sparks into the air above itself. The wider upper cone
+// lets a dust cell tucked directly beneath a solid Aluminum block still find
+// a little space at the block's edge for the Spark to rise through.
+function findEmptyAbove(x, y) {
+    const spots = [
+        [0, -1], [-1, -1], [1, -1], [-2, -1], [2, -1],
+        [0, -2], [-1, -2], [1, -2]
+    ];
+    const start = Math.floor(Math.random() * spots.length);
+    for (let n = 0; n < spots.length; n++) {
+        const [dx, dy] = spots[(start + n) % spots.length];
+        if (typeAt(x + dx, y + dy) === EMPTY) return (y + dy) * COLS + x + dx;
+    }
+    return -1;
+}
+
 // ------------------------------------------------------------------ reactions
 //
 // The things temperature alone cannot express: lifetimes, water soaking into
@@ -920,6 +1265,46 @@ function findEmptyNeighbour(x, y) {
 // stopped being what it was.
 
 function applyReactions(x, y, i, def) {
+    // An ordinary Spark touching any conductor becomes a travelling power
+    // pulse. Sparks emitted by stored charge carry data=1 and are visual only,
+    // which prevents charged aluminum from feeding itself forever.
+    if (def.energizesConductors && world.data[i] === 0) {
+        const conductors = conductiveNeighbours(x, y);
+        if (conductors.length > 0) {
+            energizeConnectedMetal(conductors);
+            removeParticle(i);
+            return true;
+        }
+    }
+
+    // Aluminum keeps the charge added by each pulse. At higher charge it gives
+    // off occasional decorative sparks without spending or reapplying charge;
+    // a future device can read the stored value and discharge it deliberately.
+    if (def.chargeCapacity > 0 && world.charge[i] > 0 && def.chargeSparkChance > 0) {
+        const fullness = world.charge[i] / def.chargeCapacity;
+        if (Math.random() < def.chargeSparkChance * fullness) {
+            const spot = findEmptyNeighbour(x, y);
+            if (spot >= 0) {
+                const spark = idOf('Spark');
+                transform(spot, spark);
+                world.data[spot] = 1;
+                world.temp[spot] = Math.max(world.temp[spot], DEFS[spark].defaultTemp);
+            }
+        }
+    }
+
+    // Spark Dust spends its own lifetime producing ordinary Sparks above it.
+    // The Sparks are real particles, so they can charge Aluminum and conduct
+    // its pulse normally before the dust pixel eventually wears out.
+    if (def.sparkEmitterChance > 0 && Math.random() < def.sparkEmitterChance) {
+        const spot = findEmptyAbove(x, y);
+        if (spot >= 0) {
+            const spark = idOf('Spark');
+            transform(spot, spark);
+            world.temp[spot] = Math.max(world.temp[spot], DEFS[spark].defaultTemp);
+        }
+    }
+
     // A lit grain of gunpowder, a frame or two from going off. It keeps
     // behaving normally in the meantime, so a lit heap still slumps and falls.
     if (def.blastRadius > 0 && world.data[i] > 0) {
@@ -942,11 +1327,7 @@ function applyReactions(x, y, i, def) {
                 transform(i, def.decaysInto);
             } else if (def.smokeChance > 0 && Math.random() < def.smokeChance) {
                 transform(i, idOf('Smoke'));
-            } else {
-                world.type[i] = EMPTY;
-                world.life[i] = 0;
-                world.residue[i] = EMPTY;
-            }
+            } else removeParticle(i);
             return true;
         }
     }
@@ -1096,10 +1477,7 @@ function applyReactions(x, y, i, def) {
                 const ni = ny * COLS + nx;
                 if (def.corrodeEmits !== EMPTY) {
                     transform(ni, def.corrodeEmits);
-                } else {
-                    world.type[ni] = EMPTY;
-                    world.life[ni] = 0;
-                }
+                } else removeParticle(ni);
                 // The acid is used up as it eats, otherwise one drop dissolves
                 // the whole world.
                 if (Math.random() < 0.5) {
@@ -1588,10 +1966,7 @@ function explode(x, y, def) {
     // place the loop below finds it, treats it as more gunpowder to light, and
     // it re-lights itself over and over.
     const source = y * COLS + x;
-    world.type[source] = EMPTY;
-    world.life[source] = 0;
-    world.residue[source] = EMPTY;
-    world.data[source] = 0;
+    removeParticle(source);
 
     for (let dy = -radius; dy <= radius; dy++) {
         for (let dx = -radius; dx <= radius; dx++) {
@@ -1619,6 +1994,9 @@ function explode(x, y, def) {
             world.residue[ni] = EMPTY;
             world.data[ni] = 0;
             world.heat[ni] = 0;
+            world.power[ni] = 0;
+            world.powerDelay[ni] = 0;
+            world.charge[ni] = 0;
             world.temp[ni] = Math.max(world.temp[ni], 650);
 
             const onTheEdge = distance > furthest * 0.4;

@@ -56,7 +56,7 @@ square to show exactly what will be dropped and where; release to place it.
 Right-click or press the claw again to leave the mode. Cancelling while
 something is held restores it to its original position.
 
-The **air temperature** runs from -60C to 600C. Drag the slider for a rough
+The **air temperature** runs from -60C to 2000C. Drag the slider for a rough
 setting, or type an exact number in the box beside it and press Enter - each one
 fills in the other. The world drifts towards whatever is set slowly rather than
 snapping to it, and it is deliberately a weak effect next to a flame or a block
@@ -83,8 +83,9 @@ strongest only near the extremes. A local fire, ice block or ray does not tint
 the whole sky.
 
 **Heat Ray** and **Cold Ray** are brushes rather than materials. They burn out
-after a few frames instead of collecting on the floor, and while they last they
-hold their cell at 900C or -120C, so you can paint heat and cold onto anything.
+after a few frames instead of collecting on the floor. While they last, the
+Heat Ray holds its cell at 2000C and radiates enough heat to melt even iron;
+the Cold Ray holds its cell at -120C.
 
 **Wind** is a brush too. Drag it and it shoves along whatever is light enough to
 pick up - flame, steam, smoke, dry sand, dry mud, ash, snow, seeds - while wet
@@ -185,6 +186,46 @@ A state change does not happen the moment a cell crosses its threshold. It banks
 heat every frame it is past the threshold, by how far past, and only changes
 once it has banked its `latent` amount. That is why ice floats in a puddle for a
 few seconds rather than vanishing, but melts almost at once against a flame.
+
+### Metals and power
+
+The **Metals** section contains Copper, Aluminum and Iron, plus a molten form of
+each and Spark. Their melting points keep their real-world order and approximate
+Celsius values: 660C for aluminum, 1085C for copper and 1538C for iron. A solid
+metal heated past its threshold becomes its own flowing liquid, and that liquid
+turns back into the matching solid after it cools and lands.
+
+Electrical conduction is separate from thermal `conductivity`. Every ordinary
+material defaults to non-conductive; the metals opt in with different electrical
+conductivities. Put a Spark beside a connected metal line and the Spark is
+absorbed. A bright yellow power pulse then travels away from the contact point,
+through branches and mixed-metal joins, until it reaches every extreme of the
+connected metal and fades. While the yellow pulse is on a cell,
+`isPowered(x, y)` reports that cell as powered for future electrical devices.
+
+**Aluminum stores charge.** Each applied Spark contributes a fixed amount of
+charge shared across the connected aluminum mass, building a persistent yellow
+tint. A larger piece therefore holds proportionally more energy but takes
+proportionally longer to charge. Newly painted aluminum touching a charged
+piece automatically draws charge from it until every connected cell has the
+same charge level. Charged aluminum occasionally throws off a visual Spark, but
+those particles do not recharge it or spend any charge themselves. The stored
+value per cell is available through `getStoredCharge(x, y)` for powered metals
+and future electrical devices.
+
+Copper and Iron have `dischargeBattery: true`. When either metal touches charged
+aluminum, it slowly drains the shared Aluminum reservoir and repeatedly carries
+yellow power pulses from the contact point through its connected length. It
+stops conducting once the Aluminum is empty. Aluminum itself and every ordinary
+material default to `dischargeBattery: false`; the same property can be enabled
+for future powered machines.
+
+Each conductive cell can also declare `powerConsumption`, which is taken from
+the battery once per simulation tick across the whole connected power grid.
+Copper wire draws 1 unit per cell per tick and Iron draws 0.5; a future machine
+can use the same field for a much larger load. **Spark Dust** is a purple powder
+that emits Sparks upwards while each pixel's finite lifetime runs down, making
+it useful as a disposable charger placed beneath Aluminum.
 
 Some contact effects are handled directly rather than through heat, because heat alone
 gives the wrong answer: water puts out fire on contact, lava chills to scoria

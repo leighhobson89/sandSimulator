@@ -518,6 +518,53 @@ input[type="range"]::-moz-range-thumb {
     white-space: nowrap;
 }
 
+.charge-indicator {
+    display: inline-flex;
+    align-items: center;
+    flex: 0 0 auto;
+    gap: 0.35rem;
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+/* Author styles override the browser's default hidden rule, so keep this
+   explicit: the battery must disappear outside an aluminum hover. */
+.charge-indicator[hidden] {
+    display: none;
+}
+
+.charge-battery {
+    display: block;
+    width: 1.45rem;
+    height: 0.9rem;
+}
+
+.charge-battery-shell,
+.charge-battery-terminal {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.25;
+}
+
+.charge-battery-fill {
+    fill: currentColor;
+    transition: width 0.15s ease, color 0.15s ease;
+}
+
+.charge-green {
+    color: #43d17a;
+}
+
+.charge-orange {
+    color: #f2a93b;
+}
+
+.charge-red {
+    color: #ef5b5b;
+}
+
 /* ------------------------------------------------------------- work surface */
 
 #workspace {

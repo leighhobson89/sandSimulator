@@ -41,6 +41,15 @@
 
                 <div class="toolbar-group toolbar-end">
                     <span id="readout" class="readout">&nbsp;</span>
+                    <div id="chargeIndicator" class="charge-indicator" hidden role="img"
+                         aria-label="Aluminum charge" title="Aluminum charge">
+                        <svg class="charge-battery" viewBox="0 0 26 16" aria-hidden="true">
+                            <rect class="charge-battery-shell" x="1" y="1" width="21" height="14" rx="2"></rect>
+                            <rect class="charge-battery-terminal" x="22" y="5" width="3" height="6" rx="1"></rect>
+                            <rect id="chargeIndicatorFill" class="charge-battery-fill" x="3" y="3" width="0" height="10" rx="1"></rect>
+                        </svg>
+                        <span id="chargeIndicatorValue">0%</span>
+                    </div>
                     <select id="themeSelect" class="select-input" title="Change the look"></select>
                 </div>
             </div>
@@ -142,12 +151,12 @@
                                 <span>Air temperature</span>
                                 <span class="tool-number-wrap">
                                     <input id="airTempValue" class="number-input tool-number-input" type="number"
-                                           min="-60" max="600" step="1" value="8"
+                                           min="-60" max="2000" step="1" value="8"
                                            title="Type a temperature, then click away or press Enter">
                                     <span class="unit">&deg;C</span>
                                 </span>
                             </div>
-                            <input id="airTemp" type="range" min="-60" max="600" step="1" value="8">
+                            <input id="airTemp" type="range" min="-60" max="2000" step="1" value="8">
                         </div>
                     </div>
 
