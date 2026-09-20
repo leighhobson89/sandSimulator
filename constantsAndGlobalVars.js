@@ -15,7 +15,10 @@ export let gameState;
 export const MENU_STATE = 'menuState';
 export const GAME_VISIBLE_ACTIVE = 'gameVisibleActive';
 export const GAME_VISIBLE_PAUSED = 'gameVisiblePaused';
-export const GRID_COLS = 200;
+// The world starts at the original width, then game.js adds columns on first
+// launch to use the available workspace without changing the displayed cell
+// size. Rows stay fixed so the extra room is genuinely extra world.
+export let GRID_COLS = 200;
 export const GRID_ROWS = 150;
 
 //GLOBAL VARIABLES
@@ -198,6 +201,10 @@ export function setGameInProgress(value) {
 
 export function getGridCols() {
     return GRID_COLS;
+}
+
+export function setGridCols(value) {
+    GRID_COLS = Math.max(200, Math.floor(value));
 }
 
 export function getGridRows() {

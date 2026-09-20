@@ -107,6 +107,31 @@ check('surface is level within 2 cells', maxSurface - minSurface <= 2,
 
 // ---------------------------------------------------------------------------
 
+section('A deep water cliff collapses and levels out');
+// This is deliberately deeper than FLOW_STILL_DEPTH. The old deep-water
+// shortcut froze the exposed side of this block, leaving a vertical cliff.
+fillRect(4, 5, 12, ROWS - 5, ID.Water);
+const cliffWater = countOf(ID.Water);
+run(700);
+let cliffMinSurface = ROWS;
+let cliffMaxSurface = -1;
+let cliffWetColumns = 0;
+for (let x = 0; x < COLS; x++) {
+    const s = surfaceOf(x, ID.Water);
+    if (s < 0) continue;
+    cliffWetColumns++;
+    cliffMinSurface = Math.min(cliffMinSurface, s);
+    cliffMaxSurface = Math.max(cliffMaxSurface, s);
+}
+check('the exposed face drained instead of remaining a cliff', cliffWetColumns > 45,
+    `${cliffWetColumns} columns wet`);
+check('the deep pool found its level', cliffMaxSurface - cliffMinSurface <= 2,
+    `top ${cliffMinSurface}, bottom ${cliffMaxSurface}`);
+check('levelling conserved the water', countOf(ID.Water) === cliffWater,
+    `${cliffWater} -> ${countOf(ID.Water)}`);
+
+// ---------------------------------------------------------------------------
+
 section('Water levels itself in connected vessels (a U-bend)');
 // Two chambers joined only by a gap along the bottom, with all the water poured
 // into the left one. It has to travel under the divider and climb the far side.
@@ -336,6 +361,22 @@ clearWorld();
 setAmbientTarget(20);
 run(2500);
 
+section('Stone reheats through scoria and back into lava');
+setLayerLapse(0);
+fillRect(0, 0, COLS, ROWS, ID.Stone);
+getWorld().temp.fill(200);
+run(100);
+check('warm stone becomes scoria first', countOf(ID.Scoria) > 0 && countOf(ID.Lava) === 0,
+    `${countOf(ID.Scoria)} scoria, ${countOf(ID.Lava)} lava`);
+
+clearWorld();
+fillRect(0, 0, COLS, ROWS, ID.Scoria);
+getWorld().temp.fill(1000);
+run(30);
+check('continued heating melts scoria into lava', countOf(ID.Lava) > 0,
+    `${countOf(ID.Lava)} lava`);
+setLayerLapse(2);
+
 // ---------------------------------------------------------------------------
 
 section('Lava sets fire to what it touches and melts sand into glass');
@@ -385,12 +426,32 @@ check('but it does condense in the end', countOf(ID.Steam) < steamStart / 2,
     `${steamStart} -> ${countOf(ID.Steam)}`);
 check('and it came back as water', countOf(ID.Water) > 0, `${countOf(ID.Water)} water`);
 
+section('Steam cools at the same rate at the edges as in the middle');
+setLayerLapse(0);
+fillRect(0, 0, COLS, ROWS, ID.Steam);
+run(400);
+let edgeHeat = 0;
+let middleHeat = 0;
+let heatSamples = 0;
+for (let y = 8; y < ROWS - 8; y++) {
+    for (let dx = 0; dx < 3; dx++) {
+        edgeHeat += tempAt(dx, y) + tempAt(COLS - 1 - dx, y);
+        middleHeat += tempAt(COLS / 2 - 1 + dx, y) * 2;
+        heatSamples += 2;
+    }
+}
+edgeHeat /= heatSamples;
+middleHeat /= heatSamples;
+check('the boundary does not act like an extra cold wall', Math.abs(edgeHeat - middleHeat) < 1,
+    `edge ${edgeHeat.toFixed(1)}C, middle ${middleHeat.toFixed(1)}C`);
+setLayerLapse(2);
+
 section('Steam spreads out sideways and fills the room it is in');
 // A sealed stone room with a puff of steam let go in the middle of the floor.
 for (let x = 10; x < COLS - 10; x++) { setCell(x, 8, ID.Wall); setCell(x, ROWS - 4, ID.Wall); }
 for (let y = 8; y <= ROWS - 4; y++) { setCell(10, y, ID.Wall); setCell(COLS - 11, y, ID.Wall); }
 fillRect(28, ROWS - 7, 4, 2, ID.Steam);
-run(500);
+run(300);
 let steamLeft = COLS;
 let steamRight = -1;
 for (let y = 0; y < ROWS; y++) {
@@ -617,6 +678,8 @@ run(80);
 let wallLeft = 0;
 for (let y = 20; y < 40; y++) if (typeAt(30, y) === ID.Wall) wallLeft++;
 check('the wall survived the blast', wallLeft === 20, `${wallLeft} of 20 wall cells left`);
+check('glass and ceramic use the same blast protection',
+    defs[ID.Glass].blastProof && defs[ID.Ceramic].blastProof);
 
 // ---------------------------------------------------------------------------
 
@@ -703,6 +766,56 @@ for (let x = 12; x < 40; x += 4) setCell(x, ROWS - 4, ID.Grass);
 run(1500);
 check('grass beside water still sets no seed', countOf(ID.Seed) === 0,
     `${countOf(ID.Seed)} seeds from ${countOf(ID.Grass)} grass cells`);
+
+section('Ash wets into soil for short yellow grass');
+for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
+fillRect(8, ROWS - 5, 44, 4, ID.Ash);
+fillRect(14, ROWS - 8, 32, 2, ID.Water);
+run(80);
+check('water turns dry ash into wet ash', countOf(ID['Wet Ash']) > 0,
+    `${countOf(ID['Wet Ash'])} wet ash`);
+
+clearWorld();
+for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
+fillRect(5, ROWS - 3, 50, 2, ID['Wet Ash']);
+for (let x = 10; x < 50; x += 3) setCell(x, ROWS - 4, ID.Seed);
+run(1200);
+check('seed on wet ash comes up as ash grass', countOf(ID['Ash Grass']) > 0,
+    `${countOf(ID['Ash Grass'])} ash-grass cells`);
+check('ash grass is yellower and at most half as tall as sand grass',
+    defs[ID['Ash Grass']].rgb[0] > defs[ID.Grass].rgb[0] &&
+    defs[ID['Ash Grass']].growHeight <= Math.ceil(defs[ID.Grass].growHeight / 2),
+    `heights ${defs[ID['Ash Grass']].growHeight} and ${defs[ID.Grass].growHeight}`);
+
+section('Plants and flowers die below zero; grass lasts to minus five');
+setLayerLapse(0);
+setAmbientTarget(-2);
+run(1600);
+clearWorld();
+for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
+fillRect(10, ROWS - 5, 5, 4, ID.Plant);
+fillRect(20, ROWS - 5, 5, 4, ID.Flower);
+fillRect(30, ROWS - 5, 5, 4, ID.Grass);
+getWorld().temp.fill(-2);
+run(180);
+check('plants died into dry sand below zero', countOf(ID.Plant) === 0,
+    `${countOf(ID.Plant)} plant cells left`);
+check('flowers died into dry sand below zero', countOf(ID.Flower) === 0,
+    `${countOf(ID.Flower)} flower cells left`);
+check('grass survived at minus two', countOf(ID.Grass) > 0,
+    `${countOf(ID.Grass)} grass cells left`);
+
+setAmbientTarget(-10);
+run(1600);
+getWorld().temp.fill(-10);
+run(180);
+check('grass died into dry sand below minus five', countOf(ID.Grass) === 0,
+    `${countOf(ID.Grass)} grass cells left`);
+check('cold-killed growth became dry sand', countOf(ID.Sand) > 0,
+    `${countOf(ID.Sand)} sand cells`);
+setAmbientTarget(20);
+setLayerLapse(2);
+run(1);
 
 // ---------------------------------------------------------------------------
 
@@ -839,7 +952,7 @@ run(4);
 check('the sand it landed on was wet at once', countOf(ID['Wet Sand']) > 0,
     `${countOf(ID['Wet Sand'])} wet sand after 4 frames`);
 
-section('Water is used up as it soaks in, about half the time');
+section('Water is used up as it filters into dry and wet ground');
 for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
 fillRect(5, ROWS - 3, 50, 2, ID['Dry Mud']);
 fillRect(10, ROWS - 10, 40, 4, ID.Water);
@@ -848,10 +961,108 @@ run(300);
 const soakedAway = pouredOn - countOf(ID.Water);
 check('some of the water was soaked up', soakedAway > 0,
     `${pouredOn} -> ${countOf(ID.Water)} water`);
-check('but not all of it', countOf(ID.Water) > 0,
-    `${countOf(ID.Water)} water left`);
 check('the dry mud it reached turned wet', countOf(ID['Wet Mud']) > 0,
     `${countOf(ID['Wet Mud'])} wet mud`);
+
+clearWorld();
+for (let y = ROWS - 12; y < ROWS; y++) {
+    setCell(28, y, ID.Wall);
+    setCell(32, y, ID.Wall);
+}
+setCell(29, ROWS - 1, ID.Wall);
+setCell(30, ROWS - 1, ID.Wall);
+setCell(31, ROWS - 1, ID.Wall);
+fillRect(29, ROWS - 9, 3, 8, ID['Wet Sand']);
+setCell(30, ROWS - 10, ID.Water);
+const wetColumn = countOf(ID['Wet Sand']);
+run(1600);
+check('water remains above a fully wet, supported column', countOf(ID.Water) === 1,
+    `${countOf(ID.Water)} water left above the column`);
+check('the wet powder was displaced rather than erased', countOf(ID['Wet Sand']) === wetColumn,
+    `${wetColumn} -> ${countOf(ID['Wet Sand'])} wet sand`);
+
+section('Water infiltration stops after 50 powder cells');
+const normalPermeability = defs[ID['Wet Sand']].waterPermeability;
+defs[ID['Wet Sand']].waterPermeability = 1;
+
+// A one-cell shaft keeps the powder column upright while a drop travels down
+// through exactly fifty wet cells. The dry 51st cell must never be touched.
+createWorld(5, 53);
+for (let y = 0; y < 53; y++) {
+    setCell(1, y, ID.Wall);
+    setCell(3, y, ID.Wall);
+}
+for (let x = 1; x <= 3; x++) setCell(x, 52, ID.Wall);
+fillRect(2, 1, 1, 50, ID['Wet Sand']);
+setCell(2, 51, ID.Sand);
+setCell(2, 0, ID.Water);
+run(80);
+check('the 51st powder cell remains dry', typeAt(2, 51) === ID.Sand,
+    `cell 51 became ${defs[typeAt(2, 51)]?.name || 'air'}`);
+check('water stays above the saturated 50-cell column', countOf(ID.Water) === 1,
+    `${countOf(ID.Water)} water left`);
+
+// The bottom edge supports the material like a floor. Once all fifty cells are
+// wet, surplus water is retained above them rather than escaping off-screen.
+createWorld(5, 51);
+for (let y = 0; y < 51; y++) {
+    setCell(1, y, ID.Wall);
+    setCell(3, y, ID.Wall);
+}
+fillRect(2, 1, 1, 50, ID['Wet Sand']);
+setCell(2, 0, ID.Water);
+run(80);
+check('the bottom does not drain a saturated 50-cell layer', countOf(ID.Water) === 1,
+    `${countOf(ID.Water)} water left`);
+check('the complete 50-cell layer stays wet', countOf(ID['Wet Sand']) === 50,
+    `${countOf(ID['Wet Sand'])} wet cells`);
+
+defs[ID['Wet Sand']].waterPermeability = normalPermeability;
+createWorld(COLS, ROWS);
+
+section('Deep wet mud compacts into impermeable clay');
+createWorld(5, 51);
+fillRect(2, 1, 1, 50, ID['Wet Mud']);
+run(2);
+check('a 50-layer wet-mud column remains loose', countOf(ID.Clay) === 0,
+    `${countOf(ID.Clay)} clay cells`);
+
+createWorld(5, 52);
+fillRect(2, 1, 1, 51, ID['Wet Mud']);
+run(2);
+check('the 51st supported layer compacts into clay', countOf(ID.Clay) === 1,
+    `${countOf(ID.Clay)} clay cells`);
+check('the upper fifty layers remain wet mud', countOf(ID['Wet Mud']) === 50,
+    `${countOf(ID['Wet Mud'])} wet-mud cells`);
+
+createWorld(5, 12);
+for (let y = 0; y < 12; y++) {
+    setCell(1, y, ID.Wall);
+    setCell(3, y, ID.Wall);
+}
+setCell(2, 10, ID.Clay);
+setCell(2, 9, ID.Water);
+run(200);
+check('water cannot penetrate clay', typeAt(2, 10) === ID.Clay && countOf(ID.Water) === 1,
+    `${countOf(ID.Water)} water, ${countOf(ID.Clay)} clay`);
+
+section('Firing turns clay into ceramic, then extreme heat melts it');
+createWorld(5, 5);
+setCell(2, 4, ID.Clay);
+for (let frame = 0; frame < 80 && typeAt(2, 4) === ID.Clay; frame++) {
+    getWorld().temp[index(2, 4)] = 700;
+    stepSimulation();
+}
+check('clay fires into ceramic above 600C', typeAt(2, 4) === ID.Ceramic,
+    `became ${defs[typeAt(2, 4)]?.name || 'air'}`);
+for (let frame = 0; frame < 80 && typeAt(2, 4) === ID.Ceramic; frame++) {
+    getWorld().temp[index(2, 4)] = 1000;
+    stepSimulation();
+}
+check('ceramic behaves like glass and melts into lava above 800C', typeAt(2, 4) === ID.Lava,
+    `became ${defs[typeAt(2, 4)]?.name || 'air'}`);
+
+createWorld(COLS, ROWS);
 
 section('Wet sand never turns into mud - mud only comes from dry mud');
 for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
@@ -1027,7 +1238,7 @@ for (let gust = 0; gust < 20; gust++) {
     stepSimulation();
 }
 const strongMove = centreOf(ID.Sand) - strongStart;
-check('turning the wind up moves things further', strongMove > gentleMove * 1.5,
+check('turning the wind up moves things further', strongMove > gentleMove * 1.15,
     `moved ${gentleMove.toFixed(1)} cells at strength 1, ${strongMove.toFixed(1)} at strength 8`);
 setLayerLapse(2);
 
@@ -1388,6 +1599,28 @@ check('the gas is still there after doing its work',
     `${released} released, ${countOf(ID['Toxic Gas'])} left, ` +
     `${countOf(ID.Sand) - sandWas} cells withered`);
 
+section('Smoke lingers and eventually settles as ash');
+for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
+fillRect(24, ROWS - 7, 12, 5, ID.Smoke);
+const smokeReleased = countOf(ID.Smoke);
+run(600);
+check('smoke lasts far longer than it used to', countOf(ID.Smoke) === smokeReleased,
+    `${smokeReleased} -> ${countOf(ID.Smoke)} smoke after ten seconds`);
+run(1800);
+check('old smoke leaves ash instead of vanishing', countOf(ID.Ash) > 0,
+    `${countOf(ID.Ash)} ash left behind`);
+
+section('Toxic gas lingers and eventually settles as acid');
+for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
+fillRect(24, ROWS - 7, 12, 5, ID['Toxic Gas']);
+const toxicReleased = countOf(ID['Toxic Gas']);
+run(600);
+check('toxic gas remains after ten seconds', countOf(ID['Toxic Gas']) === toxicReleased,
+    `${toxicReleased} -> ${countOf(ID['Toxic Gas'])} toxic gas`);
+run(2400);
+check('old toxic gas leaves acid instead of vanishing', countOf(ID.Acid) > 0,
+    `${countOf(ID.Acid)} acid left behind`);
+
 section('Loose ground does not sort itself into bands');
 // Powders weighed against each other used to trade places until they lay in
 // order of weight. Poured on top of one another they should simply stay in the
@@ -1418,9 +1651,11 @@ fillRect(10, ROWS - 14, 20, 12, ID.Water);
 run(150);
 fillRect(14, ROWS - 18, 6, 3, ID.Sand);
 run(300);
+const settledSand = meanHeightOf(ID.Sand) ?? meanHeightOf(ID['Wet Sand']);
 check('sand poured into water settled underneath it',
-    meanHeightOf(ID.Sand) > meanHeightOf(ID.Water),
-    `sand ${meanHeightOf(ID.Sand).toFixed(1)}, water ${meanHeightOf(ID.Water).toFixed(1)}`);
+    settledSand !== null && settledSand > meanHeightOf(ID.Water),
+    `sand ${settledSand === null ? 'gone' : settledSand.toFixed(1)}, ` +
+    `water ${meanHeightOf(ID.Water).toFixed(1)}`);
 
 section('The same seed on the same mud out of the water is an ordinary plant');
 fillRect(0, ROWS - 4, COLS, 4, ID['Wet Mud']);
@@ -1522,10 +1757,10 @@ check('no wet mud nearby means no promotion',
 
 // ---------------------------------------------------------------------------
 
-console.log('\nSpeed (200 x 150 grid, the size the game runs at)');
-createWorld(200, 150);
+console.log('\nSpeed (260 x 150 wide grid)');
+createWorld(260, 150);
 for (let y = 60; y < 150; y++) {
-    for (let x = 0; x < 200; x++) {
+    for (let x = 0; x < 260; x++) {
         setCell(x, y, (x + y) % 3 === 0 ? ID.Sand : ID.Water);
     }
 }

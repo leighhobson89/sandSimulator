@@ -30,6 +30,7 @@
 export const EMPTY = 0;
 const OUT_OF_BOUNDS = -1;
 const NO_SURFACE = 32000;
+const MAX_WATER_INFILTRATION_DEPTH = 50;
 
 let COLS = 0;
 let ROWS = 0;
@@ -253,13 +254,21 @@ export function prepareDefinitions(json) {
             decaysInto: toId(p.decaysInto),
             smokeChance: p.smokeChance || 0,
 
-            // wetsInto/wetChance describe how readily THIS material soaks up
-            // water that touches it. Dry ground is 1, meaning the moment water
-            // reaches it, it is wet.
+            // wetsInto/wetChance describe how readily this dry powder soaks up
+            // a drop filtering down onto it. Dry ground is 1, meaning the
+            // moment water reaches it, it becomes the wet form.
             wetsInto: toId(p.wetsInto),
             wetChance: p.wetChance || 0,
+            // Wet powders let water keep filtering down through them. A drop
+            // stores how many powder cells it has crossed, so it can be stopped
+            // at the shared infiltration depth instead of draining arbitrarily
+            // deep ground.
+            waterPermeability: p.waterPermeability || 0,
+            // A supported column keeps this many cells of its loose form. Any
+            // deeper cells compact from the bottom upwards into compactsInto.
+            compactsInto: toId(p.compactsInto),
+            compactDepth: p.compactDepth || 0,
             soaks: !!p.soaks,
-            soakConsumeChance: p.soakConsumeChance === undefined ? 0.5 : p.soakConsumeChance,
             quenchedInto: toId(p.quenchedInto),
             douses: !!p.douses,
             corrodible: !!p.corrodible,
@@ -297,7 +306,8 @@ export function prepareDefinitions(json) {
         def.hasReaction = def.life > 0 || def.soaks || def.corrosion > 0 ||
             def.growChance > 0 || def.emit > 0 || def.quenchedInto !== EMPTY ||
             def.blastRadius > 0 || def.sprouts.length > 0 || def.seedChance > 0 ||
-            def.douses || def.contacts.length > 0 || def.withersPlants !== EMPTY;
+            def.douses || def.contacts.length > 0 || def.withersPlants !== EMPTY ||
+            def.compactsInto !== EMPTY;
         def.moves = def.category !== 'static';
 
         // A second, lighter copy of anything that can come up buoyant. The
@@ -498,6 +508,15 @@ function transform(i, id, life, residue) {
     world.moved[i] = 1;
 }
 
+function removeParticle(i) {
+    world.type[i] = EMPTY;
+    world.life[i] = 0;
+    world.residue[i] = EMPTY;
+    world.heat[i] = 0;
+    world.data[i] = 0;
+    world.moved[i] = 1;
+}
+
 function swapCells(i1, i2) {
     let t = world.type[i1]; world.type[i1] = world.type[i2]; world.type[i2] = t;
     let h = world.temp[i1]; world.temp[i1] = world.temp[i2]; world.temp[i2] = h;
@@ -575,8 +594,10 @@ export function getFrameCount() { return frameCount; }
 //
 // Every cell pulls its temperature towards the average of its four neighbours,
 // at a rate set by the material it contains, and separately leaks towards the
-// ambient air temperature. Off-grid neighbours count as ambient, so the edges
-// of the world act like cold walls.
+// ambient air temperature. At the boundary the missing neighbour is the cell
+// itself: ambient cooling already applies evenly everywhere, so treating an
+// off-grid neighbour as extra air would cool edges and corners faster and make
+// steam rain there disproportionately.
 //
 // This single pass is what drives melting, boiling, freezing and ignition, so
 // there are no special "is there a fire next to me" checks anywhere.
@@ -595,10 +616,10 @@ function diffuseHeat() {
             const def = DEFS[type[i]];
             const t = temp[i];
 
-            const up = y > 0 ? temp[i - COLS] : rowAir;
-            const down = y < ROWS - 1 ? temp[i + COLS] : rowAir;
-            const left = x > 0 ? temp[i - 1] : rowAir;
-            const right = x < COLS - 1 ? temp[i + 1] : rowAir;
+            const up = y > 0 ? temp[i - COLS] : t;
+            const down = y < ROWS - 1 ? temp[i + COLS] : t;
+            const left = x > 0 ? temp[i - 1] : t;
+            const right = x < COLS - 1 ? temp[i + 1] : t;
 
             const average = (up + down + left + right) * 0.25;
 
@@ -910,32 +931,49 @@ function applyReactions(x, y, i, def) {
         }
     }
 
-    // Water soaking into the ground. Dry ground has a wetChance of 1, so water
-    // never sits against it: the instant they touch, the dry cell is wet. Half
-    // the time the water is soaked up and gone in the process, and the rest of
-    // the time it carries on, which is what lets a stream wet a long stretch of
-    // ground rather than one cell per drop.
-    //
-    // Note that only water wets anything. Wet ground does not wet what is under
-    // it, so wet sand happily sits on top of dry sand the way it really does.
+    // The weight of a deep, supported wet-mud column compacts its lowest cells
+    // into clay. Fifty cells remain loose; everything below that line changes
+    // from the bottom upwards. Requiring support stops a falling ribbon of mud
+    // turning solid in mid-air.
+    if (def.compactsInto !== EMPTY && canCompactColumn(x, y, def)) {
+        transform(i, def.compactsInto);
+        return true;
+    }
+
+    // Water filters down into loose ground instead of perching on its surface.
+    // A dry grain consumes the drop and becomes its wet form. Already-wet
+    // powder lets the drop trade places with it and continue down. Before a
+    // fresh drop enters, the wet column is inspected: a supported, completely
+    // wet column or fifty wet cells is saturated, so surplus water stays on
+    // top and remains available to level out sideways.
     if (def.soaks) {
-        let soaked = false;
-        for (let d = 0; d < 4; d++) {
-            const nx = x + (d === 0 ? -1 : d === 1 ? 1 : 0);
-            const ny = y + (d === 2 ? -1 : d === 3 ? 1 : 0);
-            const n = typeAt(nx, ny);
-            if (n <= 0) continue;
-            const ground = DEFS[n];
-            if (ground.wetsInto === EMPTY) continue;
-            if (Math.random() >= ground.wetChance) continue;
-            transform(ny * COLS + nx, ground.wetsInto);
-            soaked = true;
-            break;
+        const below = typeAt(x, y + 1);
+        if (below > 0) {
+            const ground = DEFS[below];
+            if (ground.wetsInto !== EMPTY && Math.random() < ground.wetChance) {
+                if (world.data[i] >= MAX_WATER_INFILTRATION_DEPTH) {
+                    removeParticle(i);
+                    return true;
+                }
+                transform(i + COLS, ground.wetsInto);
+                removeParticle(i);
+                return true;
+            }
+            const saturated = world.data[i] === 0 && ground.waterPermeability > 0 &&
+                saturatedPowderBelow(x, y + 1);
+            if (!saturated && ground.waterPermeability > 0 &&
+                (world.data[i] > 0 || Math.random() < ground.waterPermeability)) {
+                if (world.data[i] >= MAX_WATER_INFILTRATION_DEPTH) {
+                    removeParticle(i);
+                    return true;
+                }
+                swapCells(i, i + COLS);
+                world.data[i + COLS] = world.data[i + COLS] + 1;
+                return true;
+            }
         }
-        if (soaked && Math.random() < def.soakConsumeChance) {
-            world.type[i] = EMPTY;
-            world.life[i] = 0;
-            world.data[i] = 0;
+        if (world.data[i] > 0 && below !== EMPTY) {
+            removeParticle(i);
             return true;
         }
     }
@@ -1118,7 +1156,7 @@ function applyReactions(x, y, i, def) {
 // out from under it.
 
 const ROOT_NONE = 0;   // nothing wet anywhere against it
-const ROOT_POOR = 1;   // wet sand only
+const ROOT_POOR = 1;   // wet sand or wet ash
 const ROOT_RICH = 2;   // wet mud, which beats wet sand wherever both are found
 
 // How much of one plant is walked before the search gives up. The cap is what
@@ -1153,6 +1191,7 @@ function rootedIn(x, y) {
 
     const wetMud = idOf('Wet Mud');
     const wetSand = idOf('Wet Sand');
+    const wetAsh = idOf('Wet Ash');
 
     rootVisit++;
     let top = 0;
@@ -1182,7 +1221,7 @@ function rootedIn(x, y) {
                 // Wet mud is the best there is, so there is nothing to gain by
                 // carrying on once it turns up.
                 if (found === wetMud) return ROOT_RICH;
-                if (found === wetSand) best = ROOT_POOR;
+                if (found === wetSand || found === wetAsh) best = ROOT_POOR;
                 if (found === EMPTY || DEFS[found].growHeight <= 0) continue;
                 if (rootStamp[ni] === rootVisit) continue;
                 rootStamp[ni] = rootVisit;
@@ -1660,6 +1699,13 @@ function settledByDepth(y, i) {
     return Math.random() < settled;
 }
 
+// A deep liquid interior can sleep, but a cell on a free vertical face cannot:
+// it is precisely the cell that must spill into the space beside it to erode a
+// water cliff and let the body find its level.
+function hasOpenSide(x, y) {
+    return typeAt(x - 1, y) === EMPTY || typeAt(x + 1, y) === EMPTY;
+}
+
 // How steep a slope a powder will sit on without slipping - its angle of
 // repose. Dry sand needs only a single cell of drop beside it before it slides,
 // so it always ends up as a flat cone. Wet mud needs the ground to fall right
@@ -1696,7 +1742,7 @@ function moveLiquid(x, y, i, def, sluggish) {
     // level. Gravity above has already had its turn, so a hole opened at the
     // bottom of a pond still fills; what stops is the endless sideways
     // shuffling that had the whole body of it churning at once.
-    if (settledByDepth(y, i)) return;
+    if (settledByDepth(y, i) && !hasOpenSide(x, y)) return;
 
     for (let step = 0; step < def.flowSteps; step++) {
         const before = i;
@@ -1739,6 +1785,46 @@ function fallDown(x, y, i, def) {
         if (below !== EMPTY) break;
     }
     return ci;
+}
+
+// True when the wet powder immediately below a surface drop has no remaining
+// capacity within the 50-cell infiltration limit. An opening beneath the wet
+// material is still drainage, while dry powder is still capacity. Everything
+// else is a supporting, impermeable base and therefore makes the wet column
+// saturated even when it is shallower than the limit.
+function saturatedPowderBelow(x, startY) {
+    for (let depth = 0; depth < MAX_WATER_INFILTRATION_DEPTH; depth++) {
+        const id = typeAt(x, startY + depth);
+        if (id === EMPTY) return false;
+        if (id === OUT_OF_BOUNDS) return depth > 0;
+
+        const def = DEFS[id];
+        if (def.waterPermeability > 0) continue;
+        if (def.wetsInto !== EMPTY) return false;
+        if (def.category === 'liquid' || def.category === 'gas') return false;
+        return depth > 0;
+    }
+    return true;
+}
+
+// This cell is below the retained loose layer only when it has compactDepth
+// identical wet-mud cells immediately above it and something non-fluid below
+// supporting the column. Once the bottom cell becomes clay, it supports the
+// next one on the following row of the same bottom-up simulation pass.
+function canCompactColumn(x, y, def) {
+    if (def.compactDepth <= 0 || y < def.compactDepth) return false;
+
+    const below = typeAt(x, y + 1);
+    if (below === def.id || below === EMPTY) return false;
+    if (below !== OUT_OF_BOUNDS) {
+        const support = DEFS[below];
+        if (support.category === 'liquid' || support.category === 'gas') return false;
+    }
+
+    for (let depth = 1; depth <= def.compactDepth; depth++) {
+        if (typeAt(x, y - depth) !== def.id) return false;
+    }
+    return true;
 }
 
 // ----------------------------------------------------------------- the wind

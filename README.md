@@ -1,9 +1,10 @@
 # Sand Simulator
 
-A falling sand sandbox: 32 materials and tools on a 200 x 150 grid, with heat
-that spreads from cell to cell so that things melt, boil, freeze and catch fire
-on their own, weather that blows across the world of its own accord, and six
-themes to look at it all through.
+A falling sand sandbox: 36 materials and tools on a 150-row grid that adds
+enough columns to fill about 90% of the workspace beside the material picker,
+with heat that spreads from cell to cell so that things melt, boil, freeze and
+catch fire on their own, weather that blows across the world of its own accord,
+and six themes to look at it all through.
 
 ## Running it
 
@@ -153,7 +154,8 @@ being special-cased:
 - wood, oil and plants above their ignition point catch fire
 - sand next to lava melts into glass, and glass that lava has got right around
   melts in its turn and becomes lava itself
-- lava below 700C chills into scoria, and scoria below 100C hardens into stone
+- lava below 700C chills into scoria, and scoria below 100C hardens into stone;
+  heating reverses that path, from stone to scoria and then back to lava
 
 A state change does not happen the moment a cell crosses its threshold. It banks
 heat every frame it is past the threshold, by how far past, and only changes
@@ -213,6 +215,9 @@ Lava is heavier than scoria, so scoria dropped on a pool of lava floats on top
 of it and lava poured over scoria sinks underneath - the flow works its way back
 down through its own crust.
 
+The path also works uphill. Stone heated past 100C loosens back into scoria;
+keep heating that scoria past 900C and it melts into lava again.
+
 ### Toxic fumes
 
 Acid gives off **toxic gas** where it eats something away, left in the hole
@@ -224,6 +229,11 @@ withers to bare sand.
 The gas is not taken up in doing it. It kills what it touches and carries
 straight on, so one cloud works its way right across a bank and leaves bare
 ground behind it.
+
+Toxic gas now hangs around for roughly forty seconds rather than evaporating
+after a few moments. What finally settles out of it is acid. Smoke behaves the
+same way on a shorter, roughly thirty-second clock and settles out as ash, so
+neither gas simply disappears.
 
 ### Movement
 
@@ -260,13 +270,20 @@ worth spreads right across the sky and stays there for ten or fifteen seconds
 before it comes down - as rain in warm air, as snow in freezing air. The breeze
 carries it, as it carries any gas.
 
+The boundary is thermally neutral: missing neighbours beyond the canvas do not
+count as extra cold air. Ambient cooling is already applied everywhere, so
+steam at an edge or corner condenses at the same rate as steam in the middle and
+rain is not concentrated around the frame.
+
 ### Deep water
 
 Water is packed down by everything lying on top of it. Everything in the top
 eight cells of a body of liquid flows as freely as it ever did - that is where a
 pond finds its level, and where the ripples are - and below that the chance of a
-cell shuffling sideways falls away, until by eighteen cells down it has stopped
-altogether and the water simply sits.
+cell shuffling sideways falls away, until by eighteen cells down the enclosed
+interior has stopped altogether. A deep cell beside open air remains active:
+that exposed edge must spill away, so a tall water face collapses instead of
+remaining as an impossible cliff.
 
 Gravity has already had its turn by then, so a hole opened at the bottom of a
 pond still fills. What stops is the endless sideways shuffling that had a whole
@@ -274,18 +291,30 @@ body of water churning at once while only the surface had anything to settle.
 
 ### Wet and dry ground
 
-Water never sits against dry ground. The instant it touches Sand or Dry Mud
-those turn into Wet Sand and Wet Mud, and about half the time the drop of water
-is soaked up and gone in the process - so a stream wets a stretch of bank as it
-runs over it, and gets shorter as it goes. Wet Sand is as far as sand goes: no
-amount of water turns it into mud. Heat drives all of it back the other way,
-giving off steam.
+Water filters downward into loose ground rather than sitting on its surface.
+When a drop reaches Sand, Dry Mud or Ash, that grain becomes Wet Sand, Wet Mud
+or Wet Ash and the drop is used up. Water can also enter an already-wet powder;
+once inside it keeps moving down through at most 50 wet grains. A powder layer
+50 cells deep or shallower can therefore become wet all the way to its supported
+bottom. It is then saturated: more water remains above it and spreads normally.
+In a layer 51 or more cells deep, the 51st cell stays dry and the fifty wet cells
+above it count as saturated, again holding surplus water at the surface rather
+than losing it off-screen. Wet Sand is as far as sand goes: no amount of water
+turns it into mud. Heat drives wet ground back to its dry form, giving off
+steam.
 
 Mud only ever comes from Dry Mud getting wet, and Dry Mud comes from Wet Mud
 baking dry or from a seed that failed to come up, which closes the loop.
 
+A supported Wet Mud column keeps its upper 50 cells loose. Any thickness beyond
+that compacts from the bottom upward into **Clay**, an impermeable solid. Clay
+fires into **Ceramic** above 600C after absorbing enough heat. Ceramic has the
+same physical and chemical behaviour as Glass: it is fixed, acid-proof and
+blast-proof, and does not change again until temperatures above 800C melt it
+into Lava.
+
 Only water wets things. Wet ground does not soak into what is under it, so wet
-sand sits on top of dry sand exactly as it would in reality.
+sand still sits on top of dry sand without spreading moisture by itself.
 
 What makes the wet and dry versions feel different underfoot is `repose`, the
 angle a powder will sit at without slipping. Dry sand only needs one cell of
@@ -304,6 +333,7 @@ it landed on:
 | Wet Mud | a full plant, 6 to 18 cells, finished with a flower |
 | Wet Mud, under open water | a lily |
 | Wet Sand | short grass, 3 to 9 cells, no flower |
+| Wet Ash | yellow ash grass, 2 to 4 cells, no flower |
 | anything dry | nothing; the seed sits and waits |
 
 A seed that lands somewhere it cannot use keeps for thirty seconds and then
@@ -325,11 +355,15 @@ carrying on regardless. The search walks the whole of one plant, side shoots
 included, and crosses between kinds of plant, because what is standing there is
 one plant with one set of roots even where it is made of more than one thing.
 
-Wet mud is the richer of the two soils. Grass with any part of itself against
+Wet mud is the richest soil. Grass with any part of itself against
 wet mud grows on as a wet mud plant rather than as grass, and takes that plant's
 height with it, so it carries on upward and finishes with a flower instead of
 stopping short. It is never demoted the other way: a plant beside wet sand stays
 a plant.
+
+Cold kills established growth as well as preventing germination. Plants,
+flowers and lily growth turn into dry sand below 0C. Ordinary and ash grass are
+hardier and survive until the temperature falls below -5C.
 
 ### Lilies
 
@@ -399,7 +433,7 @@ a small patch when it goes. What makes it worth having is that the blast lights
 every grain it touches one frame later, so a trail or a heap tears through
 itself in a flash and the combined explosion is as big as the pile was. The
 blast leaves fire and sparks behind, sets light to anything flammable nearby,
-and goes through everything except Wall.
+and goes through everything except Wall, Glass and Ceramic.
 
 ### Water finding its level
 
@@ -423,7 +457,8 @@ Rule 3 is what makes water rise up the far side of a U-bend or through a hole in
 the bottom of a tank, and because a cell may never climb above the surface of
 the water pushing it, it stops dead once the two sides are level instead of
 fountaining. All three are the sideways flow, so all three are what goes quiet
-with depth (see **Deep water** above); gravity is untouched by it. Squeezing through a narrow submerged channel is gradual - a two
+in the enclosed interior with depth (see **Deep water** above); an exposed side
+stays active and gravity is untouched. Squeezing through a narrow submerged channel is gradual - a two
 cell wide channel takes several seconds of simulated time to equalise, which is
 about right.
 

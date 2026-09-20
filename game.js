@@ -11,7 +11,7 @@
 
 import { localize } from './localization.js';
 import {
-    getGridCols, getGridRows, getElements, getLanguage, gameState,
+    getGridCols, setGridCols, getGridRows, getElements, getLanguage, gameState,
     setBeginGameStatus, setGameStateVariable, getBeginGameStatus,
     getMenuState, getGameVisiblePaused, getGameVisibleActive,
     getParticleTypeIdSelected, setParticleDefinitions,
@@ -30,11 +30,13 @@ let frames = 0;
 let lastFpsCheck = 0;
 let fps = 0;
 let loopRunning = false;
+let gridFittedToWorkspace = false;
 
 //--------------------------------------------------------------------------------------------------------
 
 export function startGame() {
     const canvas = getElements().canvas;
+    if (!gridFittedToWorkspace) fitGridToWorkspace();
     const cols = getGridCols();
     const rows = getGridRows();
 
@@ -63,6 +65,24 @@ export function startGame() {
     requestAnimationFrame(gameLoop);
 }
 
+// Keep the original cell size and spend the extra horizontal room on more
+// simulation columns. The canvas area already excludes the material picker,
+// so ninety percent here means ninety percent of the usable workspace.
+function fitGridToWorkspace() {
+    const canvas = getElements().canvas;
+    const area = canvas.parentElement;
+    const rows = getGridRows();
+    const availableHeight = Math.max(1, area.clientHeight - 32);
+    const targetWidth = Math.max(1, (area.clientWidth - 32) * 0.9);
+    const cellSize = Math.max(1, availableHeight / rows);
+    const cols = Math.max(200, Math.floor(targetWidth / cellSize));
+
+    setGridCols(cols);
+    const current = getWorld();
+    if (!current || current.cols !== cols || current.rows !== rows) createWorld(cols, rows);
+    gridFittedToWorkspace = true;
+}
+
 // Makes the canvas as big as it fits in the work area while keeping cells
 // square. The canvas itself stays at one pixel per cell; this only stretches it.
 function fitCanvasToScreen() {
@@ -71,7 +91,7 @@ function fitCanvasToScreen() {
     const cols = getGridCols();
     const rows = getGridRows();
 
-    const availableWidth = area.clientWidth - 32;
+    const availableWidth = (area.clientWidth - 32) * 0.9;
     const availableHeight = area.clientHeight - 32;
     const scale = Math.max(1, Math.min(availableWidth / cols, availableHeight / rows));
 

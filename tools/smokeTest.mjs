@@ -147,6 +147,16 @@ else fail(`expected the materials to be grouped, got ${headings.length} headings
 byId('newGame').click();
 pass('New Game started without throwing');
 
+const startedCanvas = byId('canvas');
+const canvasShare = parseInt(startedCanvas.style.width) / (elements.canvasArea.clientWidth - 32);
+if (startedCanvas.width > 200) pass(`expanded the world to ${startedCanvas.width} columns`);
+else fail(`expected more than 200 columns, got ${startedCanvas.width}`);
+if (canvasShare >= 0.89 && canvasShare <= 0.9) {
+    pass(`canvas fills ${(canvasShare * 100).toFixed(1)}% of the workspace width`);
+} else {
+    fail(`canvas fills ${(canvasShare * 100).toFixed(1)}% instead of 90%`);
+}
+
 runFrames(30);
 if (putCount > 0) pass(`drew ${putCount} frames to the canvas`);
 else fail('nothing was ever drawn to the canvas');
