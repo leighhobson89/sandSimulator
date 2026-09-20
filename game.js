@@ -40,6 +40,8 @@ let machinePlacementPreview = null;
 // A blueprint is a compact, rectangular copy of the persistent cell state.
 // Transient frame bookkeeping (moved and tempNext) is intentionally excluded:
 // it belongs to the current simulation tick, not to the material being copied.
+export const BLUEPRINT_SLOT_COUNT = 24;
+
 export const BLUEPRINT_FIELDS = [
     'type', 'temp', 'life', 'lifeMax', 'residue', 'shade', 'heat', 'surface',
     'data', 'power', 'powerDelay', 'charge', 'wind', 'airflowX', 'airflowY',

@@ -7,7 +7,7 @@ import {
     getHeatViewOn, setHeatViewOn, getSimulationPaused, setSimulationPaused
 } from './constantsAndGlobalVars.js';
 import { captureSimulationState, restoreSimulationState } from './physics.js';
-import { BLUEPRINT_FIELDS } from './game.js';
+import { BLUEPRINT_FIELDS, BLUEPRINT_SLOT_COUNT } from './game.js';
 import { compressToEncodedURIComponent, decompressFromEncodedURIComponent } from './lzString.js';
 
 export const AUTOSAVE_STORAGE_KEY = 'elemental-foundry.autosave.v1';
@@ -185,7 +185,7 @@ function decodeSimulation(simulation) {
 
 function encodeBlueprintState(state) {
     if (!state?.slots) return null;
-    const slots = Array.from({ length: 8 }, (_, slot) => {
+    const slots = Array.from({ length: BLUEPRINT_SLOT_COUNT }, (_, slot) => {
         const blueprint = state.slots[slot];
         if (!blueprint) return null;
         const cells = {};
@@ -207,12 +207,14 @@ function encodeBlueprintState(state) {
 // Blueprint data was added as an optional part of version 1 saves, so older
 // strings restore to an empty library rather than becoming incompatible.
 function decodeBlueprintState(state) {
-    if (state === undefined || state === null) return { nextSlot: 0, slots: Array(8).fill(null) };
-    if (!Array.isArray(state.slots) || state.slots.length > 8 ||
-        !Number.isInteger(state.nextSlot) || state.nextSlot < 0 || state.nextSlot > 7) {
+    if (state === undefined || state === null) {
+        return { nextSlot: 0, slots: Array(BLUEPRINT_SLOT_COUNT).fill(null) };
+    }
+    if (!Array.isArray(state.slots) || state.slots.length > BLUEPRINT_SLOT_COUNT ||
+        !Number.isInteger(state.nextSlot) || state.nextSlot < 0 || state.nextSlot >= BLUEPRINT_SLOT_COUNT) {
         throw new Error('This save has invalid blueprint data.');
     }
-    const slots = Array(8).fill(null);
+    const slots = Array(BLUEPRINT_SLOT_COUNT).fill(null);
     for (let slot = 0; slot < state.slots.length; slot++) {
         const blueprint = state.slots[slot];
         if (blueprint === null) continue;

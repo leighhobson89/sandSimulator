@@ -20,7 +20,7 @@ import {
     paintLine, paintCell, clearCanvasWorld, setHoverCell,
     canPlaceMachine, placeMachine, setMachinePlacementPreview, clearMachinePlacementPreview,
     beginGrab, dropGrab, cancelGrab, setLinePreview, clearLinePreview,
-    captureBlueprint, stampBlueprint
+    captureBlueprint, stampBlueprint, BLUEPRINT_SLOT_COUNT
 } from './game.js';
 import {
     getDefinitions, setAmbientTarget, getAmbientTarget, setLayerLapse, getLayerLapse,
@@ -46,7 +46,7 @@ let marqueeMode = false;
 let isMarqueeDrawing = false;
 let marqueeStart = null;
 let marqueeSelection = null;
-let blueprints = Array(8).fill(null);
+let blueprints = Array(BLUEPRINT_SLOT_COUNT).fill(null);
 let nextBlueprintSlot = 0;
 let activeBlueprintSlot = null;
 
@@ -853,7 +853,7 @@ function captureBlueprintLibrary() {
 }
 
 function restoreBlueprintLibrary(state) {
-    blueprints = Array.from({ length: 8 }, (_, slot) => state.slots[slot] || null);
+    blueprints = Array.from({ length: BLUEPRINT_SLOT_COUNT }, (_, slot) => state.slots[slot] || null);
     nextBlueprintSlot = state.nextSlot;
     marqueeMode = false;
     isMarqueeDrawing = false;
@@ -867,7 +867,7 @@ function restoreBlueprintLibrary(state) {
 }
 
 function resetBlueprintLibrary() {
-    restoreBlueprintLibrary({ slots: Array(8).fill(null), nextSlot: 0 });
+    restoreBlueprintLibrary({ slots: Array(BLUEPRINT_SLOT_COUNT).fill(null), nextSlot: 0 });
 }
 
 function renderBlueprintLibrary() {

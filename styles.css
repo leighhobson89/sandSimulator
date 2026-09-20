@@ -643,22 +643,6 @@ input[type="range"]::-moz-range-thumb {
 
 .workspace-pane { min-height: 0; }
 
-.blueprints-heading {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 0.75rem;
-    padding: 0.1rem 0.15rem 0.7rem;
-    border-bottom: var(--border) solid var(--line);
-}
-
-.blueprints-heading h2 {
-    margin: 0;
-    font-family: var(--chrome-font);
-    font-size: 1rem;
-    letter-spacing: var(--btn-tracking);
-}
-
 .blueprints-description {
     margin: 0;
     padding: 0.8rem 0.1rem 0;
