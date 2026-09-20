@@ -13,11 +13,13 @@ import {
     getLanguageSelected, setLanguageSelected, setLanguage,
     getBrushSize, setBrushSize, getEraserOn, setEraserOn,
     getHeatViewOn, setHeatViewOn, getSimulationPaused, setSimulationPaused,
-    getWindStrength, setWindStrength
+    getWindStrength, setWindStrength, getGrabberSize, setGrabberSize,
+    getGrabberOn, setGrabberOn
 } from './constantsAndGlobalVars.js';
 import {
     loadParticleDefinitions, initializeWorld, setGameState, startGame,
-    paintLine, paintCell, clearCanvasWorld, setHoverCell
+    paintLine, paintCell, clearCanvasWorld, setHoverCell,
+    beginGrab, dropGrab, cancelGrab
 } from './game.js';
 import {
     getDefinitions, setAmbientTarget, getAmbientTarget, setLayerLapse, getLayerLapse,
@@ -28,6 +30,7 @@ import { initLocalization, localize } from './localization.js';
 import { loadSavedTheme, buildThemeSwatches, buildThemeSelect } from './themes.js';
 
 let isPainting = false;
+let isGrabbing = false;
 let lastCell = null;
 let paintTimer = null;
 let currentCell = { x: 0, y: 0 };
@@ -55,10 +58,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         startGame();
     });
 
-    elements.returnToMenuButton.addEventListener('click', () => {
-        setGameState(getMenuState());
-    });
-
     elements.pauseButton.addEventListener('click', () => {
         setSimulationPaused(!getSimulationPaused());
         elements.pauseButton.textContent = getSimulationPaused() ? 'Play' : 'Pause';
@@ -74,6 +73,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     elements.eraserButton.addEventListener('click', () => {
+        if (!getEraserOn()) setGrabberMode(false);
         setEraserOn(!getEraserOn());
         elements.eraserButton.classList.toggle('active-toggle', getEraserOn());
     });
@@ -83,8 +83,18 @@ document.addEventListener('DOMContentLoaded', async () => {
         elements.brushSizeLabel.textContent = `Brush ${getBrushSize()}`;
     });
 
+    elements.grabberButton.addEventListener('click', () => {
+        setGrabberMode(!getGrabberOn());
+    });
+
+    elements.grabberSizeInput.addEventListener('input', event => {
+        const size = Math.max(1, Math.min(60, parseInt(event.target.value)));
+        setGrabberSize(size);
+        elements.grabberSizeLabel.textContent = `Grab ${size}`;
+    });
+
     setGameState(getMenuState());
-    // Awaited: the menu button labels are looked up as soon as the game starts,
+    // Awaited: the New Game label is looked up as soon as the page starts,
     // so clicking New Game before this finished used to throw.
     await handleLanguageChange(getLanguageSelected());
     setUpAirTemperature();
@@ -293,10 +303,25 @@ function setUpCanvasInput() {
     canvas.addEventListener('contextmenu', event => event.preventDefault());
 
     canvas.addEventListener('mousedown', event => {
+        currentCell = cellFromEvent(event);
+        setHoverCell(currentCell.x, currentCell.y);
+
+        if (getGrabberOn()) {
+            // Right click is the quick way out of Grabber mode. If something
+            // is currently held, cancelling safely restores it first.
+            if (event.button === 2) {
+                isGrabbing = false;
+                setGrabberMode(false);
+                return;
+            }
+            if (event.button !== 0) return;
+            isGrabbing = beginGrab(currentCell.x, currentCell.y, getGrabberSize()) > 0;
+            return;
+        }
+
         isPainting = true;
         // Right button erases without having to switch tool.
         if (event.button === 2) setEraserOn(true);
-        currentCell = cellFromEvent(event);
         lastCell = null;
         paintAtCurrentCell();
         startPaintTimer();
@@ -305,10 +330,16 @@ function setUpCanvasInput() {
     canvas.addEventListener('mousemove', event => {
         currentCell = cellFromEvent(event);
         setHoverCell(currentCell.x, currentCell.y);
+        if (isGrabbing) return;
         if (isPainting) paintAtCurrentCell();
     });
 
     window.addEventListener('mouseup', event => {
+        if (isGrabbing) {
+            if (event.button === 0) dropGrab(currentCell.x, currentCell.y);
+            isGrabbing = false;
+            return;
+        }
         if (!isPainting) return;
         isPainting = false;
         lastCell = null;
@@ -324,8 +355,13 @@ function setUpCanvasInput() {
     // Touch support, so it works on a tablet as well.
     canvas.addEventListener('touchstart', event => {
         event.preventDefault();
-        isPainting = true;
         currentCell = cellFromEvent(event.touches[0]);
+        setHoverCell(currentCell.x, currentCell.y);
+        if (getGrabberOn()) {
+            isGrabbing = beginGrab(currentCell.x, currentCell.y, getGrabberSize()) > 0;
+            return;
+        }
+        isPainting = true;
         lastCell = null;
         paintAtCurrentCell();
         startPaintTimer();
@@ -334,14 +370,33 @@ function setUpCanvasInput() {
     canvas.addEventListener('touchmove', event => {
         event.preventDefault();
         currentCell = cellFromEvent(event.touches[0]);
+        setHoverCell(currentCell.x, currentCell.y);
+        if (isGrabbing) return;
         paintAtCurrentCell();
     }, { passive: false });
 
     canvas.addEventListener('touchend', () => {
+        if (isGrabbing) {
+            dropGrab(currentCell.x, currentCell.y);
+            isGrabbing = false;
+            return;
+        }
         isPainting = false;
         lastCell = null;
         stopPaintTimer();
     });
+}
+
+function setGrabberMode(on) {
+    if (!on) {
+        cancelGrab();
+        isGrabbing = false;
+    } else {
+        setEraserOn(false);
+        getElements().eraserButton.classList.remove('active-toggle');
+    }
+    setGrabberOn(on);
+    getElements().grabberButton.classList.toggle('active-toggle', on);
 }
 
 // The canvas is one pixel per cell but is stretched by CSS, so the on screen

@@ -9,18 +9,18 @@
 // is the single biggest speed win over the old version.
 // -----------------------------------------------------------------------------
 
-import { localize } from './localization.js';
 import {
-    getGridCols, setGridCols, getGridRows, getElements, getLanguage, gameState,
+    getGridCols, setGridCols, getGridRows, getElements, gameState,
     setBeginGameStatus, setGameStateVariable, getBeginGameStatus,
     getMenuState, getGameVisiblePaused, getGameVisibleActive,
     getParticleTypeIdSelected, setParticleDefinitions,
-    getBrushSize, getEraserOn, getHeatViewOn, getSimulationPaused, getWindStrength
+    getBrushSize, getEraserOn, getHeatViewOn, getSimulationPaused, getWindStrength,
+    getGrabberOn, getGrabberSize
 } from './constantsAndGlobalVars.js';
 import {
     prepareDefinitions, createWorld, getWorld, clearWorld, stepSimulation,
     setCell, inBounds, index, getDefinitions, getAmbientTemp, getAirTempAt,
-    getTemperature, getFrameCount, applyWind, decayWindTrails, EMPTY
+    getAmbientTarget, getTemperature, getFrameCount, applyWind, decayWindTrails, EMPTY
 } from './physics.js';
 
 let context = null;
@@ -31,6 +31,7 @@ let lastFpsCheck = 0;
 let fps = 0;
 let loopRunning = false;
 let gridFittedToWorkspace = false;
+let grabbedPixels = null;
 
 //--------------------------------------------------------------------------------------------------------
 
@@ -138,6 +139,7 @@ function drawWorld() {
     const wind = world.wind;
     const total = type.length;
     const heatView = getHeatViewOn();
+    const airTint = airTintForTemperature(getAmbientTarget());
     // Lit gunpowder flickers between its two colours while it catches.
     const flicker = (getFrameCount() & 2) === 0;
 
@@ -151,21 +153,15 @@ function drawWorld() {
         }
 
         if (id === EMPTY) {
-            // Empty air is black unless the wind has just been through it, in
-            // which case it carries a faint cool haze that fades over the next
-            // few frames. It is deliberately dim: enough to see which way the
-            // air is moving, not enough to read as a material.
+            // The whole air mass takes a subtle tint from the air-temperature
+            // dial, never from a nearby flame or ice cell. The curve is quiet
+            // around ordinary weather and increasingly strong near the two
+            // extremes. Wind adds its pale haze on top.
             const blown = wind[i];
-            if (blown > 0) {
-                const f = blown / 255;
-                pixels[p] = clampByte(24 * f);
-                pixels[p + 1] = clampByte(38 * f);
-                pixels[p + 2] = clampByte(56 * f);
-            } else {
-                pixels[p] = 0;
-                pixels[p + 1] = 0;
-                pixels[p + 2] = 0;
-            }
+            const f = blown / 255;
+            pixels[p] = clampByte(airTint[0] + 24 * f);
+            pixels[p + 1] = clampByte(airTint[1] + 38 * f);
+            pixels[p + 2] = clampByte(airTint[2] + 56 * f);
             pixels[p + 3] = 255;
             continue;
         }
@@ -224,11 +220,26 @@ function drawWorld() {
         pixels[p + 3] = 255;
     }
 
+    drawGrabberPreview();
     context.putImageData(imageData, 0, 0);
+    drawGrabberOutline();
 }
 
 function clampByte(v) {
     return v < 0 ? 0 : v > 255 ? 255 : v | 0;
+}
+
+// Non-linear on purpose: a few degrees of ordinary weather barely alter the
+// black air, while the far ends of the slider develop a clear icy blue or hot
+// orange-red glow. Local particle temperatures never enter this calculation.
+export function airTintForTemperature(t) {
+    const cold = Math.pow(Math.max(0, Math.min(1, (15 - t) / 75)), 1.7);
+    const hot = Math.pow(Math.max(0, Math.min(1, (t - 35) / 565)), 1.7);
+    return [
+        clampByte(8 * cold + 96 * hot),
+        clampByte(28 * cold + 26 * hot),
+        clampByte(72 * cold + 6 * hot)
+    ];
 }
 
 // Temperature overlay: deep blue when frozen, through green at room
@@ -264,6 +275,34 @@ export function setHoverCell(x, y) {
     hoverY = y;
 }
 
+function drawGrabberOutline() {
+    if (!getGrabberOn() || !inBounds(hoverX, hoverY)) return;
+    const size = getGrabberSize();
+    const left = hoverX - Math.floor(size / 2);
+    const top = hoverY - Math.floor(size / 2);
+    context.strokeStyle = grabbedPixels ? '#ffd166' : '#8bdcff';
+    context.lineWidth = 1;
+    context.strokeRect(left + 0.5, top + 0.5, size, size);
+}
+
+// Held cells are drawn into the frame buffer at the exact positions where a
+// release would put them, but are not restored to the simulation until the
+// mouse button comes up. The world therefore keeps evolving underneath a clear
+// visual copy of the shape being carried.
+function drawGrabberPreview() {
+    if (!grabbedPixels || !inBounds(hoverX, hoverY)) return;
+    const centre = safeGrabCentre(hoverX, hoverY, grabbedPixels.cells);
+    for (const cell of grabbedPixels.cells) {
+        const x = centre.x + cell.dx;
+        const y = centre.y + cell.dy;
+        const p = index(x, y) * 4;
+        pixels[p] = cell.previewR;
+        pixels[p + 1] = cell.previewG;
+        pixels[p + 2] = cell.previewB;
+        pixels[p + 3] = 255;
+    }
+}
+
 function updateReadout() {
     const readout = getElements().readout;
     if (!readout) return;
@@ -273,7 +312,8 @@ function updateReadout() {
     for (let i = 0; i < type.length; i++) if (type[i] !== EMPTY) count++;
 
     const defs = getDefinitions();
-    const selected = getEraserOn() ? 'Eraser' : defs[getParticleTypeIdSelected()].name;
+    const selected = getGrabberOn() ? `Grabber ${getGrabberSize()}px`
+        : (getEraserOn() ? 'Eraser' : defs[getParticleTypeIdSelected()].name);
 
     let under = '';
     if (inBounds(hoverX, hoverY)) {
@@ -357,7 +397,107 @@ export function paintLine(x0, y0, x1, y1) {
     }
 }
 
+// Removes every cell matching the single material directly under the cursor,
+// but only inside the square shown by the Grabber. Full particle state is kept
+// so hot, burning or ageing material remains exactly what it was while moved.
+export function beginGrab(centreX, centreY, size = getGrabberSize()) {
+    if (grabbedPixels || !inBounds(centreX, centreY)) return 0;
+    const world = getWorld();
+    const grabbedId = world.type[index(centreX, centreY)];
+    if (grabbedId === EMPTY) return 0;
+
+    const left = centreX - Math.floor(size / 2);
+    const top = centreY - Math.floor(size / 2);
+    const cells = [];
+    for (let oy = 0; oy < size; oy++) {
+        for (let ox = 0; ox < size; ox++) {
+            const x = left + ox;
+            const y = top + oy;
+            if (!inBounds(x, y)) continue;
+            const i = index(x, y);
+            if (world.type[i] !== grabbedId) continue;
+            const p = i * 4;
+            const def = getDefinitions()[grabbedId];
+            cells.push({
+                dx: x - centreX, dy: y - centreY,
+                x, y,
+                type: world.type[i], temp: world.temp[i], life: world.life[i],
+                residue: world.residue[i], shade: world.shade[i],
+                heat: world.heat[i], data: world.data[i], wind: world.wind[i],
+                previewR: pixels ? pixels[p] : def.rgb[0],
+                previewG: pixels ? pixels[p + 1] : def.rgb[1],
+                previewB: pixels ? pixels[p + 2] : def.rgb[2]
+            });
+            clearGrabbedCell(world, i, y);
+        }
+    }
+    grabbedPixels = { centreX, centreY, cells };
+    return cells.length;
+}
+
+export function dropGrab(centreX, centreY) {
+    if (!grabbedPixels) return 0;
+    const held = grabbedPixels;
+    grabbedPixels = null;
+    if (held.cells.length === 0) return 0;
+
+    const centre = safeGrabCentre(centreX, centreY, held.cells);
+    const world = getWorld();
+    for (const cell of held.cells) restoreGrabbedCell(world,
+        index(centre.x + cell.dx, centre.y + cell.dy), cell);
+    return held.cells.length;
+}
+
+function safeGrabCentre(centreX, centreY, cells) {
+    let minDx = 0, maxDx = 0, minDy = 0, maxDy = 0;
+    for (const cell of cells) {
+        minDx = Math.min(minDx, cell.dx); maxDx = Math.max(maxDx, cell.dx);
+        minDy = Math.min(minDy, cell.dy); maxDy = Math.max(maxDy, cell.dy);
+    }
+    return {
+        x: Math.max(-minDx, Math.min(getGridCols() - 1 - maxDx, centreX)),
+        y: Math.max(-minDy, Math.min(getGridRows() - 1 - maxDy, centreY))
+    };
+}
+
+export function cancelGrab() {
+    if (!grabbedPixels) return 0;
+    const held = grabbedPixels;
+    grabbedPixels = null;
+    const world = getWorld();
+    for (const cell of held.cells) restoreGrabbedCell(world, index(cell.x, cell.y), cell);
+    return held.cells.length;
+}
+
+export function hasGrabbedPixels() {
+    return !!grabbedPixels;
+}
+
+function clearGrabbedCell(world, i, y) {
+    world.type[i] = EMPTY;
+    world.temp[i] = getAirTempAt(y);
+    world.life[i] = 0;
+    world.residue[i] = EMPTY;
+    world.heat[i] = 0;
+    world.data[i] = 0;
+    world.wind[i] = 0;
+    world.moved[i] = 1;
+}
+
+function restoreGrabbedCell(world, i, cell) {
+    world.type[i] = cell.type;
+    world.temp[i] = cell.temp;
+    world.life[i] = cell.life;
+    world.residue[i] = cell.residue;
+    world.shade[i] = cell.shade;
+    world.heat[i] = cell.heat;
+    world.data[i] = cell.data;
+    world.wind[i] = cell.wind;
+    world.moved[i] = 1;
+}
+
 export function clearCanvasWorld() {
+    grabbedPixels = null;
     clearWorld();
 }
 
@@ -398,7 +538,6 @@ export function setGameState(newState) {
             elements.buttonRow.classList.add('d-flex');
             elements.canvasContainer.classList.remove('d-none');
             elements.canvasContainer.classList.add('d-flex');
-            elements.returnToMenuButton.innerHTML = `${localize('menuTitle', getLanguage())}`;
             elements.floatingContainer.classList.remove('d-none');
             break;
     }

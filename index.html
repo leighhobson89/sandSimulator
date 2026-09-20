@@ -27,61 +27,76 @@
     <!-- Simulator -->
     <div id="canvasContainer" class="d-none">
         <header id="buttonRow">
-            <div class="toolbar-group toolbar-brand">
-                <span class="brand-dot"></span>
-                <span class="brand-name">Sand Simulator</span>
+            <div class="toolbar-line toolbar-line-primary">
+                <div class="toolbar-group toolbar-brand">
+                    <span class="brand-dot"></span>
+                    <span class="brand-name">Sand Simulator</span>
+                </div>
+
+                <div class="toolbar-group">
+                    <button id="pauseButton" class="btn btn-tool">Pause</button>
+                    <button id="clearButton" class="btn btn-tool">Clear</button>
+                    <button id="heatViewButton" class="btn btn-tool">Heat View</button>
+                    <button id="eraserButton" class="btn btn-tool">Eraser</button>
+                </div>
+
+                <div class="toolbar-group brush-group">
+                    <label id="brushSizeLabel" for="brushSize">Brush 3</label>
+                    <input id="brushSize" type="range" min="1" max="31" step="2" value="3">
+                </div>
+
+                <div class="toolbar-group brush-group">
+                    <label id="airTempLabel" for="airTemp">Air</label>
+                    <input id="airTemp" type="range" min="-60" max="600" step="1" value="8">
+                    <input id="airTempValue" class="number-input" type="number"
+                           min="-60" max="600" step="1" value="8"
+                           title="Type a temperature, then click away or press Enter">
+                    <span class="unit">&deg;C</span>
+                </div>
+
+                <div class="toolbar-group toolbar-end">
+                    <span id="readout" class="readout">&nbsp;</span>
+                    <select id="themeSelect" class="select-input" title="Change the look"></select>
+                </div>
             </div>
 
-            <div class="toolbar-group">
-                <button id="pauseButton" class="btn btn-tool">Pause</button>
-                <button id="clearButton" class="btn btn-tool">Clear</button>
-                <button id="heatViewButton" class="btn btn-tool">Heat View</button>
-                <button id="eraserButton" class="btn btn-tool">Eraser</button>
-            </div>
+            <div class="toolbar-line toolbar-line-secondary">
+                <div class="toolbar-group brush-group grabber-controls">
+                    <button id="grabberButton" class="btn btn-tool icon-button"
+                            aria-label="Grabber" title="Grab one material type inside the outlined square">
+                        <svg class="grabber-icon" viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M12 2v5M8.5 7h7M9 7.5l-4 6.2 1.7 4.1M15 7.5l4 6.2-1.7 4.1M12 8v6.5"/>
+                            <path d="M6.7 17.8c1.1 2.2 2.8 3.2 5.3 3.2s4.2-1 5.3-3.2M10.2 14.5 12 17l1.8-2.5"/>
+                        </svg>
+                    </button>
+                    <label id="grabberSizeLabel" for="grabberSize">Grab 15</label>
+                    <input id="grabberSize" type="range" min="1" max="60" step="1" value="15">
+                </div>
 
-            <div class="toolbar-group brush-group">
-                <label id="brushSizeLabel" for="brushSize">Brush 3</label>
-                <input id="brushSize" type="range" min="1" max="31" step="2" value="3">
-            </div>
+                <div class="toolbar-group brush-group">
+                    <label class="toggle" for="airLayers"
+                           title="Unchecked, the air is one even temperature from top to bottom">
+                        <input id="airLayers" type="checkbox" checked>
+                        <span class="sr-only">Air layers</span>
+                    </label>
+                    <label id="layerLapseLabel" for="layerLapse"
+                           title="How much colder each fifth of the height is than the one below it">Layers 2.0</label>
+                    <input id="layerLapse" type="range" min="0" max="10" step="0.5" value="2">
+                </div>
 
-            <div class="toolbar-group brush-group">
-                <label id="airTempLabel" for="airTemp">Air</label>
-                <input id="airTemp" type="range" min="-60" max="600" step="1" value="8">
-                <input id="airTempValue" class="number-input" type="number"
-                       min="-60" max="600" step="1" value="8"
-                       title="Type a temperature, then click away or press Enter">
-                <span class="unit">&deg;C</span>
-            </div>
+                <div class="toolbar-group brush-group">
+                    <label id="windStrengthLabel" for="windStrength"
+                           title="How hard the wind tool blows">Wind 2</label>
+                    <input id="windStrength" type="range" min="1" max="8" step="1" value="2">
+                </div>
 
-            <div class="toolbar-group brush-group">
-                <label class="toggle" for="airLayers"
-                       title="Unchecked, the air is one even temperature from top to bottom">
-                    <input id="airLayers" type="checkbox" checked>
-                    <span class="sr-only">Air layers</span>
-                </label>
-                <label id="layerLapseLabel" for="layerLapse"
-                       title="How much colder each fifth of the height is than the one below it">Layers 2.0</label>
-                <input id="layerLapse" type="range" min="0" max="10" step="0.5" value="2">
-            </div>
-
-            <div class="toolbar-group brush-group">
-                <label id="windStrengthLabel" for="windStrength"
-                       title="How hard the wind tool blows">Wind 2</label>
-                <input id="windStrength" type="range" min="1" max="8" step="1" value="2">
-            </div>
-
-            <div class="toolbar-group">
-                <label class="toggle" for="ambientWind"
-                       title="A soft breeze that gusts across the world every few seconds, carrying seeds, dry powders and smoke with it">
-                    <input id="ambientWind" type="checkbox">
-                    <span>Breeze</span>
-                </label>
-            </div>
-
-            <div class="toolbar-group toolbar-end">
-                <span id="readout" class="readout">&nbsp;</span>
-                <select id="themeSelect" class="select-input" title="Change the look"></select>
-                <button id="returnToMenu" class="btn btn-ghost">Menu</button>
+                <div class="toolbar-group">
+                    <label class="toggle" for="ambientWind"
+                           title="A soft breeze that gusts across the world every few seconds, carrying seeds, dry powders and smoke with it">
+                        <input id="ambientWind" type="checkbox">
+                        <span>Breeze</span>
+                    </label>
+                </div>
             </div>
         </header>
 

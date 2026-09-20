@@ -25,8 +25,10 @@ export const GRID_ROWS = 150;
 let particleDefinitions = null;
 let particleTypeIdSelected = 1; //starting particle sand
 let brushSize = 3;
+let grabberSize = 15;
 let windStrength = 2;
 let eraserOn = false;
+let grabberOn = false;
 let heatViewOn = false;
 let simulationPaused = false;
 
@@ -45,7 +47,6 @@ export function setElements() {
         menu: document.getElementById('menu'),
         menuTitle: document.getElementById('menuTitle'),
         newGameMenuButton: document.getElementById('newGame'),
-        returnToMenuButton: document.getElementById('returnToMenu'),
         canvas: document.getElementById('canvas'),
         canvasContainer: document.getElementById('canvasContainer'),
         buttonRow: document.getElementById('buttonRow'),
@@ -54,8 +55,11 @@ export function setElements() {
         clearButton: document.getElementById('clearButton'),
         heatViewButton: document.getElementById('heatViewButton'),
         eraserButton: document.getElementById('eraserButton'),
+        grabberButton: document.getElementById('grabberButton'),
         brushSizeInput: document.getElementById('brushSize'),
         brushSizeLabel: document.getElementById('brushSizeLabel'),
+        grabberSizeInput: document.getElementById('grabberSize'),
+        grabberSizeLabel: document.getElementById('grabberSizeLabel'),
         airTempInput: document.getElementById('airTemp'),
         airTempValue: document.getElementById('airTempValue'),
         airTempLabel: document.getElementById('airTempLabel'),
@@ -233,6 +237,22 @@ export function getBrushSize() {
 
 export function setBrushSize(value) {
     brushSize = value;
+}
+
+export function getGrabberSize() {
+    return grabberSize;
+}
+
+export function setGrabberSize(value) {
+    grabberSize = value;
+}
+
+export function getGrabberOn() {
+    return grabberOn;
+}
+
+export function setGrabberOn(value) {
+    grabberOn = !!value;
 }
 
 export function getWindStrength() {

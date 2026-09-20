@@ -70,13 +70,16 @@ function makeElement(id) {
             return {
                 imageSmoothingEnabled: true,
                 createImageData: (w, h) => ({ width: w, height: h, data: new Uint8ClampedArray(w * h * 4) }),
-                putImageData() { putCount++; }
+                putImageData(data) { putCount++; lastImageData = data; },
+                strokeRect() { strokeCount++; }
             };
         }
     };
 }
 
 let putCount = 0;
+let strokeCount = 0;
+let lastImageData = null;
 const elements = {};
 function byId(id) {
     if (!elements[id]) elements[id] = makeElement(id);
@@ -95,7 +98,11 @@ globalThis.document = {
     // The theme is applied by setting an attribute on the body.
     body: makeElement('body')
 };
-globalThis.window = { addEventListener() {} };
+const windowListeners = {};
+globalThis.window = {
+    addEventListener(type, handler) { (windowListeners[type] ||= []).push(handler); },
+    fire(type, event = {}) { (windowListeners[type] || []).forEach(handler => handler(event)); }
+};
 // Nowhere to remember the chosen theme, which is one of the cases themes.js has
 // to cope with - a page opened straight off disk gets the same treatment.
 globalThis.localStorage = {
@@ -128,6 +135,15 @@ const ready = documentListeners['DOMContentLoaded'] || [];
 if (ready.length === 0) fail('ui.js never registered a DOMContentLoaded handler');
 for (const handler of ready) await handler();
 pass('page start-up ran without throwing');
+
+const indexMarkup = await readFile(root + 'index.html', 'utf8');
+if (!indexMarkup.includes('id="returnToMenu"')) pass('the simulator toolbar no longer has a Menu button');
+else fail('the Menu button is still present');
+if (indexMarkup.includes('toolbar-line-secondary') && indexMarkup.includes('class="grabber-icon"')) {
+    pass('the lower toolbar uses a claw icon for Grabber mode');
+} else {
+    fail('the Grabber claw is missing from the lower toolbar');
+}
 
 const panel = byId('particleButtons');
 const materialButtons = panel.querySelectorAll('.particle-button');
@@ -193,7 +209,7 @@ if (windButton) {
 } else {
     fail('no wind tool button was built');
 }
-canvas.fire('mouseup', { button: 0 });
+window.fire('mouseup', { button: 0 });
 
 // Every toolbar control should be clickable without blowing up.
 for (const id of ['pauseButton', 'clearButton', 'heatViewButton', 'eraserButton']) {
@@ -206,6 +222,73 @@ pass('pause, clear, heat view and eraser all work');
 byId('brushSize').value = '9';
 byId('brushSize').fire('input', { target: { value: '9' } });
 pass('the brush size slider works');
+
+// Grabber: only the material directly under the pointer moves, even when a
+// different material is inside the same square.
+const physicsForGrab = await import('../physics.js');
+const defsForGrab = physicsForGrab.getDefinitions();
+const stoneId = defsForGrab.findIndex(d => d && d.name === 'Stone');
+const glassId = defsForGrab.findIndex(d => d && d.name === 'Glass');
+physicsForGrab.clearWorld();
+physicsForGrab.setCell(50, 50, stoneId);
+physicsForGrab.setCell(52, 51, stoneId);
+physicsForGrab.setCell(49, 50, glassId);
+byId('grabberSize').fire('input', { target: { value: '9' } });
+byId('grabberButton').click();
+const toClient = (x, y) => ({
+    clientX: ((x + 0.5) / startedCanvas.width) * 800,
+    clientY: ((y + 0.5) / startedCanvas.height) * 600
+});
+canvas.fire('mousemove', toClient(50, 50));
+runFrames(1);
+if (strokeCount > 0) pass('grabber mode draws its square around the pointer');
+else fail('grabber mode did not draw an outline');
+canvas.fire('mousedown', { button: 0, ...toClient(50, 50) });
+canvas.fire('mousemove', { button: 0, ...toClient(80, 70) });
+runFrames(1);
+const previewOffset = physicsForGrab.index(80, 70) * 4;
+const previewVisible = physicsForGrab.getWorld().type[physicsForGrab.index(80, 70)] === 0 &&
+    lastImageData && lastImageData.data[previewOffset] > 40;
+if (previewVisible) pass('held pixels are previewed at their prospective drop position');
+else fail('held pixels were invisible while the mouse was down');
+window.fire('mouseup', { button: 0 });
+const grabbedWorld = physicsForGrab.getWorld().type;
+const movedOnlyStone = grabbedWorld[physicsForGrab.index(80, 70)] === stoneId &&
+    grabbedWorld[physicsForGrab.index(82, 71)] === stoneId &&
+    grabbedWorld[physicsForGrab.index(49, 50)] === glassId &&
+    grabbedWorld[physicsForGrab.index(50, 50)] === 0;
+if (movedOnlyStone) pass('grabber moved only the selected material type');
+else fail('grabber moved the wrong cells or failed to drop them');
+canvas.fire('mousedown', { button: 2, ...toClient(80, 70) });
+if (!byId('grabberButton').classList.contains('active-toggle')) {
+    pass('right click exits grabber mode');
+} else {
+    fail('right click left grabber mode active');
+}
+byId('grabberSize').fire('input', { target: { value: '60' } });
+const { getGrabberSize } = await import('../constantsAndGlobalVars.js');
+if (getGrabberSize() === 60 && byId('grabberSizeLabel').textContent === 'Grab 60') {
+    pass('grabber size reaches the full 60-pixel square');
+} else {
+    fail(`grabber size stopped at ${getGrabberSize()}`);
+}
+byId('grabberButton').click();
+byId('grabberButton').click();
+if (!byId('grabberButton').classList.contains('active-toggle')) {
+    pass('pressing the Grabber button again exits the mode');
+} else {
+    fail('the Grabber button could not exit its own mode');
+}
+
+const { airTintForTemperature } = await import('../game.js');
+const coldTint = airTintForTemperature(-60);
+const mildTint = airTintForTemperature(20);
+const hotTint = airTintForTemperature(600);
+if (coldTint[2] > coldTint[0] && hotTint[0] > hotTint[2] && mildTint.every(v => v <= 2)) {
+    pass('air tint is blue when cold, subtle when mild and orange-red when hot');
+} else {
+    fail(`unexpected air tints: cold ${coldTint}, mild ${mildTint}, hot ${hotTint}`);
+}
 
 const { getAmbientTarget } = await import('../physics.js');
 const airSlider = byId('airTemp');
@@ -288,11 +371,8 @@ themeSelect.fire('change');
 if (getTheme() === THEMES[0].id) pass('and the dropdown switches it back');
 else fail(`the dropdown did nothing (theme is ${getTheme()})`);
 
-byId('returnToMenu').click();
-runFrames(3);
-byId('newGame').click();
 runFrames(5);
-pass('going back to the menu and starting again works');
+pass('the simulation keeps running without the old Menu control');
 
 console.log(failures === 0 ? '\nSmoke test passed\n' : `\n${failures} smoke test failures\n`);
 process.exit(failures > 0 ? 1 : 0);

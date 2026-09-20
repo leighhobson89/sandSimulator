@@ -337,13 +337,26 @@ button.disabled {
 
 #buttonRow {
     display: flex;
-    align-items: center;
-    gap: var(--toolbar-gap);
-    flex-wrap: wrap;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.55rem;
     padding: var(--toolbar-pad);
     border-bottom: var(--border) solid var(--line);
     background-color: var(--bg-raised);
     backdrop-filter: var(--panel-blur);
+}
+
+.toolbar-line {
+    display: flex;
+    align-items: center;
+    gap: var(--toolbar-gap);
+    flex-wrap: wrap;
+    min-width: 0;
+}
+
+.toolbar-line-secondary {
+    padding-top: 0.45rem;
+    border-top: var(--border) solid var(--line);
 }
 
 .toolbar-group {
@@ -388,6 +401,29 @@ button.disabled {
     color: var(--text-dim);
     font-family: var(--mono);
     white-space: nowrap;
+}
+
+.grabber-controls input[type="range"] {
+    width: 95px;
+}
+
+.icon-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.35rem;
+    height: 2.1rem;
+    padding: 0;
+}
+
+.grabber-icon {
+    width: 1.25rem;
+    height: 1.25rem;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
 }
 
 input[type="range"] {

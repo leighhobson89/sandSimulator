@@ -84,6 +84,20 @@ check('sand spread into a pile', surfaceOf(29, ID.Sand) > ROWS - 6);
 
 // ---------------------------------------------------------------------------
 
+section('Ash falls much more slowly than snow');
+for (let x = 5; x < 55; x += 2) {
+    setCell(x, 2, ID.Ash);
+    setCell(x + 1, 2, ID.Snow);
+}
+run(20);
+const ashHeight = meanHeightOf(ID.Ash);
+const snowHeight = meanHeightOf(ID.Snow);
+check('ash descends at less than half the speed of snow',
+    ashHeight !== null && snowHeight !== null && ashHeight < snowHeight * 0.5,
+    `ash row ${ashHeight?.toFixed(1)}, snow row ${snowHeight?.toFixed(1)}`);
+
+// ---------------------------------------------------------------------------
+
 section('Water finds its own level');
 fillRect(10, 10, 6, 14, ID.Water);
 const waterStart = countOf(ID.Water);
@@ -375,6 +389,42 @@ getWorld().temp.fill(1000);
 run(30);
 check('continued heating melts scoria into lava', countOf(ID.Lava) > 0,
     `${countOf(ID.Lava)} lava`);
+setLayerLapse(2);
+
+section('Thick insulating materials keep their interior temperature');
+setLayerLapse(0);
+fillRect(20, 14, 21, 17, ID.Glass);
+const insulatedWorld = getWorld();
+insulatedWorld.temp.fill(-40);
+for (let y = 14; y < 31; y++) {
+    for (let x = 20; x < 41; x++) insulatedWorld.temp[index(x, y)] = 300;
+}
+run(70);
+let glassShell = 0;
+let shellCells = 0;
+let glassCore = 0;
+let coreCells = 0;
+for (let y = 14; y < 31; y++) {
+    for (let x = 20; x < 41; x++) {
+        const t = tempAt(x, y);
+        if (x === 20 || x === 40 || y === 14 || y === 30) {
+            glassShell += t;
+            shellCells++;
+        } else if (x >= 27 && x <= 33 && y >= 19 && y <= 25) {
+            glassCore += t;
+            coreCells++;
+        }
+    }
+}
+glassShell /= shellCells;
+glassCore /= coreCells;
+check('the exposed glass cooled while its layered interior retained heat',
+    glassShell < 250 && glassCore > glassShell + 25,
+    `shell ${glassShell.toFixed(1)}C, core ${glassCore.toFixed(1)}C`);
+check('dense solids insulate more strongly than fluids and powders',
+    defs[ID.Glass].bulkInsulation > defs[ID.Water].bulkInsulation &&
+    defs[ID.Stone].bulkInsulation > defs[ID.Sand].bulkInsulation,
+    `glass ${defs[ID.Glass].bulkInsulation}, water ${defs[ID.Water].bulkInsulation}`);
 setLayerLapse(2);
 
 // ---------------------------------------------------------------------------

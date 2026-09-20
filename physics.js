@@ -111,6 +111,7 @@ export function prepareDefinitions(json) {
         density: 0,
         conductivity: json.airConductivity !== undefined ? json.airConductivity : 0.06,
         cooling: json.airCooling !== undefined ? json.airCooling : 0.012,
+        bulkInsulation: 0,
         defaultTemp: AMBIENT,
         emit: 0,
         emitRate: 0,
@@ -137,6 +138,10 @@ export function prepareDefinitions(json) {
             density: p.density || 0,
 
             fallSpeed: p.fallSpeed || 0,
+            // Fractional gravity cadence for exceptionally light powders.
+            // fallSpeed cannot go below one cell, so Ash uses this to fall on
+            // only some frames and genuinely drift down more slowly than Snow.
+            fallChance: p.fallChance === undefined ? 1 : p.fallChance,
             slide: p.slide || 0,
             repose: p.repose || 1,
             spread: p.spread || 0,
@@ -146,6 +151,12 @@ export function prepareDefinitions(json) {
 
             conductivity: p.conductivity === undefined ? 0.06 : p.conductivity,
             cooling: p.cooling === undefined ? 0.004 : p.cooling,
+            // How strongly a cell is protected when it is buried inside more
+            // of the same material. Exposed faces keep most of their normal
+            // response; fully surrounded cells retain heat or cold longer.
+            bulkInsulation: p.bulkInsulation === undefined
+                ? defaultBulkInsulation(p.category)
+                : p.bulkInsulation,
             // Degrees given up per frame on its own account, whatever the air
             // is doing. This is how something that starts white hot cools: at
             // its own pace, evenly through the whole of it, and never below the
@@ -508,6 +519,13 @@ function transform(i, id, life, residue) {
     world.moved[i] = 1;
 }
 
+function defaultBulkInsulation(category) {
+    if (category === 'static') return 0.3;
+    if (category === 'powder') return 0.12;
+    if (category === 'liquid') return 0.05;
+    return 0;
+}
+
 function removeParticle(i) {
     world.type[i] = EMPTY;
     world.life[i] = 0;
@@ -623,8 +641,22 @@ function diffuseHeat() {
 
             const average = (up + down + left + right) * 0.25;
 
-            let result = t + (average - t) * def.conductivity;
-            result += (rowAir + airOffset[shade[i]] - result) * def.cooling;
+            // A surface still responds almost normally, but heat has a harder
+            // time reaching a cell buried behind several layers of the same
+            // material. Four matching neighbours is a true interior cell;
+            // three is a shallow subsurface cell and receives half the effect.
+            let sameNeighbours = 0;
+            const id = type[i];
+            if (y > 0 && type[i - COLS] === id) sameNeighbours++;
+            if (y < ROWS - 1 && type[i + COLS] === id) sameNeighbours++;
+            if (x > 0 && type[i - 1] === id) sameNeighbours++;
+            if (x < COLS - 1 && type[i + 1] === id) sameNeighbours++;
+            const buried = Math.max(0, (sameNeighbours - 2) * 0.5);
+            const conductionScale = 1 - def.bulkInsulation * buried;
+            const coolingScale = 1 - def.bulkInsulation * buried * 0.7;
+
+            let result = t + (average - t) * def.conductivity * conductionScale;
+            result += (rowAir + airOffset[shade[i]] - result) * def.cooling * coolingScale;
 
             // Heat sources (fire, lava) push themselves back up towards their
             // own temperature. emitRate decides how hard that is to fight:
@@ -1611,6 +1643,8 @@ function movePowder(x, y, i, def, sluggish) {
             return;
         }
     }
+
+    if (body.fallChance < 1 && Math.random() > body.fallChance) return;
 
     let cy = y;
     let ci = i;

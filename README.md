@@ -35,7 +35,7 @@ node tools/tuneIce.mjs                             # ice: lasts at room temperat
 | | |
 |---|---|
 | Left click / drag | pour the selected material |
-| Right click | erase |
+| Right click | erase, or exit Grabber mode |
 | Space | pause |
 | E | eraser |
 | H | heat view (shows temperature instead of materials) |
@@ -44,6 +44,15 @@ node tools/tuneIce.mjs                             # ice: lasts at room temperat
 The toolbar also carries the brush size, the air temperature, the air layering,
 the wind strength, the natural breeze and the theme. All of them are described
 below.
+
+**Grabber** moves existing material instead of painting more. Its fairground
+claw button and separate 1-to-60-pixel square size sit on the lower toolbar row.
+Activate the claw, then hold the left mouse button over a material. It lifts
+every pixel of that one type inside the outlined square while leaving all other
+materials there. A copy of the lifted shape follows the pointer inside the
+square to show exactly what will be dropped and where; release to place it.
+Right-click or press the claw again to leave the mode. Cancelling while
+something is held restores it to its original position.
 
 The **air temperature** runs from -60C to 600C. Drag the slider for a rough
 setting, or type an exact number in the box beside it and press Enter - each one
@@ -64,6 +73,12 @@ even temperature throughout. The checkbox beside the slider switches layering
 off altogether, which greys the slider out and makes the air even everywhere.
 Unlike dragging the slider to zero it leaves the setting alone, so switching
 layers back on brings back whatever was there before.
+
+The empty air also takes a subtle colour from this overall setting: increasingly
+blue toward the cold end of the slider and increasingly orange-red toward the
+hot end. The curve stays nearly black through ordinary temperatures and grows
+strongest only near the extremes. A local fire, ice block or ray does not tint
+the whole sky.
 
 **Heat Ray** and **Cold Ray** are brushes rather than materials. They burn out
 after a few frames instead of collecting on the floor, and while they last they
@@ -144,6 +159,13 @@ four neighbours at a rate set by the material, and leaks towards the ambient air
 temperature of 20C. Fire holds itself at its own temperature and throws heat at
 everything around it, which is what makes it a heat source. Lava does not hold
 itself up: it starts white hot and gives its heat up slowly, at its own rate.
+
+Material in bulk adds another modest layer to that calculation. An exposed cell
+responds almost normally, a cell with three neighbours of its own kind is partly
+sheltered, and a cell surrounded on all four sides exchanges heat more slowly.
+Glass, stone, ceramic, clay and wood retain the most; loose powders and fluids
+retain much less. This lets the outside of a thick block chill against ice while
+its interior stays warm, without making any material a perfect insulator.
 
 Nearly all of the interesting behaviour falls out of that one number rather than
 being special-cased:
@@ -242,6 +264,10 @@ lighter than itself and rises through anything heavier, which is all it takes to
 get sand sinking through water, ice and oil floating on top, and bubbles of
 steam rising out of a pond. Powders also slide diagonally, liquids also flow
 sideways, and gases do the same in reverse.
+
+Ash is exceptionally light: gravity only catches it on about one frame in five,
+so it drifts downward substantially more slowly than even Snow and is easily
+carried by wind.
 
 The exception is that one powder is never weighed against another. Grains that
 land on other grains stay on top of them, wet or dry, and only fluids are pushed
