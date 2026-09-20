@@ -712,9 +712,17 @@ export function captureBlueprint(x0, y0, x1, y1) {
 // always overrides the existing world rather than acting like the brush.
 export function stampBlueprint(blueprint, centreX, centreY) {
     if (!blueprint?.cells || !Number.isInteger(blueprint.width) || !Number.isInteger(blueprint.height)) return 0;
-    const world = getWorld();
     const startX = Math.round(centreX - (blueprint.width - 1) / 2);
     const startY = Math.round(centreY - (blueprint.height - 1) / 2);
+    return stampBlueprintAt(blueprint, startX, startY);
+}
+
+// This top-left variant is used by the session-only stamp history. It restores
+// an exact captured patch rather than centring it again, which is especially
+// important for stamps that were clipped at a world edge.
+export function stampBlueprintAt(blueprint, startX, startY) {
+    if (!blueprint?.cells || !Number.isInteger(blueprint.width) || !Number.isInteger(blueprint.height)) return 0;
+    const world = getWorld();
     let stamped = 0;
     for (let sy = 0; sy < blueprint.height; sy++) {
         const y = startY + sy;

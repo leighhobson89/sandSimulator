@@ -108,6 +108,16 @@ forms.
 
 - Paint with a brush or deferred line; right-click erase; use Space to pause,
   E for eraser, H for heat view and brackets for brush size.
+- The right workspace panel has Tools and Blueprints tabs. Blueprints captures
+  a paused rectangular marquee, stores up to 24 numbered previews and stamps a
+  selected design over existing material with a half-transparent cursor
+  preview. The oldest slot is replaced after the library is full. Right-click
+  or choosing another tool/material cancels selection or stamping and resumes
+  play.
+- Blueprint stamps have a session-only, ten-step history. Undo and Redo are
+  available beneath the Blueprint slots and through Ctrl+Z and Ctrl+Shift+Z
+  (Cmd on macOS). This temporary history is intentionally not included in
+  autosaves or portable game strings.
 - Grabber lifts and moves only one material type in an adjustable square, with
   an on-canvas preview and safe cancel/restore.
 - Air temperature, thermal layers, wind, breeze, heat view and machine controls
@@ -117,11 +127,11 @@ forms.
   world, while Clear World wipes it without directly changing the saved Resume
   Game.
 - Six responsive visual themes are remembered with local storage.
-- The complete world, environment and tool state can be exported as a portable
-  LZString and imported from a pasted string. One local Resume Game autosaves
-  every minute; New Game and Import protect an existing resume slot with an
-  explicit replace-or-play-without-autosave choice, plus Cancel to leave the
-  current world and saved resume unchanged.
+- The complete world, environment, tool state and 24-slot Blueprint library
+  can be exported as a portable LZString and imported from a pasted string.
+  One local Resume Game autosaves every minute; New Game and Import protect an
+  existing resume slot with an explicit replace-or-play-without-autosave
+  choice, plus Cancel to leave the current world and saved resume unchanged.
 - The source is separated into data, headless physics, rendering and UI.
   Automated coverage includes 250 seeded physics assertions, a 260x150 speed
   check, syntax/JSON validation, a stand-in-browser UI smoke test and a

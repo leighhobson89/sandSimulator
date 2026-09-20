@@ -26,9 +26,9 @@ recorded in [`COMPLETED_FEATURES.md`](COMPLETED_FEATURES.md).
 
 ## Broaden creative scope
 
-- Introduce stamps, selection/copy/paste, undo/redo and local galleries. These
-  create experimentation loops before the cost of online accounts or
-  moderation.
+- Add local galleries for sharing or organising reusable designs. Blueprint
+  selection, stamping and its short session history are now available; a
+  cross-playthrough gallery would need its own storage and discovery design.
 - Add replayable worlds and an optional share gallery around the existing
   copy/paste LZString save format.
 - Offer a documented custom-material schema, then a safe rule API or a curated

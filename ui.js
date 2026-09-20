@@ -20,7 +20,7 @@ import {
     paintLine, paintCell, clearCanvasWorld, setHoverCell,
     canPlaceMachine, placeMachine, setMachinePlacementPreview, clearMachinePlacementPreview,
     beginGrab, dropGrab, cancelGrab, setLinePreview, clearLinePreview,
-    captureBlueprint, stampBlueprint, BLUEPRINT_SLOT_COUNT
+    captureBlueprint, stampBlueprint, stampBlueprintAt, BLUEPRINT_SLOT_COUNT
 } from './game.js';
 import {
     getDefinitions, setAmbientTarget, getAmbientTarget, setLayerLapse, getLayerLapse,
@@ -49,6 +49,9 @@ let marqueeSelection = null;
 let blueprints = Array(BLUEPRINT_SLOT_COUNT).fill(null);
 let nextBlueprintSlot = 0;
 let activeBlueprintSlot = null;
+const STAMP_HISTORY_LIMIT = 10;
+let stampUndoHistory = [];
+let stampRedoHistory = [];
 
 document.addEventListener('DOMContentLoaded', async () => {
     await loadParticleDefinitions();
@@ -94,6 +97,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     elements.blueprintSlots.querySelectorAll('.blueprint-slot').forEach(slot => {
         slot.addEventListener('click', () => selectBlueprintForStamp(parseInt(slot.dataset.blueprintSlot)));
     });
+    elements.undoBlueprintButton.addEventListener('click', undoBlueprintStamp);
+    elements.redoBlueprintButton.addEventListener('click', redoBlueprintStamp);
 
     elements.clearButton.addEventListener('click', () => {
         openClearDialog();
@@ -860,6 +865,7 @@ function restoreBlueprintLibrary(state) {
     marqueeStart = null;
     marqueeSelection = null;
     activeBlueprintSlot = null;
+    clearStampHistory();
     updateMarqueeOverlay();
     hideStampPreview();
     renderBlueprintLibrary();
@@ -877,6 +883,53 @@ function renderBlueprintLibrary() {
         button.hidden = !blueprint;
         if (blueprint) drawBlueprintPreview(button, blueprint);
     });
+}
+
+function stampActiveBlueprint() {
+    const blueprint = blueprints[activeBlueprintSlot];
+    if (!blueprint) return;
+    const startX = Math.round(currentCell.x - (blueprint.width - 1) / 2);
+    const startY = Math.round(currentCell.y - (blueprint.height - 1) / 2);
+    const before = captureBlueprint(startX, startY,
+        startX + blueprint.width - 1, startY + blueprint.height - 1);
+    if (!before) return;
+    stampBlueprint(blueprint, currentCell.x, currentCell.y);
+    const after = captureBlueprint(before.left, before.top,
+        before.left + before.width - 1, before.top + before.height - 1);
+    if (!after) return;
+
+    stampUndoHistory.push({ left: before.left, top: before.top, before, after });
+    if (stampUndoHistory.length > STAMP_HISTORY_LIMIT) stampUndoHistory.shift();
+    stampRedoHistory = [];
+    updateStampHistoryControls();
+}
+
+function undoBlueprintStamp() {
+    const entry = stampUndoHistory.pop();
+    if (!entry) return;
+    stampBlueprintAt(entry.before, entry.left, entry.top);
+    stampRedoHistory.push(entry);
+    updateStampHistoryControls();
+}
+
+function redoBlueprintStamp() {
+    const entry = stampRedoHistory.pop();
+    if (!entry) return;
+    stampBlueprintAt(entry.after, entry.left, entry.top);
+    stampUndoHistory.push(entry);
+    updateStampHistoryControls();
+}
+
+function clearStampHistory() {
+    stampUndoHistory = [];
+    stampRedoHistory = [];
+    updateStampHistoryControls();
+}
+
+function updateStampHistoryControls() {
+    const elements = getElements();
+    elements.undoBlueprintButton.disabled = stampUndoHistory.length === 0;
+    elements.redoBlueprintButton.disabled = stampRedoHistory.length === 0;
 }
 
 function drawBlueprintPreview(button, blueprint) {
@@ -1004,7 +1057,7 @@ function setUpCanvasInput() {
         }
         if (event.button === 0 && activeBlueprintSlot !== null) {
             updateStampPreview(currentCell);
-            stampBlueprint(blueprints[activeBlueprintSlot], currentCell.x, currentCell.y);
+            stampActiveBlueprint();
             return;
         }
         if (marqueeMode) {
@@ -1101,7 +1154,7 @@ function setUpCanvasInput() {
         currentCell = cellFromEvent(event.touches[0]);
         setHoverCell(currentCell.x, currentCell.y);
         if (activeBlueprintSlot !== null) {
-            stampBlueprint(blueprints[activeBlueprintSlot], currentCell.x, currentCell.y);
+            stampActiveBlueprint();
             return;
         }
         if (marqueeMode) {
@@ -1278,7 +1331,11 @@ function setUpKeyboardShortcuts() {
         const typing = event.target && /^(INPUT|TEXTAREA)$/.test(event.target.tagName);
         if (typing) return;
 
-        if (event.key === ' ') {
+        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
+            event.preventDefault();
+            if (event.shiftKey) redoBlueprintStamp();
+            else undoBlueprintStamp();
+        } else if (event.key === ' ') {
             event.preventDefault();
             getElements().pauseButton.click();
         } else if (event.key === 'e' || event.key === 'E') {

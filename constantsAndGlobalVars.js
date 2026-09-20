@@ -80,6 +80,8 @@ export function setElements() {
         marqueeButton: document.getElementById('marqueeButton'),
         copyBlueprintButton: document.getElementById('copyBlueprintButton'),
         blueprintSlots: document.getElementById('blueprintSlots'),
+        undoBlueprintButton: document.getElementById('undoBlueprintButton'),
+        redoBlueprintButton: document.getElementById('redoBlueprintButton'),
         marqueeOverlay: document.getElementById('marqueeOverlay'),
         blueprintStampPreview: document.getElementById('blueprintStampPreview'),
         particleButtons: document.getElementById('particleButtons'),
