@@ -186,9 +186,13 @@ export function prepareDefinitions(json) {
 
     Object.keys(raw).map(k => parseInt(k)).sort((a, b) => a - b).forEach(id => {
         const p = raw[id];
+        if (typeof p.description !== 'string' || !p.description.trim()) {
+            throw new Error(`Particle ${p.name || id} is missing its glossary description`);
+        }
         const def = {
             id: id,
             name: p.name,
+            description: p.description.trim(),
             group: p.group || 'Other',
             category: p.category,
             density: p.density || 0,

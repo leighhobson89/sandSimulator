@@ -182,10 +182,9 @@ if (indexMarkup.includes('id="autosaveChoiceCancel"') &&
 const panel = byId('particleButtons');
 const materialButtons = panel.querySelectorAll('.particle-button');
 const headings = panel.children.filter(child => child.className === 'panel-heading');
+const particleData = JSON.parse(await readFile(root + 'particles.json', 'utf8')).particles;
 // One button per entry in particles.json, whatever that number happens to be.
-const expectedButtons = Object.keys(
-    JSON.parse(await readFile(root + 'particles.json', 'utf8')).particles
-).length;
+const expectedButtons = Object.keys(particleData).length;
 if (materialButtons.length === expectedButtons) {
     pass(`built ${materialButtons.length} material buttons from particles.json`);
 } else {
@@ -198,6 +197,29 @@ if (headings.some(heading => heading.textContent === 'Metals')) {
 } else {
     fail('the Metals material section is missing');
 }
+const describedMaterials = materialButtons.filter(button =>
+    typeof button.dataset.tooltip === 'string' &&
+    button.dataset.tooltip.includes(button.textContent) &&
+    button.getAttribute('aria-describedby') === 'toolTooltip'
+);
+if (Object.values(particleData).every(particle => typeof particle.description === 'string' && particle.description.trim())) {
+    pass('every particle definition has a glossary description');
+} else {
+    fail('one or more particle definitions are missing a glossary description');
+}
+if (describedMaterials.length === materialButtons.length) {
+    pass(`wired glossary tooltips to all ${describedMaterials.length} material buttons`);
+} else {
+    fail(`only ${describedMaterials.length} of ${materialButtons.length} material buttons have glossary tooltips`);
+}
+const tooltip = byId('toolTooltip');
+materialButtons[0].fire('mouseenter');
+if (!tooltip.hidden && tooltip.textContent.includes('Sand') && tooltip.textContent.includes('Reactions')) {
+    pass('hovering a material shows its formatted glossary content');
+} else {
+    fail('hovering a material did not show its glossary content');
+}
+materialButtons[0].fire('mouseleave');
 const fanButtonBeforeStart = materialButtons.find(button => button.textContent === 'Fan');
 if (fanButtonBeforeStart && fanButtonBeforeStart.children.length === 0) {
     pass('the Fan picker button is text-only');

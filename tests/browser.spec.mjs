@@ -42,6 +42,23 @@ test('mouse drawing and keyboard controls work in the browser', async ({ page })
     await expect(eraser).toHaveClass(/active-toggle/);
 });
 
+test('material buttons expose glossary tooltips on hover and focus', async ({ page }) => {
+    await page.goto('/');
+    const sand = page.getByRole('button', { name: 'Sand', exact: true });
+    await expect(sand).toBeVisible();
+    await expect(sand).toHaveAttribute('aria-describedby', 'toolTooltip');
+
+    await sand.hover();
+    const tooltip = page.locator('#toolTooltip');
+    await expect(tooltip).toBeVisible();
+    await expect(tooltip).toContainText('Sand');
+    await expect(tooltip).toContainText('Glass');
+    await expect(tooltip).toContainText('Reactions');
+
+    await sand.focus();
+    await expect(tooltip).toBeVisible();
+});
+
 test.describe('touch and narrow screens', () => {
     test.use({ hasTouch: true, viewport: { width: 390, height: 844 } });
 

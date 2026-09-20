@@ -800,7 +800,9 @@ input[type="range"]::-moz-range-thumb {
     position: fixed;
     z-index: 2000;
     width: max-content;
-    max-width: 210px;
+    max-width: min(320px, calc(100vw - 1.5rem));
+    max-height: min(70vh, 520px);
+    overflow-y: auto;
     padding: 0.42rem 0.55rem;
     border: var(--border) solid var(--line-bright);
     border-radius: var(--radius-sm);
@@ -810,9 +812,9 @@ input[type="range"]::-moz-range-thumb {
     font-family: var(--chrome-font);
     font-size: 0.68rem;
     font-weight: 500;
-    line-height: 1.25;
-    text-align: center;
-    white-space: normal;
+    line-height: 1.35;
+    text-align: left;
+    white-space: pre-line;
     pointer-events: none;
     animation: tooltip-in 0.14s ease both;
 }

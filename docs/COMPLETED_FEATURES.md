@@ -20,6 +20,10 @@ optional reaction properties.
   like ordinary painted material.
 - Gunpowder has a fuse and blasts nearby breakable material, while wall, glass
   and ceramic resist blasts.
+- Every picker entry has a concise implementation-based description. Hovering
+  or focusing a material shows its glossary tooltip with live properties,
+  temperatures, conversions and reaction targets; see
+  [`MATERIAL_GLOSSARY.md`](MATERIAL_GLOSSARY.md) for the maintenance contract.
 
 ## Temperature, conduction and insulation
 
@@ -81,6 +85,18 @@ forms.
 - Fan is the first powered machine. It stores one of eight directions, only
   produces airflow when powered, applies a widening 28-cell cone, and leaves
   decaying residual airflow so movement does not stop abruptly at the cone edge.
+
+## Reliability, discovery and project quality
+
+- The physics core accepts an injectable random source. `tools/simTest.mjs`
+  runs with a reproducible default seed, accepts `--seed=` or
+  `SIM_TEST_SEED`, and includes the seed in failures.
+- `tests/browser.spec.mjs` covers the six themes, mouse and touch drawing,
+  keyboard focus, material glossary tooltips and narrow layouts. The stand-in
+  smoke test remains useful for fast startup and persistence checks.
+- Unused audio/debug state was removed, `package-lock.json` matches
+  `package.json`, and generated dependencies/test output are excluded by
+  `.gitignore`.
 
 ## User experience and project quality
 

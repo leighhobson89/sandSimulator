@@ -64,7 +64,10 @@ node tools/tuneIce.mjs                             # ice: lasts at room temperat
 The top toolbar carries the play controls, readout and theme. Materials sit to
 the left of the canvas; the icon-based Tools panel to its right contains
 Brush/Line mode and size, Grabber, air temperature, Heat View, air layering,
-wind strength and the natural breeze. Hover an icon for a short explanation.
+wind strength and the natural breeze. Hover an icon for a short explanation;
+hover or focus any material button for its glossary description, properties and
+implemented reactions. The glossary maintenance contract is in
+[`docs/MATERIAL_GLOSSARY.md`](docs/MATERIAL_GLOSSARY.md).
 
 **Grabber** moves existing material instead of painting more. Its fairground
 claw button and separate 1-to-60-pixel square size sit in the Tools panel.

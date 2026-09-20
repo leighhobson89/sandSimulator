@@ -330,11 +330,12 @@ function buildParticleButtons() {
 
 function makeParticleButton(def, id) {
     const button = document.createElement('button');
-    button.className = 'particle-button';
+    button.className = 'particle-button tooltip-control';
     button.textContent = def.name;
     button.style.backgroundColor = `rgb(${def.rgb[0]}, ${def.rgb[1]}, ${def.rgb[2]})`;
     button.style.color = isLightColour(def.rgb) ? '#111' : '#fff';
     button.dataset.particleId = String(id);
+    button.dataset.tooltip = formatMaterialTooltip(def);
 
     button.addEventListener('click', () => {
         // Choosing a material always leaves Grabber mode first. If the claw is
@@ -348,6 +349,130 @@ function makeParticleButton(def, id) {
     });
 
     return button;
+}
+
+// Material buttons use the same fixed tooltip layer as the tools panel. The
+// text is assembled from the prepared definition so thresholds and reaction
+// targets cannot drift away from the rules that actually run the simulation.
+function formatMaterialTooltip(def) {
+    const lines = [def.name, def.description, '', `${titleCase(def.category)} | density ${formatNumber(def.density)}`];
+    const properties = [];
+
+    if (def.fallSpeed > 0) properties.push(`${def.category === 'gas' ? 'rise' : 'fall'} speed ${formatNumber(def.fallSpeed)} cells/frame`);
+    if (def.fallChance < 1) properties.push(`gravity acts ${formatPercent(def.fallChance)} of frames`);
+    if (def.slide > 0) properties.push(`slide chance ${formatPercent(def.slide)}`);
+    if (def.repose !== 1 && def.repose > 0) properties.push(`pile steepness ${formatNumber(def.repose)}`);
+    if (def.spread > 0) properties.push(`liquid spread ${formatNumber(def.spread)} cells`);
+    if (def.flowSteps > 1) properties.push(`${formatNumber(def.flowSteps)} flow steps/frame`);
+    if (def.moveChance < 1) properties.push(`settling chance ${formatPercent(def.moveChance)}`);
+    if (def.drift > 0) properties.push(`drift chance ${formatPercent(def.drift)}`);
+    if (def.windLift > 0) properties.push(`wind lift ${formatPercent(def.windLift)}`);
+    if (def.floatChance > 0) properties.push(`${formatPercent(def.floatChance)} are buoyant`);
+    if (def.floatChance > 0 && def.floatDensity !== def.density) properties.push(`buoyant density ${formatNumber(def.floatDensity)}`);
+    if (def.defaultTemp !== 8) properties.push(`starts at ${formatTemperature(def.defaultTemp)}`);
+    if (def.forceTemp !== undefined) properties.push(`forces ${formatTemperature(def.forceTemp)}`);
+    if (def.forceRate > 0) properties.push(`force rate ${formatNumber(def.forceRate)}`);
+    if (def.coolsBy > 0) properties.push(`cools ${formatNumber(def.coolsBy)} C/frame`);
+    if (def.conductivity !== undefined && def.conductivity !== 0.06) {
+        properties.push(`heat conductivity ${formatNumber(def.conductivity)}`);
+    }
+    if (def.cooling !== 0.004) properties.push(`air cooling ${formatPercent(def.cooling)} of the temperature gap/frame`);
+    if (def.coolingVariance > 0) properties.push(`cooling varies ±${formatPercent(def.coolingVariance)}`);
+    if (def.bulkInsulation > 0) properties.push(`buried-cell insulation ${formatPercent(def.bulkInsulation)}`);
+    if (def.insulatedBy?.length) properties.push(`insulated by ${def.insulatedBy.length} material type${def.insulatedBy.length === 1 ? '' : 's'}`);
+    if (def.bedrockKeepsMolten) properties.push('stays molten on the floor');
+    if (def.emit > 0) properties.push(`heat source at ${formatTemperature(def.emit)}`);
+    if (def.emitRate > 0) properties.push(`heat retention ${formatPercent(def.emitRate)}`);
+    if (def.radiates > 0) properties.push(`radiates ${formatNumber(def.radiates)} C/frame`);
+    if (def.clings > 0) properties.push(`clings while fueled ${formatPercent(def.clings)}`);
+    if (def.conductive) {
+        properties.push(`electrical conductor (${formatNumber(def.electricalConductivity)}x)`);
+    }
+    if (def.energizesConductors) properties.push('energizes nearby conductors');
+    if (def.wireReach > 0) properties.push(`wire reach ${formatNumber(def.wireReach)} cells`);
+    if (def.chargeCapacity > 0) properties.push(`stores ${formatNumber(def.chargeCapacity)} charge`);
+    if (def.chargePerSpark > 0) properties.push(`adds ${formatNumber(def.chargePerSpark)} charge per Spark`);
+    if (def.chargeSparkChance > 0) properties.push(`full-charge spark chance ${formatPercent(def.chargeSparkChance)}`);
+    if (def.powerConsumption > 0) properties.push(`draws ${formatNumber(def.powerConsumption)} power/tick`);
+    if (def.machine) properties.push(`machine: ${titleCase(def.machine)}`);
+    if (def.blastProof) properties.push('blast-proof');
+    if (def.fuse > 0) properties.push(`fuse ${formatNumber(def.fuse)} frames`);
+    if (def.life > 0) properties.push(`lifetime ${formatNumber(def.life)} frames`);
+    if (def.lifeVariance > 0) properties.push(`lifetime variation ±${formatPercent(def.lifeVariance)}`);
+    if (def.blastRadius > 0) properties.push(`blast radius ${formatNumber(def.blastRadius)}`);
+    if (def.displacesMaterials === false) properties.push('does not displace occupied cells');
+    if (def.growHeight > 0) properties.push(`grows ${formatNumber(def.growHeightMin)}-${formatNumber(def.growHeight)} cells`);
+    if (def.growStyle) properties.push(`growth style: ${def.growStyle}`);
+    if (def.growChance > 0) properties.push(`growth chance ${formatPercent(def.growChance)}`);
+    if (def.seedChance > 0) properties.push(`seed chance ${formatPercent(def.seedChance)}`);
+    if (def.seedWaterRange > 0) properties.push(`needs water within ${formatNumber(def.seedWaterRange)} cells`);
+    if (def.sproutMinTemp > -273) properties.push(`sprouts above ${formatTemperature(def.sproutMinTemp)}`);
+    if (def.submergedDepth !== 4 && def.submergedDepth > 0) properties.push(`submerged at ${formatNumber(def.submergedDepth)} water cells`);
+    if (def.latent > 0) properties.push(`latent heat ${formatNumber(def.latent)}`);
+    if (def.burnLife > 0) properties.push(`burns for ${formatNumber(def.burnLife)} frames`);
+    if (def.wetChance > 0) properties.push(`wetting chance ${formatPercent(def.wetChance)}`);
+    if (def.waterPermeability > 0) properties.push(`water permeability ${formatPercent(def.waterPermeability)}`);
+    if (def.compactDepth > 0) properties.push(`compacts below ${formatNumber(def.compactDepth)} cells`);
+    if (def.soaks) properties.push('soaks into powders');
+    if (def.corrodible) properties.push(`corrosion rate ${formatPercent(def.corrosion)}`);
+    if (def.witherChance > 0 && def.withersPlants !== 0) properties.push(`withers chance ${formatPercent(def.witherChance)}`);
+    if (def.decayChance < 1) properties.push(`decay chance ${formatPercent(def.decayChance)}`);
+    if (def.lifeTransitionAt > 0) properties.push(`changes at ${formatPercent(def.lifeTransitionAt)} of lifetime`);
+    if (def.smokeChance > 0) properties.push(`smoke residue chance ${formatPercent(def.smokeChance)}`);
+    if (def.condenseLossChance > 0) properties.push(`condensation loss chance ${formatPercent(def.condenseLossChance)}`);
+    if (def.dischargeBattery) properties.push('discharges connected Aluminum');
+    if (def.sparkEmitterChance > 0) properties.push(`Spark emission ${formatPercent(def.sparkEmitterChance)}`);
+    if (def.tool) properties.push('brush tool');
+
+    if (properties.length) lines.push('', 'Properties', ...properties.map(value => `- ${value}`));
+
+    const reactions = [];
+    const target = id => id > 0 && getDefinitions()[id] ? getDefinitions()[id].name : 'nothing';
+    if (def.meltPoint !== undefined && def.meltsInto !== 0) reactions.push(`above ${formatTemperature(def.meltPoint)} -> ${target(def.meltsInto)}`);
+    if (def.freezePoint !== undefined && def.freezesInto !== 0) {
+        reactions.push(`below ${formatTemperature(def.freezePoint)} -> ${target(def.freezesInto)}${def.freezeNeedsGround ? ' when supported' : ''}`);
+    }
+    if (def.boilPoint !== undefined && def.boilsInto !== 0) {
+        const emits = def.boilEmits !== 0 ? `, emits ${target(def.boilEmits)}` : '';
+        reactions.push(`above ${formatTemperature(def.boilPoint)} -> ${target(def.boilsInto)}${emits}`);
+    }
+    if (def.depositPoint !== undefined && def.depositsInto !== 0) reactions.push(`when air is below ${formatTemperature(def.depositPoint)} -> ${target(def.depositsInto)}`);
+    if (def.ignitePoint !== undefined && def.burnsInto !== 0) reactions.push(`above ${formatTemperature(def.ignitePoint)} -> ${target(def.burnsInto)}${def.emberInto !== 0 ? `, leaves ${target(def.emberInto)}` : ''}`);
+    if (def.wetsInto !== 0) reactions.push(`water contact -> ${target(def.wetsInto)}`);
+    if (def.quenchedInto !== 0) reactions.push(`touching Water -> ${target(def.quenchedInto)}`);
+    if (def.douses) reactions.push('touching hot gas -> Smoke');
+    if (def.compactsInto !== 0) reactions.push(`deep supported column -> ${target(def.compactsInto)}`);
+    if (def.corrodeEmits !== 0) reactions.push(`corrosion releases ${target(def.corrodeEmits)}`);
+    if (def.withersPlants !== 0) reactions.push(`withers growing materials -> ${target(def.withersPlants)}`);
+    if (def.flowerInto !== 0) reactions.push(`full growth -> ${target(def.flowerInto)}`);
+    if (def.seedInto !== 0) reactions.push(`flowering -> ${target(def.seedInto)}`);
+    if (def.lifeTransitionInto !== 0) reactions.push(`late life -> ${target(def.lifeTransitionInto)}`);
+    if (def.decaysInto !== 0) reactions.push(`expires -> ${target(def.decaysInto)}`);
+    for (const rule of def.contacts || []) {
+        reactions.push(`on ${target(rule.on)} -> ${target(rule.into)}${rule.temp !== undefined ? ` at ${formatTemperature(rule.temp)}` : ''}`);
+    }
+    for (const rule of def.convertsBelow || []) {
+        reactions.push(`resting on ${target(rule.on)} -> ${target(rule.into)}${rule.temp !== undefined ? `, heats it to ${formatTemperature(rule.temp)}` : ''}`);
+    }
+    for (const rule of def.sprouts || []) {
+        const submerged = rule.submergedInto !== 0 ? `, underwater -> ${target(rule.submergedInto)}` : '';
+        reactions.push(`on ${target(rule.on)} -> ${target(rule.into)}${submerged}`);
+    }
+    if (reactions.length) lines.push('', 'Reactions', ...reactions.map(value => `- ${value}`));
+
+    return lines.join('\n');
+}
+
+function formatNumber(value) {
+    return Number.isInteger(value) ? String(value) : Number(value).toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
+}
+
+function formatPercent(value) { return `${formatNumber(value * 100)}%`; }
+
+function formatTemperature(value) { return `${formatNumber(value)} C`; }
+
+function titleCase(value) {
+    return String(value || '').replace(/\b\w/g, letter => letter.toUpperCase());
 }
 
 function isLightColour(rgb) {
@@ -484,9 +609,9 @@ function setUpAmbientWind() {
 // A high z-index alone cannot escape an ancestor's overflow clipping, whereas
 // this fixed layer can sit over the canvas and every panel.
 function setUpTooltips() {
-    const panel = getElements().toolsPanel;
+    const panels = [getElements().toolsPanel, getElements().particleButtons];
     const tooltip = document.getElementById('toolTooltip');
-    const controls = panel.querySelectorAll('.tooltip-control');
+    const controls = panels.flatMap(panel => Array.from(panel.querySelectorAll('.tooltip-control')));
 
     const hide = () => { tooltip.hidden = true; };
     const show = control => {
@@ -496,8 +621,8 @@ function setUpTooltips() {
         const controlRect = control.getBoundingClientRect();
         const tooltipRect = tooltip.getBoundingClientRect();
         const gap = 10;
-        const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
-        const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+        const viewportWidth = window.innerWidth || document.documentElement?.clientWidth || 1024;
+        const viewportHeight = window.innerHeight || document.documentElement?.clientHeight || 768;
 
         let left = controlRect.left - tooltipRect.width - gap;
         if (left < gap) left = Math.min(viewportWidth - tooltipRect.width - gap, controlRect.right + gap);
@@ -515,7 +640,7 @@ function setUpTooltips() {
         control.addEventListener('focusin', () => show(control));
         control.addEventListener('focusout', hide);
     });
-    panel.addEventListener('scroll', hide);
+    panels.forEach(panel => panel.addEventListener('scroll', hide));
     window.addEventListener('resize', hide);
 }
 

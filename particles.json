@@ -156,6 +156,7 @@
   "particles": {
     "1": {
       "name": "Sand",
+      "description": "Loose mineral powder that falls quickly, piles at a shallow angle, wets into Wet Sand and melts into Glass.",
       "group": "Powders",
       "color": "rgb(222, 190, 116)",
       "category": "powder",
@@ -174,6 +175,7 @@
     },
     "2": {
       "name": "Water",
+      "description": "Fast-flowing liquid that spreads and soaks powders; it freezes into Ice and boils into Steam.",
       "group": "Liquids",
       "color": "rgb(40, 110, 205)",
       "category": "liquid",
@@ -196,6 +198,7 @@
     },
     "3": {
       "name": "Fire",
+      "description": "Short-lived hot gas that clings to nearby fuel, radiates heat and can leave Smoke as it expires.",
       "group": "Gases",
       "color": "rgb(255, 216, 74)",
       "color2": "rgb(198, 44, 10)",
@@ -219,6 +222,7 @@
     },
     "4": {
       "name": "Ice",
+      "description": "Light cold solid that floats on Water and melts into Water at its melt threshold.",
       "group": "Solids",
       "windLift": 0.03,
       "color": "rgb(168, 220, 242)",
@@ -237,6 +241,7 @@
     },
     "5": {
       "name": "Oil",
+      "description": "Light slow liquid that floats on Water and ignites into Fire when heated above its ignition point.",
       "group": "Liquids",
       "color": "rgb(66, 54, 46)",
       "category": "liquid",
@@ -255,6 +260,7 @@
     },
     "6": {
       "name": "Lava",
+      "description": "Heavy slow molten rock that bakes ground, is quenched by Water into Scoria and cools into Stone.",
       "group": "Liquids",
       "windLift": 0,
       "color": "rgb(255, 130, 25)",
@@ -285,6 +291,7 @@
     },
     "7": {
       "name": "Stone",
+      "description": "Heavy insulating solid that forms a stable barrier and melts into Scoria when strongly heated.",
       "group": "Solids",
       "color": "rgb(122, 120, 126)",
       "category": "static",
@@ -299,6 +306,7 @@
     },
     "8": {
       "name": "Wet Mud",
+      "description": "Sticky wet soil that holds steep piles, filters water and compacts into Clay when deeply supported.",
       "group": "Powders",
       "windLift": 0,
       "color": "rgb(84, 54, 28)",
@@ -321,6 +329,7 @@
     },
     "9": {
       "name": "Steam",
+      "description": "Rising drifting gas from boiling Water or Wet Mud that condenses into Water or deposits Snow in cold air.",
       "group": "Gases",
       "color": "rgb(205, 215, 225)",
       "category": "gas",
@@ -342,6 +351,7 @@
     },
     "10": {
       "name": "Smoke",
+      "description": "Lingering drifting gas from burning and condensation reactions that eventually settles into Ash.",
       "group": "Gases",
       "color": "rgb(76, 74, 78)",
       "category": "gas",
@@ -358,6 +368,7 @@
     },
     "11": {
       "name": "Wood",
+      "description": "Fixed insulating fuel that ignites into Fire when hot and leaves Ash after burning.",
       "group": "Solids",
       "color": "rgb(124, 84, 44)",
       "category": "static",
@@ -374,6 +385,7 @@
     },
     "12": {
       "name": "Ash",
+      "description": "Light drifting powder left by burning that wets into Wet Ash and can support short grass.",
       "group": "Powders",
       "windLift": 0.85,
       "color": "rgb(116, 110, 104)",
@@ -391,6 +403,7 @@
     },
     "13": {
       "name": "Glass",
+      "description": "Blast-proof insulating solid that melts into Lava when heated above its melt point.",
       "group": "Solids",
       "color": "rgb(176, 222, 232)",
       "category": "static",
@@ -406,6 +419,7 @@
     },
     "14": {
       "name": "Acid",
+      "description": "Corrosive liquid that eats eligible materials, releases Toxic Gas and boils into Smoke when hot.",
       "group": "Liquids",
       "color": "rgb(140, 225, 50)",
       "category": "liquid",
@@ -425,6 +439,7 @@
     },
     "15": {
       "name": "Plant",
+      "description": "Growing life that climbs from wet soil, flowers at full height, burns above its ignition point and freezes into Sand.",
       "group": "Solids",
       "color": "rgb(48, 162, 62)",
       "category": "static",
@@ -446,6 +461,7 @@
     },
     "16": {
       "name": "Wall",
+      "description": "Immovable blast-proof barrier that blocks wind and resists ordinary reactions.",
       "group": "Solids",
       "color": "rgb(96, 96, 102)",
       "category": "static",
@@ -457,6 +473,7 @@
     },
     "17": {
       "name": "Wet Sand",
+      "description": "Damp heavy powder that holds a firmer pile, filters water and boils back into Sand with Steam.",
       "group": "Powders",
       "windLift": 0.04,
       "color": "rgb(172, 142, 84)",
@@ -477,6 +494,7 @@
     },
     "18": {
       "name": "Dry Mud",
+      "description": "Dry soil that wets into Wet Mud when reached by water and holds a looser pile than wet ground.",
       "group": "Powders",
       "color": "rgb(142, 108, 72)",
       "category": "powder",
@@ -493,6 +511,7 @@
     },
     "19": {
       "name": "Seed",
+      "description": "Planting powder that can float, sprouts on suitable wet ground above its minimum temperature and eventually rots into Dry Mud.",
       "group": "Powders",
       "color": "rgb(158, 126, 48)",
       "category": "powder",
@@ -523,6 +542,7 @@
     },
     "20": {
       "name": "Gunpowder",
+      "description": "Explosive powder that catches above its ignition point, burns through its fuse and blasts nearby breakable material.",
       "group": "Powders",
       "color": "rgb(54, 52, 62)",
       "color2": "rgb(255, 170, 60)",
@@ -541,6 +561,7 @@
     },
     "21": {
       "name": "Spark",
+      "description": "Short-lived drifting electrical gas that energizes touching conductors before expiring.",
       "group": "Metals",
       "color": "rgb(255, 246, 196)",
       "color2": "rgb(255, 96, 16)",
@@ -560,6 +581,7 @@
     },
     "22": {
       "name": "Heat Ray",
+      "description": "Transient hot tool that forces nearby cells toward 2000 C and radiates intense heat before fading.",
       "group": "Tools",
       "color": "rgb(255, 208, 150)",
       "color2": "rgb(255, 88, 24)",
@@ -581,6 +603,7 @@
     },
     "26": {
       "name": "Snow",
+      "description": "Very light cold powder that melts into Water, melts on Water and packs into Ice when settled on Ice.",
       "group": "Powders",
       "windLift": 0.95,
       "color": "rgb(238, 246, 252)",
@@ -604,6 +627,7 @@
     },
     "25": {
       "name": "Grass",
+      "description": "Short plant grown from Wet Sand that survives slightly colder air than a full Plant but does not flower.",
       "group": "Solids",
       "color": "rgb(104, 174, 74)",
       "category": "static",
@@ -624,6 +648,7 @@
     },
     "24": {
       "name": "Flower",
+      "description": "Mature land flower that burns or freezes like a Plant and sets Seed only when water is nearby.",
       "group": "Solids",
       "color": "rgb(232, 96, 160)",
       "rainbow": true,
@@ -645,6 +670,7 @@
     },
     "27": {
       "name": "Wind",
+      "description": "Transient tool that pushes loose materials and stirs the air without placing a material in the world.",
       "group": "Tools",
       "color": "rgb(150, 196, 214)",
       "category": "static",
@@ -654,6 +680,7 @@
     },
     "23": {
       "name": "Cold Ray",
+      "description": "Transient cold tool that forces nearby cells toward -120 C and chills them before fading.",
       "group": "Tools",
       "windLift": 0.9,
       "color": "rgb(206, 240, 255)",
@@ -675,6 +702,7 @@
     },
     "28": {
       "name": "Lily Stem",
+      "description": "Open-mesh aquatic plant grown from submerged Seeds that climbs through water and opens into Lily Pads.",
       "group": "Solids",
       "color": "rgb(52, 124, 84)",
       "category": "static",
@@ -697,6 +725,7 @@
     },
     "29": {
       "name": "Lily Pad",
+      "description": "Surface-growing aquatic plant that spreads across water and opens into a Lily Flower.",
       "group": "Solids",
       "color": "rgb(84, 166, 92)",
       "category": "static",
@@ -719,6 +748,7 @@
     },
     "30": {
       "name": "Lily Flower",
+      "description": "Aquatic flower that can set Seed near water and freezes or burns like other growing plants.",
       "group": "Solids",
       "color": "rgb(246, 244, 236)",
       "category": "static",
@@ -739,6 +769,7 @@
     },
     "32": {
       "name": "Toxic Gas",
+      "description": "Lingering corrosive gas that withers growing materials and sometimes settles into Acid.",
       "group": "Gases",
       "color": "rgb(198, 245, 62)",
       "category": "gas",
@@ -759,6 +790,7 @@
     },
     "31": {
       "name": "Scoria",
+      "description": "Cooling porous lava that sinks until supported, melts back into Lava when hot and sets into Stone when cool.",
       "group": "Powders",
       "color": "rgb(172, 56, 34)",
       "color2": "rgb(66, 27, 25)",
@@ -786,6 +818,7 @@
     },
     "33": {
       "name": "Wet Ash",
+      "description": "Watered Ash that holds a steeper pile, supports Ash Grass and boils into Ash with Steam.",
       "group": "Powders",
       "windLift": 0.03,
       "color": "rgb(82, 78, 70)",
@@ -806,6 +839,7 @@
     },
     "34": {
       "name": "Ash Grass",
+      "description": "Short yellow grass grown from Wet Ash that burns above its ignition point and freezes into Sand in deep cold.",
       "group": "Solids",
       "color": "rgb(176, 166, 70)",
       "category": "static",
@@ -826,6 +860,7 @@
     },
     "35": {
       "name": "Clay",
+      "description": "Compacted wet soil that insulates moderately and fires into Ceramic above its firing temperature.",
       "group": "Solids",
       "color": "rgb(151, 88, 57)",
       "category": "static",
@@ -840,6 +875,7 @@
     },
     "36": {
       "name": "Ceramic",
+      "description": "Blast-proof fired clay that melts into Lava only under extreme heat.",
       "group": "Solids",
       "color": "rgb(205, 142, 101)",
       "category": "static",
@@ -855,6 +891,7 @@
     },
     "37": {
       "name": "Copper",
+      "description": "Dense conductive metal that carries power, draws from Aluminum and melts into Molten Copper.",
       "group": "Metals",
       "color": "rgb(184, 115, 51)",
       "category": "static",
@@ -874,6 +911,7 @@
     },
     "38": {
       "name": "Molten Copper",
+      "description": "Flowing conductive copper above its melt point that cools back into Copper when supported.",
       "group": "Metals",
       "color": "rgb(255, 205, 92)",
       "color2": "rgb(183, 73, 28)",
@@ -900,6 +938,7 @@
     },
     "39": {
       "name": "Aluminum",
+      "description": "Conductive storage metal that shares Spark charge across connected Aluminum and melts into Molten Aluminum.",
       "group": "Metals",
       "color": "rgb(188, 198, 210)",
       "category": "static",
@@ -919,6 +958,7 @@
     },
     "40": {
       "name": "Molten Aluminum",
+      "description": "Flowing conductive aluminum that cools back into Aluminum when it reaches its freeze point and has support.",
       "group": "Metals",
       "color": "rgb(255, 239, 176)",
       "color2": "rgb(178, 185, 194)",
@@ -942,6 +982,7 @@
     },
     "41": {
       "name": "Iron",
+      "description": "Dense conductive metal that draws battery charge for the grid and melts into Molten Iron.",
       "group": "Metals",
       "color": "rgb(102, 110, 120)",
       "category": "static",
@@ -961,6 +1002,7 @@
     },
     "42": {
       "name": "Molten Iron",
+      "description": "Flowing conductive iron above its melt point that cools back into Iron when supported.",
       "group": "Metals",
       "color": "rgb(255, 190, 76)",
       "color2": "rgb(116, 58, 42)",
@@ -987,6 +1029,7 @@
     },
     "43": {
       "name": "Spark Dust",
+      "description": "Loose conductive powder that emits nearby Sparks until its long lifetime expires into Ash.",
       "group": "Powders",
       "color": "rgb(150, 62, 196)",
       "category": "powder",
@@ -1004,6 +1047,7 @@
     },
     "44": {
       "name": "Spark Block",
+      "description": "Fixed conductive spark source that emits Sparks for a long lifetime, then becomes Spark Dust near the end.",
       "group": "Solids",
       "color": "rgb(118, 46, 164)",
       "category": "static",
@@ -1019,6 +1063,7 @@
     },
     "45": {
       "name": "Fan",
+      "description": "Powered one-cell machine that stores a direction and blows a widening cone of airflow through the world.",
       "group": "Machines",
       "color": "rgb(74, 137, 171)",
       "category": "static",

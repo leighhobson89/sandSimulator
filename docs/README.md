@@ -1,5 +1,8 @@
 # Elemental Foundry documentation
 
+The material picker is also a maintained in-app glossary; see
+[`MATERIAL_GLOSSARY.md`](MATERIAL_GLOSSARY.md) for its source and update rules.
+
 This folder is the current documentation index for Elemental Foundry.
 
 - [`PROGRAM_OVERVIEW.md`](PROGRAM_OVERVIEW.md) — what the simulator is, how it

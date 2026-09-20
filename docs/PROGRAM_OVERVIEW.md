@@ -55,8 +55,9 @@ rule based on the surface of connected liquid, not a Navier–Stokes solution.
   themes, pointer/touch input, focus and narrow layouts.
 - The interaction design is polished for a small sandbox: brush and line
   modes, right-click erase, heat view, a move-only-one-material Grabber,
-  environmental controls, tooltips, keyboard shortcuts and six persistent
-  themes are all present.
+  environmental controls, keyboard shortcuts and six persistent themes are all
+  present. The material picker doubles as a glossary: every entry has a
+  keyboard-accessible tooltip built from its live properties and reactions.
 - Full worlds can be exported as an LZString and imported by pasting it back.
   The current game also autosaves locally once per minute and can be resumed
   from the menu.
