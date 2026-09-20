@@ -167,9 +167,10 @@ function drawWorld() {
             // extremes. Wind adds its pale haze on top.
             const blown = wind[i];
             const f = blown / 255;
-            pixels[p] = clampByte(airTint[0] + 24 * f);
-            pixels[p + 1] = clampByte(airTint[1] + 38 * f);
-            pixels[p + 2] = clampByte(airTint[2] + 56 * f);
+            // Keep Fan cones visible without washing out the air behind them.
+            pixels[p] = clampByte(airTint[0] + 12 * f);
+            pixels[p + 1] = clampByte(airTint[1] + 19 * f);
+            pixels[p + 2] = clampByte(airTint[2] + 28 * f);
             pixels[p + 3] = 255;
             continue;
         }
@@ -230,7 +231,7 @@ function drawWorld() {
         // so a gust shows up across a sand bank as well as in the open air.
         const blown = wind[i];
         if (blown > 0) {
-            const f = (blown / 255) * 0.3;
+            const f = (blown / 255) * 0.15;
             r += (226 - r) * f;
             g += (238 - g) * f;
             b += (255 - b) * f;

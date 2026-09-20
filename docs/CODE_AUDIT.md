@@ -52,8 +52,8 @@ heat transfer, melting, freezing, boiling, fire, lava/scoria/stone, gases,
 wind and breeze, plants and lilies, snow, seeds, gunpowder, metals, electrical
 pulses, Aluminum charge sharing and discharge, Spark Dust, Spark Block lifetime,
 liquid suppression around spark sources, Fan activation, its 28-cell reach,
-residual-air deceleration and eight-way orientation, plus the UI controls
-exercised by the smoke test.
+residual-air deceleration and eight-way orientation, Copper/Iron two-cell
+machine reach, plus the UI controls exercised by the smoke test.
 
 The audit also corrected documentation drift found in the source data:
 
@@ -68,7 +68,7 @@ All commands below were run from the repository root on the audit date.
 
 | Check | Outcome |
 |---|---|
-| `npm test` | **242 passed, 0 failed** |
+| `npm test` | **244 passed, 0 failed** |
 | `node tools/smokeTest.mjs` | **Passed**: startup, 45 material buttons, seven groups, canvas rendering, Fan placement/orientation, drawing tools, themes, charge rendering, temperature and breeze controls all passed |
 | `node --check physics.js` | Passed |
 | `node --check tools/simTest.mjs` | Passed |

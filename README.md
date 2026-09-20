@@ -14,7 +14,7 @@ The current code audit is recorded in [`docs/CODE_AUDIT.md`](docs/CODE_AUDIT.md)
 Active findings are kept in [`docs/ISSUES.md`](docs/ISSUES.md), while superseded
 documentation findings are kept in [`docs/archive/`](docs/archive/).
 
-The latest verification on 20 September 2026 is green: `npm test` reports 242
+The latest verification on 20 September 2026 is green: `npm test` reports 244
 passed and 0 failed, and `node tools/smokeTest.mjs` passes its browser-startup
 and interaction checks. The audit also includes the static syntax and JSON
 validation commands used alongside those suites.
@@ -135,7 +135,9 @@ clicking places one 30x30 on-canvas fan regardless of brush size or drawing mode
 Drag while placing to face it in any of the eight cardinal or diagonal
 directions. A powered Fan blows a strength-21, 28-cell cone in the direction
 it faces; the airflow decelerates past the cone so loose particles do not drop
-vertically at its edge.
+vertically at its edge. Copper and Iron wire can reach conductive machines
+through up to two empty cells beyond the physical wire end, making it possible
+to place a machine beside a wire without touching the drawn pixels.
 
 ## Themes
 
