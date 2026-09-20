@@ -1,10 +1,23 @@
-# Sand Simulator
+# Elemental Foundry
 
-A falling sand sandbox: 36 materials and tools on a 150-row grid that adds
+A living elemental sandbox: 44 materials and tools on a 150-row grid that adds
 enough columns to fill about 90% of the workspace beside the material picker,
 with heat that spreads from cell to cell so that things melt, boil, freeze and
 catch fire on their own, weather that blows across the world of its own accord,
-and six themes to look at it all through.
+and electricity that charges Aluminum, powers connected metals and drives Sparks
+through a grid. Six themes let you look at it all through different workshop
+moods.
+
+## Current status
+
+The current code audit is recorded in [`docs/CODE_AUDIT.md`](docs/CODE_AUDIT.md).
+Active findings are kept in [`docs/ISSUES.md`](docs/ISSUES.md), while superseded
+documentation findings are kept in [`docs/archive/`](docs/archive/).
+
+The latest verification on 20 September 2026 is green: `npm test` reports 233
+passed and 0 failed, and `node tools/smokeTest.mjs` passes its browser-startup
+and interaction checks. The audit also includes the static syntax and JSON
+validation commands used alongside those suites.
 
 ## Running it
 
@@ -159,7 +172,7 @@ left-to-right scan order flips every frame so piles do not drift sideways.
 
 Every cell has a temperature in degrees C. It pulls towards the average of its
 four neighbours at a rate set by the material, and leaks towards the ambient air
-temperature of 20C. Fire holds itself at its own temperature and throws heat at
+temperature of 8C. Fire holds itself at its own temperature and throws heat at
 everything around it, which is what makes it a heat source. Lava does not hold
 itself up: it starts white hot and gives its heat up slowly, at its own rate.
 
@@ -220,12 +233,14 @@ stops conducting once the Aluminum is empty. Aluminum itself and every ordinary
 material default to `dischargeBattery: false`; the same property can be enabled
 for future powered machines.
 
-Each conductive cell can also declare `powerConsumption`, which is taken from
-the battery once per simulation tick across the whole connected power grid.
-Copper wire draws 1 unit per cell per tick and Iron draws 0.5; a future machine
-can use the same field for a much larger load. **Spark Dust** is a purple powder
-that emits Sparks upwards while each pixel's finite lifetime runs down, making
-it useful as a disposable charger placed beneath Aluminum.
+Each conductive cell can also declare `powerConsumption`, which is summed across
+the whole connected power grid and then drawn from the battery at one hundredth
+of that rate per simulation tick. Copper wire is rated 1 per cell and Iron 0.5;
+a future machine can use the same field for a much larger load. **Spark Dust** is a purple powder
+that emits Sparks into empty neighboring cells while each pixel's finite lifetime runs down, making
+it useful as a disposable charger around Aluminum. **Spark Block** is the solid version and lasts
+five times longer before becoming Spark Dust during its final tenth; Spark Dust expires into Ash.
+Either source stops emitting while a liquid touches it.
 
 Some contact effects are handled directly rather than through heat, because heat alone
 gives the wrong answer: water puts out fire on contact, lava chills to scoria
@@ -472,7 +487,7 @@ nothing - and lies there until it rots.
 ### Seeds, and which of them float
 
 Whether a seed is buoyant is settled the moment it exists and never revisited.
-About two in five come up floaters, which weigh less than water: dropped into a
+About one in ten come up floaters, which weigh less than water: dropped into a
 pond they ride on the surface and work their way to one side over time, the way
 anything adrift does, until they fetch up against a bank. The rest sink straight
 to the bottom, which is where lilies come from. Away from water it makes no
@@ -545,7 +560,8 @@ things worth knowing:
   flame settles at roughly a quarter of the flame's temperature. That is why
   wood ignites at 160 rather than a realistic 300 - 160 is a temperature a cell
   next to a fire can actually reach.
-- `ambientTemp` at the top of the file is room temperature. Set it below zero
+- `ambientTemp` at the top of the file is the starting air temperature (8C by
+  default). Set it below zero
   and ice stops melting on its own.
 - `npm test` is the quickest way to see whether a change to those numbers broke
   something: it checks conservation, levelling, floating, burning, melting,

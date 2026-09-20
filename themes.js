@@ -14,7 +14,7 @@
 // a page opened straight off disk in some browsers refuses to give it up.
 // -----------------------------------------------------------------------------
 
-const STORAGE_KEY = 'sandSimulator.theme';
+const STORAGE_KEY = 'elementalFoundry.theme';
 
 // The swatch colours are only for the three dots on each button in the picker.
 // They are a summary of the theme, not its definition - the real values live in

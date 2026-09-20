@@ -1,7 +1,7 @@
 {
   "_readme": [
     "Every number in here is a tuning knob. Change a value, reload the page, done - no code changes.",
-    "Temperatures are in degrees Celsius. Ambient (air) temperature starts at 20 and is set by the slider.",
+    "Temperatures are in degrees Celsius. Ambient (air) temperature starts at 8 and is set by the slider.",
     "",
     "group         which heading the button appears under in the side panel",
     "category      static = never moves | powder = falls and piles | liquid = falls and spreads | gas = rises",
@@ -131,7 +131,9 @@
     "",
     "life          frames before it decays into decaysInto (0 = lasts forever)",
     "decayChance   chance that a particle produces decaysInto when its life runs out",
-    "sparkEmitterChance  chance per frame of emitting a Spark into an empty space above the cell",
+    "lifeTransitionAt  fraction of its lifetime at which it changes into lifeTransitionInto",
+    "lifeTransitionInto  material used for that late-life transition",
+    "sparkEmitterChance  chance per frame of emitting a Spark into an empty neighboring space; touching liquids suppress it",
     "corrodible    whether acid can eat it",
     "corrosion     how readily this eats through what it touches, and corrodeEmits is the gas left",
     "              behind in the hole - which is where the toxic fumes off dissolving acid come from",
@@ -991,6 +993,22 @@
       "sparkEmitterChance": 0.04,
       "life": 1200,
       "lifeVariance": 240,
+      "decaysInto": "Ash",
+      "corrodible": true
+    },
+    "44": {
+      "name": "Spark Block",
+      "group": "Solids",
+      "color": "rgb(118, 46, 164)",
+      "category": "static",
+      "density": 1.6,
+      "conductivity": 0.07,
+      "cooling": 0.003,
+      "sparkEmitterChance": 0.04,
+      "life": 6000,
+      "lifeVariance": 1200,
+      "lifeTransitionAt": 0.1,
+      "lifeTransitionInto": "Spark Dust",
       "corrodible": true
     }
   }

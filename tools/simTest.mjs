@@ -947,8 +947,8 @@ setCell(12, 20, ID.Iron);
 getWorld().charge[index(10, 20)] = 10;
 stepSimulation();
 check('the grid discharges its total copper-plus-iron load every tick',
-    Math.abs(getStoredCharge(10, 20) - 8.5) < 0.001,
-    `${getStoredCharge(10, 20).toFixed(1)} charge remains after a 1.5-unit tick`);
+    Math.abs(getStoredCharge(10, 20) - 9.985) < 0.001,
+    `${getStoredCharge(10, 20).toFixed(3)} charge remains after a scaled 1.5-unit tick`);
 
 clearWorld();
 for (let x = 10; x < 15; x++) setCell(x, 20, ID.Aluminum);
@@ -972,7 +972,7 @@ check('the attached metal stops receiving power once Aluminum is empty',
     !getWorld().power.some(value => value > 0) &&
     !getWorld().powerDelay.some(value => value > 0));
 
-section('Spark Dust emits upward sparks and wears out pixel by pixel');
+section('Spark Dust emits around itself and wears out pixel by pixel');
 clearWorld();
 for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
 const sparkDust = defs[ID['Spark Dust']];
@@ -986,17 +986,54 @@ sparkDust.life = 4;
 sparkDust.lifeVariance = 0;
 setCell(30, ROWS - 2, ID['Spark Dust']);
 stepSimulation();
-let sparkAboveDust = false;
-for (let y = 0; y < ROWS - 2; y++) {
-    if (typeAt(30, y) === ID.Spark || typeAt(29, y) === ID.Spark || typeAt(31, y) === ID.Spark) {
-        sparkAboveDust = true;
-        break;
-    }
-}
-check('Spark Dust emits real Sparks above itself', sparkAboveDust);
+check('Spark Dust emits real Sparks around itself', countOf(ID.Spark) > 0);
 run(8);
-check('each Spark Dust pixel eventually disappears', countOf(ID['Spark Dust']) === 0);
+check('each Spark Dust pixel expires into Ash',
+    countOf(ID['Spark Dust']) === 0 && countOf(ID.Ash) > 0);
 Object.assign(sparkDust, savedSparkDustSettings);
+
+section('Spark Block emits around itself and water suppresses it');
+clearWorld();
+const sparkBlock = defs[ID['Spark Block']];
+const savedSparkBlockEmitterChance = sparkBlock.sparkEmitterChance;
+const savedSparkBlockLifetime = {
+    life: sparkBlock.life,
+    lifeVariance: sparkBlock.lifeVariance,
+    lifeTransitionAt: sparkBlock.lifeTransitionAt
+};
+sparkBlock.sparkEmitterChance = 1;
+const blockX = 30;
+const blockY = 20;
+setCell(blockX, blockY, ID['Spark Block']);
+setCell(blockX, blockY - 1, ID.Water);
+for (const [x, y] of [
+    [blockX - 1, blockY - 2], [blockX, blockY - 2], [blockX + 1, blockY - 2],
+    [blockX - 1, blockY - 1], [blockX + 1, blockY - 1],
+    [blockX - 1, blockY], [blockX + 1, blockY]
+]) setCell(x, y, ID.Wall);
+stepSimulation();
+check('water touching a Spark Block suppresses its Sparks', countOf(ID.Spark) === 0);
+
+getWorld().type[index(blockX, blockY - 1)] = EMPTY;
+getWorld().life[index(blockX, blockY - 1)] = 0;
+stepSimulation();
+check('the Spark Block resumes when the water is cleared', countOf(ID.Spark) > 0);
+check('the Spark Block lasts five times longer than Spark Dust',
+    sparkBlock.life === sparkDust.life * 5 &&
+    sparkBlock.lifeVariance === sparkDust.lifeVariance * 5);
+
+clearWorld();
+sparkBlock.sparkEmitterChance = 0;
+sparkBlock.life = 20;
+sparkBlock.lifeVariance = 0;
+sparkBlock.lifeTransitionAt = 0.1;
+setCell(blockX, blockY, ID['Spark Block']);
+run(18);
+check('a Spark Block becomes Spark Dust in its final tenth',
+    typeAt(blockX, blockY) === ID['Spark Dust']);
+sparkBlock.sparkEmitterChance = savedSparkBlockEmitterChance;
+Object.assign(sparkBlock, savedSparkBlockLifetime);
+sparkBlock.sparkEmitterChance = savedSparkBlockEmitterChance;
 
 // ---------------------------------------------------------------------------
 
@@ -1810,7 +1847,7 @@ section('A brushful of seeds in a pond all come up as lilies, not pondweed');
 fillRect(0, ROWS - 6, COLS, 6, ID['Wet Mud']);
 fillRect(3, ROWS - 26, COLS - 6, 20, ID.Water);
 run(300);
-// A generous scattering: around two in five seeds come up buoyant and never
+// A generous scattering: around one in ten seeds come up buoyant and never
 // reach the bed at all, and the ones that do sink want elbow room from each
 // other, so a thin sprinkling makes for a flaky count.
 for (let dy = 0; dy < 4; dy++) {

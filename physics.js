@@ -10,6 +10,7 @@
 //   type    which particle is in the cell (0 = empty air)
 //   temp    temperature of the cell in degrees C
 //   life    frames left before the particle decays (0 = it never decays)
+//   lifeMax starting lifetime for per-pixel late-life transitions
 //   residue what the cell leaves behind when its life runs out (0 = use the
 //           particle's own decaysInto). This is how burning wood leaves ash.
 //   moved   set to 1 once a particle has moved this frame, so that no particle
@@ -37,6 +38,7 @@ const OUT_OF_BOUNDS = -1;
 const NO_SURFACE = 32000;
 const MAX_WATER_INFILTRATION_DEPTH = 50;
 const POWER_GLOW_FRAMES = 7;
+const BATTERY_DISCHARGE_SCALE = 100;
 const ELECTRICAL_NEIGHBOURS = [
     [-1, -1], [0, -1], [1, -1],
     [-1, 0],           [1, 0],
@@ -321,6 +323,12 @@ export function prepareDefinitions(json) {
             life: p.life || 0,
             lifeVariance: p.lifeVariance || 0,
             decaysInto: toId(p.decaysInto),
+            // A long-lived material can turn into a shorter-lived material
+            // while it is wearing out, rather than jumping straight to its
+            // final residue. Spark Block uses this to become Spark Dust in
+            // the last tenth of its life.
+            lifeTransitionAt: p.lifeTransitionAt || 0,
+            lifeTransitionInto: toId(p.lifeTransitionInto),
             // Most particles that expire leave their by-product every time;
             // a material such as toxic gas can instead have a diminishing
             // conversion rate so its cycle cannot feed itself forever.
@@ -501,6 +509,7 @@ export function createWorld(cols, rows) {
         temp: new Float32Array(n),
         tempNext: new Float32Array(n),
         life: new Int16Array(n),
+        lifeMax: new Int16Array(n),
         residue: new Uint8Array(n),
         moved: new Uint8Array(n),
         shade: new Uint8Array(n),
@@ -573,6 +582,7 @@ export function getConnectedAluminumCharge(x, y) {
 export function clearWorld() {
     world.type.fill(EMPTY);
     world.life.fill(0);
+    world.lifeMax.fill(0);
     world.residue.fill(0);
     world.temp.fill(AMBIENT);
     world.heat.fill(0);
@@ -615,9 +625,11 @@ export function setCell(x, y, id, keepTemp) {
     const def = DEFS[id];
     world.type[i] = id;
     world.residue[i] = EMPTY;
-    world.life[i] = def.life > 0
+    const lifetime = def.life > 0
         ? def.life + Math.floor((Math.random() - 0.5) * def.lifeVariance)
         : 0;
+    world.life[i] = lifetime;
+    world.lifeMax[i] = lifetime;
     if (!keepTemp) world.temp[i] = def.defaultTemp;
     world.heat[i] = 0;
     world.data[i] = startingData(def);
@@ -634,8 +646,10 @@ export function setCell(x, y, id, keepTemp) {
 function transform(i, id, life, residue) {
     const def = DEFS[id];
     world.type[i] = id;
-    world.life[i] = life !== undefined ? life
+    const lifetime = life !== undefined ? life
         : (def.life > 0 ? def.life + Math.floor((Math.random() - 0.5) * def.lifeVariance) : 0);
+    world.life[i] = lifetime;
+    world.lifeMax[i] = lifetime;
     world.residue[i] = residue || EMPTY;
     world.heat[i] = 0;
     world.data[i] = startingData(def);
@@ -656,6 +670,7 @@ function defaultBulkInsulation(category) {
 function removeParticle(i) {
     world.type[i] = EMPTY;
     world.life[i] = 0;
+    world.lifeMax[i] = 0;
     world.residue[i] = EMPTY;
     world.heat[i] = 0;
     world.data[i] = 0;
@@ -669,6 +684,7 @@ function swapCells(i1, i2) {
     let t = world.type[i1]; world.type[i1] = world.type[i2]; world.type[i2] = t;
     let h = world.temp[i1]; world.temp[i1] = world.temp[i2]; world.temp[i2] = h;
     let l = world.life[i1]; world.life[i1] = world.life[i2]; world.life[i2] = l;
+    let lm = world.lifeMax[i1]; world.lifeMax[i1] = world.lifeMax[i2]; world.lifeMax[i2] = lm;
     let r = world.residue[i1]; world.residue[i1] = world.residue[i2]; world.residue[i2] = r;
     let s = world.shade[i1]; world.shade[i1] = world.shade[i2]; world.shade[i2] = s;
     let q = world.heat[i1]; world.heat[i1] = world.heat[i2]; world.heat[i2] = q;
@@ -862,7 +878,8 @@ function balanceStoredCharge() {
         // amount on every simulation tick. A bare copper wire therefore drains
         // very slowly, while a future machine can make the same grid consume
         // hundreds of charge units per tick.
-        const gridConsumption = connectedGridConsumption(dischargeContacts);
+        const gridConsumption = connectedGridConsumption(dischargeContacts) /
+            BATTERY_DISCHARGE_SCALE;
         if (totalCharge > 0 && gridConsumption > 0) {
             totalCharge = Math.max(0, totalCharge - gridConsumption);
             energizeConnectedMetal(dischargeContacts, false);
@@ -1242,20 +1259,23 @@ function findEmptyNeighbour(x, y) {
     return -1;
 }
 
-// Spark Dust throws sparks into the air above itself. The wider upper cone
-// lets a dust cell tucked directly beneath a solid Aluminum block still find
-// a little space at the block's edge for the Spark to rise through.
-function findEmptyAbove(x, y) {
-    const spots = [
-        [0, -1], [-1, -1], [1, -1], [-2, -1], [2, -1],
-        [0, -2], [-1, -2], [1, -2]
-    ];
-    const start = Math.floor(Math.random() * spots.length);
-    for (let n = 0; n < spots.length; n++) {
-        const [dx, dy] = spots[(start + n) % spots.length];
+// Spark sources throw sparks into any empty neighboring cell. That lets a
+// source charge Aluminum above, below, or beside it rather than making its
+// placement direction matter.
+function findEmptySparkSpace(x, y) {
+    const start = Math.floor(Math.random() * ELECTRICAL_NEIGHBOURS.length);
+    for (let n = 0; n < ELECTRICAL_NEIGHBOURS.length; n++) {
+        const [dx, dy] = ELECTRICAL_NEIGHBOURS[(start + n) % ELECTRICAL_NEIGHBOURS.length];
         if (typeAt(x + dx, y + dy) === EMPTY) return (y + dy) * COLS + x + dx;
     }
     return -1;
+}
+
+function hasLiquidNeighbour(x, y) {
+    for (const [dx, dy] of ELECTRICAL_NEIGHBOURS) {
+        if (DEFS[typeAt(x + dx, y + dy)]?.category === 'liquid') return true;
+    }
+    return false;
 }
 
 // ------------------------------------------------------------------ reactions
@@ -1293,11 +1313,13 @@ function applyReactions(x, y, i, def) {
         }
     }
 
-    // Spark Dust spends its own lifetime producing ordinary Sparks above it.
+    // Spark sources spend their own lifetime producing ordinary Sparks around
+    // themselves. Any touching liquid suppresses the source until it clears.
     // The Sparks are real particles, so they can charge Aluminum and conduct
-    // its pulse normally before the dust pixel eventually wears out.
-    if (def.sparkEmitterChance > 0 && Math.random() < def.sparkEmitterChance) {
-        const spot = findEmptyAbove(x, y);
+    // its pulse normally before the source pixel eventually wears out.
+    if (def.sparkEmitterChance > 0 && !hasLiquidNeighbour(x, y) &&
+        Math.random() < def.sparkEmitterChance) {
+        const spot = findEmptySparkSpace(x, y);
         if (spot >= 0) {
             const spark = idOf('Spark');
             transform(spot, spark);
@@ -1319,6 +1341,11 @@ function applyReactions(x, y, i, def) {
     // Lifetime. Fire and smoke burn out; a burning cell leaves its residue.
     if (def.life > 0) {
         world.life[i]--;
+        if (def.lifeTransitionInto !== EMPTY && def.lifeTransitionAt > 0 &&
+            world.life[i] > 0 && world.life[i] <= world.lifeMax[i] * def.lifeTransitionAt) {
+            transform(i, def.lifeTransitionInto);
+            return true;
+        }
         if (world.life[i] <= 0) {
             const residue = world.residue[i];
             if (residue !== EMPTY) {
@@ -1989,9 +2016,10 @@ function explode(x, y, def) {
                 continue;
             }
 
-            world.type[ni] = EMPTY;
-            world.life[ni] = 0;
-            world.residue[ni] = EMPTY;
+        world.type[ni] = EMPTY;
+        world.life[ni] = 0;
+        world.lifeMax[ni] = 0;
+        world.residue[ni] = EMPTY;
             world.data[ni] = 0;
             world.heat[ni] = 0;
             world.power[ni] = 0;

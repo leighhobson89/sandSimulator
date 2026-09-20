@@ -45,5 +45,5 @@ createServer(async (request, response) => {
         response.end('Not found: ' + relative);
     }
 }).listen(port, () => {
-    console.log(`Sand Simulator running at http://localhost:${port}`);
+    console.log(`Elemental Foundry running at http://localhost:${port}`);
 });
