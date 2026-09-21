@@ -1099,6 +1099,15 @@ input[type="range"]::-moz-range-thumb {
 .machine-overlay-icon.machine-fan { color: #d9f4ff; }
 .machine-overlay-icon.machine-heater { color: #ff9b45; }
 .machine-overlay-icon.machine-cooler { color: #8ed7ff; }
+.machine-overlay-icon.machine-storagePowder { color: #e0ad72; }
+.machine-overlay-icon.machine-storageLiquid { color: #72d2dd; }
+.machine-overlay-icon.machine-storageGas { color: #c39aff; }
+.machine-overlay-icon.machine-storagePowder,
+.machine-overlay-icon.machine-storageLiquid,
+.machine-overlay-icon.machine-storageGas {
+    width: 32px;
+    height: 32px;
+}
 .machine-placement-preview { opacity: 0.82; }
 
 canvas {
@@ -1188,6 +1197,15 @@ canvas.machine-hover { cursor: pointer; }
 .save-dialog-card-small { width: min(470px, 100%); }
 
 .machine-dialog-card { width: min(360px, 100%); }
+.machine-dialog-storage-summary {
+    margin: 0;
+    color: var(--text-dim);
+    line-height: 1.45;
+}
+.machine-dialog-storage-summary strong {
+    color: var(--text);
+    font-weight: 700;
+}
 .machine-dialog-input-label {
     margin-top: 0.35rem;
     color: var(--text-dim);

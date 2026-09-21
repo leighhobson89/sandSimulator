@@ -369,15 +369,29 @@
             <span class="tools-kicker">Machine control</span>
             <h2 id="machineDialogTitle">Machine</h2>
             <p id="machineDialogDescription" class="save-dialog-description"></p>
+            <p id="machineDialogStorageSummary" class="machine-dialog-storage-summary" hidden></p>
             <label id="machineDialogLabel" class="machine-dialog-input-label" for="machineDialogInput">Value</label>
-            <div class="machine-dialog-input-wrap">
+            <div id="machineDialogInputWrap" class="machine-dialog-input-wrap">
                 <input id="machineDialogInput" class="number-input machine-dialog-input" type="number" step="1" autocomplete="off">
                 <span id="machineDialogUnit" class="unit">&deg;C</span>
             </div>
             <p id="machineDialogError" class="save-dialog-error" role="alert" hidden></p>
             <div class="save-dialog-actions">
                 <button id="machineDialogOk" class="btn btn-primary" type="button">OK</button>
+                <button id="machineDialogPurge" class="btn btn-primary" type="button" hidden>Purge</button>
                 <button id="machineDialogCancel" class="btn btn-ghost" type="button">Cancel</button>
+            </div>
+        </div>
+    </section>
+
+    <section id="purgeDialog" class="save-dialog" hidden role="dialog" aria-modal="true" aria-labelledby="purgeDialogTitle">
+        <div class="save-dialog-card save-dialog-card-small">
+            <span class="tools-kicker">Destructive action</span>
+            <h2 id="purgeDialogTitle">Purge storage bin?</h2>
+            <p id="purgeDialogDescription" class="save-dialog-description">This empties the bin and allows it to accept a new material type.</p>
+            <div class="save-dialog-actions">
+                <button id="purgeDialogConfirm" class="btn btn-primary" type="button">Purge</button>
+                <button id="purgeDialogCancel" class="btn btn-ghost" type="button">Cancel</button>
             </div>
         </div>
     </section>

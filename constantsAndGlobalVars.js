@@ -113,12 +113,19 @@ export function setElements() {
         machineDialog: document.getElementById('machineDialog'),
         machineDialogTitle: document.getElementById('machineDialogTitle'),
         machineDialogDescription: document.getElementById('machineDialogDescription'),
+        machineDialogStorageSummary: document.getElementById('machineDialogStorageSummary'),
         machineDialogLabel: document.getElementById('machineDialogLabel'),
+        machineDialogInputWrap: document.getElementById('machineDialogInputWrap'),
         machineDialogInput: document.getElementById('machineDialogInput'),
         machineDialogUnit: document.getElementById('machineDialogUnit'),
         machineDialogError: document.getElementById('machineDialogError'),
         machineDialogOk: document.getElementById('machineDialogOk'),
-        machineDialogCancel: document.getElementById('machineDialogCancel')
+        machineDialogPurge: document.getElementById('machineDialogPurge'),
+        machineDialogCancel: document.getElementById('machineDialogCancel'),
+        purgeDialog: document.getElementById('purgeDialog'),
+        purgeDialogDescription: document.getElementById('purgeDialogDescription'),
+        purgeDialogConfirm: document.getElementById('purgeDialogConfirm'),
+        purgeDialogCancel: document.getElementById('purgeDialogCancel')
     };
 }
 

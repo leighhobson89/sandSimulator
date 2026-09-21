@@ -37,6 +37,7 @@
 
 export const EMPTY = 0;
 const OUT_OF_BOUNDS = -1;
+const STORAGE_VIRTUAL_WALL = -2;
 const NO_SURFACE = 32000;
 const MAX_WATER_INFILTRATION_DEPTH = 50;
 const POWER_GLOW_FRAMES = 7;
@@ -231,6 +232,8 @@ export function prepareDefinitions(json) {
                 ? Math.max(0.01, p.electricalConductivity || 1)
                 : 0,
             machine: p.machine || null,
+            storageCategory: p.storageCategory || null,
+            storageCapacity: p.storageCapacity || 0,
             machineWindSpeed: p.machineWindSpeed,
             machineTemp: p.machineTemp,
             machineRange: p.machineRange || 0,
@@ -553,7 +556,7 @@ export function getAmbientTarget() { return ambientTarget; }
 // always built with the same typed arrays as a newly-created one.
 const PERSISTED_WORLD_FIELDS = [
     'type', 'temp', 'life', 'lifeMax', 'residue', 'shade', 'heat', 'data',
-    'machineSetting', 'power', 'powerDelay', 'charge', 'wind', 'airflowX', 'airflowY',
+    'machineSetting', 'storageType', 'storageCount', 'power', 'powerDelay', 'charge', 'wind', 'airflowX', 'airflowY',
     'airflowNextX', 'airflowNextY'
 ];
 
@@ -595,6 +598,10 @@ export function restoreSimulationState(state) {
             }
             continue;
         }
+        // Storage inventory was added after the original machine state. Old
+        // saves simply have empty inventories because newly-created arrays are
+        // already zero-filled.
+        if ((field === 'storageType' || field === 'storageCount') && !source) continue;
         if (!source || source.length !== cells) {
             throw new Error(`This save has invalid ${field} data.`);
         }
@@ -631,6 +638,8 @@ export function createWorld(cols, rows) {
         surface: new Int16Array(n),
         data: new Uint8Array(n),
         machineSetting: new Float32Array(n),
+        storageType: new Uint8Array(n),
+        storageCount: new Uint16Array(n),
         power: new Uint8Array(n),
         powerDelay: new Uint16Array(n),
         charge: new Float32Array(n),
@@ -642,6 +651,8 @@ export function createWorld(cols, rows) {
     };
     world.temp.fill(AMBIENT);
     for (let i = 0; i < n; i++) world.shade[i] = random() * 255;
+    storageFunnelMachines = [];
+    storageBarrierMask = null;
     return world;
 }
 
@@ -657,6 +668,52 @@ function machineSettingBounds(def) {
     if (def?.machine === 'heater') return { min: 0, max: 4000 };
     if (def?.machine === 'cooler') return { min: -60, max: 20 };
     return null;
+}
+
+const STORAGE_CAPACITY = 500;
+// A storage icon is 32 screen pixels wide and a simulation cell is normally
+// about four screen pixels. Its invisible intake therefore spans roughly nine
+// cells and sits one cell behind the machine centre, at the funnel-to-bin
+// join. Keeping this close to the housing prevents an empty visual pocket
+// inside the icon. Diagonal barriers use the same one-step placement and a
+// supercover staircase across the rotated width.
+const STORAGE_OPENING_HALF_WIDTH = 4;
+const STORAGE_BARRIER_DISTANCE = 1;
+const STORAGE_DIAGONAL_BARRIER_STEPS = 1;
+const STORAGE_SUCTION_DEPTH = 2;
+
+function isStorageMachine(def) {
+    return !!def?.storageCategory && def.storageCapacity > 0;
+}
+
+function storageAccepts(def, particle) {
+    if (!isStorageMachine(def) || !particle) return false;
+    if (def.storageCategory === 'powder') return particle.category === 'powder';
+    if (def.storageCategory === 'liquid') return particle.category === 'liquid';
+    if (def.storageCategory === 'gas') return particle.category === 'gas' && particle.emit <= 0;
+    return false;
+}
+
+export function getStorageInventory(x, y) {
+    if (!inBounds(x, y)) return null;
+    const i = index(x, y);
+    const def = DEFS[world.type[i]];
+    if (!isStorageMachine(def)) return null;
+    return {
+        type: world.storageType[i],
+        count: world.storageCount[i],
+        capacity: def.storageCapacity || STORAGE_CAPACITY,
+        category: def.storageCategory
+    };
+}
+
+export function purgeStorageBin(x, y) {
+    if (!inBounds(x, y)) return false;
+    const i = index(x, y);
+    if (!isStorageMachine(DEFS[world.type[i]])) return false;
+    world.storageType[i] = EMPTY;
+    world.storageCount[i] = 0;
+    return true;
 }
 
 export function getMachineSetting(x, y) {
@@ -736,6 +793,8 @@ export function clearWorld() {
     world.heat.fill(0);
     world.data.fill(0);
     world.machineSetting.fill(0);
+    world.storageType.fill(0);
+    world.storageCount.fill(0);
     world.power.fill(0);
     world.powerDelay.fill(0);
     world.charge.fill(0);
@@ -744,6 +803,8 @@ export function clearWorld() {
     world.airflowY.fill(0);
     world.airflowNextX.fill(0);
     world.airflowNextY.fill(0);
+    storageFunnelMachines = [];
+    if (storageBarrierMask) storageBarrierMask.fill(0);
 }
 
 // What a freshly placed particle starts with in its data slot. A plant gets a
@@ -770,6 +831,16 @@ function typeAt(x, y) {
     return world.type[y * COLS + x];
 }
 
+function storageIntakeIsWall(x, y) {
+    return inBounds(x, y) && !!storageBarrierMask?.[index(x, y)];
+}
+
+function typeAtForMovement(def, x, y) {
+    const id = typeAt(x, y);
+    if (id !== EMPTY || !storageIntakeIsWall(x, y)) return id;
+    return STORAGE_VIRTUAL_WALL;
+}
+
 // Puts a particle into a cell, giving it its starting temperature and lifetime.
 // This is what the brush uses.
 export function setCell(x, y, id, keepTemp) {
@@ -787,6 +858,8 @@ export function setCell(x, y, id, keepTemp) {
     world.heat[i] = 0;
     world.data[i] = startingData(def);
     world.machineSetting[i] = def.machine ? defaultMachineSetting(def) : 0;
+    world.storageType[i] = 0;
+    world.storageCount[i] = 0;
     world.power[i] = 0;
     world.powerDelay[i] = 0;
     world.charge[i] = 0;
@@ -808,6 +881,8 @@ function transform(i, id, life, residue) {
     world.heat[i] = 0;
     world.data[i] = startingData(def);
     world.machineSetting[i] = def.machine ? defaultMachineSetting(def) : 0;
+    world.storageType[i] = 0;
+    world.storageCount[i] = 0;
     world.power[i] = 0;
     world.powerDelay[i] = 0;
     world.charge[i] = 0;
@@ -830,6 +905,8 @@ function removeParticle(i) {
     world.heat[i] = 0;
     world.data[i] = 0;
     world.machineSetting[i] = 0;
+    world.storageType[i] = 0;
+    world.storageCount[i] = 0;
     world.power[i] = 0;
     world.powerDelay[i] = 0;
     world.charge[i] = 0;
@@ -847,6 +924,8 @@ function swapCells(i1, i2) {
     let f = world.surface[i1]; world.surface[i1] = world.surface[i2]; world.surface[i2] = f;
     let d = world.data[i1]; world.data[i1] = world.data[i2]; world.data[i2] = d;
     let ms = world.machineSetting[i1]; world.machineSetting[i1] = world.machineSetting[i2]; world.machineSetting[i2] = ms;
+    let st = world.storageType[i1]; world.storageType[i1] = world.storageType[i2]; world.storageType[i2] = st;
+    let sc = world.storageCount[i1]; world.storageCount[i1] = world.storageCount[i2]; world.storageCount[i2] = sc;
     let p = world.power[i1]; world.power[i1] = world.power[i2]; world.power[i2] = p;
     let pd = world.powerDelay[i1]; world.powerDelay[i1] = world.powerDelay[i2]; world.powerDelay[i2] = pd;
     let c = world.charge[i1]; world.charge[i1] = world.charge[i2]; world.charge[i2] = c;
@@ -1094,10 +1173,12 @@ export function stepSimulation() {
     radiateHeat();
     computeLiquidSurfaces();
     world.moved.fill(0);
+    refreshStorageFunnelMachines();
     updateElectricalPower();
     decayAndAdvectFanAir();
     updateActiveMachines();
     applyFanAirflowToParticles();
+    updateStorageBins();
 
     // The breeze blows first, on the freshly cleared moved flags, so that
     // anything it shifts counts as having had its move for the frame and is
@@ -2251,7 +2332,7 @@ function powdersTogether(def, other) {
 }
 
 function canSinkInto(def, other) {
-    if (other === OUT_OF_BOUNDS) return false;
+    if (other === OUT_OF_BOUNDS || other === STORAGE_VIRTUAL_WALL) return false;
     if (other === EMPTY) return true;
     if (!def.displacesMaterials) return false;
     const o = DEFS[other];
@@ -2261,12 +2342,92 @@ function canSinkInto(def, other) {
 }
 
 function canRiseInto(def, other) {
-    if (other === OUT_OF_BOUNDS) return false;
+    if (other === OUT_OF_BOUNDS || other === STORAGE_VIRTUAL_WALL) return false;
     if (other === EMPTY) return true;
     const o = DEFS[other];
     if (o.category === 'static') return false;
     if (powdersTogether(def, o)) return false;
     return o.density > def.density;
+}
+
+function isSolidBarrier(id) {
+    return id === STORAGE_VIRTUAL_WALL || (id > 0 && DEFS[id]?.category === 'static');
+}
+
+let storageFunnelMachines = [];
+let storageBarrierMask = null;
+
+function buildStorageBarrierCells(x, y, frontX, frontY) {
+    const diagonal = frontX !== 0 && frontY !== 0;
+    const depthSteps = diagonal
+        ? STORAGE_DIAGONAL_BARRIER_STEPS
+        : STORAGE_BARRIER_DISTANCE;
+    const halfSteps = diagonal ? 3 : STORAGE_OPENING_HALF_WIDTH;
+    const tangentX = -frontY;
+    const tangentY = frontX;
+    const centreX = x - frontX * depthSteps;
+    const centreY = y - frontY * depthSteps;
+    const cells = [];
+    const seen = new Set();
+    const add = (cellX, cellY) => {
+        if (!inBounds(cellX, cellY)) return;
+        const cell = index(cellX, cellY);
+        if (seen.has(cell)) return;
+        seen.add(cell);
+        cells.push({ x: cellX, y: cellY, i: cell });
+    };
+
+    let previous = null;
+    for (let offset = -halfSteps; offset <= halfSteps; offset++) {
+        const cellX = centreX + tangentX * offset;
+        const cellY = centreY + tangentY * offset;
+
+        // A plain 45-degree row only touches at cell corners. Fan particles
+        // also travel diagonally, so they could tunnel through those corners.
+        // Adding the horizontal connector produces a one-cell staircase: a
+        // continuous supercover line without turning the whole icon square
+        // into a solid block.
+        if (diagonal && previous) add(previous.x + tangentX, previous.y);
+        add(cellX, cellY);
+        previous = { x: cellX, y: cellY };
+    }
+    return cells;
+}
+
+function isStorageFunnelArea(x, y, def) {
+    for (const funnel of storageFunnelMachines) {
+        const relativeX = x - funnel.x;
+        const relativeY = y - funnel.y;
+        const depth = relativeX * funnel.rearUnitX + relativeY * funnel.rearUnitY;
+        if (depth < 0) continue;
+        const tangent = relativeX * funnel.tangentUnitX + relativeY * funnel.tangentUnitY;
+        // The visible wings widen as they extend away from the bin. Treat the
+        // same area as the sealed funnel when a solid wall is drawn there.
+        const width = STORAGE_OPENING_HALF_WIDTH +
+            Math.max(0, depth - STORAGE_BARRIER_DISTANCE);
+        if (Math.abs(tangent) <= width) return true;
+    }
+    return false;
+}
+
+// A fluid must not squeeze diagonally through the corner where two cells of a
+// solid wall meet. Without this corner check, a staircase made from glass (the
+// usual shape of a storage-bin funnel wing) has one-cell diagonal gaps that let
+// liquid leak through even though the drawn wall is continuous.
+function canSinkDiagonally(def, x, y, nx, ny) {
+    if (!canSinkInto(def, typeAtForMovement(def, nx, ny))) return false;
+    if (nx === x || ny === y) return true;
+    if (!isStorageFunnelArea(x, y, def) && !isStorageFunnelArea(nx, ny, def)) return true;
+    return !isSolidBarrier(typeAtForMovement(def, nx, y)) &&
+        !isSolidBarrier(typeAtForMovement(def, x, ny));
+}
+
+function canRiseDiagonally(def, x, y, nx, ny) {
+    if (typeAtForMovement(def, nx, ny) !== EMPTY) return false;
+    if (nx === x || ny === y) return true;
+    if (!isStorageFunnelArea(x, y, def) && !isStorageFunnelArea(nx, ny, def)) return true;
+    return !isSolidBarrier(typeAtForMovement(def, nx, y)) &&
+        !isSolidBarrier(typeAtForMovement(def, x, ny));
 }
 
 function randomSign() { return random() < 0.5 ? -1 : 1; }
@@ -2289,7 +2450,7 @@ function movePowder(x, y, i, def, sluggish) {
         // business burrowing up through a bank of sand, and partly because two
         // buoyant seeds resting on one another each look heavier than the other
         // one does and would swap places for ever without falling.
-        const above = typeAt(x, y - 1);
+        const above = typeAtForMovement(body, x, y - 1);
         if (above > 0 && DEFS[above].category === 'liquid' && canRiseInto(body, above)) {
             swapCells(i, i - COLS);
             return;
@@ -2302,7 +2463,7 @@ function movePowder(x, y, i, def, sluggish) {
     let ci = i;
 
     for (let step = 0; step < body.fallSpeed; step++) {
-        const below = typeAt(x, cy + 1);
+        const below = typeAtForMovement(body, x, cy + 1);
         if (!canSinkInto(body, below)) break;
         const ni = ci + COLS;
         swapCells(ci, ni);
@@ -2321,37 +2482,37 @@ function movePowder(x, y, i, def, sluggish) {
     if (body.slide > 0 && random() < body.slide) {
         const dir = randomSign();
         for (const d of [dir, -dir]) {
-            if (!canSinkInto(body, typeAt(x + d, y + 1))) continue;
+            if (!canSinkDiagonally(body, x, y, x + d, y + 1)) continue;
             if (!groundFallsAway(body, x + d, y)) continue;
             swapCells(i, i + COLS + d);
             return;
         }
     }
 
-    if (body !== def) driftOnSurface(x, y, i);
+    if (body !== def) driftOnSurface(x, y, i, body);
 }
 
 // Anything floating on open water works its way to one side over time, the way
 // anything adrift does, until it fetches up against a bank or something else in
 // the water. It only ever steps to another spot on the same surface, so it
 // cannot drift out over dry land.
-function driftOnSurface(x, y, i) {
+function driftOnSurface(x, y, i, def) {
     if (random() > FLOAT_DRIFT_CHANCE) return;
-    if (!isFloatingOn(x, y)) return;
+    if (!isFloatingOn(x, y, def)) return;
 
     const dir = randomSign();
     for (const d of [dir, -dir]) {
-        if (typeAt(x + d, y) !== EMPTY) continue;
-        if (!isFloatingOn(x + d, y)) continue;
+        if (typeAtForMovement(def, x + d, y) !== EMPTY) continue;
+        if (!isFloatingOn(x + d, y, def)) continue;
         swapCells(i, i + d);
         return;
     }
 }
 
 // Is this cell sitting directly on top of a liquid?
-function isFloatingOn(x, y) {
-    const below = typeAt(x, y + 1);
-    if (below === OUT_OF_BOUNDS || below === EMPTY) return false;
+function isFloatingOn(x, y, def) {
+    const below = typeAtForMovement(def, x, y + 1);
+    if (below <= EMPTY) return false;
     return DEFS[below].category === 'liquid';
 }
 
@@ -2388,8 +2549,9 @@ function settledByDepth(y, i) {
 // A deep liquid interior can sleep, but a cell on a free vertical face cannot:
 // it is precisely the cell that must spill into the space beside it to erode a
 // water cliff and let the body find its level.
-function hasOpenSide(x, y) {
-    return typeAt(x - 1, y) === EMPTY || typeAt(x + 1, y) === EMPTY;
+function hasOpenSide(x, y, def) {
+    return typeAtForMovement(def, x - 1, y) === EMPTY ||
+        typeAtForMovement(def, x + 1, y) === EMPTY;
 }
 
 // How steep a slope a powder will sit on without slipping - its angle of
@@ -2399,7 +2561,7 @@ function hasOpenSide(x, y) {
 // between wet and dry that you can actually see.
 function groundFallsAway(def, nx, y) {
     for (let n = 1; n <= def.repose; n++) {
-        if (!canSinkInto(def, typeAt(nx, y + n))) return false;
+        if (!canSinkInto(def, typeAtForMovement(def, nx, y + n))) return false;
     }
     return true;
 }
@@ -2428,7 +2590,7 @@ function moveLiquid(x, y, i, def, sluggish) {
     // level. Gravity above has already had its turn, so a hole opened at the
     // bottom of a pond still fills; what stops is the endless sideways
     // shuffling that had the whole body of it churning at once.
-    if (settledByDepth(y, i) && !hasOpenSide(x, y)) return;
+    if (settledByDepth(y, i) && !hasOpenSide(x, y, def)) return;
 
     for (let step = 0; step < def.flowSteps; step++) {
         const before = i;
@@ -2452,7 +2614,7 @@ function fallDown(x, y, i, def) {
     let ci = i;
 
     for (let step = 0; step < def.fallSpeed; step++) {
-        const below = typeAt(x, cy + 1);
+        const below = typeAtForMovement(def, x, cy + 1);
 
         // Water landing on a flame puts it out there and then, instead of
         // dropping straight through it.
@@ -2639,6 +2801,7 @@ function isBuried(i, y) {
 // powder only gives way to something heavier than it is.
 function windCanEnter(def, target) {
     if (target === EMPTY) return true;
+    if (target === OUT_OF_BOUNDS || target === STORAGE_VIRTUAL_WALL) return false;
     const blocking = DEFS[target];
     if (blocking.category === 'static') return false;
     return blocking.density < def.density;
@@ -2678,7 +2841,8 @@ function decayAndAdvectFanAir() {
 
         nextX[i] += decayedX * FAN_AIR_STAY;
         nextY[i] += decayedY * FAN_AIR_STAY;
-        if (inBounds(nx, ny) && !stopsWind(world.type[ny * COLS + nx])) {
+        if (inBounds(nx, ny) && !stopsWind(world.type[ny * COLS + nx]) &&
+            !storageIntakeIsWall(nx, ny)) {
             const ni = ny * COLS + nx;
             nextX[ni] += decayedX * FAN_AIR_ADVECT;
             nextY[ni] += decayedY * FAN_AIR_ADVECT;
@@ -2751,6 +2915,84 @@ function machineIsPowered(x, y, i) {
     return false;
 }
 
+// A storage bin is an always-active one-cell machine with a 32px-wide virtual
+// barrier at the outside edge of its drawn funnel. The same rasterized cells
+// are used here and by movement collision, so the visible opening and the
+// working intake cannot drift apart. Each barrier cell draws acceptable matter
+// from up to two cells directly outside it, which prevents packed liquids from
+// waiting for a random movement before entering. A wrong particle, a different
+// stored type, or a full bin still meets the barrier as a solid wall and also
+// blocks suction from reaching through it.
+function updateStorageBins() {
+    for (const funnel of storageFunnelMachines) {
+        const i = funnel.i;
+        const def = DEFS[world.type[i]];
+        if (!isStorageMachine(def)) continue;
+
+        for (const barrier of funnel.barrierCells) {
+            if (world.storageCount[i] >= (def.storageCapacity || STORAGE_CAPACITY)) break;
+            for (let depth = 1; depth <= STORAGE_SUCTION_DEPTH; depth++) {
+                const sourceX = barrier.x - funnel.frontX * depth;
+                const sourceY = barrier.y - funnel.frontY * depth;
+                if (!inBounds(sourceX, sourceY)) break;
+
+                const source = index(sourceX, sourceY);
+                const particle = DEFS[world.type[source]];
+                if (!particle) continue;
+
+                // Suction never reaches through an unacceptable particle.
+                // It stays against the virtual wall and behaves normally
+                // under gravity and wind while also shielding anything behind
+                // it from being collected through the blockage.
+                if (!storageAccepts(def, particle) ||
+                    (world.storageType[i] !== EMPTY && world.storageType[i] !== particle.id) ||
+                    world.storageCount[i] >= (def.storageCapacity || STORAGE_CAPACITY)) {
+                    break;
+                }
+
+                world.storageType[i] = particle.id;
+                world.storageCount[i]++;
+                removeParticle(source);
+            }
+        }
+    }
+}
+
+function refreshStorageFunnelMachines() {
+    storageFunnelMachines = [];
+    if (!storageBarrierMask || storageBarrierMask.length !== world.type.length) {
+        storageBarrierMask = new Uint8Array(world.type.length);
+    } else {
+        storageBarrierMask.fill(0);
+    }
+
+    for (let i = 0; i < world.type.length; i++) {
+        const def = DEFS[world.type[i]];
+        if (!isStorageMachine(def)) continue;
+
+        const x = i % COLS;
+        const y = Math.floor(i / COLS);
+        const [frontX, frontY] = fanDirectionVector(world.data[i] & 7);
+        const directionLength = Math.hypot(frontX, frontY);
+        const rearUnitX = -frontX / directionLength;
+        const rearUnitY = -frontY / directionLength;
+        const tangentX = -frontY;
+        const tangentY = frontX;
+        const barrierCells = buildStorageBarrierCells(x, y, frontX, frontY);
+        for (const cell of barrierCells) storageBarrierMask[cell.i] = 1;
+        storageFunnelMachines.push({
+            i, x, y,
+            frontX,
+            frontY,
+            rearUnitX,
+            rearUnitY,
+            tangentUnitX: tangentX / directionLength,
+            tangentUnitY: tangentY / directionLength,
+            barrierCells
+        });
+    }
+}
+
 function emitMachineProjectile(x, y, direction, def, targetTemp) {
     if (def.machineEmits === EMPTY) return;
     const [dirX, dirY] = fanDirectionVector(direction);
@@ -2778,7 +3020,9 @@ function emitMachineProjectile(x, y, direction, def, targetTemp) {
 export function isMachinePoweredAt(x, y) {
     if (!world || !inBounds(x, y)) return false;
     const i = index(x, y);
-    return !!DEFS[world.type[i]]?.machine && machineIsPowered(x, y, i);
+    const def = DEFS[world.type[i]];
+    if (isStorageMachine(def)) return true;
+    return !!def?.machine && machineIsPowered(x, y, i);
 }
 
 // Heater and Cooler use the same widening, directional cone as a Fan, but
@@ -2834,7 +3078,10 @@ function applyFanWind(x, y, direction, strength = FAN_WIND_STRENGTH) {
     const intensity = Math.min(1, powerScale);
     const blocked = new Set();
 
-    for (let distance = range; distance >= 1; distance--) {
+    // Walk from the fan outwards. A solid cell must shelter the downwind part
+    // of its line, while the cells between the fan and that solid still need
+    // to receive airflow. Walking the other way blocks the near side instead.
+    for (let distance = 1; distance <= range; distance++) {
         const halfWidth = Math.floor((distance - 1) * 0.5);
         const falloff = 1 - (distance - 1) / (range + 1);
         for (let offset = -halfWidth; offset <= halfWidth; offset++) {
@@ -2846,7 +3093,7 @@ function applyFanWind(x, y, direction, strength = FAN_WIND_STRENGTH) {
 
             const ni = index(nx, ny);
             const id = world.type[ni];
-            if (stopsWind(id)) {
+            if (stopsWind(id) || storageIntakeIsWall(nx, ny)) {
                 blocked.add(offset);
                 continue;
             }
@@ -2868,7 +3115,8 @@ function applyFanWind(x, y, direction, strength = FAN_WIND_STRENGTH) {
             const ty = ny + dirY;
             if (!inBounds(tx, ty)) continue;
             const target = index(tx, ty);
-            if (world.moved[target] || !windCanEnter(def, world.type[target])) continue;
+            if (world.moved[target] || !windCanEnter(def,
+                typeAtForMovement(def, tx, ty))) continue;
             swapCells(ni, target);
         }
     }
@@ -2900,7 +3148,8 @@ function applyFanAirflowToParticles() {
         if (!inBounds(nx, ny)) continue;
 
         const target = index(nx, ny);
-        if (world.moved[target] || !windCanEnter(def, world.type[target])) continue;
+        if (world.moved[target] || !windCanEnter(def,
+            typeAtForMovement(def, nx, ny))) continue;
         swapCells(i, target);
     }
 }
@@ -2927,7 +3176,8 @@ function updateActiveMachines() {
 // it back; a bank of sand turns it upwards, because the air has to go
 // somewhere and over the top is the way that is open.
 function deflectsUpward(target) {
-    return target !== EMPTY && DEFS[target].category !== 'static';
+    return target !== EMPTY && target !== STORAGE_VIRTUAL_WALL &&
+        DEFS[target].category !== 'static';
 }
 
 // Works out which parts of a gust are in the lee of something solid.
@@ -3101,7 +3351,7 @@ export function applyWind(centreX, centreY, dirX, dirY, radius, strength) {
                 if (!inBounds(nx, ny)) continue;
 
                 const ni = ny * COLS + nx;
-                if (!windCanEnter(def, world.type[ni])) continue;
+                if (!windCanEnter(def, typeAtForMovement(def, nx, ny))) continue;
                 swapCells(i, ni);
             }
         }
@@ -3277,7 +3527,7 @@ function blowBreeze() {
             if (nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS) continue;
 
             let ni = ny * COLS + nx;
-            const ahead = world.type[ni];
+            const ahead = typeAtForMovement(def, nx, ny);
             if (!windCanEnter(def, ahead)) {
                 // Blocked. If what is in the way is loose - the next grain
                 // along in the pile rather than a wall - the air is turned up
@@ -3286,7 +3536,7 @@ function blowBreeze() {
                 if (!deflectsUpward(ahead) || ny < 1) continue;
                 ny -= 1;
                 ni = ny * COLS + nx;
-                if (!windCanEnter(def, world.type[ni])) continue;
+                if (!windCanEnter(def, typeAtForMovement(def, nx, ny))) continue;
             }
             swapCells(i, ni);
             markWind(ni, force * 75);
@@ -3305,7 +3555,7 @@ function takeOneFlowStep(x, y, i, def) {
     // cell with a lower neighbouring column slides into it.
     const dir = randomSign();
     for (const d of [dir, -dir]) {
-        if (canSinkInto(def, typeAt(x + d, y + 1))) {
+        if (canSinkDiagonally(def, x, y, x + d, y + 1)) {
             swapCells(i, i + COLS + d);
             return i + COLS + d;
         }
@@ -3331,10 +3581,10 @@ function flowSideways(x, y, i, def, preferred) {
         let run = 0;
         for (let n = 1; n <= def.spread; n++) {
             const nx = x + d * n;
-            if (typeAt(nx, y) !== EMPTY) break;
+            if (typeAtForMovement(def, nx, y) !== EMPTY) break;
             run = n;
             // Found a gap to drop through: go straight there.
-            if (canSinkInto(def, typeAt(nx, y + 1))) {
+            if (canSinkInto(def, typeAtForMovement(def, nx, y + 1))) {
                 swapCells(i, i + d * n);
                 return i + d * n;
             }
@@ -3366,13 +3616,13 @@ function pressureRise(x, y, i, def, preferred) {
     if (y - 1 <= level) return i;
     if (random() > 0.5) return i;
 
-    if (typeAt(x, y - 1) === EMPTY) {
+    if (typeAtForMovement(def, x, y - 1) === EMPTY) {
         swapCells(i, i - COLS);
         closeGapBehind(x, y, i, def.id);
         return i - COLS;
     }
     for (const d of [preferred, -preferred]) {
-        if (typeAt(x + d, y - 1) === EMPTY) {
+        if (canRiseDiagonally(def, x, y, x + d, y - 1)) {
             swapCells(i, i - COLS + d);
             closeGapBehind(x, y, i, def.id);
             return i - COLS + d;
@@ -3514,11 +3764,11 @@ function moveGas(x, y, i, def) {
     // steam fill a room instead of hugging the ceiling above where it was made.
     if (def.drift > 0 && random() < def.drift) {
         const d = randomSign();
-        if (canRiseInto(def, typeAt(x + d, y - 1))) {
+        if (canRiseInto(def, typeAtForMovement(def, x + d, y - 1))) {
             swapCells(i, i - COLS + d);
             return;
         }
-        if (canRiseInto(def, typeAt(x + d, y))) {
+        if (canRiseInto(def, typeAtForMovement(def, x + d, y))) {
             swapCells(i, i + d);
             return;
         }
@@ -3528,7 +3778,7 @@ function moveGas(x, y, i, def) {
     let ci = i;
 
     for (let step = 0; step < def.fallSpeed; step++) {
-        const above = typeAt(x, cy - 1);
+        const above = typeAtForMovement(def, x, cy - 1);
         if (!canRiseInto(def, above)) break;
         const ni = ci - COLS;
         swapCells(ci, ni);
@@ -3540,7 +3790,7 @@ function moveGas(x, y, i, def) {
 
     const dir = randomSign();
     for (const d of [dir, -dir]) {
-        if (canRiseInto(def, typeAt(x + d, y - 1))) {
+        if (canRiseInto(def, typeAtForMovement(def, x + d, y - 1))) {
             swapCells(i, i - COLS + d);
             return;
         }
@@ -3550,7 +3800,7 @@ function moveGas(x, y, i, def) {
     // its own kind. It spreads out along whatever is stopping it rather than
     // stacking up underneath it - gas fills the room it is in.
     for (const d of [dir, -dir]) {
-        if (canRiseInto(def, typeAt(x + d, y))) {
+        if (canRiseInto(def, typeAtForMovement(def, x + d, y))) {
             swapCells(i, i + d);
             return;
         }

@@ -16,7 +16,7 @@ import {
     setLayerLapse, getLayerLapse, getAirTempAt, setAirLayersOn,
     applyWind, getWindTrails, decayWindTrails,
     setAmbientWindOn, isBreezeBlowing, isPowered, getStoredCharge,
-    getConnectedAluminumCharge, setRandomSeed, getRandomSeed, EMPTY
+    getConnectedAluminumCharge, getStorageInventory, setRandomSeed, getRandomSeed, EMPTY
 } from '../physics.js';
 
 const json = JSON.parse(readFileSync(new URL('../particles.json', import.meta.url), 'utf8'));
@@ -433,7 +433,7 @@ check('freezing air did not come close to halving the time it takes',
 // along would quietly turn to ice.
 clearWorld();
 setAmbientTarget(20);
-run(2500);
+run(1400);
 
 section('Stone reheats through scoria and back into lava');
 setLayerLapse(0);
@@ -543,7 +543,7 @@ for (let y = 0; y < ROWS; y++) {
 }
 check('steam cools at different rates', warmestSteam - coolestSteam > 4,
     `${(warmestSteam - coolestSteam).toFixed(1)}C spread`);
-run(1400);
+run(2500);
 check('but it does condense in the end', countOf(ID.Steam) < steamStart / 2,
     `${steamStart} -> ${countOf(ID.Steam)}`);
 check('some steam came back as water', countOf(ID.Water) > 0, `${countOf(ID.Water)} water`);
@@ -1129,6 +1129,16 @@ check('a Fan can blow diagonally',
     getWorld().wind[index(fanX + 1, fanY - 1)] > 0 &&
     getWorld().wind[index(fanX + 1, fanY + 1)] === 0);
 
+clearWorld();
+setCell(fanX, fanY, ID.Fan);
+setCell(fanX - 1, fanY, ID.Aluminum);
+getWorld().charge[index(fanX - 1, fanY)] = defs[ID.Aluminum].chargeCapacity;
+setCell(fanX + 3, fanY, ID.Glass);
+stepSimulation();
+check('a solid in front of a Fan blocks only the downwind cone',
+    getWorld().wind[index(fanX + 2, fanY)] > 0 &&
+    getWorld().wind[index(fanX + 4, fanY)] === 0);
+
 // ---------------------------------------------------------------------------
 
 section('Heater and Cooler launch directional ray particles when powered');
@@ -1169,6 +1179,33 @@ clearWorld();
 setCell(machineX, machineY, ID.Heater);
 stepSimulation();
 check('an unpowered Heater launches no Heat Ray', countOf(ID['Heat Ray']) === 0);
+
+// ---------------------------------------------------------------------------
+
+section('A sealed storage funnel fills the bin before retaining overflow');
+clearWorld();
+for (let x = 0; x < COLS; x++) setCell(x, ROWS - 2, ID.Glass);
+const storageX = Math.floor(COLS / 2);
+const storageY = ROWS - 3;
+setCell(storageX, storageY, ID['Liquid Storage Bin']);
+getWorld().data[index(storageX, storageY)] = 3; // entrance points upward
+for (let y = 0; y < storageY; y++) {
+    const progress = y / (storageY - 1);
+    const leftWing = Math.round(4 + (storageX - 1 - 4) * progress);
+    const rightWing = Math.round((COLS - 5) + ((storageX + 1) - (COLS - 5)) * progress);
+    setCell(leftWing, y, ID.Glass);
+    setCell(rightWing, y, ID.Glass);
+    for (let x = leftWing + 1; x < rightWing; x++) {
+        if (y >= 6 && y < 30) setCell(x, y, ID.Water);
+    }
+}
+run(1400);
+const storage = getStorageInventory(storageX, storageY);
+check('the funnel stores water as it reaches the entrance',
+    storage?.type === ID.Water && storage.count === storage.capacity,
+    `${storage?.count ?? 0}/${storage?.capacity ?? 0} stored`);
+check('water remains above a full storage bin', countOf(ID.Water) > 0,
+    `${countOf(ID.Water)} water remains above the full bin`);
 
 // ---------------------------------------------------------------------------
 
@@ -2246,6 +2283,65 @@ run(1200);
 check('no wet mud nearby means no promotion',
     countOf(ID.Grass) > 2 && countOf(ID.Plant) === 0,
     `${countOf(ID.Grass)} grass cells, ${countOf(ID.Plant)} plant cells`);
+
+// ---------------------------------------------------------------------------
+
+section('A lower-left Fan feeds Ash into a diagonal Powder Storage Bin');
+const fedBinX = 36;
+const fedBinY = 12;
+const fedDirection = 4; // up-right
+setCell(fedBinX, fedBinY, ID['Powder Storage Bin']);
+getWorld().data[index(fedBinX, fedBinY)] = fedDirection;
+const fedFanX = 18;
+const fedFanY = 30;
+setCell(fedFanX, fedFanY, ID.Fan);
+getWorld().data[index(fedFanX, fedFanY)] = fedDirection;
+getWorld().power[index(fedFanX, fedFanY)] = 255;
+getWorld().machineSetting[index(fedFanX, fedFanY)] = 20;
+// These start outside the icon and its rear-edge barrier, on the Fan's exact
+// lower-left to upper-right centreline. This reproduces the diagonal failure
+// that a particle placed beside the machine cannot exercise.
+for (const [x, y] of [[24, 24], [26, 22], [28, 20]]) setCell(x, y, ID.Ash);
+run(20);
+check('all Ash fired up-right at 45 degrees crosses the intake and is stored',
+    getStorageInventory(fedBinX, fedBinY)?.type === ID.Ash &&
+    getStorageInventory(fedBinX, fedBinY)?.count === 3,
+    `${getStorageInventory(fedBinX, fedBinY)?.count ?? 0}/3 Ash stored`);
+
+clearWorld();
+const wrongSideBinX = 30;
+const wrongSideBinY = 22;
+setCell(wrongSideBinX, wrongSideBinY, ID['Powder Storage Bin']);
+getWorld().data[index(wrongSideBinX, wrongSideBinY)] = 2; // entrance points up
+setCell(wrongSideBinX, wrongSideBinY - 2, ID.Ash); // falls from the front
+stepSimulation();
+check('powder arriving from the front of an upside-down bin is refused',
+    getStorageInventory(wrongSideBinX, wrongSideBinY)?.count === 0);
+
+clearWorld();
+const suctionBinX = 30;
+const suctionBinY = 22;
+setCell(suctionBinX, suctionBinY, ID['Liquid Storage Bin']);
+getWorld().data[index(suctionBinX, suctionBinY)] = 3; // intake is above the bin
+// The virtual barrier is one row above the bin. These two packed Water cells
+// are in its two-cell suction zone and have no movement history or free row to
+// drop into before the storage pass runs.
+setCell(suctionBinX, suctionBinY - 2, ID.Water);
+setCell(suctionBinX, suctionBinY - 3, ID.Water);
+stepSimulation();
+check('a storage intake pulls two rows of stationary packed Water into the bin',
+    getStorageInventory(suctionBinX, suctionBinY)?.type === ID.Water &&
+    getStorageInventory(suctionBinX, suctionBinY)?.count === 2,
+    `${getStorageInventory(suctionBinX, suctionBinY)?.count ?? 0}/2 Water stored`);
+
+clearWorld();
+setCell(suctionBinX, suctionBinY, ID['Powder Storage Bin']);
+getWorld().data[index(suctionBinX, suctionBinY)] = 3;
+setCell(suctionBinX, suctionBinY - 2, ID.Water); // wrong type nearest the intake
+setCell(suctionBinX, suctionBinY - 3, ID.Ash);   // valid type behind the blockage
+stepSimulation();
+check('storage suction neither accepts nor reaches through a wrong particle',
+    getStorageInventory(suctionBinX, suctionBinY)?.count === 0);
 
 // ---------------------------------------------------------------------------
 

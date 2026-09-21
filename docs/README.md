@@ -1,5 +1,8 @@
 # Elemental Foundry documentation
 
+Storage-machine collision and intake maintenance is documented in
+[`STORAGE_BIN_COLLISION.md`](STORAGE_BIN_COLLISION.md).
+
 The material picker is also a maintained in-app glossary; see
 [`MATERIAL_GLOSSARY.md`](MATERIAL_GLOSSARY.md) for its source and update rules.
 

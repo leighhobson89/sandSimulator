@@ -26,7 +26,8 @@ import {
 import {
     getDefinitions, setAmbientTarget, getAmbientTarget, setLayerLapse, getLayerLapse,
     setAmbientWindOn, getAmbientWindOn, setAirLayersOn, getAirLayersOn,
-    setWindDial, getWorld, index, getMachineSetting, setMachineSetting
+    setWindDial, getWorld, index, getMachineSetting, setMachineSetting,
+    getStorageInventory, purgeStorageBin, isMachinePoweredAt
 } from './physics.js';
 import { loadSavedTheme, buildThemeSwatches, buildThemeSelect } from './themes.js';
 import {
@@ -56,6 +57,9 @@ const STAMP_HISTORY_LIMIT = 10;
 let stampUndoHistory = [];
 let stampRedoHistory = [];
 let editingMachine = null;
+let machineTooltipTimer = null;
+let machineTooltipTarget = null;
+let machineTooltipAnchor = null;
 
 document.addEventListener('DOMContentLoaded', async () => {
     await loadParticleDefinitions();
@@ -84,7 +88,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     elements.clearDialogConfirm.addEventListener('click', confirmClearWorld);
     elements.clearDialogCancel.addEventListener('click', closeClearDialog);
     elements.machineDialogOk.addEventListener('click', confirmMachineDialog);
+    elements.machineDialogPurge.addEventListener('click', openPurgeDialog);
     elements.machineDialogCancel.addEventListener('click', closeMachineDialog);
+    elements.purgeDialogConfirm.addEventListener('click', confirmPurgeDialog);
+    elements.purgeDialogCancel.addEventListener('click', closePurgeDialog);
     elements.machineDialogInput.addEventListener('input', validateMachineInput);
     elements.machineDialogInput.addEventListener('keydown', event => {
         if (event.key === 'Enter') {
@@ -357,6 +364,16 @@ const MACHINE_CONTROL_SPECS = {
     cooler: { label: 'Temperature', min: -60, max: 20, unit: '°C' }
 };
 
+function isStorageMachineDefinition(def) {
+    return !!def?.storageCategory;
+}
+
+function storageContentsText(inventory) {
+    if (!inventory) return 'empty';
+    const stored = inventory.type > 0 ? getDefinitions()[inventory.type]?.name : null;
+    return `${inventory.count}/${inventory.capacity} ${stored || 'empty'}`;
+}
+
 function machineAtCell(cell) {
     const world = getWorld();
     if (!world || cell.x < 0 || cell.y < 0 || cell.x >= world.cols || cell.y >= world.rows) return null;
@@ -365,7 +382,7 @@ function machineAtCell(cell) {
     return def?.machine ? { id, def, x: cell.x, y: cell.y } : null;
 }
 
-// The SVG machine face is 30 CSS pixels wide, while the simulation machine is
+// The SVG machine face is 32 CSS pixels wide, while the simulation machine is
 // only one cell. Hit-test against that visible face so a pointer near its edge
 // still gets the hand cursor and can open the machine controls.
 function machineAtPointer(event) {
@@ -378,15 +395,16 @@ function machineAtPointer(event) {
     const cellWidth = rect.width / world.cols;
     const cellHeight = rect.height / world.rows;
     const cell = cellFromEvent(event);
-    const radiusX = Math.ceil(15 / Math.max(1, cellWidth) + 0.5);
-    const radiusY = Math.ceil(15 / Math.max(1, cellHeight) + 0.5);
+    const iconHalfSize = 16;
+    const radiusX = Math.ceil(iconHalfSize / Math.max(1, cellWidth) + 0.5);
+    const radiusY = Math.ceil(iconHalfSize / Math.max(1, cellHeight) + 0.5);
 
     for (let y = cell.y - radiusY; y <= cell.y + radiusY; y++) {
         for (let x = cell.x - radiusX; x <= cell.x + radiusX; x++) {
             if (x < 0 || y < 0 || x >= world.cols || y >= world.rows) continue;
             const centreX = (x + 0.5) * cellWidth;
             const centreY = (y + 0.5) * cellHeight;
-            if (Math.abs(pointerX - centreX) > 15 || Math.abs(pointerY - centreY) > 15) continue;
+            if (Math.abs(pointerX - centreX) > iconHalfSize || Math.abs(pointerY - centreY) > iconHalfSize) continue;
             const machine = machineAtCell({ x, y });
             if (machine) return machine;
         }
@@ -397,31 +415,59 @@ function machineAtPointer(event) {
 function updateMachineCursor(cell, event) {
     const hit = event ? machineAtPointer(event) : machineAtCell(cell);
     getElements().canvas.classList.toggle('machine-hover', !!hit);
+    if (hit && event) showMachineTooltip(hit, event);
+    else if (!hit) hideMachineTooltip();
 }
 
 function openMachineDialog(x, y, machine = machineAtCell({ x, y })) {
     if (!machine) return false;
     const spec = MACHINE_CONTROL_SPECS[machine.def.machine];
-    if (!spec) return false;
+    const storage = isStorageMachineDefinition(machine.def);
+    if (!spec && !storage) return false;
 
     const elements = getElements();
+    hideMachineTooltip();
     const current = getMachineSetting(x, y);
-    editingMachine = { x, y, machine: machine.def.machine, fallback: current };
-    elements.machineDialogTitle.textContent = `${machine.def.name} settings`;
-    elements.machineDialogDescription.textContent = machine.def.machine === 'fan'
-        ? 'Set the airflow strength for this Fan. Speed 7 matches the default breeze scale; higher values are stronger.'
-        : `${machine.def.name} will only ${machine.def.machine === 'heater' ? 'raise' : 'lower'} temperatures toward this target in its facing direction.`;
-    elements.machineDialogLabel.textContent = spec.label;
-    elements.machineDialogInput.setAttribute('aria-label', spec.label);
-    elements.machineDialogInput.min = String(spec.min);
-    elements.machineDialogInput.max = String(spec.max);
-    elements.machineDialogInput.step = '1';
-    elements.machineDialogInput.value = String(Number.isFinite(current) ? current : (spec.defaultValue ?? spec.min));
-    elements.machineDialogUnit.textContent = spec.unit;
-    elements.machineDialogUnit.hidden = !spec.unit;
+    editingMachine = { x, y, machine: machine.def.machine, fallback: current, storage };
+    elements.machineDialogTitle.textContent = storage ? `${machine.def.name} contents` : `${machine.def.name} settings`;
+    elements.machineDialogDescription.textContent = storage
+        ? `Stores one ${machine.def.storageCategory} type, up to ${machine.def.storageCapacity} particles. Wrong types are refused. Purge the bin to empty it and accept a new type.`
+        : machine.def.machine === 'fan'
+            ? 'Set the airflow strength for this Fan. Speed 7 matches the default breeze scale; higher values are stronger.'
+            : `${machine.def.name} will only ${machine.def.machine === 'heater' ? 'raise' : 'lower'} temperatures toward this target in its facing direction.`;
+    const storageSummary = elements.machineDialogStorageSummary;
+    storageSummary.textContent = '';
+    if (storage) {
+        const inventory = getStorageInventory(x, y);
+        const summaryPrefix = document.createElement('span');
+        summaryPrefix.textContent = 'Current contents: ';
+        storageSummary.appendChild(summaryPrefix);
+        const summaryStrong = document.createElement('strong');
+        summaryStrong.textContent = storageContentsText(inventory);
+        storageSummary.appendChild(summaryStrong);
+    }
+    storageSummary.hidden = !storage;
+    elements.machineDialogLabel.textContent = spec?.label || 'Contents';
+    elements.machineDialogLabel.hidden = storage;
+    elements.machineDialogInputWrap.hidden = storage;
+    elements.machineDialogInput.hidden = storage;
+    elements.machineDialogInput.disabled = storage;
+    elements.machineDialogInput.setAttribute('aria-label', spec?.label || 'Contents');
+    if (spec) {
+        elements.machineDialogInput.min = String(spec.min);
+        elements.machineDialogInput.max = String(spec.max);
+        elements.machineDialogInput.step = '1';
+        elements.machineDialogInput.value = String(Number.isFinite(current) ? current : (spec.defaultValue ?? spec.min));
+    }
+    elements.machineDialogUnit.textContent = spec?.unit || '';
+    elements.machineDialogUnit.hidden = !spec?.unit;
     elements.machineDialogError.hidden = true;
+    elements.machineDialogOk.hidden = storage;
+    elements.machineDialogPurge.hidden = !storage;
+    elements.machineDialogCancel.textContent = storage ? 'Close' : 'Cancel';
     elements.machineDialog.hidden = false;
-    elements.machineDialogInput.focus();
+    if (!storage) elements.machineDialogInput.focus();
+    else elements.machineDialogCancel.focus();
     return true;
 }
 
@@ -443,11 +489,41 @@ function closeMachineDialog() {
     const elements = getElements();
     elements.machineDialog.hidden = true;
     elements.machineDialogError.hidden = true;
+    elements.machineDialogStorageSummary.hidden = true;
+    elements.machineDialogStorageSummary.textContent = '';
+    elements.machineDialogLabel.hidden = false;
+    elements.machineDialogInput.disabled = false;
+    elements.machineDialogInput.hidden = false;
+    elements.machineDialogInputWrap.hidden = false;
+    elements.machineDialogOk.hidden = false;
+    elements.machineDialogPurge.hidden = true;
+    elements.machineDialogCancel.textContent = 'Cancel';
     editingMachine = null;
 }
 
+function openPurgeDialog() {
+    if (!editingMachine?.storage) return;
+    const elements = getElements();
+    const inventory = getStorageInventory(editingMachine.x, editingMachine.y);
+    elements.purgeDialogDescription.textContent =
+        `Purge ${storageContentsText(inventory)} from this bin? The bin will then accept a new material type.`;
+    elements.purgeDialog.hidden = false;
+    elements.purgeDialogConfirm.focus();
+}
+
+function closePurgeDialog() {
+    getElements().purgeDialog.hidden = true;
+}
+
+function confirmPurgeDialog() {
+    if (!editingMachine?.storage) return;
+    purgeStorageBin(editingMachine.x, editingMachine.y);
+    closePurgeDialog();
+    closeMachineDialog();
+}
+
 function confirmMachineDialog() {
-    if (!editingMachine) return;
+    if (!editingMachine || editingMachine.storage) return;
     const value = validateMachineInput();
     const finalValue = value === null ? editingMachine.fallback : value;
     if (Number.isFinite(finalValue)) {
@@ -476,7 +552,7 @@ function buildParticleButtons() {
     const defs = getDefinitions();
     container.innerHTML = '';
 
-    const order = ['Powders', 'Liquids', 'Gases', 'Solids', 'Metals', 'Machines', 'Tools', 'Other'];
+    const order = ['Powders', 'Liquids', 'Gases', 'Solids', 'Metals', 'Machines', 'Storage', 'Tools', 'Other'];
     const groups = {};
     for (let id = 1; id < defs.length; id++) {
         if (!defs[id]) continue;
@@ -572,6 +648,7 @@ function formatMaterialTooltip(def) {
     if (def.chargeSparkChance > 0) properties.push(`full-charge spark chance ${formatPercent(def.chargeSparkChance)}`);
     if (def.powerConsumption > 0) properties.push(`draws ${formatNumber(def.powerConsumption)} power/tick`);
     if (def.machine) properties.push(`machine: ${titleCase(def.machine)}`);
+    if (def.storageCategory) properties.push(`stores one ${def.storageCategory} type, up to ${formatNumber(def.storageCapacity)} particles`);
     if (def.machineTemp !== undefined) properties.push(`outputs ${formatTemperature(def.machineTemp)} over ${formatNumber(def.machineRange)} cells`);
     if (def.machineRate > 0) properties.push(`output rate ${formatPercent(def.machineRate)}`);
     if (def.machineEmits > 0) {
@@ -825,7 +902,69 @@ function setUpTooltips() {
         control.addEventListener('focusout', hide);
     });
     panels.forEach(panel => panel.addEventListener('scroll', hide));
-    window.addEventListener('resize', hide);
+    window.addEventListener('resize', () => { hide(); hideMachineTooltip(); });
+}
+
+function machineTooltipText(machine) {
+    const def = machine.def;
+    const lines = [def.name];
+    if (isStorageMachineDefinition(def)) {
+        lines.push(`Contents: ${storageContentsText(getStorageInventory(machine.x, machine.y))}`);
+        lines.push('Status: Active (no power required)');
+        return lines.join('\n');
+    }
+
+    const setting = getMachineSetting(machine.x, machine.y);
+    if (def.machine === 'fan') lines.push(`Wind speed: ${formatNumber(setting)}`);
+    else if (def.machine === 'heater' || def.machine === 'cooler') {
+        lines.push(`Temperature: ${formatNumber(setting)} \u00b0C`);
+    }
+    lines.push(`Status: ${isMachinePoweredAt(machine.x, machine.y) ? 'Powered / active' : 'Not powered'}`);
+    return lines.join('\n');
+}
+
+function renderMachineTooltip(machine, event) {
+    const tooltip = document.getElementById('toolTooltip');
+    if (!tooltip) return;
+    tooltip.textContent = machineTooltipText(machine);
+    tooltip.hidden = false;
+
+    const viewportWidth = window.innerWidth || 1024;
+    const viewportHeight = window.innerHeight || 768;
+    const gap = 14;
+    const tooltipRect = tooltip.getBoundingClientRect();
+    let left = (event?.clientX || 0) + gap;
+    let top = (event?.clientY || 0) + gap;
+    if (left + tooltipRect.width > viewportWidth - gap) left = Math.max(gap, (event?.clientX || 0) - tooltipRect.width - gap);
+    if (top + tooltipRect.height > viewportHeight - gap) top = Math.max(gap, (event?.clientY || 0) - tooltipRect.height - gap);
+    tooltip.style.left = `${Math.round(left)}px`;
+    tooltip.style.top = `${Math.round(top)}px`;
+}
+
+function showMachineTooltip(machine, event) {
+    machineTooltipTarget = { x: machine.x, y: machine.y, id: machine.id };
+    machineTooltipAnchor = { clientX: event.clientX, clientY: event.clientY };
+    renderMachineTooltip(machine, machineTooltipAnchor);
+    if (!machineTooltipTimer) machineTooltipTimer = setInterval(refreshMachineTooltip, 150);
+}
+
+function refreshMachineTooltip() {
+    if (!machineTooltipTarget) return;
+    const machine = machineAtCell(machineTooltipTarget);
+    if (!machine || machine.id !== machineTooltipTarget.id) {
+        hideMachineTooltip();
+        return;
+    }
+    renderMachineTooltip(machine, machineTooltipAnchor);
+}
+
+function hideMachineTooltip() {
+    if (machineTooltipTimer) clearInterval(machineTooltipTimer);
+    machineTooltipTimer = null;
+    machineTooltipTarget = null;
+    machineTooltipAnchor = null;
+    const tooltip = document.getElementById('toolTooltip');
+    if (tooltip) tooltip.hidden = true;
 }
 
 function selectDrawingMode(mode) {

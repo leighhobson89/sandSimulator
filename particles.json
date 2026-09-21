@@ -1141,6 +1141,54 @@
       "machineRate": 0.9,
       "machineEmits": "Cold Ray",
       "corrodible": true
+    },
+    "48": {
+      "name": "Powder Storage Bin",
+      "description": "Always-active storage machine that accepts one kind of powder through its rear entrance and holds up to 500 particles.",
+      "group": "Storage",
+      "color": "rgb(171, 119, 70)",
+      "category": "static",
+      "density": 7.8,
+      "conductivity": 0.04,
+      "cooling": 0.002,
+      "bulkInsulation": 0.3,
+      "meltPoint": 10000,
+      "machine": "storagePowder",
+      "storageCategory": "powder",
+      "storageCapacity": 500,
+      "corrodible": false
+    },
+    "49": {
+      "name": "Liquid Storage Bin",
+      "description": "Always-active storage machine that accepts one kind of liquid, including molten metal, through its rear entrance and holds up to 500 particles.",
+      "group": "Storage",
+      "color": "rgb(55, 151, 166)",
+      "category": "static",
+      "density": 7.8,
+      "conductivity": 0.04,
+      "cooling": 0.002,
+      "bulkInsulation": 0.3,
+      "meltPoint": 10000,
+      "machine": "storageLiquid",
+      "storageCategory": "liquid",
+      "storageCapacity": 500,
+      "corrodible": false
+    },
+    "50": {
+      "name": "Gas Storage Bin",
+      "description": "Always-active storage machine that accepts one kind of non-flaming gas through its rear entrance and holds up to 500 particles.",
+      "group": "Storage",
+      "color": "rgb(136, 91, 181)",
+      "category": "static",
+      "density": 7.8,
+      "conductivity": 0.04,
+      "cooling": 0.002,
+      "bulkInsulation": 0.3,
+      "meltPoint": 10000,
+      "machine": "storageGas",
+      "storageCategory": "gas",
+      "storageCapacity": 500,
+      "corrodible": false
     }
   }
 }

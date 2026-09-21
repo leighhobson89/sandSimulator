@@ -45,7 +45,7 @@ export const BLUEPRINT_SLOT_COUNT = 24;
 
 export const BLUEPRINT_FIELDS = [
     'type', 'temp', 'life', 'lifeMax', 'residue', 'shade', 'heat', 'surface',
-    'data', 'machineSetting', 'power', 'powerDelay', 'charge', 'wind', 'airflowX', 'airflowY',
+    'data', 'machineSetting', 'storageType', 'storageCount', 'power', 'powerDelay', 'charge', 'wind', 'airflowX', 'airflowY',
     'airflowNextX', 'airflowNextY'
 ];
 
@@ -318,7 +318,19 @@ function drawMachineOverlays() {
             '<path d="M10.7 21.5c.3-2 1.6-3.1 3.6-4.7-.1 2.5.8 3.5 1.8 4.7" fill="none" stroke="#fff" stroke-width="1.3" stroke-linecap="round"/>' +
             '<path d="M3 27h11m0 0-3-2.5m3 2.5-3 2.5" fill="none" stroke="#fff" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>',
         cooler: '<path d="M15 4v22M6 9.5l18 11M6 20.5l18-11M15 4l-3 3M15 4l3 3M15 26l-3-3M15 26l3-3M6 9.5l.5 4M6 9.5l4 .6M24 20.5l-.5-4M24 20.5l-4-.6M6 20.5l4-.6M6 20.5l.5-4M24 9.5l-4 .6M24 9.5l-.5 4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>' +
-            '<path d="M3 27h11m0 0-3-2.5m3 2.5-3 2.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>'
+            '<path d="M3 27h11m0 0-3-2.5m3 2.5-3 2.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>',
+        storagePowder: '<rect x="11" y="6" width="15" height="19" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/>' +
+            '<path d="M11 13 2 3M11 17 2 27" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.78"/>' +
+            '<path d="M3 15h7m0 0-3-3m3 3-3 3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>' +
+            '<path d="M15 11h8M15 15h8M15 19h8" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>',
+        storageLiquid: '<rect x="11" y="6" width="15" height="19" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/>' +
+            '<path d="M11 13 2 3M11 17 2 27" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.78"/>' +
+            '<path d="M3 15h7m0 0-3-3m3 3-3 3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>' +
+            '<path d="M14 12c2-2 4 2 6 0s4 2 6 0M14 18c2-2 4 2 6 0s4 2 6 0" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>',
+        storageGas: '<rect x="11" y="6" width="15" height="19" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/>' +
+            '<path d="M11 13 2 3M11 17 2 27" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.78"/>' +
+            '<path d="M3 15h7m0 0-3-3m3 3-3 3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>' +
+            '<circle cx="16" cy="12" r="1.2" fill="currentColor"/><circle cx="21" cy="16" r="1.2" fill="currentColor"/><circle cx="16" cy="20" r="1.2" fill="currentColor"/>'
     };
 
     for (let i = 0; i < world.type.length; i++) {
@@ -337,11 +349,12 @@ function drawMachineOverlays() {
         const icon = document.createElementNS(MACHINE_ICON_SVG_NS, 'svg');
         icon.setAttribute('class', `machine-overlay-icon machine-${machine}`);
         icon.setAttribute('viewBox', '0 0 30 30');
-        icon.setAttribute('width', '30');
-        icon.setAttribute('height', '30');
+        const iconSize = machine.startsWith('storage') ? 32 : 30;
+        icon.setAttribute('width', String(iconSize));
+        icon.setAttribute('height', String(iconSize));
         icon.setAttribute('aria-hidden', 'true');
-        icon.style.left = `${(x + 0.5) * cellWidth - 15}px`;
-        icon.style.top = `${(y + 0.5) * cellHeight - 15}px`;
+        icon.style.left = `${(x + 0.5) * cellWidth - iconSize / 2}px`;
+        icon.style.top = `${(y + 0.5) * cellHeight - iconSize / 2}px`;
         icon.style.transform = `rotate(${rotations[world.data[i] & 7]}deg)`;
         icon.innerHTML = icons[machine];
         overlay.appendChild(icon);
@@ -361,11 +374,12 @@ function drawMachineOverlays() {
             const icon = document.createElementNS(MACHINE_ICON_SVG_NS, 'svg');
             icon.setAttribute('class', `machine-overlay-icon machine-${preview.machine} machine-placement-preview`);
             icon.setAttribute('viewBox', '0 0 30 30');
-            icon.setAttribute('width', '30');
-            icon.setAttribute('height', '30');
+            const iconSize = preview.machine.startsWith('storage') ? 32 : 30;
+            icon.setAttribute('width', String(iconSize));
+            icon.setAttribute('height', String(iconSize));
             icon.setAttribute('aria-hidden', 'true');
-            icon.style.left = `${(preview.x + 0.5) * cellWidth - 15}px`;
-            icon.style.top = `${(preview.y + 0.5) * cellHeight - 15}px`;
+            icon.style.left = `${(preview.x + 0.5) * cellWidth - iconSize / 2}px`;
+            icon.style.top = `${(preview.y + 0.5) * cellHeight - iconSize / 2}px`;
             icon.style.transform = `rotate(${rotations[preview.direction]}deg)`;
             icon.innerHTML = icons[preview.machine];
             overlay.appendChild(icon);
@@ -874,6 +888,7 @@ export function beginGrab(centreX, centreY, size = getGrabberSize()) {
                 residue: world.residue[i], shade: world.shade[i],
                 heat: world.heat[i], data: world.data[i],
                 machineSetting: world.machineSetting[i],
+                storageType: world.storageType[i], storageCount: world.storageCount[i],
                 power: world.power[i], powerDelay: world.powerDelay[i],
                 charge: world.charge[i], wind: world.wind[i],
                 previewR: pixels ? pixels[p] : def.rgb[0],
@@ -935,6 +950,8 @@ function clearGrabbedCell(world, i, y) {
     world.heat[i] = 0;
     world.data[i] = 0;
     world.machineSetting[i] = 0;
+    world.storageType[i] = 0;
+    world.storageCount[i] = 0;
     world.power[i] = 0;
     world.powerDelay[i] = 0;
     world.charge[i] = 0;
@@ -952,6 +969,8 @@ function restoreGrabbedCell(world, i, cell) {
     world.heat[i] = cell.heat;
     world.data[i] = cell.data;
     world.machineSetting[i] = cell.machineSetting || 0;
+    world.storageType[i] = cell.storageType || 0;
+    world.storageCount[i] = cell.storageCount || 0;
     world.power[i] = cell.power;
     world.powerDelay[i] = cell.powerDelay;
     world.charge[i] = cell.charge;
