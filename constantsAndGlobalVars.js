@@ -54,6 +54,8 @@ export function setElements() {
         grabberButton: document.getElementById('grabberButton'),
         brushModeButton: document.getElementById('brushModeButton'),
         lineModeButton: document.getElementById('lineModeButton'),
+        rectangleModeButton: document.getElementById('rectangleModeButton'),
+        ellipseModeButton: document.getElementById('ellipseModeButton'),
         brushSizeInput: document.getElementById('brushSize'),
         brushSizeLabel: document.getElementById('brushSizeLabel'),
         brushSizeValue: document.getElementById('brushSizeValue'),
@@ -107,7 +109,16 @@ export function setElements() {
         autosaveChoiceCancel: document.getElementById('autosaveChoiceCancel'),
         clearDialog: document.getElementById('clearDialog'),
         clearDialogConfirm: document.getElementById('clearDialogConfirm'),
-        clearDialogCancel: document.getElementById('clearDialogCancel')
+        clearDialogCancel: document.getElementById('clearDialogCancel'),
+        machineDialog: document.getElementById('machineDialog'),
+        machineDialogTitle: document.getElementById('machineDialogTitle'),
+        machineDialogDescription: document.getElementById('machineDialogDescription'),
+        machineDialogLabel: document.getElementById('machineDialogLabel'),
+        machineDialogInput: document.getElementById('machineDialogInput'),
+        machineDialogUnit: document.getElementById('machineDialogUnit'),
+        machineDialogError: document.getElementById('machineDialogError'),
+        machineDialogOk: document.getElementById('machineDialogOk'),
+        machineDialogCancel: document.getElementById('machineDialogCancel')
     };
 }
 
@@ -202,7 +213,7 @@ export function getDrawMode() {
 }
 
 export function setDrawMode(value) {
-    drawMode = value === 'line' ? 'line' : 'brush';
+    drawMode = ['line', 'rectangle', 'ellipse'].includes(value) ? value : 'brush';
 }
 
 export function getGrabberSize() {

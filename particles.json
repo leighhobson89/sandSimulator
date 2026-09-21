@@ -1075,7 +1075,7 @@
     },
     "45": {
       "name": "Fan",
-      "description": "Powered one-cell machine that stores a direction and blows a widening cone of airflow through the world.",
+      "description": "Powered one-cell machine that stores a direction and blows a widening cone of airflow through the world; its wind speed defaults to 7 and can be set from 1 to 20.",
       "group": "Machines",
       "color": "rgb(74, 137, 171)",
       "category": "static",
@@ -1091,11 +1091,12 @@
       "dischargeBattery": true,
       "powerConsumption": 50,
       "machine": "fan",
+      "machineWindSpeed": 7,
       "corrodible": true
     },
     "46": {
       "name": "Heater",
-      "description": "Powered directional machine that heats a 28-cell cone toward 2000 C and launches Heat Rays along its centreline while it has power.",
+      "description": "Powered directional machine that heats a 28-cell cone toward 2000 C by default, with a configurable 0-4000 C target, and launches Heat Rays along its centreline while it has power.",
       "group": "Machines",
       "color": "rgb(224, 104, 38)",
       "category": "static",
@@ -1103,7 +1104,7 @@
       "conductivity": 0.35,
       "cooling": 0.002,
       "bulkInsulation": 0.12,
-      "meltPoint": 1538,
+      "meltPoint": 10000,
       "meltsInto": "Molten Iron",
       "latent": 1200,
       "conductive": true,
@@ -1119,7 +1120,7 @@
     },
     "47": {
       "name": "Cooler",
-      "description": "Powered directional machine that chills a 28-cell cone toward -60 C and launches Cold Rays along its centreline while it has power.",
+      "description": "Powered directional machine that chills a 28-cell cone toward -60 C by default, with a configurable -60 to 20 C target, and launches Cold Rays along its centreline while it has power.",
       "group": "Machines",
       "color": "rgb(70, 142, 220)",
       "category": "static",

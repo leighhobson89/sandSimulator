@@ -1114,6 +1114,8 @@ canvas {
     touch-action: none;
 }
 
+canvas.machine-hover { cursor: pointer; }
+
 .overlay {
     position: fixed;
     inset: 0;
@@ -1184,6 +1186,36 @@ canvas {
 }
 
 .save-dialog-card-small { width: min(470px, 100%); }
+
+.machine-dialog-card { width: min(360px, 100%); }
+.machine-dialog-input-label {
+    margin-top: 0.35rem;
+    color: var(--text-dim);
+    font: 0.72rem var(--mono);
+}
+.machine-dialog-input-wrap {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+}
+.machine-dialog-input {
+    width: 100%;
+    padding: 0.55rem 0.65rem;
+    color: var(--text);
+    background: var(--bg-sunken);
+    border: var(--border) solid var(--line-bright);
+    border-radius: var(--radius-sm);
+    font: 0.9rem var(--mono);
+}
+.machine-dialog-input:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+}
+.machine-dialog-input-wrap .unit {
+    min-width: 2rem;
+    color: var(--text-dim);
+    font: 0.72rem var(--mono);
+}
 
 .save-dialog-heading { display: flex; justify-content: space-between; gap: 1rem; align-items: flex-start; }
 .save-dialog-heading h2, .save-dialog-card h2 { margin: 0.25rem 0 0; font-family: var(--chrome-font); font-size: 1.35rem; }

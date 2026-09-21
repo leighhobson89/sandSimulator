@@ -231,6 +231,7 @@ export function prepareDefinitions(json) {
                 ? Math.max(0.01, p.electricalConductivity || 1)
                 : 0,
             machine: p.machine || null,
+            machineWindSpeed: p.machineWindSpeed,
             machineTemp: p.machineTemp,
             machineRange: p.machineRange || 0,
             machineRate: p.machineRate || 0,
@@ -552,7 +553,7 @@ export function getAmbientTarget() { return ambientTarget; }
 // always built with the same typed arrays as a newly-created one.
 const PERSISTED_WORLD_FIELDS = [
     'type', 'temp', 'life', 'lifeMax', 'residue', 'shade', 'heat', 'data',
-    'power', 'powerDelay', 'charge', 'wind', 'airflowX', 'airflowY',
+    'machineSetting', 'power', 'powerDelay', 'charge', 'wind', 'airflowX', 'airflowY',
     'airflowNextX', 'airflowNextY'
 ];
 
@@ -585,6 +586,15 @@ export function restoreSimulationState(state) {
     createWorld(state.cols, state.rows);
     for (const field of PERSISTED_WORLD_FIELDS) {
         const source = state.arrays[field];
+        // machineSetting was added after the first version of the save format.
+        // Older saves use each machine's definition default.
+        if (field === 'machineSetting' && !source) {
+            for (let i = 0; i < cells; i++) {
+                const def = DEFS[world.type[i]];
+                world.machineSetting[i] = def?.machine ? defaultMachineSetting(def) : 0;
+            }
+            continue;
+        }
         if (!source || source.length !== cells) {
             throw new Error(`This save has invalid ${field} data.`);
         }
@@ -620,6 +630,7 @@ export function createWorld(cols, rows) {
         heat: new Float32Array(n),
         surface: new Int16Array(n),
         data: new Uint8Array(n),
+        machineSetting: new Float32Array(n),
         power: new Uint8Array(n),
         powerDelay: new Uint16Array(n),
         charge: new Float32Array(n),
@@ -635,6 +646,35 @@ export function createWorld(cols, rows) {
 }
 
 export function getWorld() { return world; }
+
+function defaultMachineSetting(def) {
+    if (def?.machine === 'fan') return def.machineWindSpeed ?? 7;
+    return def?.machineTemp ?? 0;
+}
+
+function machineSettingBounds(def) {
+    if (def?.machine === 'fan') return { min: 1, max: 20 };
+    if (def?.machine === 'heater') return { min: 0, max: 4000 };
+    if (def?.machine === 'cooler') return { min: -60, max: 20 };
+    return null;
+}
+
+export function getMachineSetting(x, y) {
+    if (!inBounds(x, y)) return null;
+    const i = index(x, y);
+    const def = DEFS[world.type[i]];
+    return def?.machine ? world.machineSetting[i] : null;
+}
+
+export function setMachineSetting(x, y, value) {
+    if (!inBounds(x, y)) return false;
+    const i = index(x, y);
+    const def = DEFS[world.type[i]];
+    const bounds = machineSettingBounds(def);
+    if (!bounds || !Number.isFinite(value)) return false;
+    world.machineSetting[i] = Math.max(bounds.min, Math.min(bounds.max, Math.round(value)));
+    return true;
+}
 
 // Public electrical state for later devices as well as the current renderer.
 export function isPowered(x, y) {
@@ -695,6 +735,7 @@ export function clearWorld() {
     world.temp.fill(AMBIENT);
     world.heat.fill(0);
     world.data.fill(0);
+    world.machineSetting.fill(0);
     world.power.fill(0);
     world.powerDelay.fill(0);
     world.charge.fill(0);
@@ -745,6 +786,7 @@ export function setCell(x, y, id, keepTemp) {
     if (!keepTemp) world.temp[i] = def.defaultTemp;
     world.heat[i] = 0;
     world.data[i] = startingData(def);
+    world.machineSetting[i] = def.machine ? defaultMachineSetting(def) : 0;
     world.power[i] = 0;
     world.powerDelay[i] = 0;
     world.charge[i] = 0;
@@ -765,6 +807,7 @@ function transform(i, id, life, residue) {
     world.residue[i] = residue || EMPTY;
     world.heat[i] = 0;
     world.data[i] = startingData(def);
+    world.machineSetting[i] = def.machine ? defaultMachineSetting(def) : 0;
     world.power[i] = 0;
     world.powerDelay[i] = 0;
     world.charge[i] = 0;
@@ -786,6 +829,7 @@ function removeParticle(i) {
     world.residue[i] = EMPTY;
     world.heat[i] = 0;
     world.data[i] = 0;
+    world.machineSetting[i] = 0;
     world.power[i] = 0;
     world.powerDelay[i] = 0;
     world.charge[i] = 0;
@@ -802,6 +846,7 @@ function swapCells(i1, i2) {
     let q = world.heat[i1]; world.heat[i1] = world.heat[i2]; world.heat[i2] = q;
     let f = world.surface[i1]; world.surface[i1] = world.surface[i2]; world.surface[i2] = f;
     let d = world.data[i1]; world.data[i1] = world.data[i2]; world.data[i2] = d;
+    let ms = world.machineSetting[i1]; world.machineSetting[i1] = world.machineSetting[i2]; world.machineSetting[i2] = ms;
     let p = world.power[i1]; world.power[i1] = world.power[i2]; world.power[i2] = p;
     let pd = world.powerDelay[i1]; world.powerDelay[i1] = world.powerDelay[i2]; world.powerDelay[i2] = pd;
     let c = world.charge[i1]; world.charge[i1] = world.charge[i2]; world.charge[i2] = c;
@@ -1170,7 +1215,21 @@ function diffuseHeat() {
             // temperature in both directions, so they can chill as well as
             // heat. They burn out after a few frames, which is what stops them
             // piling up like a normal material.
-            if (def.forceRate > 0) result += (def.forceTemp - result) * def.forceRate;
+            if (def.forceRate > 0) {
+                let forceTemp = def.forceTemp;
+                // Rays emitted by a configured machine inherit that machine's
+                // target. Hand-painted rays keep their original two-way tool
+                // behaviour.
+                if (def.projectile && (world.data[i] & 8) &&
+                    Number.isFinite(world.machineSetting[i])) {
+                    forceTemp = world.machineSetting[i];
+                    const delta = forceTemp - result;
+                    forceTemp = def.name === 'Heat Ray'
+                        ? result + Math.max(0, delta)
+                        : result + Math.min(0, delta);
+                }
+                if (forceTemp !== undefined) result += (forceTemp - result) * def.forceRate;
+            }
 
             // Something that starts far hotter than anything around it loses
             // heat at its own steady rate rather than in proportion to how cold
@@ -2585,9 +2644,11 @@ function windCanEnter(def, target) {
     return blocking.density < def.density;
 }
 
-const FAN_WIND_STRENGTH = 21;
+const FAN_WIND_STRENGTH = 7;
 const FAN_WIND_RANGE = 28;
-const FAN_REFERENCE_STRENGTH = 7;
+// Fan speed uses the same numeric scale as the breeze dial up to 8. Values
+// above 8 are intentionally stronger than a maximum natural breeze.
+const FAN_REFERENCE_STRENGTH = 8;
 const FAN_AIR_DECAY = 0.84;
 const FAN_AIR_ADVECT = 0.76;
 const FAN_AIR_STAY = 1 - FAN_AIR_ADVECT;
@@ -2690,7 +2751,7 @@ function machineIsPowered(x, y, i) {
     return false;
 }
 
-function emitMachineProjectile(x, y, direction, def) {
+function emitMachineProjectile(x, y, direction, def, targetTemp) {
     if (def.machineEmits === EMPTY) return;
     const [dirX, dirY] = fanDirectionVector(direction);
     const nx = x + dirX;
@@ -2700,12 +2761,17 @@ function emitMachineProjectile(x, y, direction, def) {
     if (world.type[spot] !== EMPTY) return;
 
     const projectile = DEFS[def.machineEmits];
+    const airTemperature = world.temp[spot];
     transform(spot, def.machineEmits);
     // Keep bit 3 as the emitted-projectile marker; the lower three bits retain
     // the eight-way direction while hand-painted ray tools remain ordinary
     // falling/rising particles.
     world.data[spot] = (direction & 7) | 8;
-    world.temp[spot] = projectile.defaultTemp;
+    world.machineSetting[spot] = Number.isFinite(targetTemp) ? targetTemp : projectile.defaultTemp;
+    // Do not inject the target temperature merely by creating a ray. The
+    // emitted ray will apply its one-way force on later frames, so a Heater
+    // set below the current air or a Cooler set above it remains a no-op.
+    world.temp[spot] = airTemperature;
 }
 
 // Rendering uses the same power rule to show or hide a machine's active cone.
@@ -2719,7 +2785,7 @@ export function isMachinePoweredAt(x, y) {
 // replace airflow with a temperature force. Near cells receive almost the
 // complete Heat Ray/Cold Ray strength; the force fades gently at the edge so
 // the full 28-cell range still has a visible effect.
-function applyMachineTemperature(x, y, direction, targetTemp, range, machineRate) {
+function applyMachineTemperature(x, y, direction, targetTemp, range, machineRate, machine) {
     const [dirX, dirY] = fanDirectionVector(direction);
     const tangentX = -dirY;
     const tangentY = dirX;
@@ -2744,7 +2810,13 @@ function applyMachineTemperature(x, y, direction, targetTemp, range, machineRate
 
             const rate = Math.max(0, Math.min(1,
                 machineRate * (0.35 + 0.65 * falloff)));
-            world.temp[ni] += (targetTemp - world.temp[ni]) * rate;
+            const delta = targetTemp - world.temp[ni];
+            // A heater only raises temperatures and a cooler only lowers them.
+            // Setting a machine on the already-correct side of a cell is a
+            // no-op, rather than an instruction to reverse its job.
+            if ((machine === 'heater' && delta <= 0) ||
+                (machine === 'cooler' && delta >= 0)) continue;
+            world.temp[ni] += delta * rate;
         }
     }
 }
@@ -2781,7 +2853,11 @@ function applyFanWind(x, y, direction, strength = FAN_WIND_STRENGTH) {
 
             const lateral = 1 - Math.abs(offset) / (halfWidth + 1) * 0.35;
             markWind(ni, 16 + 32 * intensity * falloff * lateral);
-            addFanAirflow(ni, dirX, dirY, powerScale * falloff * lateral);
+            // Keep enough momentum in the air to carry a gust beyond the
+            // visible cone. The setting still scales this continuously, while
+            // the extra transport factor prevents the new default of 7 from
+            // stopping abruptly at the cone edge.
+            addFanAirflow(ni, dirX, dirY, powerScale * 3.5 * falloff * lateral);
 
             if (id === EMPTY || world.moved[ni]) continue;
             const def = DEFS[id];
@@ -2836,12 +2912,13 @@ function updateActiveMachines() {
         const x = i % COLS;
         const y = Math.floor(i / COLS);
         if (!machineIsPowered(x, y, i)) continue;
-        if (def.machine === 'fan') applyFanWind(x, y, world.data[i]);
+        if (def.machine === 'fan') applyFanWind(x, y, world.data[i], world.machineSetting[i]);
         else if ((def.machine === 'heater' || def.machine === 'cooler') &&
             def.machineTemp !== undefined) {
-            applyMachineTemperature(x, y, world.data[i], def.machineTemp,
-                def.machineRange, def.machineRate);
-            emitMachineProjectile(x, y, world.data[i], def);
+            const targetTemp = world.machineSetting[i];
+            applyMachineTemperature(x, y, world.data[i], targetTemp,
+                def.machineRange, def.machineRate, def.machine);
+            emitMachineProjectile(x, y, world.data[i], def, targetTemp);
         }
     }
 }

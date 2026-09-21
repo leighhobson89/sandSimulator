@@ -154,8 +154,9 @@ if (indexMarkup.includes('id="toolsPanel"') &&
     fail('the right-hand tools panel is missing or misplaced');
 }
 if (indexMarkup.includes('id="brushModeButton"') && indexMarkup.includes('id="lineModeButton"') &&
+    indexMarkup.includes('id="rectangleModeButton"') && indexMarkup.includes('id="ellipseModeButton"') &&
     (indexMarkup.match(/class="tool-icon"/g) || []).length >= 7) {
-    pass('the tools use SVG icons and include Brush and Line modes');
+    pass('the tools use SVG icons and include Brush, Line, Rectangle and Ellipse modes');
 } else {
     fail('the icon tools or drawing mode controls are missing');
 }
@@ -298,7 +299,21 @@ if (byId('lineModeButton').classList.contains('active-toggle') &&
 } else {
     fail('Line and Brush were not switched exclusively');
 }
+byId('rectangleModeButton').click();
+if (byId('brushSize').disabled && byId('brushSize').classList.contains('disabled-control')) {
+    pass('Rectangle mode disables the Brush size slider');
+} else {
+    fail('Rectangle mode left the Brush size slider enabled');
+}
+byId('ellipseModeButton').click();
+if (byId('brushSize').disabled && byId('ellipseModeButton').classList.contains('active-toggle')) {
+    pass('Ellipse mode keeps the Brush size slider disabled');
+} else {
+    fail('Ellipse mode did not activate or disable the Brush size slider');
+}
 byId('brushModeButton').click();
+if (!byId('brushSize').disabled) pass('Brush mode re-enables the Brush size slider');
+else fail('Brush mode left the Brush size slider disabled');
 
 // The wind is a tool, not a material: dragging it must not leave Wind behind.
 const { getDefinitions } = await import('../physics.js');
@@ -329,6 +344,39 @@ const fanClient = (x, y) => ({
     clientX: ((x + 0.5) / startedCanvas.width) * 800,
     clientY: ((y + 0.5) / startedCanvas.height) * 600
 });
+const copperForShapeId = getDefinitions().findIndex(d => d && d.name === 'Copper');
+function countMaterial(materialId) {
+    let count = 0;
+    for (const id of physicsForLine.getWorld().type) if (id === materialId) count++;
+    return count;
+}
+physicsForLine.clearWorld();
+stoneButtonForLine.fire('click', {});
+byId('rectangleModeButton').click();
+physicsForLine.setCell(22, 21, copperForShapeId);
+canvas.fire('mousedown', { button: 0, ...fanClient(20, 20) });
+canvas.fire('mousemove', { button: 0, ...fanClient(24, 23) });
+const rectangleBeforeRelease = countMaterial(parseInt(stoneButtonForLine.dataset.particleId));
+runFrames(1);
+window.fire('mouseup', { button: 0 });
+const rectangleStone = countMaterial(parseInt(stoneButtonForLine.dataset.particleId));
+const rectangleCopper = countMaterial(copperForShapeId);
+if (rectangleBeforeRelease === 0 && rectangleStone === 19 && rectangleCopper === 1) {
+    pass('Rectangle mode fills only air cells and leaves occupied cells unchanged');
+} else {
+    fail(`Rectangle mode filled ${rectangleStone} stone cells and left ${rectangleCopper} copper cells`);
+}
+physicsForLine.clearWorld();
+stoneButtonForLine.fire('click', {});
+byId('ellipseModeButton').click();
+canvas.fire('mousedown', { button: 0, ...fanClient(30, 20) });
+canvas.fire('mousemove', { button: 0, ...fanClient(36, 24) });
+runFrames(1);
+window.fire('mouseup', { button: 0 });
+const ellipseStone = countMaterial(parseInt(stoneButtonForLine.dataset.particleId));
+if (ellipseStone > 0 && ellipseStone < 35) pass('Ellipse mode fills a bounded ellipse');
+else fail(`Ellipse mode filled an unexpected ${ellipseStone} cells`);
+byId('brushModeButton').click();
 function countFans() {
     const world = physicsForLine.getWorld();
     let count = 0;

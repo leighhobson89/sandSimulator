@@ -35,6 +35,7 @@ let gridFittedToWorkspace = false;
 let resizeListenerAttached = false;
 let grabbedPixels = null;
 let linePreview = null;
+let shapePreview = null;
 let machinePlacementPreview = null;
 
 // A blueprint is a compact, rectangular copy of the persistent cell state.
@@ -44,7 +45,7 @@ export const BLUEPRINT_SLOT_COUNT = 24;
 
 export const BLUEPRINT_FIELDS = [
     'type', 'temp', 'life', 'lifeMax', 'residue', 'shade', 'heat', 'surface',
-    'data', 'power', 'powerDelay', 'charge', 'wind', 'airflowX', 'airflowY',
+    'data', 'machineSetting', 'power', 'powerDelay', 'charge', 'wind', 'airflowX', 'airflowY',
     'airflowNextX', 'airflowNextY'
 ];
 
@@ -267,6 +268,7 @@ function drawWorld() {
     drawMachineOverlays();
     drawGrabberOutline();
     drawLinePreview();
+    drawShapePreview();
 }
 
 // A pending machine is only a visual preview. It is deliberately kept outside
@@ -473,6 +475,15 @@ export function clearLinePreview() {
     linePreview = null;
 }
 
+export function setShapePreview(shape, x0, y0, x1, y1) {
+    if (shape !== 'rectangle' && shape !== 'ellipse') return;
+    shapePreview = { shape, x0, y0, x1, y1 };
+}
+
+export function clearShapePreview() {
+    shapePreview = null;
+}
+
 function drawLinePreview() {
     if (!linePreview || !context) return;
     context.beginPath();
@@ -481,6 +492,41 @@ function drawLinePreview() {
     context.lineCap = 'round';
     context.moveTo(linePreview.x0 + 0.5, linePreview.y0 + 0.5);
     context.lineTo(linePreview.x1 + 0.5, linePreview.y1 + 0.5);
+    context.stroke();
+}
+
+function drawShapePreview() {
+    if (!shapePreview || !context) return;
+
+    const left = Math.min(shapePreview.x0, shapePreview.x1);
+    const right = Math.max(shapePreview.x0, shapePreview.x1);
+    const top = Math.min(shapePreview.y0, shapePreview.y1);
+    const bottom = Math.max(shapePreview.y0, shapePreview.y1);
+    const width = right - left + 1;
+    const height = bottom - top + 1;
+
+    context.strokeStyle = '#8bdcff';
+    context.lineWidth = 1;
+    if (shapePreview.shape === 'rectangle') {
+        context.strokeRect(left + 0.5, top + 0.5, width, height);
+        return;
+    }
+
+    // Use a small polygon so the preview works in the same lightweight canvas
+    // contexts as the rest of the renderer, without relying on ellipse().
+    const centreX = left + width / 2;
+    const centreY = top + height / 2;
+    const radiusX = Math.max(0.5, width / 2);
+    const radiusY = Math.max(0.5, height / 2);
+    const segments = Math.max(16, Math.ceil(Math.PI * Math.max(width, height)));
+    context.beginPath();
+    for (let segment = 0; segment <= segments; segment++) {
+        const angle = (segment / segments) * Math.PI * 2;
+        const x = centreX + Math.cos(angle) * radiusX;
+        const y = centreY + Math.sin(angle) * radiusY;
+        if (segment === 0) context.moveTo(x, y);
+        else context.lineTo(x, y);
+    }
     context.stroke();
 }
 
@@ -523,7 +569,9 @@ function updateReadout() {
     const defs = getDefinitions();
     const selected = getGrabberOn() ? `Claw ${getGrabberSize()}px`
         : (getEraserOn() ? 'Eraser' : defs[getParticleTypeIdSelected()].name);
-    const drawing = getDrawMode() === 'line' ? 'Line' : 'Brush';
+    const drawing = getDrawMode() === 'line' ? 'Line'
+        : getDrawMode() === 'rectangle' ? 'Rectangle'
+            : getDrawMode() === 'ellipse' ? 'Ellipse' : 'Brush';
 
     let under = '';
     if (inBounds(hoverX, hoverY)) {
@@ -679,6 +727,63 @@ export function paintLine(x0, y0, x1, y1) {
     }
 }
 
+// Filled shapes use one-cell placement so their footprint is exact and the
+// material's air-only rule is preserved for every cell inside the shape.
+export function paintShape(shape, x0, y0, x1, y1) {
+    if (shape !== 'rectangle' && shape !== 'ellipse') return;
+
+    const id = getEraserOn() ? EMPTY : getParticleTypeIdSelected();
+    const left = Math.min(x0, x1);
+    const right = Math.max(x0, x1);
+    const top = Math.min(y0, y1);
+    const bottom = Math.max(y0, y1);
+    const width = right - left + 1;
+    const height = bottom - top + 1;
+    const centreX = left + width / 2;
+    const centreY = top + height / 2;
+    const radiusX = Math.max(0.5, width / 2);
+    const radiusY = Math.max(0.5, height / 2);
+    const isWind = id !== EMPTY && getDefinitions()[id]?.tool === 'wind';
+
+    for (let y = top; y <= bottom; y++) {
+        for (let x = left; x <= right; x++) {
+            if (shape === 'ellipse') {
+                const dx = (x + 0.5 - centreX) / radiusX;
+                const dy = (y + 0.5 - centreY) / radiusY;
+                if (dx * dx + dy * dy > 1) continue;
+            }
+            if (isWind) {
+                applyWind(x, y, 0, 0, Math.max(3, getBrushSize()), getWindStrength());
+            } else {
+                paintSingleCell(x, y, id, true);
+            }
+        }
+    }
+}
+
+function paintSingleCell(x, y, id, fillLooseMaterial = false) {
+    if (!inBounds(x, y)) return;
+    const world = getWorld();
+    const i = index(x, y);
+    if (id === EMPTY) {
+        world.type[i] = EMPTY;
+        world.life[i] = 0;
+        world.lifeMax[i] = 0;
+        world.residue[i] = EMPTY;
+        world.temp[i] = getAirTempAt(y);
+        world.power[i] = 0;
+        world.powerDelay[i] = 0;
+        world.charge[i] = 0;
+        return;
+    }
+    if (world.type[i] !== EMPTY) return;
+
+    const def = getDefinitions()[id];
+    const loose = def.category === 'powder' || def.category === 'gas';
+    if (!fillLooseMaterial && loose && getBrushSize() > 1 && Math.random() < 0.45) return;
+    setCell(x, y, id);
+}
+
 // --------------------------------------------------------------- blueprints
 
 // Copying through every listed field lets a blueprint retain such details as a
@@ -768,6 +873,7 @@ export function beginGrab(centreX, centreY, size = getGrabberSize()) {
                 type: world.type[i], temp: world.temp[i], life: world.life[i], lifeMax: world.lifeMax[i],
                 residue: world.residue[i], shade: world.shade[i],
                 heat: world.heat[i], data: world.data[i],
+                machineSetting: world.machineSetting[i],
                 power: world.power[i], powerDelay: world.powerDelay[i],
                 charge: world.charge[i], wind: world.wind[i],
                 previewR: pixels ? pixels[p] : def.rgb[0],
@@ -828,6 +934,7 @@ function clearGrabbedCell(world, i, y) {
     world.residue[i] = EMPTY;
     world.heat[i] = 0;
     world.data[i] = 0;
+    world.machineSetting[i] = 0;
     world.power[i] = 0;
     world.powerDelay[i] = 0;
     world.charge[i] = 0;
@@ -844,6 +951,7 @@ function restoreGrabbedCell(world, i, cell) {
     world.shade[i] = cell.shade;
     world.heat[i] = cell.heat;
     world.data[i] = cell.data;
+    world.machineSetting[i] = cell.machineSetting || 0;
     world.power[i] = cell.power;
     world.powerDelay[i] = cell.powerDelay;
     world.charge[i] = cell.charge;

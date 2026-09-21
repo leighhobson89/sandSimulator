@@ -106,11 +106,27 @@
                             </svg>
                             <span>Line</span>
                         </button>
+                        <button id="rectangleModeButton" class="btn tool-icon-button tooltip-control"
+                                type="button" aria-label="Rectangle mode" aria-pressed="false"
+                                data-tooltip="Drag to preview; release to fill a rectangle">
+                            <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true">
+                                <rect x="4" y="5" width="16" height="14" rx="1"/>
+                            </svg>
+                            <span>Rectangle</span>
+                        </button>
+                        <button id="ellipseModeButton" class="btn tool-icon-button tooltip-control"
+                                type="button" aria-label="Ellipse mode" aria-pressed="false"
+                                data-tooltip="Drag to preview; release to fill an ellipse">
+                            <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true">
+                                <ellipse cx="12" cy="12" rx="8" ry="6"/>
+                            </svg>
+                            <span>Ellipse</span>
+                        </button>
                     </div>
 
                     <div class="tool-slider-row">
                         <label id="brushSizeLabel" class="tool-slider-icon tooltip-control" for="brushSize"
-                               data-tooltip="Width used by both drawing modes">
+                               data-tooltip="Width used by Brush and Line modes">
                             <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true">
                                 <circle cx="7" cy="12" r="2"/>
                                 <circle cx="17" cy="12" r="5"/>
@@ -344,6 +360,24 @@
             <div class="save-dialog-actions">
                 <button id="clearDialogConfirm" class="btn btn-primary" type="button">Clear World</button>
                 <button id="clearDialogCancel" class="btn btn-ghost" type="button">Cancel</button>
+            </div>
+        </div>
+    </section>
+
+    <section id="machineDialog" class="save-dialog" hidden role="dialog" aria-modal="true" aria-labelledby="machineDialogTitle">
+        <div class="save-dialog-card save-dialog-card-small machine-dialog-card">
+            <span class="tools-kicker">Machine control</span>
+            <h2 id="machineDialogTitle">Machine</h2>
+            <p id="machineDialogDescription" class="save-dialog-description"></p>
+            <label id="machineDialogLabel" class="machine-dialog-input-label" for="machineDialogInput">Value</label>
+            <div class="machine-dialog-input-wrap">
+                <input id="machineDialogInput" class="number-input machine-dialog-input" type="number" step="1" autocomplete="off">
+                <span id="machineDialogUnit" class="unit">&deg;C</span>
+            </div>
+            <p id="machineDialogError" class="save-dialog-error" role="alert" hidden></p>
+            <div class="save-dialog-actions">
+                <button id="machineDialogOk" class="btn btn-primary" type="button">OK</button>
+                <button id="machineDialogCancel" class="btn btn-ghost" type="button">Cancel</button>
             </div>
         </div>
     </section>

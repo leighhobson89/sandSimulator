@@ -20,12 +20,13 @@ import {
     paintLine, paintCell, clearCanvasWorld, setHoverCell,
     canPlaceMachine, placeMachine, setMachinePlacementPreview, clearMachinePlacementPreview,
     beginGrab, dropGrab, cancelGrab, setLinePreview, clearLinePreview,
+    setShapePreview, clearShapePreview, paintShape,
     captureBlueprint, stampBlueprint, stampBlueprintAt, BLUEPRINT_SLOT_COUNT
 } from './game.js';
 import {
     getDefinitions, setAmbientTarget, getAmbientTarget, setLayerLapse, getLayerLapse,
     setAmbientWindOn, getAmbientWindOn, setAirLayersOn, getAirLayersOn,
-    setWindDial
+    setWindDial, getWorld, index, getMachineSetting, setMachineSetting
 } from './physics.js';
 import { loadSavedTheme, buildThemeSwatches, buildThemeSelect } from './themes.js';
 import {
@@ -40,6 +41,8 @@ let lastCell = null;
 let paintTimer = null;
 let currentCell = { x: 0, y: 0 };
 let lineStart = null;
+let shapeStart = null;
+let shapeMode = null;
 let machinePlacement = null;
 let autosaveChoiceResolver = null;
 let marqueeMode = false;
@@ -52,6 +55,7 @@ let activeBlueprintSlot = null;
 const STAMP_HISTORY_LIMIT = 10;
 let stampUndoHistory = [];
 let stampRedoHistory = [];
+let editingMachine = null;
 
 document.addEventListener('DOMContentLoaded', async () => {
     await loadParticleDefinitions();
@@ -79,6 +83,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     setUpSaveDialogs();
     elements.clearDialogConfirm.addEventListener('click', confirmClearWorld);
     elements.clearDialogCancel.addEventListener('click', closeClearDialog);
+    elements.machineDialogOk.addEventListener('click', confirmMachineDialog);
+    elements.machineDialogCancel.addEventListener('click', closeMachineDialog);
+    elements.machineDialogInput.addEventListener('input', validateMachineInput);
+    elements.machineDialogInput.addEventListener('keydown', event => {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            confirmMachineDialog();
+        } else if (event.key === 'Escape') {
+            event.preventDefault();
+            closeMachineDialog();
+        }
+    });
     setSavingListener(saving => { elements.autosaveStatus.hidden = !saving; });
     updateResumeButton();
 
@@ -124,6 +140,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     elements.brushModeButton.addEventListener('click', () => selectDrawingMode('brush'));
     elements.lineModeButton.addEventListener('click', () => selectDrawingMode('line'));
+    elements.rectangleModeButton.addEventListener('click', () => selectDrawingMode('rectangle'));
+    elements.ellipseModeButton.addEventListener('click', () => selectDrawingMode('ellipse'));
     selectDrawingMode(getDrawMode());
 
     elements.grabberButton.addEventListener('click', () => {
@@ -214,11 +232,7 @@ function synchroniseRestoredControls() {
     elements.windStrengthValue.textContent = String(getWindStrength());
     elements.ambientWindCheckbox.checked = getAmbientWindOn();
     setWindDial(getWindStrength());
-    const brushOn = getDrawMode() === 'brush';
-    elements.brushModeButton.classList.toggle('active-toggle', brushOn);
-    elements.lineModeButton.classList.toggle('active-toggle', !brushOn);
-    elements.brushModeButton.setAttribute('aria-pressed', String(brushOn));
-    elements.lineModeButton.setAttribute('aria-pressed', String(!brushOn));
+    syncDrawingModeButtons(getDrawMode());
     highlightSelectedParticle();
 }
 
@@ -335,6 +349,111 @@ function confirmClearWorld() {
     setGrabberMode(false);
     clearCanvasWorld();
     closeClearDialog();
+}
+
+const MACHINE_CONTROL_SPECS = {
+    fan: { label: 'Wind speed', min: 1, max: 20, unit: '', defaultValue: 7 },
+    heater: { label: 'Temperature', min: 0, max: 4000, unit: '°C' },
+    cooler: { label: 'Temperature', min: -60, max: 20, unit: '°C' }
+};
+
+function machineAtCell(cell) {
+    const world = getWorld();
+    if (!world || cell.x < 0 || cell.y < 0 || cell.x >= world.cols || cell.y >= world.rows) return null;
+    const id = world.type[index(cell.x, cell.y)];
+    const def = getDefinitions()[id];
+    return def?.machine ? { id, def, x: cell.x, y: cell.y } : null;
+}
+
+// The SVG machine face is 30 CSS pixels wide, while the simulation machine is
+// only one cell. Hit-test against that visible face so a pointer near its edge
+// still gets the hand cursor and can open the machine controls.
+function machineAtPointer(event) {
+    const world = getWorld();
+    const canvas = getElements().canvas;
+    if (!world || !canvas || !event) return null;
+    const rect = canvas.getBoundingClientRect();
+    const pointerX = event.clientX - rect.left;
+    const pointerY = event.clientY - rect.top;
+    const cellWidth = rect.width / world.cols;
+    const cellHeight = rect.height / world.rows;
+    const cell = cellFromEvent(event);
+    const radiusX = Math.ceil(15 / Math.max(1, cellWidth) + 0.5);
+    const radiusY = Math.ceil(15 / Math.max(1, cellHeight) + 0.5);
+
+    for (let y = cell.y - radiusY; y <= cell.y + radiusY; y++) {
+        for (let x = cell.x - radiusX; x <= cell.x + radiusX; x++) {
+            if (x < 0 || y < 0 || x >= world.cols || y >= world.rows) continue;
+            const centreX = (x + 0.5) * cellWidth;
+            const centreY = (y + 0.5) * cellHeight;
+            if (Math.abs(pointerX - centreX) > 15 || Math.abs(pointerY - centreY) > 15) continue;
+            const machine = machineAtCell({ x, y });
+            if (machine) return machine;
+        }
+    }
+    return null;
+}
+
+function updateMachineCursor(cell, event) {
+    const hit = event ? machineAtPointer(event) : machineAtCell(cell);
+    getElements().canvas.classList.toggle('machine-hover', !!hit);
+}
+
+function openMachineDialog(x, y, machine = machineAtCell({ x, y })) {
+    if (!machine) return false;
+    const spec = MACHINE_CONTROL_SPECS[machine.def.machine];
+    if (!spec) return false;
+
+    const elements = getElements();
+    const current = getMachineSetting(x, y);
+    editingMachine = { x, y, machine: machine.def.machine, fallback: current };
+    elements.machineDialogTitle.textContent = `${machine.def.name} settings`;
+    elements.machineDialogDescription.textContent = machine.def.machine === 'fan'
+        ? 'Set the airflow strength for this Fan. Speed 7 matches the default breeze scale; higher values are stronger.'
+        : `${machine.def.name} will only ${machine.def.machine === 'heater' ? 'raise' : 'lower'} temperatures toward this target in its facing direction.`;
+    elements.machineDialogLabel.textContent = spec.label;
+    elements.machineDialogInput.setAttribute('aria-label', spec.label);
+    elements.machineDialogInput.min = String(spec.min);
+    elements.machineDialogInput.max = String(spec.max);
+    elements.machineDialogInput.step = '1';
+    elements.machineDialogInput.value = String(Number.isFinite(current) ? current : (spec.defaultValue ?? spec.min));
+    elements.machineDialogUnit.textContent = spec.unit;
+    elements.machineDialogUnit.hidden = !spec.unit;
+    elements.machineDialogError.hidden = true;
+    elements.machineDialog.hidden = false;
+    elements.machineDialogInput.focus();
+    return true;
+}
+
+function validateMachineInput() {
+    if (!editingMachine) return null;
+    const input = getElements().machineDialogInput;
+    const spec = MACHINE_CONTROL_SPECS[editingMachine.machine];
+    const raw = String(input.value ?? '').trim();
+    if (!raw) return null;
+    const numeric = Number(raw);
+    if (!Number.isFinite(numeric)) return null;
+    const value = Math.max(spec.min, Math.min(spec.max, Math.round(numeric)));
+    if (String(value) !== raw) input.value = String(value);
+    getElements().machineDialogError.hidden = true;
+    return value;
+}
+
+function closeMachineDialog() {
+    const elements = getElements();
+    elements.machineDialog.hidden = true;
+    elements.machineDialogError.hidden = true;
+    editingMachine = null;
+}
+
+function confirmMachineDialog() {
+    if (!editingMachine) return;
+    const value = validateMachineInput();
+    const finalValue = value === null ? editingMachine.fallback : value;
+    if (Number.isFinite(finalValue)) {
+        setMachineSetting(editingMachine.x, editingMachine.y, finalValue);
+    }
+    closeMachineDialog();
 }
 
 function showSaveError(message) {
@@ -710,18 +829,33 @@ function setUpTooltips() {
 }
 
 function selectDrawingMode(mode) {
-    const next = mode === 'line' ? 'line' : 'brush';
+    const next = ['line', 'rectangle', 'ellipse'].includes(mode) ? mode : 'brush';
     cancelBlueprintModes();
     setDrawMode(next);
     setGrabberMode(false);
     cancelPainting();
 
+    syncDrawingModeButtons(next);
+}
+
+function syncDrawingModeButtons(mode) {
     const elements = getElements();
-    const brushOn = next === 'brush';
-    elements.brushModeButton.classList.toggle('active-toggle', brushOn);
-    elements.lineModeButton.classList.toggle('active-toggle', !brushOn);
-    elements.brushModeButton.setAttribute('aria-pressed', String(brushOn));
-    elements.lineModeButton.setAttribute('aria-pressed', String(!brushOn));
+    const buttons = [
+        ['brush', elements.brushModeButton],
+        ['line', elements.lineModeButton],
+        ['rectangle', elements.rectangleModeButton],
+        ['ellipse', elements.ellipseModeButton]
+    ];
+    buttons.forEach(([buttonMode, button]) => {
+        const active = buttonMode === mode;
+        button.classList.toggle('active-toggle', active);
+        button.setAttribute('aria-pressed', String(active));
+    });
+
+    const brushSizeEnabled = mode === 'brush' || mode === 'line';
+    elements.brushSizeInput.disabled = !brushSizeEnabled;
+    elements.brushSizeInput.classList.toggle('disabled-control', !brushSizeEnabled);
+    elements.brushSizeLabel.classList.toggle('disabled-control', !brushSizeEnabled);
 }
 
 // --------------------------------------------------------------- blueprints
@@ -1048,6 +1182,8 @@ function setUpCanvasInput() {
     canvas.addEventListener('mousedown', event => {
         currentCell = cellFromEvent(event);
         setHoverCell(currentCell.x, currentCell.y);
+        const pointerMachine = machineAtPointer(event);
+        updateMachineCursor(currentCell, event);
 
         // Blueprint modes have first claim on a click. A right click always
         // exits them, without performing the normal temporary eraser action.
@@ -1062,6 +1198,15 @@ function setUpCanvasInput() {
         }
         if (marqueeMode) {
             if (event.button === 0) beginMarqueeAt(currentCell);
+            return;
+        }
+
+        // A left click on an existing machine edits that machine instead of
+        // starting a paint stroke. Grabber mode keeps priority so machines can
+        // still be moved normally.
+        if (event.button === 0 && !getGrabberOn() && pointerMachine &&
+            openMachineDialog(pointerMachine.x, pointerMachine.y, pointerMachine)) {
+            cancelPainting();
             return;
         }
 
@@ -1095,6 +1240,11 @@ function setUpCanvasInput() {
         if (getDrawMode() === 'line') {
             lineStart = { x: currentCell.x, y: currentCell.y };
             setLinePreview(lineStart.x, lineStart.y, currentCell.x, currentCell.y);
+        } else if (isShapeMode()) {
+            shapeMode = getDrawMode();
+            shapeStart = { x: currentCell.x, y: currentCell.y };
+            setShapePreview(shapeMode, shapeStart.x, shapeStart.y,
+                currentCell.x, currentCell.y);
         } else {
             paintAtCurrentCell();
             startPaintTimer();
@@ -1104,6 +1254,7 @@ function setUpCanvasInput() {
     canvas.addEventListener('mousemove', event => {
         currentCell = cellFromEvent(event);
         setHoverCell(currentCell.x, currentCell.y);
+        updateMachineCursor(currentCell, event);
         if (activeBlueprintSlot !== null) updateStampPreview(currentCell);
         if (isMarqueeDrawing) {
             updateMarqueeAt(currentCell);
@@ -1122,6 +1273,9 @@ function setUpCanvasInput() {
         }
         if (getDrawMode() === 'line' && lineStart) {
             setLinePreview(lineStart.x, lineStart.y, currentCell.x, currentCell.y);
+        } else if (shapeStart && isShapeMode(shapeMode)) {
+            setShapePreview(shapeMode, shapeStart.x, shapeStart.y,
+                currentCell.x, currentCell.y);
         } else {
             paintAtCurrentCell();
         }
@@ -1145,6 +1299,7 @@ function setUpCanvasInput() {
     canvas.addEventListener('mouseleave', () => {
         lastCell = null;
         setHoverCell(-1, -1);
+        updateMachineCursor({ x: -1, y: -1 });
         hideStampPreview();
     });
 
@@ -1153,12 +1308,19 @@ function setUpCanvasInput() {
         event.preventDefault();
         currentCell = cellFromEvent(event.touches[0]);
         setHoverCell(currentCell.x, currentCell.y);
+        const pointerMachine = machineAtPointer(event.touches[0]);
+        updateMachineCursor(currentCell, event.touches[0]);
         if (activeBlueprintSlot !== null) {
             stampActiveBlueprint();
             return;
         }
         if (marqueeMode) {
             beginMarqueeAt(currentCell);
+            return;
+        }
+        if (!getGrabberOn() && pointerMachine &&
+            openMachineDialog(pointerMachine.x, pointerMachine.y, pointerMachine)) {
+            cancelPainting();
             return;
         }
         if (getGrabberOn()) {
@@ -1180,6 +1342,11 @@ function setUpCanvasInput() {
         if (getDrawMode() === 'line') {
             lineStart = { x: currentCell.x, y: currentCell.y };
             setLinePreview(lineStart.x, lineStart.y, currentCell.x, currentCell.y);
+        } else if (isShapeMode()) {
+            shapeMode = getDrawMode();
+            shapeStart = { x: currentCell.x, y: currentCell.y };
+            setShapePreview(shapeMode, shapeStart.x, shapeStart.y,
+                currentCell.x, currentCell.y);
         } else {
             paintAtCurrentCell();
             startPaintTimer();
@@ -1206,6 +1373,9 @@ function setUpCanvasInput() {
         }
         if (getDrawMode() === 'line' && lineStart) {
             setLinePreview(lineStart.x, lineStart.y, currentCell.x, currentCell.y);
+        } else if (shapeStart && isShapeMode(shapeMode)) {
+            setShapePreview(shapeMode, shapeStart.x, shapeStart.y,
+                currentCell.x, currentCell.y);
         } else {
             paintAtCurrentCell();
         }
@@ -1239,12 +1409,19 @@ function finishPainting(button) {
         if (button === 2) setEraserOn(false);
         return;
     }
-    if (getDrawMode() === 'line' && lineStart) {
+    if (shapeStart && isShapeMode(shapeMode)) {
+        const start = shapeStart;
+        const shape = shapeMode;
+        clearShapePreview();
+        if (button === 0) paintShape(shape, start.x, start.y, currentCell.x, currentCell.y);
+    } else if (getDrawMode() === 'line' && lineStart) {
         clearLinePreview();
         paintLine(lineStart.x, lineStart.y, currentCell.x, currentCell.y);
     }
     isPainting = false;
     lineStart = null;
+    shapeStart = null;
+    shapeMode = null;
     lastCell = null;
     stopPaintTimer();
     if (button === 2) setEraserOn(false);
@@ -1255,9 +1432,16 @@ function cancelPainting() {
     machinePlacement = null;
     clearMachinePlacementPreview();
     lineStart = null;
+    shapeStart = null;
+    shapeMode = null;
     lastCell = null;
     stopPaintTimer();
     clearLinePreview();
+    clearShapePreview();
+}
+
+function isShapeMode(mode = getDrawMode()) {
+    return mode === 'rectangle' || mode === 'ellipse';
 }
 
 function selectedMachine() {
