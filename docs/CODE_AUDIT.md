@@ -21,14 +21,15 @@ physics core. The current data file defines 47 material and tool entries:
 | Liquids | 4 |
 | Gases | 4 |
 | Solids | 15 |
-| Metals | 7 |
-| Machines | 3 |
+| Metals | 8 |
+| Machines | 4 |
+| Storage | 3 |
 | Tools | 3 |
 
 The simulator exposes six visual themes, a 150-row world, heat and state
 changes, flowing liquids, gases, fire, weather, plants, lilies, snow,
-gunpowder, electrical pulses, Aluminum charge storage, conductive power grids,
-Spark Dust, Spark Block and the directional Fan, Heater and Cooler machines.
+gunpowder, Battery charge storage, conductive power grids, Tubing, three storage
+bins, a Vent, Spark Dust, Spark Block and the directional Fan, Heater and Cooler machines.
 
 No confirmed functional regression was found in this audit. The seeded headless
 suite and browser-oriented smoke suite pass. A Playwright suite now covers the
@@ -41,7 +42,7 @@ broader device/accessibility coverage, recorded in [`ISSUES.md`](ISSUES.md).
 |---|---|---|
 | Particle data | `particles.json` is the source of material names, categories, colors, movement, heat, reactions, electrical properties and lifetimes. | Healthy |
 | Simulation core | `physics.js` uses flat typed arrays and a bottom-up frame loop. Heat diffusion, radiation, movement, reactions, liquids, gases, plants, wind and electrical state are kept outside the DOM. | Healthy |
-| Electrical model | Conductivity, temporary pulses, connected Aluminum reservoirs, battery indicators and grid consumption are separate from thermal conductivity. Copper draws 1 and Iron 0.5 per cell, with a 100x discharge scale. | Healthy |
+| Electrical model | Conductivity, temporary pulses, connected Battery reservoirs, battery indicators and grid consumption are separate from thermal conductivity. Copper draws 1 and Iron 0.5 per cell, with a 100x discharge scale. | Healthy |
 | Rendering and loop | `game.js` owns the canvas, frame scheduling, drawing, hover state and charge indicator. | Healthy |
 | Controls and layout | `ui.js`, `index.html` and `styles.css` provide material selection, drawing modes, tools, weather controls, themes and responsive workspace layout. | Healthy |
 | Theme and persistence | `themes.js` applies six themes. `saveLoadGame.js` serializes durable typed-array world fields plus tool/environment settings into a versioned LZString and manages the local once-per-minute resume slot. | Healthy |
@@ -52,14 +53,15 @@ broader device/accessibility coverage, recorded in [`ISSUES.md`](ISSUES.md).
 The test suite covers conservation and movement, water leveling and infiltration,
 heat transfer, melting, freezing, boiling, fire, lava/scoria/stone, gases,
 wind and breeze, plants and lilies, snow, seeds, gunpowder, metals, electrical
-pulses, Aluminum charge sharing and discharge, Spark Dust, Spark Block lifetime,
+pulses, Battery charge sharing and discharge, Spark Dust, Spark Block lifetime,
 liquid suppression around spark sources, Fan activation, its 28-cell reach,
 residual-air deceleration and eight-way orientation, Heater/Cooler activation,
 temperature cones, centreline ray projectiles, power load and drag previews,
-Copper/Iron two-cell machine reach, UI controls, Clear confirmation, and
-autosave replacement/cancellation behavior.
+Copper/Iron two-cell machine reach, storage intake, Tubing bottlenecks, Vent
+release/full-stop behavior, UI controls, Clear confirmation, and autosave
+replacement/cancellation behavior.
 
-The audit also keeps documentation aligned with the source data: 47 entries,
+The audit also keeps documentation aligned with the source data: 52 entries,
 an 8C starting ambient temperature, 10% seed buoyancy and the Elemental Foundry
 product name.
 

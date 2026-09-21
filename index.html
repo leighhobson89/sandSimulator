@@ -48,7 +48,7 @@
                 <div class="toolbar-group toolbar-end">
                     <span id="readout" class="readout">&nbsp;</span>
                     <div id="chargeIndicator" class="charge-indicator" hidden role="img"
-                         aria-label="Aluminum charge" title="Aluminum charge">
+                         aria-label="Battery charge" title="Battery charge">
                         <svg class="charge-battery" viewBox="0 0 26 16" aria-hidden="true">
                             <rect class="charge-battery-shell" x="1" y="1" width="21" height="14" rx="2"></rect>
                             <rect class="charge-battery-terminal" x="22" y="5" width="3" height="6" rx="1"></rect>
@@ -375,6 +375,10 @@
                 <input id="machineDialogInput" class="number-input machine-dialog-input" type="number" step="1" autocomplete="off">
                 <span id="machineDialogUnit" class="unit">&deg;C</span>
             </div>
+            <label id="machineDialogVentToggleWrap" class="machine-dialog-vent-toggle" hidden>
+                <span>Release into canvas</span>
+                <input id="machineDialogVentToggle" type="checkbox" role="switch" aria-label="Release vent contents into the canvas">
+            </label>
             <p id="machineDialogError" class="save-dialog-error" role="alert" hidden></p>
             <div class="save-dialog-actions">
                 <button id="machineDialogOk" class="btn btn-primary" type="button">OK</button>

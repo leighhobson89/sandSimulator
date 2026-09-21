@@ -20,7 +20,7 @@ materials come from the rules that actually run.
 
 ## Current catalogue
 
-The 47 entries are grouped in the same order as the picker:
+The 52 entries are grouped in the same order as the picker:
 
 | Group | Materials |
 | --- | --- |
@@ -28,8 +28,9 @@ The 47 entries are grouped in the same order as the picker:
 | Liquids | Water, Oil, Lava, Acid |
 | Gases | Fire, Steam, Smoke, Toxic Gas |
 | Solids | Ice, Stone, Wood, Glass, Plant, Wall, Flower, Grass, Lily Stem, Lily Pad, Lily Flower, Scoria, Ash Grass, Clay, Ceramic, Spark Block |
-| Metals | Spark, Copper, Molten Copper, Aluminum, Molten Aluminum, Iron, Molten Iron |
-| Machines | Fan, Heater, Cooler |
+| Metals | Spark, Copper, Molten Copper, Battery, Molten Aluminum, Iron, Molten Iron, Tubing |
+| Machines | Fan, Heater, Cooler, Vent |
+| Storage | Powder Storage Bin, Liquid Storage Bin, Gas Storage Bin |
 | Tools | Heat Ray, Cold Ray, Wind |
 
 The short descriptions live beside each name in `particles.json`, rather than

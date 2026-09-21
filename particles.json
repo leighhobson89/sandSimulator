@@ -38,7 +38,7 @@
     "chargePerSpark  total charge one Spark adds, shared by the connected storage-metal mass",
     "chargeSparkChance  chance per frame at full charge of emitting a visual-only Spark",
     "dischargeBattery  draws stored charge from touching battery material and conducts its power",
-    "powerConsumption  charge units this conductive cell draws from its connected Aluminum grid each tick",
+    "powerConsumption  charge units this conductive cell draws from its connected Battery grid each tick",
     "wireReach     extra grid cells of empty air a wire can bridge to reach another conductor",
     "bulkInsulation  how much slower buried cells exchange heat than exposed cells, from 0 to 1",
     "coolsBy       degrees given up per frame on its own account, whatever the air is doing, stopping",
@@ -903,7 +903,7 @@
     },
     "37": {
       "name": "Copper",
-      "description": "Dense conductive metal that carries power, draws from Aluminum and melts into Molten Copper.",
+      "description": "Dense conductive metal that carries power, draws from Battery and melts into Molten Copper.",
       "group": "Metals",
       "color": "rgb(184, 115, 51)",
       "category": "static",
@@ -949,8 +949,8 @@
       "corrodible": true
     },
     "39": {
-      "name": "Aluminum",
-      "description": "Conductive storage metal that shares Spark charge across connected Aluminum and melts into Molten Aluminum.",
+      "name": "Battery",
+      "description": "Conductive storage metal that shares Spark charge across connected Battery cells and melts into Molten Aluminum.",
       "group": "Metals",
       "color": "rgb(188, 198, 210)",
       "category": "static",
@@ -970,7 +970,7 @@
     },
     "40": {
       "name": "Molten Aluminum",
-      "description": "Flowing conductive aluminum that cools back into Aluminum when it reaches its freeze point and has support.",
+      "description": "Flowing conductive aluminum that cools back into Battery when it reaches its freeze point and has support.",
       "group": "Metals",
       "color": "rgb(255, 239, 176)",
       "color2": "rgb(178, 185, 194)",
@@ -985,7 +985,7 @@
       "cooling": 0.003,
       "defaultTemp": 720,
       "freezePoint": 660,
-      "freezesInto": "Aluminum",
+      "freezesInto": "Battery",
       "freezeNeedsGround": true,
       "latent": 700,
       "conductive": true,
@@ -1188,6 +1188,36 @@
       "machine": "storageGas",
       "storageCategory": "gas",
       "storageCapacity": 500,
+      "corrodible": false
+    },
+    "51": {
+      "name": "Tubing",
+      "description": "Dense non-conductive iron tubing that carries stored material between a storage bin and another compatible bin or a Vent.",
+      "group": "Metals",
+      "color": "rgb(102, 110, 120)",
+      "category": "static",
+      "density": 7.87,
+      "conductivity": 0,
+      "cooling": 0.002,
+      "bulkInsulation": 0.18,
+      "meltPoint": 1538,
+      "meltsInto": "Molten Iron",
+      "latent": 1200,
+      "tubing": true,
+      "corrodible": true
+    },
+    "52": {
+      "name": "Vent",
+      "description": "Always-active machine that receives one stored material through connected Tubing and releases it into the canvas below. Turn release off to store up to 100 particles.",
+      "group": "Machines",
+      "color": "rgb(126, 151, 160)",
+      "category": "static",
+      "density": 7.8,
+      "conductivity": 0.04,
+      "cooling": 0.002,
+      "bulkInsulation": 0.3,
+      "meltPoint": 10000,
+      "machine": "vent",
       "corrodible": false
     }
   }

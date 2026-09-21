@@ -19,6 +19,7 @@ const BLUEPRINT_FIELD_TYPES = {
     type: Uint8Array, temp: Float32Array, life: Int16Array, lifeMax: Int16Array,
     residue: Uint8Array, shade: Uint8Array, heat: Float32Array, surface: Int16Array,
     data: Uint8Array, machineSetting: Float32Array, storageType: Uint8Array, storageCount: Uint16Array,
+    storageFlowRemainder: Float32Array,
     power: Uint8Array,
     powerDelay: Uint16Array, charge: Float32Array,
     wind: Uint8Array, airflowX: Float32Array, airflowY: Float32Array,
@@ -230,7 +231,8 @@ function decodeBlueprintState(state) {
             const Type = BLUEPRINT_FIELD_TYPES[field];
             // Blueprints made before configurable machines and storage existed
             // have no corresponding planes; zero means defaults and empty bins.
-            if ((field === 'machineSetting' || field === 'storageType' || field === 'storageCount') && !encoded) {
+            if ((field === 'machineSetting' || field === 'storageType' || field === 'storageCount' ||
+                field === 'storageFlowRemainder') && !encoded) {
                 cells[field] = new Type(blueprint.width * blueprint.height);
                 continue;
             }

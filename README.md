@@ -1,10 +1,10 @@
 # Elemental Foundry
 
-A living elemental sandbox: 47 materials and tools on a 150-row grid that adds
+A living elemental sandbox: 52 materials and tools on a 150-row grid that adds
 enough columns to fill about 90% of the workspace beside the material picker,
 with heat that spreads from cell to cell so that things melt, boil, freeze and
 catch fire on their own, weather that blows across the world of its own accord,
-and electricity that charges Aluminum, powers connected metals and drives Sparks
+and electricity that charges Battery, powers connected metals and drives Sparks
 through a grid. Six themes let you look at it all through different workshop
 moods.
 
@@ -171,6 +171,16 @@ powered. Copper and Iron wire can reach conductive machines through up to two
 empty cells beyond the physical wire end, making it possible to place a machine
 beside a wire without touching the drawn pixels.
 
+**Vent** is an always-active machine. A Vent connected to a storage bin with
+painted **Tubing** accepts the bin's stored material and drops it into the
+canvas below. Tubing only connects through shared edges and needs another
+machine at its far end. Its transfer rate is 10 particles per second for every
+cell in the narrowest cross-section: a three-cell-wide run carries 30/s, while
+a two-cell pinch carries 20/s. Moving particles are shown only while the run is
+valid and flowing. Click a Vent to turn its default-on Release switch off; it
+then buffers one material type up to 100 particles, and a full Vent stops the
+connected tubing flow.
+
 ## Themes
 
 Six of them - Workshop, Ember, Paper, Terminal, Lagoon and Dune - picked from
@@ -243,11 +253,11 @@ few seconds rather than vanishing, but melts almost at once against a flame.
 
 ### Metals and power
 
-The **Metals** section contains Copper, Aluminum and Iron, plus a molten form of
-each and Spark. Their melting points keep their real-world order and approximate
-Celsius values: 660C for aluminum, 1085C for copper and 1538C for iron. A solid
-metal heated past its threshold becomes its own flowing liquid, and that liquid
-turns back into the matching solid after it cools and lands.
+The **Metals** section contains Copper, Battery, Iron and non-conductive Tubing,
+plus the matching molten metals and Spark. Battery melts at 660C into Molten
+Aluminum, which cools back into Battery; copper and iron retain their approximate
+1085C and 1538C melting points. Tubing is made with Iron's heat and melting
+behavior but has no electrical or thermal conductivity.
 
 Electrical conduction is separate from thermal `conductivity`. Every ordinary
 material defaults to non-conductive; the metals opt in with different electrical
@@ -257,20 +267,20 @@ through branches and mixed-metal joins, until it reaches every extreme of the
 connected metal and fades. While the yellow pulse is on a cell,
 `isPowered(x, y)` reports that cell as powered for future electrical devices.
 
-**Aluminum stores charge.** Each applied Spark contributes a fixed amount of
-charge shared across the connected aluminum mass, building a persistent yellow
+**Battery stores charge.** Each applied Spark contributes a fixed amount of
+charge shared across the connected Battery mass, building a persistent yellow
 tint. A larger piece therefore holds proportionally more energy but takes
-proportionally longer to charge. Newly painted aluminum touching a charged
+proportionally longer to charge. Newly painted Battery touching a charged
 piece automatically draws charge from it until every connected cell has the
-same charge level. Charged aluminum occasionally throws off a visual Spark, but
+same charge level. Charged Battery occasionally throws off a visual Spark, but
 those particles do not recharge it or spend any charge themselves. The stored
 value per cell is available through `getStoredCharge(x, y)` for powered metals
 and future electrical devices.
 
 Copper and Iron have `dischargeBattery: true`. When either metal touches charged
-aluminum, it slowly drains the shared Aluminum reservoir and repeatedly carries
+Battery, it slowly drains the shared Battery reservoir and repeatedly carries
 yellow power pulses from the contact point through its connected length. It
-stops conducting once the Aluminum is empty. Aluminum itself and every ordinary
+stops conducting once the Battery is empty. Battery itself and every ordinary
 material default to `dischargeBattery: false`; the same property can be enabled
 for future powered machines.
 
@@ -280,7 +290,7 @@ of that rate per simulation tick. Copper wire is rated 1 per cell and Iron 0.5;
 the Heater and Cooler use the same field for their larger 100-unit load.
 **Spark Dust** is a purple powder whose half-opacity Sparks are emitted less frequently
 into empty neighboring cells while each pixel's finite lifetime runs down, making
-it useful as a disposable charger around Aluminum. **Spark Block** is the solid version and lasts
+it useful as a disposable charger around Battery. **Spark Block** is the solid version and lasts
 five times longer before becoming Spark Dust during its final tenth; Spark Dust expires into Ash.
 Either source stops emitting while a liquid touches it.
 

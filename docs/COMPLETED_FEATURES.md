@@ -6,8 +6,8 @@ real-world model.
 
 ## Materials and motion
 
-The material picker is generated from 47 `particles.json` entries in seven
-groups: Powders, Liquids, Gases, Solids, Metals, Machines and Tools. Materials
+The material picker is generated from 52 `particles.json` entries in eight
+groups: Powders, Liquids, Gases, Solids, Metals, Machines, Storage and Tools. Materials
 have category, density, colour, fall/slide/spread behaviour, lifespan and
 optional reaction properties.
 
@@ -72,15 +72,15 @@ can be divided into five altitude layers.
 ## Electricity and machines
 
 Thermal conductivity and electrical conductivity are separate fields. Copper,
-Aluminum and Iron have distinct electrical behaviour and corresponding molten
+Battery and Iron have distinct electrical behaviour and corresponding molten
 forms.
 
 - A Spark adjacent to conductive material is absorbed and sends a visible
   temporary power wave through connected conductive cells and branches.
-- Aluminum is a storage material: Sparks add a fixed total charge shared across
+- Battery is a storage material: Sparks add a fixed total charge shared across
   its connected mass. The interface shows the connected reservoir's charge.
-- Copper and Iron connected to charged Aluminum draw charge by their configured
-  grid load and repeatedly energise the reachable non-Aluminum grid. Their
+- Copper and Iron connected to charged Battery draw charge by their configured
+  grid load and repeatedly energise the reachable non-Battery grid. Their
   wiring can bridge up to two empty cells in a straight grid direction.
 - Fan stores one of eight directions and only produces airflow when powered;
   it applies a widening 28-cell cone and leaves decaying residual airflow so
@@ -91,6 +91,12 @@ forms.
   While powered they launch matching Heat Ray or Cold Ray particles along the
   cone centreline. Machine placement previews the facing icon and cone while
   dragging, but commits the machine and its effects only on mouse-up.
+- Tubing is an edge-connected, non-conductive material that moves a storage
+  bin's contents to a compatible bin or Vent. Its narrowest painted
+  cross-section sets the rate at 10 particles/second per cell.
+- Vent is always active and releases stored material below itself. Its
+  default-on Release switch can retain one material type up to 100 particles;
+  a full switched-off Vent cuts the connected Tubing flow to 0.
 
 ## Reliability, discovery and project quality
 
@@ -121,7 +127,7 @@ forms.
 - Grabber lifts and moves only one material type in an adjustable square, with
   an on-canvas preview and safe cancel/restore.
 - Air temperature, thermal layers, wind, breeze, heat view and machine controls
-  are available in the UI. Fan, Heater and Cooler placement ignores brush size
+  are available in the UI. Fan, Heater, Cooler and Vent placement ignores brush size
   and can be aimed by dragging.
 - Clear is a confirmation-first destructive action: Cancel preserves the active
   world, while Clear World wipes it without directly changing the saved Resume

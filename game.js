@@ -21,7 +21,7 @@ import {
     prepareDefinitions, createWorld, getWorld, clearWorld, stepSimulation,
     setCell, inBounds, index, getDefinitions, getAmbientTemp, getAirTempAt,
     getAmbientTarget, getTemperature, getFrameCount, applyWind, decayWindTrails,
-    getConnectedAluminumCharge, isMachinePoweredAt, EMPTY
+    getConnectedBatteryCharge, getTubingFlows, isMachinePoweredAt, EMPTY
 } from './physics.js';
 
 let context = null;
@@ -45,7 +45,8 @@ export const BLUEPRINT_SLOT_COUNT = 24;
 
 export const BLUEPRINT_FIELDS = [
     'type', 'temp', 'life', 'lifeMax', 'residue', 'shade', 'heat', 'surface',
-    'data', 'machineSetting', 'storageType', 'storageCount', 'power', 'powerDelay', 'charge', 'wind', 'airflowX', 'airflowY',
+    'data', 'machineSetting', 'storageType', 'storageCount', 'storageFlowRemainder',
+    'power', 'powerDelay', 'charge', 'wind', 'airflowX', 'airflowY',
     'airflowNextX', 'airflowNextY'
 ];
 
@@ -229,7 +230,7 @@ function drawWorld() {
             b = def.rgb2[2] + (def.rgb[2] - def.rgb2[2]) * mix;
         }
 
-        // Stored charge gives aluminum a persistent yellow tint. A live power
+        // Stored charge gives Battery a persistent yellow tint. A live power
         // pulse is brighter, producing the moving yellow dots/line along any
         // connected conductor.
         if (def.chargeCapacity > 0 && charge[i] > 0) {
@@ -306,6 +307,13 @@ function drawMachineOverlays() {
     coneLayer.setAttribute('height', '100%');
     coneLayer.setAttribute('aria-hidden', 'true');
     overlay.appendChild(coneLayer);
+    const flowLayer = document.createElementNS(MACHINE_ICON_SVG_NS, 'svg');
+    flowLayer.setAttribute('class', 'tubing-flow-overlay');
+    flowLayer.setAttribute('viewBox', `0 0 ${canvas.clientWidth} ${canvas.clientHeight}`);
+    flowLayer.setAttribute('width', '100%');
+    flowLayer.setAttribute('height', '100%');
+    flowLayer.setAttribute('aria-hidden', 'true');
+    overlay.appendChild(flowLayer);
     const icons = {
         fan: '<circle cx="11" cy="15" r="7" fill="none" stroke="currentColor" stroke-width="1.6"/>' +
         '<circle cx="11" cy="15" r="2.2" fill="currentColor"/>' +
@@ -330,8 +338,12 @@ function drawMachineOverlays() {
         storageGas: '<rect x="11" y="6" width="15" height="19" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/>' +
             '<path d="M11 13 2 3M11 17 2 27" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.78"/>' +
             '<path d="M3 15h7m0 0-3-3m3 3-3 3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>' +
-            '<circle cx="16" cy="12" r="1.2" fill="currentColor"/><circle cx="21" cy="16" r="1.2" fill="currentColor"/><circle cx="16" cy="20" r="1.2" fill="currentColor"/>'
+            '<circle cx="16" cy="12" r="1.2" fill="currentColor"/><circle cx="21" cy="16" r="1.2" fill="currentColor"/><circle cx="16" cy="20" r="1.2" fill="currentColor"/>',
+        vent: '<path d="M5 8h20l-2.2 4H7.2L5 8Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>' +
+            '<path d="M8 14h14v8H8zM11 16v4M15 16v4M19 16v4M5 25h20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>'
     };
+
+    drawTubingFlowOverlay(flowLayer, getTubingFlows(), cellWidth, cellHeight);
 
     for (let i = 0; i < world.type.length; i++) {
         const def = getDefinitions()[world.type[i]];
@@ -355,7 +367,7 @@ function drawMachineOverlays() {
         icon.setAttribute('aria-hidden', 'true');
         icon.style.left = `${(x + 0.5) * cellWidth - iconSize / 2}px`;
         icon.style.top = `${(y + 0.5) * cellHeight - iconSize / 2}px`;
-        icon.style.transform = `rotate(${rotations[world.data[i] & 7]}deg)`;
+        icon.style.transform = `rotate(${machine === 'vent' ? 0 : rotations[world.data[i] & 7]}deg)`;
         icon.innerHTML = icons[machine];
         overlay.appendChild(icon);
     }
@@ -380,10 +392,47 @@ function drawMachineOverlays() {
             icon.setAttribute('aria-hidden', 'true');
             icon.style.left = `${(preview.x + 0.5) * cellWidth - iconSize / 2}px`;
             icon.style.top = `${(preview.y + 0.5) * cellHeight - iconSize / 2}px`;
-            icon.style.transform = `rotate(${rotations[preview.direction]}deg)`;
+            icon.style.transform = `rotate(${preview.machine === 'vent' ? 0 : rotations[preview.direction]}deg)`;
             icon.innerHTML = icons[preview.machine];
             overlay.appendChild(icon);
         }
+    }
+}
+
+// Animate discrete bands along the same ordered tubing-cell route which moves
+// the material. Unlike an SVG centreline, the bands stay in real cells at a
+// bend, while their sequence makes the direction from Storage Bin to Vent (or
+// another compatible bin) unambiguous.
+function drawTubingFlowOverlay(layer, flows, cellWidth, cellHeight) {
+    const frame = getFrameCount();
+    const world = getWorld();
+    for (let flowIndex = 0; flowIndex < flows.length; flowIndex++) {
+        const flow = flows[flowIndex];
+        if (!flow.path?.length) continue;
+        const route = document.createElementNS(MACHINE_ICON_SVG_NS, 'g');
+        route.setAttribute('class', 'tubing-flow-route');
+        const spacing = Math.max(6, Math.min(12, Math.ceil(flow.path.length / 2)));
+        const bandWidth = 2.2;
+        const progress = frame * Math.max(0.12, Math.min(0.7, flow.rate / 80));
+        route.setAttribute('data-flow-progress', String(progress));
+        for (let position = 0; position < flow.path.length; position++) {
+            const phase = ((progress - position) % spacing + spacing) % spacing;
+            if (phase > bandWidth) continue;
+            const cell = flow.path[position];
+            const x = cell % world.cols;
+            const y = Math.floor(cell / world.cols);
+            const band = document.createElementNS(MACHINE_ICON_SVG_NS, 'rect');
+            band.setAttribute('class', 'tubing-flow-band-cell');
+            band.setAttribute('x', String(x * cellWidth));
+            band.setAttribute('y', String(y * cellHeight));
+            band.setAttribute('width', String(cellWidth));
+            band.setAttribute('height', String(cellHeight));
+            band.setAttribute('fill', '#59a8e0');
+            band.setAttribute('opacity', String(0.35 + 0.65 * (1 - phase / bandWidth)));
+            band.setAttribute('data-route-position', String(position));
+            route.appendChild(band);
+        }
+        layer.appendChild(route);
     }
 }
 
@@ -603,7 +652,7 @@ function updateChargeIndicator(elements) {
     if (!indicator) return;
 
     const charge = inBounds(hoverX, hoverY)
-        ? getConnectedAluminumCharge(hoverX, hoverY)
+        ? getConnectedBatteryCharge(hoverX, hoverY)
         : null;
     if (!charge) {
         indicator.hidden = true;
@@ -616,8 +665,8 @@ function updateChargeIndicator(elements) {
     indicator.hidden = false;
     indicator.classList.remove('charge-green', 'charge-orange', 'charge-red');
     indicator.classList.add(`charge-${state}`);
-    indicator.setAttribute('aria-label', `Aluminum charge ${percent}%`);
-    indicator.title = `Aluminum charge: ${percent}%`;
+    indicator.setAttribute('aria-label', `Battery charge ${percent}%`);
+    indicator.title = `Battery charge: ${percent}%`;
     elements.chargeIndicatorFill.setAttribute('width', String(ratio * 17));
     elements.chargeIndicatorValue.textContent = `${percent}%`;
 }
@@ -889,6 +938,7 @@ export function beginGrab(centreX, centreY, size = getGrabberSize()) {
                 heat: world.heat[i], data: world.data[i],
                 machineSetting: world.machineSetting[i],
                 storageType: world.storageType[i], storageCount: world.storageCount[i],
+                storageFlowRemainder: world.storageFlowRemainder[i],
                 power: world.power[i], powerDelay: world.powerDelay[i],
                 charge: world.charge[i], wind: world.wind[i],
                 previewR: pixels ? pixels[p] : def.rgb[0],
@@ -952,6 +1002,7 @@ function clearGrabbedCell(world, i, y) {
     world.machineSetting[i] = 0;
     world.storageType[i] = 0;
     world.storageCount[i] = 0;
+    world.storageFlowRemainder[i] = 0;
     world.power[i] = 0;
     world.powerDelay[i] = 0;
     world.charge[i] = 0;
@@ -971,6 +1022,7 @@ function restoreGrabbedCell(world, i, cell) {
     world.machineSetting[i] = cell.machineSetting || 0;
     world.storageType[i] = cell.storageType || 0;
     world.storageCount[i] = cell.storageCount || 0;
+    world.storageFlowRemainder[i] = cell.storageFlowRemainder || 0;
     world.power[i] = cell.power;
     world.powerDelay[i] = cell.powerDelay;
     world.charge[i] = cell.charge;

@@ -166,6 +166,7 @@ export function prepareDefinitions(json) {
         emitRate: 0,
         conductive: false,
         electricalConductivity: 0,
+        tubing: false,
         energizesConductors: false,
         chargeCapacity: 0,
         chargePerSpark: 0,
@@ -231,6 +232,7 @@ export function prepareDefinitions(json) {
             electricalConductivity: p.conductive
                 ? Math.max(0.01, p.electricalConductivity || 1)
                 : 0,
+            tubing: !!p.tubing,
             machine: p.machine || null,
             storageCategory: p.storageCategory || null,
             storageCapacity: p.storageCapacity || 0,
@@ -556,9 +558,11 @@ export function getAmbientTarget() { return ambientTarget; }
 // always built with the same typed arrays as a newly-created one.
 const PERSISTED_WORLD_FIELDS = [
     'type', 'temp', 'life', 'lifeMax', 'residue', 'shade', 'heat', 'data',
-    'machineSetting', 'storageType', 'storageCount', 'power', 'powerDelay', 'charge', 'wind', 'airflowX', 'airflowY',
+    'machineSetting', 'storageType', 'storageCount', 'storageFlowRemainder',
+    'power', 'powerDelay', 'charge', 'wind', 'airflowX', 'airflowY',
     'airflowNextX', 'airflowNextY'
 ];
+const TUBING_NEIGHBOURS = [[0, -1], [1, 0], [0, 1], [-1, 0]];
 
 export function captureSimulationState() {
     if (!world) throw new Error('There is no world to save.');
@@ -601,7 +605,7 @@ export function restoreSimulationState(state) {
         // Storage inventory was added after the original machine state. Old
         // saves simply have empty inventories because newly-created arrays are
         // already zero-filled.
-        if ((field === 'storageType' || field === 'storageCount') && !source) continue;
+        if ((field === 'storageType' || field === 'storageCount' || field === 'storageFlowRemainder') && !source) continue;
         if (!source || source.length !== cells) {
             throw new Error(`This save has invalid ${field} data.`);
         }
@@ -640,6 +644,7 @@ export function createWorld(cols, rows) {
         machineSetting: new Float32Array(n),
         storageType: new Uint8Array(n),
         storageCount: new Uint16Array(n),
+        storageFlowRemainder: new Float32Array(n),
         power: new Uint8Array(n),
         powerDelay: new Uint16Array(n),
         charge: new Float32Array(n),
@@ -653,6 +658,7 @@ export function createWorld(cols, rows) {
     for (let i = 0; i < n; i++) world.shade[i] = random() * 255;
     storageFunnelMachines = [];
     storageBarrierMask = null;
+    tubingFlows = [];
     return world;
 }
 
@@ -660,6 +666,7 @@ export function getWorld() { return world; }
 
 function defaultMachineSetting(def) {
     if (def?.machine === 'fan') return def.machineWindSpeed ?? 7;
+    if (def?.machine === 'vent') return 1;
     return def?.machineTemp ?? 0;
 }
 
@@ -671,6 +678,10 @@ function machineSettingBounds(def) {
 }
 
 const STORAGE_CAPACITY = 500;
+const VENT_CAPACITY = 100;
+const DEFAULT_VENT_RELEASE_RATE = 10;
+const MAX_VENT_RELEASE_RATE = 100;
+const SIMULATION_STEPS_PER_SECOND = 60;
 // A storage icon is 32 screen pixels wide and a simulation cell is normally
 // about four screen pixels. Its invisible intake therefore spans roughly nine
 // cells and sits one cell behind the machine centre, at the funnel-to-bin
@@ -684,6 +695,10 @@ const STORAGE_SUCTION_DEPTH = 2;
 
 function isStorageMachine(def) {
     return !!def?.storageCategory && def.storageCapacity > 0;
+}
+
+function isVentMachine(def) {
+    return def?.machine === 'vent';
 }
 
 function storageAccepts(def, particle) {
@@ -713,6 +728,51 @@ export function purgeStorageBin(x, y) {
     if (!isStorageMachine(DEFS[world.type[i]])) return false;
     world.storageType[i] = EMPTY;
     world.storageCount[i] = 0;
+    world.storageFlowRemainder[i] = 0;
+    return true;
+}
+
+export function getVentInventory(x, y) {
+    if (!inBounds(x, y)) return null;
+    const i = index(x, y);
+    if (!isVentMachine(DEFS[world.type[i]])) return null;
+    return {
+        type: world.storageType[i],
+        count: world.storageCount[i],
+        capacity: VENT_CAPACITY,
+        releaseEnabled: world.machineSetting[i] !== 0,
+        releaseRate: getVentReleaseRate(x, y)
+    };
+}
+
+export function getVentReleaseRate(x, y) {
+    if (!inBounds(x, y)) return null;
+    const i = index(x, y);
+    if (!isVentMachine(DEFS[world.type[i]])) return null;
+    return Math.max(1, Math.min(MAX_VENT_RELEASE_RATE,
+        Math.round(world.data[i] || DEFAULT_VENT_RELEASE_RATE)));
+}
+
+export function setVentReleaseRate(x, y, value) {
+    if (!inBounds(x, y) || !Number.isFinite(value)) return false;
+    const i = index(x, y);
+    if (!isVentMachine(DEFS[world.type[i]])) return false;
+    world.data[i] = Math.max(1, Math.min(MAX_VENT_RELEASE_RATE, Math.round(value)));
+    return true;
+}
+
+export function isVentReleaseEnabled(x, y) {
+    if (!inBounds(x, y)) return false;
+    const i = index(x, y);
+    return isVentMachine(DEFS[world.type[i]]) && world.machineSetting[i] !== 0;
+}
+
+export function setVentReleaseEnabled(x, y, enabled) {
+    if (!inBounds(x, y)) return false;
+    const i = index(x, y);
+    if (!isVentMachine(DEFS[world.type[i]])) return false;
+    world.machineSetting[i] = enabled ? 1 : 0;
+    if (!enabled) world.storageFlowRemainder[i] = 0;
     return true;
 }
 
@@ -742,15 +802,15 @@ export function getStoredCharge(x, y) {
     return inBounds(x, y) ? world.charge[index(x, y)] : 0;
 }
 
-// Returns the shared charge level for the connected aluminum entity under the
+// Returns the shared charge level for the connected Battery entity under the
 // cursor. The UI needs the whole reservoir rather than just one cell, since
-// adding or discharging charge affects every connected aluminum cell equally.
-export function getConnectedAluminumCharge(x, y) {
+// adding or discharging charge affects every connected Battery cell equally.
+export function getConnectedBatteryCharge(x, y) {
     if (!inBounds(x, y)) return null;
 
     const start = index(x, y);
-    const aluminum = DEFS[world.type[start]];
-    if (!aluminum || aluminum.name !== 'Aluminum') return null;
+    const battery = DEFS[world.type[start]];
+    if (!battery || battery.name !== 'Battery') return null;
 
     const visited = new Uint8Array(world.type.length);
     const queue = [start];
@@ -795,6 +855,7 @@ export function clearWorld() {
     world.machineSetting.fill(0);
     world.storageType.fill(0);
     world.storageCount.fill(0);
+    world.storageFlowRemainder.fill(0);
     world.power.fill(0);
     world.powerDelay.fill(0);
     world.charge.fill(0);
@@ -805,6 +866,7 @@ export function clearWorld() {
     world.airflowNextY.fill(0);
     storageFunnelMachines = [];
     if (storageBarrierMask) storageBarrierMask.fill(0);
+    tubingFlows = [];
 }
 
 // What a freshly placed particle starts with in its data slot. A plant gets a
@@ -814,6 +876,7 @@ export function clearWorld() {
 // That is decided here, once, and never revisited, so a seed that came up a
 // floater is a floater for as long as it lasts.
 function startingData(def) {
+    if (def?.machine === 'vent') return DEFAULT_VENT_RELEASE_RATE;
     if (def.floatChance > 0) return random() < def.floatChance ? 1 : 0;
     if (def.growHeight <= 0) return 0;
     const spread = def.growHeight - def.growHeightMin;
@@ -860,6 +923,7 @@ export function setCell(x, y, id, keepTemp) {
     world.machineSetting[i] = def.machine ? defaultMachineSetting(def) : 0;
     world.storageType[i] = 0;
     world.storageCount[i] = 0;
+    world.storageFlowRemainder[i] = 0;
     world.power[i] = 0;
     world.powerDelay[i] = 0;
     world.charge[i] = 0;
@@ -883,6 +947,7 @@ function transform(i, id, life, residue) {
     world.machineSetting[i] = def.machine ? defaultMachineSetting(def) : 0;
     world.storageType[i] = 0;
     world.storageCount[i] = 0;
+    world.storageFlowRemainder[i] = 0;
     world.power[i] = 0;
     world.powerDelay[i] = 0;
     world.charge[i] = 0;
@@ -907,6 +972,7 @@ function removeParticle(i) {
     world.machineSetting[i] = 0;
     world.storageType[i] = 0;
     world.storageCount[i] = 0;
+    world.storageFlowRemainder[i] = 0;
     world.power[i] = 0;
     world.powerDelay[i] = 0;
     world.charge[i] = 0;
@@ -926,6 +992,7 @@ function swapCells(i1, i2) {
     let ms = world.machineSetting[i1]; world.machineSetting[i1] = world.machineSetting[i2]; world.machineSetting[i2] = ms;
     let st = world.storageType[i1]; world.storageType[i1] = world.storageType[i2]; world.storageType[i2] = st;
     let sc = world.storageCount[i1]; world.storageCount[i1] = world.storageCount[i2]; world.storageCount[i2] = sc;
+    let sfr = world.storageFlowRemainder[i1]; world.storageFlowRemainder[i1] = world.storageFlowRemainder[i2]; world.storageFlowRemainder[i2] = sfr;
     let p = world.power[i1]; world.power[i1] = world.power[i2]; world.power[i2] = p;
     let pd = world.powerDelay[i1]; world.powerDelay[i1] = world.powerDelay[i2]; world.powerDelay[i2] = pd;
     let c = world.charge[i1]; world.charge[i1] = world.charge[i2]; world.charge[i2] = c;
@@ -991,7 +1058,7 @@ function energizeConnectedMetal(seeds, chargeStorage = true) {
     }
 
     // A Spark carries a fixed amount of energy. Sharing it across every
-    // storage cell means a larger aluminum mass has proportionally more total
+    // storage cell means a larger Battery mass has proportionally more total
     // capacity, but needs proportionally more Sparks (or a Spark brush held on
     // it for longer) to reach the same yellow charge level.
     if (chargeStorage && storageCells.length > 0 && storageCapacity > 0) {
@@ -1032,8 +1099,8 @@ function forEachConductiveConnection(i, callback) {
     }
 }
 
-// Returns the total load of the conductive grid reached from an aluminum
-// battery. Aluminum cells are deliberately not traversed here: two separate
+// Returns the total load of the conductive grid reached from a Battery
+// source. Battery cells are deliberately not traversed here: two separate
 // batteries may touch the same wire grid, but neither battery should become a
 // bridge into the other battery's reservoir.
 function connectedGridConsumption(seeds) {
@@ -1067,7 +1134,7 @@ function connectedGridConsumption(seeds) {
 }
 
 // Directly touching storage metals behave as one reservoir. This conserves
-// their total charge while equalising fullness, so fresh aluminum painted onto
+// their total charge while equalising fullness, so fresh Battery painted onto
 // a charged piece draws charge from the old cells immediately on the next
 // simulation frame. Eight-way contact matches electrical wire connectivity.
 function balanceStoredCharge() {
@@ -1179,6 +1246,11 @@ export function stepSimulation() {
     updateActiveMachines();
     applyFanAirflowToParticles();
     updateStorageBins();
+    updateVents();
+    updateTubingFlows();
+    // A newly delivered item can use release credit accumulated earlier in
+    // this frame, but the rate is accrued only once per frame.
+    updateVents(false);
 
     // The breeze blows first, on the freshly cleared moved flags, so that
     // anything it shifts counts as having had its move for the frame and is
@@ -1526,7 +1598,7 @@ function findEmptyNeighbour(x, y) {
 }
 
 // Spark sources throw sparks into any empty neighboring cell. That lets a
-// source charge Aluminum above, below, or beside it rather than making its
+// source charge Battery above, below, or beside it rather than making its
 // placement direction matter.
 function findEmptySparkSpace(x, y) {
     const start = Math.floor(random() * ELECTRICAL_NEIGHBOURS.length);
@@ -1553,7 +1625,7 @@ function hasLiquidNeighbour(x, y) {
 function applyReactions(x, y, i, def) {
     // An ordinary Spark touching any conductor becomes a travelling power
     // pulse. Sparks emitted by stored charge carry data=1 and are visual only,
-    // which prevents charged aluminum from feeding itself forever.
+    // which prevents charged Battery from feeding itself forever.
     if (def.energizesConductors && world.data[i] === 0) {
         const conductors = conductiveNeighbours(x, y);
         if (conductors.length > 0) {
@@ -1563,7 +1635,7 @@ function applyReactions(x, y, i, def) {
         }
     }
 
-    // Aluminum keeps the charge added by each pulse. At higher charge it gives
+    // Battery keeps the charge added by each pulse. At higher charge it gives
     // off occasional decorative sparks without spending or reapplying charge;
     // a future device can read the stored value and discharge it deliberately.
     if (def.chargeCapacity > 0 && world.charge[i] > 0 && def.chargeSparkChance > 0) {
@@ -1581,7 +1653,7 @@ function applyReactions(x, y, i, def) {
 
     // Spark sources spend their own lifetime producing ordinary Sparks around
     // themselves. Any touching liquid suppresses the source until it clears.
-    // The Sparks are real particles, so they can charge Aluminum and conduct
+    // The Sparks are real particles, so they can charge Battery and conduct
     // its pulse normally before the source pixel eventually wears out.
     if (def.sparkEmitterChance > 0 && !hasLiquidNeighbour(x, y) &&
         random() < def.sparkEmitterChance) {
@@ -2958,6 +3030,288 @@ function updateStorageBins() {
     }
 }
 
+// Tubing is deliberately a four-way physical network: pieces have to share a
+// cell edge, rather than merely touching at a corner. That makes a painted
+// three-cell-wide tube a three-cell-wide channel and stops diagonal near-misses
+// from becoming invisible pipe connections.
+let tubingFlows = [];
+
+export function getTubingFlows() {
+    return tubingFlows;
+}
+
+function buildTubingComponents() {
+    const visited = new Uint8Array(world.type.length);
+    const components = [];
+
+    for (let start = 0; start < world.type.length; start++) {
+        if (visited[start] || !DEFS[world.type[start]]?.tubing) continue;
+
+        const cells = [start];
+        const cellSet = new Set([start]);
+        visited[start] = 1;
+        for (let head = 0; head < cells.length; head++) {
+            const i = cells[head];
+            const x = i % COLS;
+            const y = Math.floor(i / COLS);
+            for (const [dx, dy] of TUBING_NEIGHBOURS) {
+                const nx = x + dx;
+                const ny = y + dy;
+                if (!inBounds(nx, ny)) continue;
+                const ni = index(nx, ny);
+                if (visited[ni] || !DEFS[world.type[ni]]?.tubing) continue;
+                visited[ni] = 1;
+                cellSet.add(ni);
+                cells.push(ni);
+            }
+        }
+
+        const attachments = new Map();
+        for (const tube of cells) {
+            const x = tube % COLS;
+            const y = Math.floor(tube / COLS);
+            for (const [dx, dy] of TUBING_NEIGHBOURS) {
+                const nx = x + dx;
+                const ny = y + dy;
+                if (!inBounds(nx, ny)) continue;
+                const machine = index(nx, ny);
+                const def = DEFS[world.type[machine]];
+                if (!isStorageMachine(def) && !isVentMachine(def)) continue;
+                const contacts = attachments.get(machine);
+                if (contacts) contacts.push(tube);
+                else attachments.set(machine, [tube]);
+            }
+        }
+        if (attachments.size >= 2) components.push({ cells, cellSet, attachments });
+    }
+    return components;
+}
+
+function shortestTubingPath(cellSet, sourceContacts, destinationContacts) {
+    const goals = new Set(destinationContacts);
+    const queue = [];
+    const parents = new Map();
+    for (const contact of sourceContacts) {
+        if (parents.has(contact)) continue;
+        parents.set(contact, -1);
+        queue.push(contact);
+    }
+
+    let end = -1;
+    for (let head = 0; head < queue.length; head++) {
+        const i = queue[head];
+        if (goals.has(i)) {
+            end = i;
+            break;
+        }
+        const x = i % COLS;
+        const y = Math.floor(i / COLS);
+        for (const [dx, dy] of TUBING_NEIGHBOURS) {
+            const nx = x + dx;
+            const ny = y + dy;
+            if (!inBounds(nx, ny)) continue;
+            const ni = index(nx, ny);
+            if (!cellSet.has(ni) || parents.has(ni)) continue;
+            parents.set(ni, i);
+            queue.push(ni);
+        }
+    }
+    if (end < 0) return null;
+
+    const path = [];
+    for (let current = end; current >= 0; current = parents.get(current)) path.push(current);
+    path.reverse();
+    return path;
+}
+
+function tubingRunWidth(cellSet, x, y, stepX, stepY) {
+    let width = 1;
+    for (const direction of [-1, 1]) {
+        let nx = x + stepX * direction;
+        let ny = y + stepY * direction;
+        while (inBounds(nx, ny) && cellSet.has(index(nx, ny))) {
+            width++;
+            nx += stepX * direction;
+            ny += stepY * direction;
+        }
+    }
+    return width;
+}
+
+function tubingPathAxes(path, position, source, destination) {
+    const cell = path[position];
+    const x = cell % COLS;
+    const y = Math.floor(cell / COLS);
+    let horizontal = false;
+    let vertical = false;
+    for (const neighbour of [path[position - 1], path[position + 1]]) {
+        if (neighbour === undefined) continue;
+        if ((neighbour % COLS) !== x) horizontal = true;
+        if (Math.floor(neighbour / COLS) !== y) vertical = true;
+    }
+    // A one-cell route can join machines directly. Use their relative
+    // positions to retain the width of a short, thick connector.
+    if (!horizontal && !vertical) {
+        horizontal = (source % COLS) !== (destination % COLS);
+        vertical = Math.floor(source / COLS) !== Math.floor(destination / COLS);
+    }
+    return { horizontal, vertical };
+}
+
+// Measure the painted width perpendicular to the route at every point. A
+// three-cell brush stroke therefore carries 30/s, while a two-cell pinch in
+// the middle limits the complete connection to 20/s.
+function tubingPathCapacity(path, cellSet, source, destination) {
+    let narrowest = Infinity;
+    for (let position = 0; position < path.length; position++) {
+        const cell = path[position];
+        const x = cell % COLS;
+        const y = Math.floor(cell / COLS);
+        const { horizontal, vertical } = tubingPathAxes(path, position, source, destination);
+        const horizontalWidth = horizontal ? tubingRunWidth(cellSet, x, y, 0, 1) : Infinity;
+        const verticalWidth = vertical ? tubingRunWidth(cellSet, x, y, 1, 0) : Infinity;
+        narrowest = Math.min(narrowest, horizontalWidth, verticalWidth);
+    }
+    return Number.isFinite(narrowest) ? Math.max(1, narrowest) : 1;
+}
+
+function destinationCanAccept(destination, material) {
+    const def = DEFS[world.type[destination]];
+    if (isStorageMachine(def)) {
+        return storageAccepts(def, DEFS[material]) &&
+            world.storageCount[destination] < (def.storageCapacity || STORAGE_CAPACITY) &&
+            (world.storageType[destination] === EMPTY || world.storageType[destination] === material);
+    }
+    if (isVentMachine(def)) {
+        const releaseEnabled = world.machineSetting[destination] !== 0;
+        return (world.storageCount[destination] < VENT_CAPACITY || releaseEnabled) &&
+            (world.storageType[destination] === EMPTY || world.storageType[destination] === material);
+    }
+    return false;
+}
+
+function destinationSpace(destination) {
+    const def = DEFS[world.type[destination]];
+    const capacity = isStorageMachine(def) ? (def.storageCapacity || STORAGE_CAPACITY) : VENT_CAPACITY;
+    return Math.max(0, capacity - world.storageCount[destination]);
+}
+
+function receiveTubingMaterial(destination, material) {
+    world.storageType[destination] = material;
+    world.storageCount[destination]++;
+}
+
+function updateTubingFlows() {
+    tubingFlows = [];
+    const sourceBins = [];
+    for (let i = 0; i < world.type.length; i++) {
+        if (isStorageMachine(DEFS[world.type[i]]) && world.storageCount[i] > 0) sourceBins.push(i);
+    }
+    if (sourceBins.length === 0) return;
+
+    const activeSources = new Set();
+    const claimedSources = new Set();
+    for (const component of buildTubingComponents()) {
+        // A tube has a meaningful direction only when it runs between exactly
+        // two machines. Branches must be completed into a separate run rather
+        // than silently choosing an arbitrary output.
+        if (component.attachments.size !== 2) continue;
+        const endpoints = [...component.attachments.keys()].sort((a, b) => a - b);
+        for (const source of endpoints) {
+            if (claimedSources.has(source) || !sourceBins.includes(source)) continue;
+            const material = world.storageType[source];
+            if (material === EMPTY) continue;
+            const destination = endpoints[0] === source ? endpoints[1] : endpoints[0];
+            if (!destinationCanAccept(destination, material)) continue;
+
+            const path = shortestTubingPath(component.cellSet, component.attachments.get(source),
+                component.attachments.get(destination));
+            if (!path) continue;
+            const width = tubingPathCapacity(path, component.cellSet, source, destination);
+            const tubingRate = width * 10;
+            const destinationDef = DEFS[world.type[destination]];
+            const destinationX = destination % COLS;
+            const destinationY = Math.floor(destination / COLS);
+            // An active Vent accepts tubing flow while it has room. Once its
+            // buffer reaches capacity, its release setting becomes the
+            // downstream back-pressure limit. This lets a faster tube fill a
+            // vent first, while a faster vent simply drains at the tube rate.
+            const ventBackpressure = isVentMachine(destinationDef) &&
+                isVentReleaseEnabled(destinationX, destinationY) &&
+                world.storageCount[destination] >= VENT_CAPACITY - 1;
+            const rate = ventBackpressure
+                ? Math.min(tubingRate, getVentReleaseRate(destinationX, destinationY))
+                : tubingRate;
+            if (rate <= 0) continue;
+
+            activeSources.add(source);
+            claimedSources.add(source);
+            world.storageFlowRemainder[source] += rate / SIMULATION_STEPS_PER_SECOND;
+            const transferred = Math.min(
+                world.storageCount[source],
+                destinationSpace(destination),
+                Math.floor(world.storageFlowRemainder[source])
+            );
+            if (transferred > 0) {
+                world.storageFlowRemainder[source] -= transferred;
+                world.storageCount[source] -= transferred;
+                for (let item = 0; item < transferred; item++) receiveTubingMaterial(destination, material);
+                if (world.storageCount[source] === 0) {
+                    world.storageType[source] = EMPTY;
+                    world.storageFlowRemainder[source] = 0;
+                }
+            }
+            if (world.storageCount[source] > 0) {
+                tubingFlows.push({
+                    source, destination, material, rate, width,
+                    // The pulse renderer follows this ordered, physical route
+                    // from the source contact to the destination contact. It
+                    // uses the unmodified cell path, never an inferred visual
+                    // centreline that could cut across a painted bend.
+                    path,
+                    cells: component.cells
+                });
+            }
+            break;
+        }
+    }
+    for (const source of sourceBins) {
+        if (!activeSources.has(source)) world.storageFlowRemainder[source] = 0;
+    }
+}
+
+// A Vent uses the same compact type/count inventory as a bin. With release on
+// it places one stored particle in the canvas cell below each frame; with
+// release off it simply retains material until its 100-particle buffer is full.
+function updateVents(accrueRate = true) {
+    for (let i = 0; i < world.type.length; i++) {
+        if (!isVentMachine(DEFS[world.type[i]]) || world.machineSetting[i] === 0 ||
+            world.storageCount[i] === 0) continue;
+        if (accrueRate) {
+            const releaseRate = getVentReleaseRate(i % COLS, Math.floor(i / COLS));
+            // Keep at most one ready particle buffered. This preserves the
+            // requested average rate without releasing a burst after an output
+            // cell has been blocked for a while.
+            world.storageFlowRemainder[i] = Math.min(1,
+                world.storageFlowRemainder[i] + releaseRate / SIMULATION_STEPS_PER_SECOND);
+        }
+        if (world.storageFlowRemainder[i] < 1) continue;
+        const x = i % COLS;
+        const y = Math.floor(i / COLS);
+        const outputY = y + 1;
+        if (!inBounds(x, outputY) || storageIntakeIsWall(x, outputY)) continue;
+        const output = index(x, outputY);
+        if (world.type[output] !== EMPTY) continue;
+
+        const material = world.storageType[i];
+        if (material === EMPTY) continue;
+        setCell(x, outputY, material);
+        world.storageFlowRemainder[i] -= 1;
+        world.storageCount[i]--;
+        if (world.storageCount[i] === 0) world.storageType[i] = EMPTY;
+    }
+}
+
 function refreshStorageFunnelMachines() {
     storageFunnelMachines = [];
     if (!storageBarrierMask || storageBarrierMask.length !== world.type.length) {
@@ -3021,7 +3375,7 @@ export function isMachinePoweredAt(x, y) {
     if (!world || !inBounds(x, y)) return false;
     const i = index(x, y);
     const def = DEFS[world.type[i]];
-    if (isStorageMachine(def)) return true;
+    if (isStorageMachine(def) || isVentMachine(def)) return true;
     return !!def?.machine && machineIsPowered(x, y, i);
 }
 

@@ -16,7 +16,9 @@ import {
     setLayerLapse, getLayerLapse, getAirTempAt, setAirLayersOn,
     applyWind, getWindTrails, decayWindTrails,
     setAmbientWindOn, isBreezeBlowing, isPowered, getStoredCharge,
-    getConnectedAluminumCharge, getStorageInventory, setRandomSeed, getRandomSeed, EMPTY
+    getConnectedBatteryCharge, getStorageInventory, getVentInventory, getVentReleaseRate,
+    getTubingFlows, setVentReleaseEnabled, setVentReleaseRate, setRandomSeed,
+    getRandomSeed, EMPTY
 } from '../physics.js';
 
 const json = JSON.parse(readFileSync(new URL('../particles.json', import.meta.url), 'utf8'));
@@ -813,7 +815,7 @@ check('glass and ceramic use the same blast protection',
 section('Metals melt into their own liquid forms and solidify again');
 const metalPairs = [
     ['Copper', 'Molten Copper'],
-    ['Aluminum', 'Molten Aluminum'],
+    ['Battery', 'Molten Aluminum'],
     ['Iron', 'Molten Iron']
 ];
 check('the three solid metals have distinct electrical conductivities',
@@ -825,10 +827,10 @@ check('wire cells draw their configured grid load',
     defs[ID['Molten Copper']].powerConsumption === 1 &&
     defs[ID.Iron].powerConsumption === 0.5 &&
     defs[ID['Molten Iron']].powerConsumption === 0.5);
-check('only non-aluminum metals can discharge a battery',
+check('only non-Battery metals can discharge a battery',
     defs[ID.Copper].dischargeBattery && defs[ID['Molten Copper']].dischargeBattery &&
     defs[ID.Iron].dischargeBattery && defs[ID['Molten Iron']].dischargeBattery &&
-    !defs[ID.Aluminum].dischargeBattery && !defs[ID.Stone].dischargeBattery);
+    !defs[ID.Battery].dischargeBattery && !defs[ID.Stone].dischargeBattery);
 
 for (let n = 0; n < metalPairs.length; n++) {
     const [solid, liquid] = metalPairs[n];
@@ -864,7 +866,7 @@ for (let n = 0; n < metalPairs.length; n++) {
 for (let f = 0; f < 30; f++) {
     for (let n = 0; n < metalPairs.length; n++) {
         const [solid] = metalPairs[n];
-        const liquid = `Molten ${solid}`;
+        const [, liquid] = metalPairs[n];
         setCell(15 + n * 15, 28, ID['Heat Ray']);
         if (countOf(ID[liquid]) > 0) rayMelted.add(solid);
     }
@@ -873,7 +875,7 @@ for (let f = 0; f < 30; f++) {
         if (countOf(ID[liquid]) > 0) rayMelted.add(solid);
     }
 }
-check('the stronger Heat Ray can melt Aluminum, Copper and Iron',
+check('the stronger Heat Ray can melt Battery, Copper and Iron',
     metalPairs.every(([solid]) => rayMelted.has(solid)));
 
 // ---------------------------------------------------------------------------
@@ -899,58 +901,58 @@ check('the power disappears after the pulse reaches the ends',
 
 // ---------------------------------------------------------------------------
 
-section('Aluminum stores and shares repeated Spark charge');
+section('Battery stores and shares repeated Spark charge');
 clearWorld();
-for (let x = 10; x < 20; x++) setCell(x, 20, ID.Aluminum);
+for (let x = 10; x < 20; x++) setCell(x, 20, ID.Battery);
 for (let n = 0; n < 5; n++) {
     setCell(15, 19, ID.Spark);
     stepSimulation();
 }
 const storedCharge = getStoredCharge(10, 20);
-const expectedCharge = defs[ID.Aluminum].chargePerSpark * 5 / 10;
-const connectedBattery = getConnectedAluminumCharge(10, 20);
-check('the charge indicator reads the whole connected aluminum entity',
-    connectedBattery && connectedBattery.capacity === defs[ID.Aluminum].chargeCapacity * 10 &&
+const expectedCharge = defs[ID.Battery].chargePerSpark * 5 / 10;
+const connectedBattery = getConnectedBatteryCharge(10, 20);
+check('the charge indicator reads the whole connected Battery entity',
+    connectedBattery && connectedBattery.capacity === defs[ID.Battery].chargeCapacity * 10 &&
     Math.abs(connectedBattery.charge - storedCharge * 10) < 0.001);
-setCell(25, 20, ID.Aluminum);
-const separateBattery = getConnectedAluminumCharge(25, 20);
-check('a disconnected aluminum entity has its own battery reservoir',
-    separateBattery && separateBattery.capacity === defs[ID.Aluminum].chargeCapacity &&
+setCell(25, 20, ID.Battery);
+const separateBattery = getConnectedBatteryCharge(25, 20);
+check('a disconnected Battery entity has its own battery reservoir',
+    separateBattery && separateBattery.capacity === defs[ID.Battery].chargeCapacity &&
     separateBattery.charge === 0);
-check('each Spark adds a fixed total charge shared across connected aluminum',
+check('each Spark adds a fixed total charge shared across connected Battery',
     Math.abs(storedCharge - expectedCharge) < 0.001,
     `${storedCharge.toFixed(2)} charge per cell`);
-check('a larger aluminum mass has proportionally more total capacity',
-    defs[ID.Aluminum].chargeCapacity * 10 ===
-        defs[ID.Aluminum].chargeCapacity * 2 * 5);
+check('a larger Battery mass has proportionally more total capacity',
+    defs[ID.Battery].chargeCapacity * 10 ===
+        defs[ID.Battery].chargeCapacity * 2 * 5);
 
-setCell(20, 20, ID.Aluminum);
+setCell(20, 20, ID.Battery);
 stepSimulation();
-const balancedCharge = defs[ID.Aluminum].chargePerSpark * 5 / 11;
-check('new aluminum draws from touching charged aluminum until charge is balanced',
+const balancedCharge = defs[ID.Battery].chargePerSpark * 5 / 11;
+check('new Battery draws from touching charged Battery until charge is balanced',
     Math.abs(getStoredCharge(10, 20) - balancedCharge) < 0.001 &&
     Math.abs(getStoredCharge(20, 20) - balancedCharge) < 0.001,
     `${getStoredCharge(10, 20).toFixed(2)} old, ${getStoredCharge(20, 20).toFixed(2)} new`);
 let emittedChargeSpark = false;
 clearWorld();
 for (let x = 10; x < 20; x++) {
-    setCell(x, 20, ID.Aluminum);
-    getWorld().charge[index(x, 20)] = defs[ID.Aluminum].chargeCapacity;
+    setCell(x, 20, ID.Battery);
+    getWorld().charge[index(x, 20)] = defs[ID.Battery].chargeCapacity;
 }
 for (let f = 0; f < 1200; f++) {
     stepSimulation();
     emittedChargeSpark ||= countOf(ID.Spark) > 0;
 }
-check('charged aluminum occasionally emits visual sparks', emittedChargeSpark);
+check('charged Battery occasionally emits visual sparks', emittedChargeSpark);
 check('stored charge persists when no discharge metal is attached',
-    Math.abs(getStoredCharge(10, 20) - defs[ID.Aluminum].chargeCapacity) < 0.001);
+    Math.abs(getStoredCharge(10, 20) - defs[ID.Battery].chargeCapacity) < 0.001);
 check('visual charge Sparks do not create smoke', countOf(ID.Smoke) === 0);
 
 // ---------------------------------------------------------------------------
 
-section('Copper and Iron draw power from touching charged Aluminum');
+section('Copper and Iron draw power from touching charged Battery');
 clearWorld();
-setCell(10, 20, ID.Aluminum);
+setCell(10, 20, ID.Battery);
 setCell(11, 20, ID.Copper);
 setCell(12, 20, ID.Iron);
 getWorld().charge[index(10, 20)] = 10;
@@ -960,7 +962,7 @@ check('the grid discharges its total copper-plus-iron load every tick',
     `${getStoredCharge(10, 20).toFixed(3)} charge remains after a scaled 1.5-unit tick`);
 
 clearWorld();
-for (let x = 10; x < 15; x++) setCell(x, 20, ID.Aluminum);
+for (let x = 10; x < 15; x++) setCell(x, 20, ID.Battery);
 for (let x = 15; x <= 30; x++) setCell(x, 20, ID.Copper);
 for (let x = 10; x < 15; x++) getWorld().charge[index(x, 20)] = 4;
 const batteryChargeBefore = Array.from({ length: 5 }, (_, n) =>
@@ -972,21 +974,21 @@ for (let f = 0; f < 160; f++) {
 }
 const batteryChargeAfter = Array.from({ length: 5 }, (_, n) =>
     getStoredCharge(10 + n, 20)).reduce((sum, value) => sum + value, 0);
-check('touching Copper slowly drains the Aluminum reservoir',
+check('touching Copper slowly drains the Battery reservoir',
     batteryChargeAfter < batteryChargeBefore && batteryChargeAfter === 0,
     `${batteryChargeBefore.toFixed(1)} -> ${batteryChargeAfter.toFixed(1)} total charge`);
 check('battery power repeatedly reaches the far end of attached metal', batteryPoweredFarEnd);
 run(50);
-check('the attached metal stops receiving power once Aluminum is empty',
+check('the attached metal stops receiving power once Battery is empty',
     !getWorld().power.some(value => value > 0) &&
     !getWorld().powerDelay.some(value => value > 0));
 
 for (const [wireId, wireName] of [[ID.Copper, 'Copper'], [ID.Iron, 'Iron']]) {
     clearWorld();
-    setCell(10, 20, ID.Aluminum);
+    setCell(10, 20, ID.Battery);
     setCell(11, 20, wireId);
     setCell(13, 20, ID.Fan);
-    getWorld().charge[index(10, 20)] = defs[ID.Aluminum].chargeCapacity;
+    getWorld().charge[index(10, 20)] = defs[ID.Battery].chargeCapacity;
     stepSimulation();
     const machine = index(13, 20);
     check(`${wireName} can power a machine two cells beyond its end`,
@@ -1073,11 +1075,11 @@ const fanX = 30;
 const fanY = 20;
 clearWorld();
 setCell(fanX, fanY, ID.Fan);
-setCell(fanX - 1, fanY, ID.Aluminum);
-getWorld().charge[index(fanX - 1, fanY)] = defs[ID.Aluminum].chargeCapacity;
+setCell(fanX - 1, fanY, ID.Battery);
+getWorld().charge[index(fanX - 1, fanY)] = defs[ID.Battery].chargeCapacity;
 stepSimulation();
 const fanWind = getWorld().wind;
-check('a charged Aluminum contact powers the Fan', isPowered(fanX, fanY));
+check('a charged Battery contact powers the Fan', isPowered(fanX, fanY));
 check('an active Fan marks its forward cone',
     fanWind[index(fanX + 1, fanY)] > 0 && fanWind[index(fanX + 3, fanY)] > 0);
 check('the Fan cone widens away from the housing',
@@ -1088,8 +1090,8 @@ clearWorld();
 const floorFanX = 20;
 const floorFanY = ROWS - 1;
 setCell(floorFanX, floorFanY, ID.Fan);
-setCell(floorFanX - 1, floorFanY, ID.Aluminum);
-getWorld().charge[index(floorFanX - 1, floorFanY)] = defs[ID.Aluminum].chargeCapacity;
+setCell(floorFanX - 1, floorFanY, ID.Battery);
+getWorld().charge[index(floorFanX - 1, floorFanY)] = defs[ID.Battery].chargeCapacity;
 setCell(floorFanX + 28, floorFanY, ID.Ash);
 defs[ID.Ash].windLift = 100;
 stepSimulation();
@@ -1122,8 +1124,8 @@ check('a touching Spark activates a Fan facing left',
 clearWorld();
 setCell(fanX, fanY, ID.Fan);
 getWorld().data[index(fanX, fanY)] = 4; // up-right
-setCell(fanX - 1, fanY, ID.Aluminum);
-getWorld().charge[index(fanX - 1, fanY)] = defs[ID.Aluminum].chargeCapacity;
+setCell(fanX - 1, fanY, ID.Battery);
+getWorld().charge[index(fanX - 1, fanY)] = defs[ID.Battery].chargeCapacity;
 stepSimulation();
 check('a Fan can blow diagonally',
     getWorld().wind[index(fanX + 1, fanY - 1)] > 0 &&
@@ -1131,8 +1133,8 @@ check('a Fan can blow diagonally',
 
 clearWorld();
 setCell(fanX, fanY, ID.Fan);
-setCell(fanX - 1, fanY, ID.Aluminum);
-getWorld().charge[index(fanX - 1, fanY)] = defs[ID.Aluminum].chargeCapacity;
+setCell(fanX - 1, fanY, ID.Battery);
+getWorld().charge[index(fanX - 1, fanY)] = defs[ID.Battery].chargeCapacity;
 setCell(fanX + 3, fanY, ID.Glass);
 stepSimulation();
 check('a solid in front of a Fan blocks only the downwind cone',
@@ -1152,8 +1154,8 @@ const machineX = 30;
 const machineY = 20;
 clearWorld();
 setCell(machineX, machineY, ID.Heater);
-setCell(machineX - 1, machineY, ID.Aluminum);
-getWorld().charge[index(machineX - 1, machineY)] = defs[ID.Aluminum].chargeCapacity;
+setCell(machineX - 1, machineY, ID.Battery);
+getWorld().charge[index(machineX - 1, machineY)] = defs[ID.Battery].chargeCapacity;
 stepSimulation();
 const firstHeatRay = index(machineX + 1, machineY);
 check('a powered Heater launches a right-facing Heat Ray',
@@ -1166,8 +1168,8 @@ check('the emitted Heat Ray advances along the cone centreline',
 
 clearWorld();
 setCell(machineX, machineY, ID.Cooler);
-setCell(machineX - 1, machineY, ID.Aluminum);
-getWorld().charge[index(machineX - 1, machineY)] = defs[ID.Aluminum].chargeCapacity;
+setCell(machineX - 1, machineY, ID.Battery);
+getWorld().charge[index(machineX - 1, machineY)] = defs[ID.Battery].chargeCapacity;
 stepSimulation();
 const firstColdRay = index(machineX + 1, machineY);
 check('a powered Cooler launches a right-facing Cold Ray',
@@ -2342,6 +2344,125 @@ setCell(suctionBinX, suctionBinY - 3, ID.Ash);   // valid type behind the blocka
 stepSimulation();
 check('storage suction neither accepts nor reaches through a wrong particle',
     getStorageInventory(suctionBinX, suctionBinY)?.count === 0);
+
+// ---------------------------------------------------------------------------
+
+section('Tubing transfers stored material through a measured bottleneck');
+clearWorld();
+const tubeSourceX = 10;
+const tubeY = 20;
+const ventX = 30;
+setCell(tubeSourceX, tubeY, ID['Powder Storage Bin']);
+setCell(ventX, tubeY, ID.Vent);
+setVentReleaseEnabled(ventX, tubeY, false);
+for (let x = tubeSourceX + 1; x < ventX; x++) {
+    for (let y = tubeY - 1; y <= tubeY + 1; y++) setCell(x, y, ID.Tubing);
+}
+const tubeSource = index(tubeSourceX, tubeY);
+getWorld().storageType[tubeSource] = ID.Ash;
+getWorld().storageCount[tubeSource] = 120;
+run(60);
+check('three-cell-wide Tubing transfers 30 particles per second',
+    getStorageInventory(tubeSourceX, tubeY)?.count === 90 &&
+    getVentInventory(ventX, tubeY)?.type === ID.Ash &&
+    getVentInventory(ventX, tubeY)?.count === 30 &&
+    getTubingFlows()[0]?.rate === 30,
+    `${getStorageInventory(tubeSourceX, tubeY)?.count ?? 0} source, ${getVentInventory(ventX, tubeY)?.count ?? 0} vent, ${getTubingFlows()[0]?.rate ?? 0}/s`);
+check('Tubing flow bands are restricted to actual Tubing cells',
+    getTubingFlows()[0]?.cells.length > 0 &&
+    getTubingFlows()[0]?.path.length > 0 &&
+    getTubingFlows()[0]?.path.every(cell => getWorld().type[cell] === ID.Tubing),
+    JSON.stringify(getTubingFlows()[0]?.path ?? []));
+
+// Pinch the lower row out of the three-cell-wide run. The remaining channel
+// is still continuous but only two cells wide at that point, so it must cap
+// the whole route at 20/s rather than using the wide end measurement.
+getWorld().type[index(20, tubeY + 1)] = EMPTY;
+run(60);
+check('the narrowest two-cell Tubing section limits flow to 20 particles per second',
+    getStorageInventory(tubeSourceX, tubeY)?.count === 70 &&
+    getVentInventory(ventX, tubeY)?.count === 50 &&
+    getTubingFlows()[0]?.rate === 20,
+    `${getStorageInventory(tubeSourceX, tubeY)?.count ?? 0} source, ${getVentInventory(ventX, tubeY)?.count ?? 0} vent, ${getTubingFlows()[0]?.rate ?? 0}/s`);
+check('Tubing flow bands update after a bottleneck changes',
+    getTubingFlows()[0]?.path.every(cell => getWorld().type[cell] === ID.Tubing),
+    JSON.stringify(getTubingFlows()[0]?.path ?? []));
+check('Tubing is an explicitly non-conductive material',
+    defs[ID.Tubing].tubing && !defs[ID.Tubing].conductive && defs[ID.Tubing].conductivity === 0);
+
+clearWorld();
+const bendSourceX = 10;
+const bendSourceY = 19;
+const bendTubeEndX = 20;
+const bendVentY = 35;
+setCell(bendSourceX, bendSourceY, ID['Powder Storage Bin']);
+setCell(bendTubeEndX, bendVentY, ID.Vent);
+setVentReleaseEnabled(bendTubeEndX, bendVentY, false);
+for (let x = bendSourceX + 1; x <= bendTubeEndX; x++) {
+    for (let y = bendSourceY; y <= bendSourceY + 2; y++) setCell(x, y, ID.Tubing);
+}
+for (let x = bendTubeEndX - 1; x <= bendTubeEndX + 1; x++) {
+    for (let y = bendSourceY + 2; y < bendVentY; y++) setCell(x, y, ID.Tubing);
+}
+const bendSource = index(bendSourceX, bendSourceY);
+getWorld().storageType[bendSource] = ID.Ash;
+getWorld().storageCount[bendSource] = 60;
+run(60);
+const bendFlowPath = getTubingFlows()[0]?.path ?? [];
+check('Tubing bands travel from source to destination through real bend cells',
+    bendFlowPath.length > 0 && bendFlowPath.every(cell => getWorld().type[cell] === ID.Tubing),
+    JSON.stringify(bendFlowPath));
+
+clearWorld();
+setCell(40, 20, ID.Vent);
+const releasingVent = index(40, 20);
+getWorld().storageType[releasingVent] = ID.Water;
+getWorld().storageCount[releasingVent] = 20;
+check('new Vents default to a release rate of 10 particles per second',
+    getVentReleaseRate(40, 20) === 10 && getVentInventory(40, 20)?.releaseRate === 10);
+run(60);
+check('an enabled Vent releases at its configured rate',
+    getVentInventory(40, 20)?.releaseEnabled && getVentInventory(40, 20)?.count === 10 &&
+    countOf(ID.Water) === 10,
+    `${getVentInventory(40, 20)?.count ?? 0} stored, ${countOf(ID.Water)} released`);
+
+clearWorld();
+const throttledSourceX = 10;
+const throttledVentX = 30;
+const throttledY = 20;
+setCell(throttledSourceX, throttledY, ID['Powder Storage Bin']);
+setCell(throttledVentX, throttledY, ID.Vent);
+for (let x = throttledSourceX + 1; x < throttledVentX; x++) {
+    for (let y = throttledY - 1; y <= throttledY + 1; y++) setCell(x, y, ID.Tubing);
+}
+const throttledSource = index(throttledSourceX, throttledY);
+getWorld().storageType[throttledSource] = ID.Ash;
+getWorld().storageCount[throttledSource] = 400;
+run(600);
+check('a faster Tubing path fills an active Vent before its release rate throttles flow',
+    getVentInventory(throttledVentX, throttledY)?.count >= 99 &&
+    getTubingFlows()[0]?.rate === 10,
+    `${getVentInventory(throttledVentX, throttledY)?.count ?? 0} stored, ${getTubingFlows()[0]?.rate ?? 0}/s`);
+
+setVentReleaseRate(throttledVentX, throttledY, 40);
+run(120);
+check('a faster Vent release setting does not exceed the connected Tubing rate',
+    getVentReleaseRate(throttledVentX, throttledY) === 40 &&
+    getTubingFlows()[0]?.rate === 30,
+    `${getVentReleaseRate(throttledVentX, throttledY)}/s setting, ${getTubingFlows()[0]?.rate ?? 0}/s tube`);
+
+clearWorld();
+setCell(tubeSourceX, tubeY, ID['Powder Storage Bin']);
+setCell(ventX, tubeY, ID.Vent);
+setVentReleaseEnabled(ventX, tubeY, false);
+for (let x = tubeSourceX + 1; x < ventX; x++) setCell(x, tubeY, ID.Tubing);
+getWorld().storageType[index(tubeSourceX, tubeY)] = ID.Ash;
+getWorld().storageCount[index(tubeSourceX, tubeY)] = 10;
+getWorld().storageType[index(ventX, tubeY)] = ID.Ash;
+getWorld().storageCount[index(ventX, tubeY)] = 100;
+stepSimulation();
+check('a full switched-off Vent cuts connected Tubing flow to 0',
+    getStorageInventory(tubeSourceX, tubeY)?.count === 10 && getTubingFlows().length === 0);
 
 // ---------------------------------------------------------------------------
 

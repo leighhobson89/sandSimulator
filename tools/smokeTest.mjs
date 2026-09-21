@@ -605,22 +605,91 @@ if (heaterButton && coolerButton) {
     fail('Heater or Cooler picker button was not built');
 }
 
-// Stored charge is visible as a yellow tint on aluminum.
-const aluminumId = getDefinitions().findIndex(d => d && d.name === 'Aluminum');
+// Stored charge is visible as a yellow tint on Battery.
+const batteryId = getDefinitions().findIndex(d => d && d.name === 'Battery');
 physicsForLine.clearWorld();
-physicsForLine.setCell(50, 50, aluminumId);
+physicsForLine.setCell(50, 50, batteryId);
 const chargedIndex = physicsForLine.index(50, 50);
-physicsForLine.getWorld().charge[chargedIndex] = getDefinitions()[aluminumId].chargeCapacity;
+physicsForLine.getWorld().charge[chargedIndex] = getDefinitions()[batteryId].chargeCapacity;
 runFrames(1);
 const chargedPixel = chargedIndex * 4;
 if (lastImageData && lastImageData.data[chargedPixel] > 190 &&
     lastImageData.data[chargedPixel + 1] > 175 &&
     lastImageData.data[chargedPixel + 2] < 150 &&
     lastImageData.data[chargedPixel] - lastImageData.data[chargedPixel + 2] > 70) {
-    pass('stored aluminum charge renders with a yellow tint');
+    pass('stored Battery charge renders with a yellow tint');
 } else {
-    fail('stored aluminum charge is not visible on the canvas');
+    fail('stored Battery charge is not visible on the canvas');
 }
+
+// Active Tubing draws animated bands clipped to its actual painted cells, and
+// reports the same live flow rate when the pointer hovers over it.
+const powderBinId = getDefinitions().findIndex(d => d && d.name === 'Powder Storage Bin');
+const tubingId = getDefinitions().findIndex(d => d && d.name === 'Tubing');
+const ventId = getDefinitions().findIndex(d => d && d.machine === 'vent');
+const ashId = getDefinitions().findIndex(d => d && d.name === 'Ash');
+physicsForLine.clearWorld();
+physicsForLine.setCell(50, 50, powderBinId);
+physicsForLine.setCell(60, 50, ventId);
+for (let x = 51; x < 60; x++) physicsForLine.setCell(x, 50, tubingId);
+const tubingSource = physicsForLine.index(50, 50);
+physicsForLine.getWorld().storageType[tubingSource] = ashId;
+physicsForLine.getWorld().storageCount[tubingSource] = 20;
+runFrames(1);
+const firstFlowLayer = byId('machineOverlay').children.find(child =>
+    child.getAttribute('class') === 'tubing-flow-overlay');
+const firstFlowRoute = firstFlowLayer?.children.find(child =>
+    child.getAttribute('class') === 'tubing-flow-route');
+const firstBandProgress = firstFlowRoute?.getAttribute('data-flow-progress');
+runFrames(4);
+const secondFlowLayer = byId('machineOverlay').children.find(child =>
+    child.getAttribute('class') === 'tubing-flow-overlay');
+const secondFlowRoute = secondFlowLayer?.children.find(child =>
+    child.getAttribute('class') === 'tubing-flow-route');
+if (firstFlowRoute?.children.length && firstBandProgress &&
+    secondFlowRoute?.getAttribute('data-flow-progress') !== firstBandProgress &&
+    firstFlowRoute.children.every(child => child.getAttribute('data-route-position') !== undefined)) {
+    pass('active Tubing bands advance from source to destination through pipe cells');
+} else {
+    fail('active Tubing bands are missing or are not advancing along the pipe route');
+}
+canvas.fire('mousemove', fanClient(55, 50));
+if (!tooltip.hidden && tooltip.textContent.includes('Tubing') && tooltip.textContent.includes('Flow: 10/s')) {
+    pass('hovering Tubing reports its live flow rate');
+} else {
+    fail(`Tubing hover tooltip did not report the flow (${tooltip.textContent || 'hidden'})`);
+}
+
+// Machine inventory dialogs stay open while the simulation changes, so their
+// summaries should refresh just like the hover tooltip does.
+const dialogSummaryText = () => byId('machineDialogStorageSummary').children
+    .map(child => child.textContent).join('');
+canvas.fire('mousedown', { button: 0, ...fanClient(50, 50) });
+if (!byId('machineDialog').hidden && dialogSummaryText().includes('20/500')) {
+    pass('opening a storage bin shows its current inventory');
+} else {
+    fail(`storage bin dialog did not show its inventory (${dialogSummaryText()})`);
+}
+physicsForLine.getWorld().storageCount[tubingSource] = 3;
+await new Promise(resolve => setTimeout(resolve, 180));
+if (dialogSummaryText().includes('3/500')) pass('open storage bin inventory updates live');
+else fail(`open storage bin inventory did not update (${dialogSummaryText()})`);
+byId('machineDialogCancel').click();
+
+const ventIndex = physicsForLine.index(60, 50);
+physicsForLine.getWorld().storageType[ventIndex] = ashId;
+physicsForLine.getWorld().storageCount[ventIndex] = 6;
+canvas.fire('mousedown', { button: 0, ...fanClient(60, 50) });
+if (!byId('machineDialog').hidden && dialogSummaryText().includes('6/100')) {
+    pass('opening a Vent shows its current inventory');
+} else {
+    fail(`Vent dialog did not show its inventory (${dialogSummaryText()})`);
+}
+physicsForLine.getWorld().storageCount[ventIndex] = 2;
+await new Promise(resolve => setTimeout(resolve, 180));
+if (dialogSummaryText().includes('2/100')) pass('open Vent inventory updates live');
+else fail(`open Vent inventory did not update (${dialogSummaryText()})`);
+byId('machineDialogCancel').click();
 
 // Clear is destructive, so it must ask before changing the world. Cancel keeps
 // the world intact; confirmation clears every particle and closes the dialog.

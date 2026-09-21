@@ -118,6 +118,8 @@ export function setElements() {
         machineDialogInputWrap: document.getElementById('machineDialogInputWrap'),
         machineDialogInput: document.getElementById('machineDialogInput'),
         machineDialogUnit: document.getElementById('machineDialogUnit'),
+        machineDialogVentToggleWrap: document.getElementById('machineDialogVentToggleWrap'),
+        machineDialogVentToggle: document.getElementById('machineDialogVentToggle'),
         machineDialogError: document.getElementById('machineDialogError'),
         machineDialogOk: document.getElementById('machineDialogOk'),
         machineDialogPurge: document.getElementById('machineDialogPurge'),

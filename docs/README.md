@@ -3,6 +3,9 @@
 Storage-machine collision and intake maintenance is documented in
 [`STORAGE_BIN_COLLISION.md`](STORAGE_BIN_COLLISION.md).
 
+Tubing connection, flow-rate, and Vent behavior is documented in
+[`TUBING_AND_VENTS.md`](TUBING_AND_VENTS.md).
+
 The material picker is also a maintained in-app glossary; see
 [`MATERIAL_GLOSSARY.md`](MATERIAL_GLOSSARY.md) for its source and update rules.
 

@@ -46,7 +46,7 @@ rule based on the surface of connected liquid, not a Navier–Stokes solution.
   conduction, ambient cooling, eight-way radiation, latent-heat accumulation,
   and bulk insulation make thick material and heat sources feel distinct.
 - The electrical system is more than a colour change. Sparks launch visible
-  pulses through conductive networks; Aluminum stores shared charge; Copper,
+  pulses through conductive networks; Battery stores shared charge; Copper,
   Iron and machines consume it; a Fan converts power into directional airflow,
   while Heater and Cooler convert it into directional temperature forces and
   matching centreline Heat Ray/Cold Ray projectiles.
@@ -69,7 +69,8 @@ rule based on the surface of connected liquid, not a Navier–Stokes solution.
 - It favours readable, game-like rules over physical accuracy. There is no
   continuous pressure field, momentum-conserving liquid solver, real chemical
   stoichiometry, voltage/current/resistance calculation, or rigid-body physics.
-- It is currently a focused 47-entry material set with three powered machines.
+- It is currently a focused 52-entry material set with three powered machines,
+  three storage bins, and an always-active Vent.
   That makes it approachable, but limits complex construction compared with
   mature sandboxes.
 - Saves are browser-local or copy/paste strings rather than an online gallery,
@@ -82,7 +83,7 @@ rule based on the surface of connected liquid, not a Navier–Stokes solution.
 
 | Program | Where Elemental Foundry is stronger or distinctive | Where the comparator is stronger |
 |---|---|---|
-| [The Powder Toy](https://powdertoy.co.uk/) | More focused presentation; a clear material-to-ecosystem loop; a bespoke Aluminum battery and Fan system that are easy to understand. | A much broader long-running sandbox: its official description includes air pressure/velocity, heat, gravity, many interactions, complex electronics, community saves and Lua custom elements. |
+| [The Powder Toy](https://powdertoy.co.uk/) | More focused presentation; a clear material-to-ecosystem loop; a bespoke Battery, Tubing, Vent and Fan system that is easy to understand. | A much broader long-running sandbox: its official description includes air pressure/velocity, heat, gravity, many interactions, complex electronics, community saves and Lua custom elements. |
 | [Sandspiel](https://github.com/MaxBittker/sandspiel) | More explicit thermal insulation, ground-water lifecycle, electrical charge model, machine power consumption and environmental controls. | Rust/WASM + WebGL implementation, a sharing/forking-oriented platform, and a stated ambition for programmable user elements. |
 | [DAN-BALL Powder Game](https://dan-ball.jp/en/m/dustviewer/) | Stronger current emphasis on temperature transitions, material-defined properties, battery-style charge and test coverage. | A long-established toybox with a large interaction catalogue including pumps, copy/paste, clouds, gears, controllable characters, upload/view modes and more. |
 

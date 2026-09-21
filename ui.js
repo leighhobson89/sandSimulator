@@ -27,7 +27,9 @@ import {
     getDefinitions, setAmbientTarget, getAmbientTarget, setLayerLapse, getLayerLapse,
     setAmbientWindOn, getAmbientWindOn, setAirLayersOn, getAirLayersOn,
     setWindDial, getWorld, index, getMachineSetting, setMachineSetting,
-    getStorageInventory, purgeStorageBin, isMachinePoweredAt
+    getStorageInventory, purgeStorageBin, getVentInventory, getVentReleaseRate,
+    setVentReleaseRate, isVentReleaseEnabled, setVentReleaseEnabled,
+    getTubingFlows, isMachinePoweredAt
 } from './physics.js';
 import { loadSavedTheme, buildThemeSwatches, buildThemeSelect } from './themes.js';
 import {
@@ -60,6 +62,7 @@ let editingMachine = null;
 let machineTooltipTimer = null;
 let machineTooltipTarget = null;
 let machineTooltipAnchor = null;
+let machineDialogTimer = null;
 
 document.addEventListener('DOMContentLoaded', async () => {
     await loadParticleDefinitions();
@@ -93,6 +96,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     elements.purgeDialogConfirm.addEventListener('click', confirmPurgeDialog);
     elements.purgeDialogCancel.addEventListener('click', closePurgeDialog);
     elements.machineDialogInput.addEventListener('input', validateMachineInput);
+    elements.machineDialogVentToggle.addEventListener('change', updateVentReleaseToggle);
     elements.machineDialogInput.addEventListener('keydown', event => {
         if (event.key === 'Enter') {
             event.preventDefault();
@@ -361,7 +365,8 @@ function confirmClearWorld() {
 const MACHINE_CONTROL_SPECS = {
     fan: { label: 'Wind speed', min: 1, max: 20, unit: '', defaultValue: 7 },
     heater: { label: 'Temperature', min: 0, max: 4000, unit: '°C' },
-    cooler: { label: 'Temperature', min: -60, max: 20, unit: '°C' }
+    cooler: { label: 'Temperature', min: -60, max: 20, unit: '°C' },
+    vent: { label: 'Release rate', min: 1, max: 100, unit: 'particles/s', defaultValue: 10 }
 };
 
 function isStorageMachineDefinition(def) {
@@ -379,7 +384,15 @@ function machineAtCell(cell) {
     if (!world || cell.x < 0 || cell.y < 0 || cell.x >= world.cols || cell.y >= world.rows) return null;
     const id = world.type[index(cell.x, cell.y)];
     const def = getDefinitions()[id];
-    return def?.machine ? { id, def, x: cell.x, y: cell.y } : null;
+    return def?.machine ? { id, def, x: cell.x, y: cell.y, tubing: false } : null;
+}
+
+function tubingAtCell(cell) {
+    const world = getWorld();
+    if (!world || cell.x < 0 || cell.y < 0 || cell.x >= world.cols || cell.y >= world.rows) return null;
+    const id = world.type[index(cell.x, cell.y)];
+    const def = getDefinitions()[id];
+    return def?.tubing ? { id, def, x: cell.x, y: cell.y, tubing: true } : null;
 }
 
 // The SVG machine face is 32 CSS pixels wide, while the simulation machine is
@@ -413,8 +426,10 @@ function machineAtPointer(event) {
 }
 
 function updateMachineCursor(cell, event) {
-    const hit = event ? machineAtPointer(event) : machineAtCell(cell);
-    getElements().canvas.classList.toggle('machine-hover', !!hit);
+    const machine = event ? machineAtPointer(event) : machineAtCell(cell);
+    const hit = machine || tubingAtCell(cell);
+    getElements().canvas.classList.toggle('machine-hover', !!machine);
+    getElements().canvas.classList.toggle('tubing-hover', !!hit?.tubing);
     if (hit && event) showMachineTooltip(hit, event);
     else if (!hit) hideMachineTooltip();
 }
@@ -423,35 +438,37 @@ function openMachineDialog(x, y, machine = machineAtCell({ x, y })) {
     if (!machine) return false;
     const spec = MACHINE_CONTROL_SPECS[machine.def.machine];
     const storage = isStorageMachineDefinition(machine.def);
-    if (!spec && !storage) return false;
+    const vent = machine.def.machine === 'vent';
+    if (!spec && !storage && !vent) return false;
 
     const elements = getElements();
     hideMachineTooltip();
-    const current = getMachineSetting(x, y);
-    editingMachine = { x, y, machine: machine.def.machine, fallback: current, storage };
+    const current = vent ? getVentReleaseRate(x, y) : getMachineSetting(x, y);
+    editingMachine = { x, y, machine: machine.def.machine, fallback: current, storage, vent };
     elements.machineDialogTitle.textContent = storage ? `${machine.def.name} contents` : `${machine.def.name} settings`;
     elements.machineDialogDescription.textContent = storage
         ? `Stores one ${machine.def.storageCategory} type, up to ${machine.def.storageCapacity} particles. Wrong types are refused. Purge the bin to empty it and accept a new type.`
+        : vent
+            ? 'Always active. Set the release rate in particles per second. Turn release off to retain up to 100 particles.'
         : machine.def.machine === 'fan'
             ? 'Set the airflow strength for this Fan. Speed 7 matches the default breeze scale; higher values are stronger.'
             : `${machine.def.name} will only ${machine.def.machine === 'heater' ? 'raise' : 'lower'} temperatures toward this target in its facing direction.`;
     const storageSummary = elements.machineDialogStorageSummary;
-    storageSummary.textContent = '';
     if (storage) {
-        const inventory = getStorageInventory(x, y);
-        const summaryPrefix = document.createElement('span');
-        summaryPrefix.textContent = 'Current contents: ';
-        storageSummary.appendChild(summaryPrefix);
-        const summaryStrong = document.createElement('strong');
-        summaryStrong.textContent = storageContentsText(inventory);
-        storageSummary.appendChild(summaryStrong);
+        renderInventorySummary(storageSummary, getStorageInventory(x, y));
+    } else if (vent) {
+        renderInventorySummary(storageSummary, getVentInventory(x, y));
+    } else {
+        storageSummary.textContent = '';
     }
-    storageSummary.hidden = !storage;
+    storageSummary.hidden = !storage && !vent;
     elements.machineDialogLabel.textContent = spec?.label || 'Contents';
     elements.machineDialogLabel.hidden = storage;
     elements.machineDialogInputWrap.hidden = storage;
     elements.machineDialogInput.hidden = storage;
     elements.machineDialogInput.disabled = storage;
+    elements.machineDialogVentToggleWrap.hidden = !vent;
+    elements.machineDialogVentToggle.checked = vent && isVentReleaseEnabled(x, y);
     elements.machineDialogInput.setAttribute('aria-label', spec?.label || 'Contents');
     if (spec) {
         elements.machineDialogInput.min = String(spec.min);
@@ -462,31 +479,69 @@ function openMachineDialog(x, y, machine = machineAtCell({ x, y })) {
     elements.machineDialogUnit.textContent = spec?.unit || '';
     elements.machineDialogUnit.hidden = !spec?.unit;
     elements.machineDialogError.hidden = true;
-    elements.machineDialogOk.hidden = storage;
+    elements.machineDialogOk.hidden = storage || vent;
     elements.machineDialogPurge.hidden = !storage;
-    elements.machineDialogCancel.textContent = storage ? 'Close' : 'Cancel';
+    elements.machineDialogCancel.textContent = storage || vent ? 'Close' : 'Cancel';
     elements.machineDialog.hidden = false;
+    if (machineDialogTimer) clearInterval(machineDialogTimer);
+    refreshMachineDialog();
+    machineDialogTimer = setInterval(refreshMachineDialog, 150);
     if (!storage) elements.machineDialogInput.focus();
     else elements.machineDialogCancel.focus();
     return true;
+}
+
+function renderInventorySummary(summary, inventory) {
+    summary.textContent = '';
+    const summaryPrefix = document.createElement('span');
+    summaryPrefix.textContent = 'Current contents: ';
+    summary.appendChild(summaryPrefix);
+    const summaryStrong = document.createElement('strong');
+    summaryStrong.textContent = storageContentsText(inventory);
+    summary.appendChild(summaryStrong);
+}
+
+function refreshMachineDialog() {
+    if (!editingMachine) return;
+    const elements = getElements();
+    if (elements.machineDialog.hidden) return;
+    if (editingMachine.storage) {
+        renderInventorySummary(elements.machineDialogStorageSummary,
+            getStorageInventory(editingMachine.x, editingMachine.y));
+    } else if (editingMachine.vent) {
+        renderInventorySummary(elements.machineDialogStorageSummary,
+            getVentInventory(editingMachine.x, editingMachine.y));
+    }
+}
+
+function updateVentReleaseToggle() {
+    if (!editingMachine?.vent) return;
+    const elements = getElements();
+    setVentReleaseEnabled(editingMachine.x, editingMachine.y, elements.machineDialogVentToggle.checked);
+    renderInventorySummary(elements.machineDialogStorageSummary,
+        getVentInventory(editingMachine.x, editingMachine.y));
 }
 
 function validateMachineInput() {
     if (!editingMachine) return null;
     const input = getElements().machineDialogInput;
     const spec = MACHINE_CONTROL_SPECS[editingMachine.machine];
+    if (!spec) return null;
     const raw = String(input.value ?? '').trim();
     if (!raw) return null;
     const numeric = Number(raw);
     if (!Number.isFinite(numeric)) return null;
     const value = Math.max(spec.min, Math.min(spec.max, Math.round(numeric)));
     if (String(value) !== raw) input.value = String(value);
+    if (editingMachine.vent) setVentReleaseRate(editingMachine.x, editingMachine.y, value);
     getElements().machineDialogError.hidden = true;
     return value;
 }
 
 function closeMachineDialog() {
     const elements = getElements();
+    if (machineDialogTimer) clearInterval(machineDialogTimer);
+    machineDialogTimer = null;
     elements.machineDialog.hidden = true;
     elements.machineDialogError.hidden = true;
     elements.machineDialogStorageSummary.hidden = true;
@@ -495,6 +550,8 @@ function closeMachineDialog() {
     elements.machineDialogInput.disabled = false;
     elements.machineDialogInput.hidden = false;
     elements.machineDialogInputWrap.hidden = false;
+    elements.machineDialogVentToggleWrap.hidden = true;
+    elements.machineDialogVentToggle.checked = false;
     elements.machineDialogOk.hidden = false;
     elements.machineDialogPurge.hidden = true;
     elements.machineDialogCancel.textContent = 'Cancel';
@@ -523,7 +580,7 @@ function confirmPurgeDialog() {
 }
 
 function confirmMachineDialog() {
-    if (!editingMachine || editingMachine.storage) return;
+    if (!editingMachine || editingMachine.storage || editingMachine.vent) return;
     const value = validateMachineInput();
     const finalValue = value === null ? editingMachine.fallback : value;
     if (Number.isFinite(finalValue)) {
@@ -649,6 +706,7 @@ function formatMaterialTooltip(def) {
     if (def.powerConsumption > 0) properties.push(`draws ${formatNumber(def.powerConsumption)} power/tick`);
     if (def.machine) properties.push(`machine: ${titleCase(def.machine)}`);
     if (def.storageCategory) properties.push(`stores one ${def.storageCategory} type, up to ${formatNumber(def.storageCapacity)} particles`);
+    if (def.tubing) properties.push('tubing: carries stored material between connected machines');
     if (def.machineTemp !== undefined) properties.push(`outputs ${formatTemperature(def.machineTemp)} over ${formatNumber(def.machineRange)} cells`);
     if (def.machineRate > 0) properties.push(`output rate ${formatPercent(def.machineRate)}`);
     if (def.machineEmits > 0) {
@@ -681,7 +739,7 @@ function formatMaterialTooltip(def) {
     if (def.lifeTransitionAt > 0) properties.push(`changes at ${formatPercent(def.lifeTransitionAt)} of lifetime`);
     if (def.smokeChance > 0) properties.push(`smoke residue chance ${formatPercent(def.smokeChance)}`);
     if (def.condenseLossChance > 0) properties.push(`condensation loss chance ${formatPercent(def.condenseLossChance)}`);
-    if (def.dischargeBattery) properties.push('discharges connected Aluminum');
+    if (def.dischargeBattery) properties.push('discharges connected Battery');
     if (def.sparkEmitterChance > 0) properties.push(`Spark emission ${formatPercent(def.sparkEmitterChance)}`);
     if (def.tool) properties.push('brush tool');
 
@@ -907,10 +965,28 @@ function setUpTooltips() {
 
 function machineTooltipText(machine) {
     const def = machine.def;
+    if (machine.tubing) {
+        const tubeCell = index(machine.x, machine.y);
+        const flow = getTubingFlows().find(candidate => candidate.cells?.includes(tubeCell));
+        return [
+            'Tubing',
+            `Flow: ${formatNumber(flow?.rate || 0)}/s`,
+            flow ? 'Status: Flowing' : 'Status: No active flow'
+        ].join('\n');
+    }
     const lines = [def.name];
     if (isStorageMachineDefinition(def)) {
         lines.push(`Contents: ${storageContentsText(getStorageInventory(machine.x, machine.y))}`);
+        const flow = getTubingFlows().find(candidate => candidate.source === index(machine.x, machine.y));
+        if (flow) lines.push(`Tubing: Connected (${formatNumber(flow.rate)}/s)`);
         lines.push('Status: Active (no power required)');
+        return lines.join('\n');
+    }
+    if (def.machine === 'vent') {
+        lines.push(`Contents: ${storageContentsText(getVentInventory(machine.x, machine.y))}`);
+        lines.push(`Release rate: ${formatNumber(getVentReleaseRate(machine.x, machine.y))}/s`);
+        lines.push(`Release: ${isVentReleaseEnabled(machine.x, machine.y) ? 'On' : 'Off'}`);
+        lines.push('Click to change the release switch');
         return lines.join('\n');
     }
 
@@ -942,7 +1018,7 @@ function renderMachineTooltip(machine, event) {
 }
 
 function showMachineTooltip(machine, event) {
-    machineTooltipTarget = { x: machine.x, y: machine.y, id: machine.id };
+    machineTooltipTarget = { x: machine.x, y: machine.y, id: machine.id, tubing: !!machine.tubing };
     machineTooltipAnchor = { clientX: event.clientX, clientY: event.clientY };
     renderMachineTooltip(machine, machineTooltipAnchor);
     if (!machineTooltipTimer) machineTooltipTimer = setInterval(refreshMachineTooltip, 150);
@@ -950,7 +1026,9 @@ function showMachineTooltip(machine, event) {
 
 function refreshMachineTooltip() {
     if (!machineTooltipTarget) return;
-    const machine = machineAtCell(machineTooltipTarget);
+    const machine = machineTooltipTarget.tubing
+        ? tubingAtCell(machineTooltipTarget)
+        : machineAtCell(machineTooltipTarget);
     if (!machine || machine.id !== machineTooltipTarget.id) {
         hideMachineTooltip();
         return;
