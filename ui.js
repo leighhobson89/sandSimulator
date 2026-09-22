@@ -507,7 +507,11 @@ function openMachineDialog(x, y, machine = machineAtCell({ x, y })) {
 function materialDisplay(type) {
     if (!type) return { name: 'Empty', color: 'transparent' };
     const def = getDefinitions()[type];
-    return { name: def?.name || 'Empty', color: def?.color || 'transparent' };
+    const rgb = def?.rgb;
+    const color = Array.isArray(rgb) && rgb.length >= 3
+        ? `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`
+        : 'transparent';
+    return { name: def?.name || 'Empty', color };
 }
 
 function openMixerDialog(x, y) {
@@ -544,15 +548,20 @@ function refreshMixerDialog() {
             ? inventory.output.types.map((type, index) => inventory.output.counts[index] > 0
                 ? materialDisplay(type).name : null).filter(Boolean).join(' + ') || 'Empty'
             : materialDisplay(bin.type).name;
+        const outputIsMixed = slot === 2 && inventory.output.mixed;
+        if (slot === 2) {
+            elements.mixerDialogOutputLabel.textContent = `output: ${types}`;
+        }
         if (slot === 2) {
             for (let side = 0; side < 2; side++) {
                 const segment = document.createElement('div');
                 const segmentCount = inventory.output.counts[side];
                 segment.className = 'mixer-bin-segment';
-                segment.style.width = '50%';
+                segment.style.width = outputIsMixed ? '100%' : '50%';
                 segment.style.height = `${Math.min(100, segmentCount / 500 * 100)}%`;
                 segment.style.background = materialDisplay(inventory.output.types[side]).color;
                 fill.appendChild(segment);
+                if (outputIsMixed) break;
             }
         } else {
             const segment = document.createElement('div');

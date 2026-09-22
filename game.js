@@ -48,7 +48,8 @@ export const BLUEPRINT_FIELDS = [
     'data', 'machineSetting', 'storageType', 'storageCount', 'storageFlowRemainder',
     'mixerInputTypeA', 'mixerInputCountA', 'mixerInputFlowA',
     'mixerInputTypeB', 'mixerInputCountB', 'mixerInputFlowB',
-    'mixerOutputCountA', 'mixerOutputCountB', 'mixerOutputFlow', 'mixerNextInput',
+    'mixerOutputCountA', 'mixerOutputCountB', 'mixerOutputTypeA', 'mixerOutputTypeB', 'mixerOutputMixed',
+    'mixerOutputFlow', 'mixerNextInput',
     'mixerOutputNext',
     'power', 'powerDelay', 'charge', 'wind', 'airflowX', 'airflowY',
     'airflowNextX', 'airflowNextY'
@@ -345,8 +346,11 @@ function drawMachineOverlays() {
             '<circle cx="16" cy="12" r="1.2" fill="currentColor"/><circle cx="21" cy="16" r="1.2" fill="currentColor"/><circle cx="16" cy="20" r="1.2" fill="currentColor"/>',
         vent: '<path d="M5 8h20l-2.2 4H7.2L5 8Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>' +
             '<path d="M8 14h14v8H8zM11 16v4M15 16v4M19 16v4M5 25h20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>',
-        mixer: '<rect x="7" y="8" width="16" height="17" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/>' +
-            '<path d="M7 12 2 8M7 20l-5 4M23 16h6M13 14v6M10 17h6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>'
+        mixer: '<rect x="7" y="7" width="16" height="18" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.6"/>' +
+            '<path d="M0 9h7M30 9h-7M4 9l3 3M26 9l-3 3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>' +
+            '<circle cx="15" cy="16" r="4.5" fill="none" stroke="currentColor" stroke-width="1.3"/>' +
+            '<path d="M15 11.5v9M10.5 16h9M11.8 12.8l6.4 6.4M18.2 12.8l-6.4 6.4" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round"/>' +
+            '<path d="M7 23h16M11 25v2M19 25v2" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>'
     };
 
     drawTubingFlowOverlay(flowLayer, getTubingFlows(), cellWidth, cellHeight);
@@ -373,7 +377,9 @@ function drawMachineOverlays() {
         icon.setAttribute('aria-hidden', 'true');
         icon.style.left = `${(x + 0.5) * cellWidth - iconSize / 2}px`;
         icon.style.top = `${(y + 0.5) * cellHeight - iconSize / 2}px`;
-        icon.style.transform = `rotate(${machine === 'vent' ? 0 : rotations[world.data[i] & 7]}deg)`;
+        const mixerRotation = machine === 'mixer' ? -90 : 0;
+        icon.style.transform = `rotate(${machine === 'vent'
+            ? 0 : rotations[world.data[i] & 7] + mixerRotation}deg)`;
         icon.innerHTML = icons[machine];
         overlay.appendChild(icon);
     }
@@ -399,7 +405,9 @@ function drawMachineOverlays() {
             icon.setAttribute('aria-hidden', 'true');
             icon.style.left = `${(preview.x + 0.5) * cellWidth - iconSize / 2}px`;
             icon.style.top = `${(preview.y + 0.5) * cellHeight - iconSize / 2}px`;
-            icon.style.transform = `rotate(${preview.machine === 'vent' ? 0 : rotations[preview.direction]}deg)`;
+            const mixerRotation = preview.machine === 'mixer' ? -90 : 0;
+            icon.style.transform = `rotate(${preview.machine === 'vent'
+                ? 0 : rotations[preview.direction] + mixerRotation}deg)`;
             icon.innerHTML = icons[preview.machine];
             overlay.appendChild(icon);
         }
@@ -762,11 +770,13 @@ export function placeMachine(x, y, machine, direction = 0) {
     getWorld().data[i] = normaliseMachineDirection(direction);
     if (machine === 'mixer') {
         const stubId = getDefinitions().findIndex(def => def?.tubing);
-        for (const [dx, dy] of [[-1, 0], [1, 0]]) {
-            const stubX = x + dx;
-            const stubY = y + dy;
-            if (inBounds(stubX, stubY) && getWorld().type[index(stubX, stubY)] === EMPTY) {
-                setCell(stubX, stubY, stubId);
+        for (const side of [-1, 1]) {
+            for (let distance = 1; distance <= 7; distance++) {
+                const stubX = x + side * distance;
+                const stubY = y - 3;
+                if (inBounds(stubX, stubY) && getWorld().type[index(stubX, stubY)] === EMPTY) {
+                    setCell(stubX, stubY, stubId);
+                }
             }
         }
     }
@@ -1028,7 +1038,9 @@ function clearGrabbedCell(world, i, y) {
     world.storageFlowRemainder[i] = 0;
     world.mixerInputTypeA[i] = 0; world.mixerInputCountA[i] = 0; world.mixerInputFlowA[i] = 0;
     world.mixerInputTypeB[i] = 0; world.mixerInputCountB[i] = 0; world.mixerInputFlowB[i] = 0;
-    world.mixerOutputCountA[i] = 0; world.mixerOutputCountB[i] = 0; world.mixerOutputFlow[i] = 0;
+        world.mixerOutputCountA[i] = 0; world.mixerOutputCountB[i] = 0;
+        world.mixerOutputTypeA[i] = 0; world.mixerOutputTypeB[i] = 0; world.mixerOutputMixed[i] = 0;
+        world.mixerOutputFlow[i] = 0;
     world.mixerNextInput[i] = 0;
     world.power[i] = 0;
     world.powerDelay[i] = 0;
@@ -1053,7 +1065,9 @@ function restoreGrabbedCell(world, i, cell) {
     world.mixerInputTypeA[i] = cell.mixerInputTypeA || 0; world.mixerInputCountA[i] = cell.mixerInputCountA || 0;
     world.mixerInputFlowA[i] = cell.mixerInputFlowA || 0; world.mixerInputTypeB[i] = cell.mixerInputTypeB || 0;
     world.mixerInputCountB[i] = cell.mixerInputCountB || 0; world.mixerInputFlowB[i] = cell.mixerInputFlowB || 0;
-    world.mixerOutputCountA[i] = cell.mixerOutputCountA || 0; world.mixerOutputCountB[i] = cell.mixerOutputCountB || 0;
+        world.mixerOutputCountA[i] = cell.mixerOutputCountA || 0; world.mixerOutputCountB[i] = cell.mixerOutputCountB || 0;
+        world.mixerOutputTypeA[i] = cell.mixerOutputTypeA || 0; world.mixerOutputTypeB[i] = cell.mixerOutputTypeB || 0;
+        world.mixerOutputMixed[i] = cell.mixerOutputMixed || 0;
     world.mixerOutputFlow[i] = cell.mixerOutputFlow || 0; world.mixerNextInput[i] = cell.mixerNextInput || 0;
     world.mixerOutputNext[i] = cell.mixerOutputNext || 0;
     world.power[i] = cell.power;

@@ -394,20 +394,27 @@
             <h2 id="mixerDialogTitle">Mixer</h2>
             <p id="mixerDialogDescription" class="save-dialog-description">Two independent inputs feed a mixed 1000-particle output bin.</p>
             <div id="mixerDialogBins" class="mixer-dialog-bins">
-                <div class="mixer-dialog-bin" data-bin-index="0">
-                    <div class="mixer-bin-fill" id="mixerDialogBinFill0"></div>
-                    <strong id="mixerDialogBinSummary0">0/500 Empty</strong>
+                <div class="mixer-dialog-input">
+                    <div class="mixer-dialog-bin" data-bin-index="0">
+                        <div class="mixer-bin-fill" id="mixerDialogBinFill0"></div>
+                        <strong id="mixerDialogBinSummary0">0/500 Empty</strong>
+                    </div>
                     <button id="mixerDialogBinPurge0" class="btn btn-ghost" type="button">Purge</button>
                 </div>
                 <span class="mixer-dialog-arrow" aria-hidden="true">&#8594;</span>
-                <div class="mixer-dialog-bin" data-bin-index="2">
-                    <div class="mixer-bin-fill" id="mixerDialogBinFill2"></div>
-                    <strong id="mixerDialogBinSummary2">0/1000 Empty</strong>
+                <div class="mixer-dialog-output">
+                    <div class="mixer-dialog-bin" data-bin-index="2">
+                        <div class="mixer-bin-fill" id="mixerDialogBinFill2"></div>
+                        <strong id="mixerDialogBinSummary2">0/1000 Empty</strong>
+                    </div>
+                    <strong id="mixerDialogOutputLabel" class="mixer-dialog-output-label">output: Empty</strong>
                 </div>
                 <span class="mixer-dialog-arrow" aria-hidden="true">&#8592;</span>
-                <div class="mixer-dialog-bin" data-bin-index="1">
-                    <div class="mixer-bin-fill" id="mixerDialogBinFill1"></div>
-                    <strong id="mixerDialogBinSummary1">0/500 Empty</strong>
+                <div class="mixer-dialog-input">
+                    <div class="mixer-dialog-bin" data-bin-index="1">
+                        <div class="mixer-bin-fill" id="mixerDialogBinFill1"></div>
+                        <strong id="mixerDialogBinSummary1">0/500 Empty</strong>
+                    </div>
                     <button id="mixerDialogBinPurge1" class="btn btn-ghost" type="button">Purge</button>
                 </div>
             </div>

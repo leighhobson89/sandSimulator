@@ -23,6 +23,7 @@ const BLUEPRINT_FIELD_TYPES = {
     mixerInputTypeA: Uint8Array, mixerInputCountA: Uint16Array, mixerInputFlowA: Float32Array,
     mixerInputTypeB: Uint8Array, mixerInputCountB: Uint16Array, mixerInputFlowB: Float32Array,
     mixerOutputCountA: Uint16Array, mixerOutputCountB: Uint16Array,
+    mixerOutputTypeA: Uint8Array, mixerOutputTypeB: Uint8Array, mixerOutputMixed: Uint8Array,
     mixerOutputFlow: Float32Array, mixerNextInput: Uint8Array,
     mixerOutputNext: Uint8Array,
     power: Uint8Array,

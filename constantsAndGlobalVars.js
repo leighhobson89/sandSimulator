@@ -130,6 +130,7 @@ export function setElements() {
         mixerDialogBinSummary0: document.getElementById('mixerDialogBinSummary0'),
         mixerDialogBinSummary1: document.getElementById('mixerDialogBinSummary1'),
         mixerDialogBinSummary2: document.getElementById('mixerDialogBinSummary2'),
+        mixerDialogOutputLabel: document.getElementById('mixerDialogOutputLabel'),
         mixerDialogBinFill0: document.getElementById('mixerDialogBinFill0'),
         mixerDialogBinFill1: document.getElementById('mixerDialogBinFill1'),
         mixerDialogBinFill2: document.getElementById('mixerDialogBinFill2'),

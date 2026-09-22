@@ -2478,7 +2478,7 @@ const mixerIndex = index(mixerX, mixerY);
 const leftSourceX = 20;
 const rightSourceX = 40;
 setCell(leftSourceX, mixerY, ID['Powder Storage Bin']);
-setCell(rightSourceX, mixerY, ID['Liquid Storage Bin']);
+    setCell(rightSourceX, mixerY, ID['Powder Storage Bin']);
 setCell(mixerX, mixerY, ID.Mixer);
 setMixerReleaseEnabled(mixerX, mixerY, false);
 for (let x = leftSourceX + 1; x < mixerX; x++) setCell(x, mixerY, ID.Tubing);
@@ -2487,12 +2487,12 @@ const leftSource = index(leftSourceX, mixerY);
 const rightSource = index(rightSourceX, mixerY);
 getWorld().storageType[leftSource] = ID.Sand;
 getWorld().storageCount[leftSource] = 120;
-getWorld().storageType[rightSource] = ID.Water;
+    getWorld().storageType[rightSource] = ID.Ash;
 getWorld().storageCount[rightSource] = 120;
 run(60);
 const mixer = getMixerInventory(mixerX, mixerY);
 check('Mixer keeps its two disconnected Tubing inputs separate',
-    mixer?.output.types[0] === ID.Sand && mixer?.output.types[1] === ID.Water &&
+    mixer?.output.types[0] === ID.Sand && mixer?.output.types[1] === ID.Ash &&
     mixer.output.counts[0] > 0 && mixer.output.counts[1] > 0,
     JSON.stringify(mixer?.output));
 check('Mixer accepts two Tubing entities touching the same machine',
@@ -2521,7 +2521,7 @@ setMixerReleaseEnabled(30, 30, true);
 const sequenceMixer = index(30, 30);
 getWorld().mixerInputTypeA[sequenceMixer] = ID.Sand;
 getWorld().mixerInputCountA[sequenceMixer] = 6;
-getWorld().mixerInputTypeB[sequenceMixer] = ID.Water;
+    getWorld().mixerInputTypeB[sequenceMixer] = ID.Ash;
 getWorld().mixerInputCountB[sequenceMixer] = 6;
 const emitted = [];
 for (let frame = 0; frame < 360; frame++) {
@@ -2533,8 +2533,75 @@ for (let frame = 0; frame < 360; frame++) {
     }
 }
 check('Mixer emits strict alternating output from the third bin',
-    emitted.length >= 4 && emitted.slice(0, 6).every((id, index) => id === (index & 1 ? ID.Water : ID.Sand)),
+    emitted.length >= 4 && emitted.slice(0, 6).every((id, index) => id === (index & 1 ? ID.Ash : ID.Sand)),
     JSON.stringify(emitted.slice(0, 6)));
+
+clearWorld();
+setCell(30, 30, ID.Mixer);
+setMixerReleaseEnabled(30, 30, false);
+const mixedMixer = index(30, 30);
+getWorld().mixerInputTypeA[mixedMixer] = ID.Sand;
+getWorld().mixerInputCountA[mixedMixer] = 2;
+getWorld().mixerInputTypeB[mixedMixer] = ID.Water;
+getWorld().mixerInputCountB[mixedMixer] = 2;
+stepSimulation();
+const mixedInventory = getMixerInventory(30, 30);
+check('Mixer combines Sand and Water into Wet Sand',
+    mixedInventory?.output.types[0] === ID['Wet Sand'] &&
+    mixedInventory.output.counts[0] === 1 && mixedInventory.output.counts[1] === 0 &&
+    mixedInventory.bins[0].count === 1 && mixedInventory.bins[1].count === 1,
+    JSON.stringify(mixedInventory));
+
+clearWorld();
+setCell(30, 30, ID.Mixer);
+setMixerReleaseEnabled(30, 30, false);
+const mudMixer = index(30, 30);
+getWorld().mixerInputTypeA[mudMixer] = ID.Water;
+getWorld().mixerInputCountA[mudMixer] = 2;
+getWorld().mixerInputTypeB[mudMixer] = ID['Dry Mud'];
+getWorld().mixerInputCountB[mudMixer] = 2;
+stepSimulation();
+const mudInventory = getMixerInventory(30, 30);
+check('Mixer combines Water and Dry Mud into Wet Mud',
+    mudInventory?.output.types[0] === ID['Wet Mud'] &&
+    mudInventory.output.counts[0] === 1 && mudInventory.output.counts[1] === 0,
+    JSON.stringify(mudInventory));
+
+clearWorld();
+setCell(30, 30, ID.Mixer);
+setMixerReleaseEnabled(30, 30, false);
+const sameMaterialMixer = index(30, 30);
+getWorld().mixerInputTypeA[sameMaterialMixer] = ID.Water;
+getWorld().mixerInputCountA[sameMaterialMixer] = 20;
+getWorld().mixerInputTypeB[sameMaterialMixer] = ID.Water;
+getWorld().mixerInputCountB[sameMaterialMixer] = 20;
+stepSimulation();
+const sameMaterialBefore = getMixerInventory(30, 30);
+const sameMaterialCount = sameMaterialBefore.output.counts[0] + sameMaterialBefore.output.counts[1];
+run(60);
+const sameMaterialAfter = getMixerInventory(30, 30);
+check('Mixer coalesces identical Water inputs while release is off',
+    sameMaterialAfter?.output.types[0] === ID.Water &&
+    sameMaterialAfter.output.types[1] === EMPTY &&
+    sameMaterialAfter.output.counts[0] >= sameMaterialCount,
+    JSON.stringify(sameMaterialAfter?.output));
+
+clearWorld();
+setCell(30, 30, ID.Mixer);
+setMixerReleaseEnabled(30, 30, false);
+const stagedMixer = index(30, 30);
+getWorld().mixerInputTypeB[stagedMixer] = ID['Dry Mud'];
+getWorld().mixerInputCountB[stagedMixer] = 3;
+stepSimulation();
+getWorld().mixerInputTypeA[stagedMixer] = ID.Water;
+getWorld().mixerInputCountA[stagedMixer] = 3;
+run(5);
+const stagedInventory = getMixerInventory(30, 30);
+check('Mixer preserves a lone Dry Mud output until Water can form Wet Mud',
+    stagedInventory?.output.types[0] === ID['Wet Mud'] &&
+    stagedInventory.output.types[1] === EMPTY &&
+    stagedInventory.output.counts[0] > 0,
+    JSON.stringify(stagedInventory));
 
 // ---------------------------------------------------------------------------
 
