@@ -714,7 +714,8 @@ const VENT_CAPACITY = 100;
 const MIXER_INPUT_CAPACITY = 500;
 const MIXER_OUTPUT_SIDE_CAPACITY = 500;
 const MIXER_OUTPUT_CAPACITY = 1000;
-const MIXER_RELEASE_RATE = 10;
+const MIXER_INPUT_RATE = 5;
+const MIXER_RELEASE_RATE = 8;
 // The mixer face is a 64px overlay. Simulation cells are kept available for
 // tubing and particles, so this is an invisible logical footprint rather than
 // extra occupied cells. At the normal four-pixel logical cell scale it spans
@@ -3498,6 +3499,44 @@ function receiveMixerOutput(i, slot) {
     else world.mixerOutputCountB[i]++;
 }
 
+function mixerOutputSlotForMaterial(i, material, mixed = false) {
+    if (world.mixerOutputCountA[i] > 0 && world.mixerOutputTypeA[i] === material &&
+        world.mixerOutputMixed[i] === (mixed ? 1 : 0)) return 0;
+    if (world.mixerOutputCountB[i] > 0 && world.mixerOutputTypeB[i] === material &&
+        world.mixerOutputMixed[i] === 0) return 1;
+    if (world.mixerOutputCountA[i] === 0) return 0;
+    if (world.mixerOutputCountB[i] === 0) return 1;
+    return -1;
+}
+
+function addMixerOutput(i, material, mixed = false) {
+    const slot = mixerOutputSlotForMaterial(i, material, mixed);
+    if (slot < 0 || mixerOutputTotal(i) >= MIXER_OUTPUT_CAPACITY) return false;
+    if (slot === 0) {
+        world.mixerOutputTypeA[i] = material;
+        world.mixerOutputMixed[i] = mixed ? 1 : 0;
+    } else {
+        world.mixerOutputTypeB[i] = material;
+        world.mixerOutputMixed[i] = 0;
+    }
+    receiveMixerOutput(i, slot);
+    if (world.mixerOutputCountB[i] > 0) world.mixerOutputMixed[i] = 0;
+    return true;
+}
+
+function consumeMixerOutputMaterial(i, material) {
+    if (world.mixerOutputCountA[i] > 0 && world.mixerOutputTypeA[i] === material &&
+        world.mixerOutputMixed[i] === 0) {
+        world.mixerOutputCountA[i]--;
+        return true;
+    }
+    if (world.mixerOutputCountB[i] > 0 && world.mixerOutputTypeB[i] === material) {
+        world.mixerOutputCountB[i]--;
+        return true;
+    }
+    return false;
+}
+
 function mixerMixResult(first, second) {
     if (first === EMPTY || second === EMPTY) return EMPTY;
     const water = DEFS.findIndex(def => def?.name === 'Water');
@@ -3533,50 +3572,68 @@ function normalizeMixerOutputs(i) {
     world.mixerOutputCountB[i] = remainderCount;
 }
 
+function mixerCanProduceMixed(i, result) {
+    if (mixerOutputTotal(i) >= MIXER_OUTPUT_CAPACITY) return false;
+    if (world.mixerOutputCountA[i] === 0) return true;
+    return world.mixerOutputCountB[i] === 0 &&
+        world.mixerOutputMixed[i] !== 0 && world.mixerOutputTypeA[i] === result;
+}
+
+function mixerProduceMixed(i, result) {
+    if (!mixerCanProduceMixed(i, result)) return false;
+    return addMixerOutput(i, result, true);
+}
+
+function mixerFeedOneInput(i, slot) {
+    const type = slot === 0 ? world.mixerInputTypeA[i] : world.mixerInputTypeB[i];
+    // A mixed result owns the output stream until it is drained. Do not append
+    // an unmatched source material beside it; keep that material in its input
+    // bin so the output remains one full-width mixed stream.
+    if (world.mixerOutputMixed[i] !== 0) return false;
+    const otherOutputType = world.mixerOutputCountA[i] > 0 && world.mixerOutputMixed[i] === 0
+        ? world.mixerOutputTypeA[i]
+        : world.mixerOutputCountB[i] > 0 ? world.mixerOutputTypeB[i] : EMPTY;
+    const result = mixerMixResult(type, otherOutputType);
+
+    if (result !== EMPTY && consumeMixerOutputMaterial(i, otherOutputType) &&
+        mixerCanProduceMixed(i, result) && mixerProduceMixed(i, result)) {
+        if (slot === 0) world.mixerInputCountA[i]--;
+        else world.mixerInputCountB[i]--;
+        return true;
+    }
+    if (!addMixerOutput(i, type, false)) return false;
+    if (slot === 0) world.mixerInputCountA[i]--;
+    else world.mixerInputCountB[i]--;
+    return true;
+}
+
 function updateMixers() {
     if (!hasMixerMachine) return;
     for (let i = 0; i < world.type.length; i++) {
         if (!isMixerMachine(DEFS[world.type[i]])) continue;
         normalizeMixerOutputs(i);
-        if (mixerOutputTotal(i) < MIXER_OUTPUT_CAPACITY) {
+        world.mixerInputFlowA[i] = Math.min(1, world.mixerInputFlowA[i] +
+            MIXER_INPUT_RATE / SIMULATION_STEPS_PER_SECOND);
+        world.mixerInputFlowB[i] = Math.min(1, world.mixerInputFlowB[i] +
+            MIXER_INPUT_RATE / SIMULATION_STEPS_PER_SECOND);
+        const readyA = world.mixerInputFlowA[i] >= 1 && world.mixerInputCountA[i] > 0;
+        const readyB = world.mixerInputFlowB[i] >= 1 && world.mixerInputCountB[i] > 0;
+        if (readyA && readyB) {
             const mixed = mixerMixResult(world.mixerInputTypeA[i], world.mixerInputTypeB[i]);
-            const outputCanAcceptMixed = world.mixerOutputCountB[i] === 0 &&
-                (world.mixerOutputCountA[i] === 0 || world.mixerOutputMixed[i] !== 0);
-            if (mixed !== EMPTY && outputCanAcceptMixed &&
-                world.mixerInputCountA[i] > 0 && world.mixerInputCountB[i] > 0) {
+            if (mixed !== EMPTY && mixerCanProduceMixed(i, mixed) && mixerProduceMixed(i, mixed)) {
                 world.mixerInputCountA[i]--;
                 world.mixerInputCountB[i]--;
-                world.mixerOutputTypeA[i] = mixed;
-                world.mixerOutputMixed[i] = 1;
-                receiveMixerOutput(i, 0);
+                world.mixerInputFlowA[i]--;
+                world.mixerInputFlowB[i]--;
             } else {
-                const preferred = world.mixerNextInput[i] & 1;
-                const preferredOutput = preferred === 0
-                    ? world.mixerOutputCountA[i] : world.mixerOutputCountB[i];
-                const alternate = preferred ^ 1;
-                const alternateOutput = alternate === 0
-                    ? world.mixerOutputCountA[i] : world.mixerOutputCountB[i];
-                const slot = preferredOutput < MIXER_OUTPUT_SIDE_CAPACITY &&
-                    (preferred === 0 ? world.mixerInputCountA[i] : world.mixerInputCountB[i]) > 0
-                    ? preferred
-                    : alternateOutput < MIXER_OUTPUT_SIDE_CAPACITY &&
-                        (alternate === 0 ? world.mixerInputCountA[i] : world.mixerInputCountB[i]) > 0
-                        ? alternate : -1;
-                if (slot >= 0) {
-                    if (slot === 0) {
-                        world.mixerInputCountA[i]--;
-                        world.mixerOutputTypeA[i] = world.mixerInputTypeA[i];
-                    } else {
-                        world.mixerInputCountB[i]--;
-                        world.mixerOutputTypeB[i] = world.mixerInputTypeB[i];
-                    }
-                    world.mixerOutputMixed[i] = 0;
-                    receiveMixerOutput(i, slot);
-                    world.mixerNextInput[i] = slot ^ 1;
-                }
+                if (readyA && mixerFeedOneInput(i, 0)) world.mixerInputFlowA[i]--;
+                if (readyB && mixerFeedOneInput(i, 1)) world.mixerInputFlowB[i]--;
             }
-            resetEmptyMixer(i);
+        } else {
+            if (readyA && mixerFeedOneInput(i, 0)) world.mixerInputFlowA[i]--;
+            if (readyB && mixerFeedOneInput(i, 1)) world.mixerInputFlowB[i]--;
         }
+        resetEmptyMixer(i);
         if (!isMixerReleaseEnabled(i % COLS, Math.floor(i / COLS))) continue;
         world.mixerOutputFlow[i] = Math.min(1,
             world.mixerOutputFlow[i] + MIXER_RELEASE_RATE / SIMULATION_STEPS_PER_SECOND);
@@ -3652,9 +3709,11 @@ function updateTubingFlows() {
             const ventBackpressure = isVentMachine(destinationDef) &&
                 isVentReleaseEnabled(destinationX, destinationY) &&
                 world.storageCount[destination] >= VENT_CAPACITY - 1;
-            const rate = ventBackpressure
-                ? Math.min(tubingRate, getVentReleaseRate(destinationX, destinationY))
-                : tubingRate;
+            const rate = isMixerMachine(destinationDef)
+                ? Math.min(tubingRate, MIXER_INPUT_RATE)
+                : ventBackpressure
+                    ? Math.min(tubingRate, getVentReleaseRate(destinationX, destinationY))
+                    : tubingRate;
             if (rate <= 0) continue;
 
             activeSources.add(source);

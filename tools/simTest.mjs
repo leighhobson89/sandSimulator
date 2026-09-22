@@ -2524,7 +2524,7 @@ getWorld().mixerInputCountA[sequenceMixer] = 6;
     getWorld().mixerInputTypeB[sequenceMixer] = ID.Ash;
 getWorld().mixerInputCountB[sequenceMixer] = 6;
 const emitted = [];
-for (let frame = 0; frame < 360; frame++) {
+for (let frame = 0; frame < 720; frame++) {
     stepSimulation();
     const output = getWorld().type[index(30, 32)];
     if (output !== EMPTY) {
@@ -2544,7 +2544,7 @@ getWorld().mixerInputTypeA[mixedMixer] = ID.Sand;
 getWorld().mixerInputCountA[mixedMixer] = 2;
 getWorld().mixerInputTypeB[mixedMixer] = ID.Water;
 getWorld().mixerInputCountB[mixedMixer] = 2;
-stepSimulation();
+run(15);
 const mixedInventory = getMixerInventory(30, 30);
 check('Mixer combines Sand and Water into Wet Sand',
     mixedInventory?.output.types[0] === ID['Wet Sand'] &&
@@ -2560,7 +2560,7 @@ getWorld().mixerInputTypeA[mudMixer] = ID.Water;
 getWorld().mixerInputCountA[mudMixer] = 2;
 getWorld().mixerInputTypeB[mudMixer] = ID['Dry Mud'];
 getWorld().mixerInputCountB[mudMixer] = 2;
-stepSimulation();
+run(15);
 const mudInventory = getMixerInventory(30, 30);
 check('Mixer combines Water and Dry Mud into Wet Mud',
     mudInventory?.output.types[0] === ID['Wet Mud'] &&
@@ -2595,7 +2595,7 @@ getWorld().mixerInputCountB[stagedMixer] = 3;
 stepSimulation();
 getWorld().mixerInputTypeA[stagedMixer] = ID.Water;
 getWorld().mixerInputCountA[stagedMixer] = 3;
-run(5);
+run(15);
 const stagedInventory = getMixerInventory(30, 30);
 check('Mixer preserves a lone Dry Mud output until Water can form Wet Mud',
     stagedInventory?.output.types[0] === ID['Wet Mud'] &&

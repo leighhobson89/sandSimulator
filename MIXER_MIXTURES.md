@@ -21,6 +21,11 @@ physics. The mixer therefore stays aligned with the normal simulation reactions.
 Mixed results are logged as a single output stream. They never appear alongside
 their source materials in the output list or visualization.
 
+Once a mixed stream such as Wet Mud exists in bin 3, unmatched source material
+remaining in an input bin is held there. It is never appended as a second output
+column beside the mixed result. When the mixed stream is drained, the remaining
+source material can become a normal single output stream.
+
 The mixer never overwrites an existing non-mixed output stream while creating a
 recipe result. A lone non-mixing output remains a single half-width stream until
 the complementary material arrives; only then can the pair be converted into
@@ -32,9 +37,15 @@ until either source bin cannot provide another particle. Source bin types reset
 independently when their counts reach zero. Bin 3 resets its output type only
 when its output count reaches zero.
 
-With release disabled, bin 3 retains its output and continues accumulating up to
-its 1000-particle capacity. With release enabled, output particles are released
-through the mixer outlet at the configured mixer release rate.
+Each input feeds bin 3 at 5 particles per second, for a maximum combined input
+rate of 10 particles per second. With release disabled, bin 3 retains its output
+and continues accumulating up to its 1000-particle capacity. With release
+enabled, output particles are released through the mixer outlet at 8 particles
+per second.
+
+The browser regression suite covers five mixer workflows: a Water-only input, a
+Dry Mud-only input, Water + Dry Mud -> Wet Mud, non-mixing Water + Oil, and a
+late Water + Ash -> Wet Ash transition while Water is already being processed.
 
 ## Non-Mixing Inputs
 
