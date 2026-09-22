@@ -336,7 +336,7 @@
     },
     "9": {
       "name": "Steam",
-      "description": "Rising drifting gas from boiling Water or Wet Mud that condenses into Water or deposits Snow in cold air.",
+      "description": "Rising drifting gas from boiling Water or Wet Mud that condenses into Water or deposits Snow in cold air; it evaporates away above 3000 C.",
       "group": "Gases",
       "color": "rgb(205, 215, 225)",
       "category": "gas",
@@ -353,12 +353,13 @@
       "depositPoint": 0,
       "depositsInto": "Snow",
       "condenseLossChance": 0.4,
+      "evaporatesAbove": 3000,
       "latent": 1000,
       "corrodible": false
     },
     "10": {
       "name": "Smoke",
-      "description": "Lingering drifting gas from burning and condensation reactions that eventually settles into Ash.",
+      "description": "Lingering drifting gas from burning and condensation reactions that eventually settles into Ash; it evaporates away above 3000 C.",
       "group": "Gases",
       "color": "rgb(76, 74, 78)",
       "category": "gas",
@@ -371,6 +372,7 @@
       "life": 1800,
       "lifeVariance": 300,
       "decaysInto": "Ash",
+      "evaporatesAbove": 3000,
       "corrodible": false
     },
     "11": {
@@ -392,7 +394,7 @@
     },
     "12": {
       "name": "Ash",
-      "description": "Light drifting powder left by burning that wets into Wet Ash and can support short grass.",
+      "description": "Light drifting powder left by burning that melts into Lava at high heat, wets into Wet Ash and can support short grass.",
       "group": "Powders",
       "windLift": 0.85,
       "color": "rgb(116, 110, 104)",
@@ -404,6 +406,8 @@
       "moveChance": 0.45,
       "conductivity": 0.06,
       "cooling": 0.006,
+      "meltPoint": 900,
+      "meltsInto": "Lava",
       "wetsInto": "Wet Ash",
       "wetChance": 1,
       "corrodible": true
@@ -781,7 +785,7 @@
     },
     "32": {
       "name": "Toxic Gas",
-      "description": "Lingering corrosive gas that withers growing materials and sometimes settles into Acid.",
+      "description": "Lingering corrosive gas that withers growing materials and sometimes settles into Acid; it evaporates away above 3000 C.",
       "group": "Gases",
       "color": "rgb(198, 245, 62)",
       "category": "gas",
@@ -798,6 +802,7 @@
       "lifeVariance": 300,
       "decayChance": 0.2,
       "decaysInto": "Acid",
+      "evaporatesAbove": 3000,
       "corrodible": false
     },
     "31": {

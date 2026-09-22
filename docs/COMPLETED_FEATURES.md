@@ -48,6 +48,8 @@ can be divided into five altitude layers.
 
 - Water wets sand, mud and ash; it infiltrates wet powder to a 50-cell limit.
   Deep wet mud compacts into impermeable clay, which fires into ceramic.
+- Ash melts into Lava at high heat. Steam, Smoke and Toxic Gas evaporate into
+  nothing when their temperature exceeds 3000 C.
 - Steam can produce rain or snow. Snow melts in warmth, melts on water and
   gradually packs into ice when it settles on ice.
 - Plants sprout only from viable wet ground at suitable temperatures; grass,

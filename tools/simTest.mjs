@@ -453,6 +453,7 @@ getWorld().temp.fill(1000);
 run(30);
 check('continued heating melts scoria into lava', countOf(ID.Lava) > 0,
     `${countOf(ID.Lava)} lava`);
+
 setLayerLapse(2);
 
 section('Thick insulating materials keep their interior temperature');
@@ -2602,6 +2603,22 @@ check('Mixer preserves a lone Dry Mud output until Water can form Wet Mud',
     stagedInventory.output.types[1] === EMPTY &&
     stagedInventory.output.counts[0] > 0,
     JSON.stringify(stagedInventory));
+
+section('Extreme heat evaporates gases and melts ash');
+clearWorld();
+fillRect(20, 20, 8, 4, ID.Ash);
+getWorld().temp.fill(1000);
+run(120);
+check('high heat melts Ash into Lava', countOf(ID.Ash) === 0 && countOf(ID.Lava) > 0,
+    `${countOf(ID.Ash)} ash, ${countOf(ID.Lava)} lava`);
+
+for (const [name, label] of [[ID.Steam, 'steam'], [ID.Smoke, 'smoke'], [ID['Toxic Gas'], 'toxic gas']]) {
+    clearWorld();
+    fillRect(20, 20, 8, 4, name);
+    getWorld().temp.fill(3200);
+    run(10);
+    check(`${label} evaporates above 3000C`, countOf(name) === 0, `${countOf(name)} ${label}`);
+}
 
 // ---------------------------------------------------------------------------
 

@@ -348,6 +348,7 @@ export function prepareDefinitions(json) {
             boilEmits: toId(p.boilEmits),
             depositPoint: p.depositPoint,
             depositsInto: toId(p.depositsInto),
+            evaporatesAbove: p.evaporatesAbove,
             // Some gases can escape instead of becoming a liquid or deposit.
             // This is checked only once the gas has actually reached its
             // condensation point, so placement and production do not decide
@@ -440,7 +441,8 @@ export function prepareDefinitions(json) {
         // Worked out once here so the per-frame loop can skip particles that
         // have nothing to do instead of testing a dozen properties every frame.
         def.hasStateChange = def.meltPoint !== undefined || def.freezePoint !== undefined ||
-            def.boilPoint !== undefined || def.ignitePoint !== undefined;
+            def.boilPoint !== undefined || def.ignitePoint !== undefined ||
+            def.evaporatesAbove !== undefined;
         def.hasReaction = def.life > 0 || def.soaks || def.corrosion > 0 ||
             def.growChance > 0 || def.emit > 0 || def.quenchedInto !== EMPTY ||
             def.blastRadius > 0 || def.sprouts.length > 0 || def.seedChance > 0 ||
@@ -1673,6 +1675,11 @@ function applyStateChange(x, y, i, def) {
 
     let change = null;
     let over = 0;
+
+    if (def.evaporatesAbove !== undefined && t > def.evaporatesAbove) {
+        removeParticle(i);
+        return true;
+    }
 
     if (def.ignitePoint !== undefined && t > def.ignitePoint) {
         change = 'ignite';
