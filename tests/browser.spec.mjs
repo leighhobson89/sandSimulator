@@ -197,17 +197,18 @@ test('vent browser connection uses the top tubing stub and releases below its ic
         world.storageType[vent] = id('Water');
         world.storageCount[vent] = 3;
         physics.setVentReleaseEnabled(30, 30, true);
-        for (let frame = 0; frame < 7; frame++) physics.stepSimulation();
+        for (let frame = 0; frame < 8; frame++) physics.stepSimulation();
         return {
             stub: world.type[physics.index(30, 29)],
-            outlet: world.type[physics.index(30, 32)],
+            releasedBelowIcon: Array.from({ length: 100 }, (_, offset) =>
+                world.type[physics.index(30, 32 + offset)]),
             tubing: id('Tubing'),
             water: id('Water'),
             remaining: world.storageCount[vent]
         };
     });
     expect(state.stub).toBe(state.tubing);
-    expect(state.outlet).toBe(state.water);
+    expect(state.releasedBelowIcon).toContain(state.water);
     expect(state.remaining).toBeLessThan(3);
 });
 

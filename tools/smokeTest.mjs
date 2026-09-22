@@ -854,11 +854,11 @@ const { getAmbientTarget } = await import('../physics.js');
 const airSlider = byId('airTemp');
 const airBox = byId('airTempValue');
 if (indexMarkup.includes('id="airTempValue"') &&
-    /id="airTempValue"[^>]*max="2000"/.test(indexMarkup) &&
-    /id="airTemp"[^>]*max="2000"/.test(indexMarkup)) {
-    pass('the air temperature controls reach 2000C');
+    /id="airTempValue"[^>]*max="4000"/.test(indexMarkup) &&
+    /id="airTemp"[^>]*max="4000"/.test(indexMarkup)) {
+    pass('the air temperature controls reach 4000C');
 } else {
-    fail('the air temperature controls do not reach 2000C');
+    fail('the air temperature controls do not reach 4000C');
 }
 
 // Sliding should fill in the box.
@@ -879,7 +879,7 @@ else fail(`slider did not follow the number box (shows ${airSlider.value})`);
 // Out of range typing should be pulled back into range, not accepted.
 airBox.value = '9999';
 airBox.fire('keydown', { key: 'Enter' });
-if (getAmbientTarget() === 2000) pass('a silly number is clamped to the top of the range');
+if (getAmbientTarget() === 4000) pass('a silly number is clamped to the top of the range');
 else fail(`out of range value was not clamped (target is ${getAmbientTarget()})`);
 
 airBox.value = '20';

@@ -949,7 +949,7 @@ function highlightSelectedParticle() {
 // whatever is set rather than jumping to it, so turning it down feels like the
 // weather changing.
 const MIN_AIR_TEMP = -60;
-const MAX_AIR_TEMP = 2000;
+const MAX_AIR_TEMP = 4000;
 
 function setUpAirTemperature() {
     const slider = getElements().airTempInput;

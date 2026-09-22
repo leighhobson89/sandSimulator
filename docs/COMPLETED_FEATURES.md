@@ -30,7 +30,7 @@ optional reaction properties.
 Each cell carries a temperature. Every frame it exchanges heat with four
 neighbours, cools or warms toward the ambient air, and can receive eight-way
 radiation from heat sources. The air temperature is adjustable from -60C to
-2000C, eases toward the requested value, has stable cell-to-cell variation and
+4000C, eases toward the requested value, has stable cell-to-cell variation and
 can be divided into five altitude layers.
 
 - State transitions accumulate latent heat rather than flipping instantly.

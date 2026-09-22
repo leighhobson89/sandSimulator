@@ -1,8 +1,8 @@
 # Machine Glossary
 
-Current reference for machine behavior and user-facing options. Update this
-file whenever a machine, control, capacity, connection rule, or machine test
-changes.
+Current reference for machine behavior and user-facing options. The air
+temperature control ranges from -60 to 4000 C. Update this file whenever a
+machine, control, capacity, connection rule, or machine test changes.
 
 ## Powered Machines
 
@@ -62,6 +62,8 @@ grid cells below the logical anchor, outside the drawn icon footprint.
 - Release rate: 1-100 particles/s, default 10 particles/s.
 - Release switch: enabled by default; disabled mode retains up to 100 particles.
 - Connected Tubing flow caps the effective release rate.
+- The outlet is outside the icon footprint, so normal output is visible below
+  the housing instead of being blocked by its drawn body.
 
 ### Mixer
 
