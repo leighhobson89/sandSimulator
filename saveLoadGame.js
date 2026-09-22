@@ -20,6 +20,11 @@ const BLUEPRINT_FIELD_TYPES = {
     residue: Uint8Array, shade: Uint8Array, heat: Float32Array, surface: Int16Array,
     data: Uint8Array, machineSetting: Float32Array, storageType: Uint8Array, storageCount: Uint16Array,
     storageFlowRemainder: Float32Array,
+    mixerInputTypeA: Uint8Array, mixerInputCountA: Uint16Array, mixerInputFlowA: Float32Array,
+    mixerInputTypeB: Uint8Array, mixerInputCountB: Uint16Array, mixerInputFlowB: Float32Array,
+    mixerOutputCountA: Uint16Array, mixerOutputCountB: Uint16Array,
+    mixerOutputFlow: Float32Array, mixerNextInput: Uint8Array,
+    mixerOutputNext: Uint8Array,
     power: Uint8Array,
     powerDelay: Uint16Array, charge: Float32Array,
     wind: Uint8Array, airflowX: Float32Array, airflowY: Float32Array,
@@ -232,7 +237,7 @@ function decodeBlueprintState(state) {
             // Blueprints made before configurable machines and storage existed
             // have no corresponding planes; zero means defaults and empty bins.
             if ((field === 'machineSetting' || field === 'storageType' || field === 'storageCount' ||
-                field === 'storageFlowRemainder') && !encoded) {
+                field === 'storageFlowRemainder' || field.startsWith('mixer')) && !encoded) {
                 cells[field] = new Type(blueprint.width * blueprint.height);
                 continue;
             }

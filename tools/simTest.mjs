@@ -19,6 +19,7 @@ import {
     getConnectedBatteryCharge, getStorageInventory, getVentInventory, getVentReleaseRate,
     getVentTubingRate,
     getTubingFlows, setVentReleaseEnabled, setVentReleaseRate, setRandomSeed,
+    getMixerInventory, setMixerReleaseEnabled, purgeMixerBin,
     getRandomSeed, EMPTY
 } from '../physics.js';
 
@@ -2468,6 +2469,72 @@ getWorld().storageCount[index(ventX, tubeY)] = 100;
 stepSimulation();
 check('a full switched-off Vent cuts connected Tubing flow to 0',
     getStorageInventory(tubeSourceX, tubeY)?.count === 10 && getTubingFlows().length === 0);
+
+section('A Mixer accepts two independent Tubing inputs and alternates its output');
+clearWorld();
+const mixerX = 30;
+const mixerY = 30;
+const mixerIndex = index(mixerX, mixerY);
+const leftSourceX = 20;
+const rightSourceX = 40;
+setCell(leftSourceX, mixerY, ID['Powder Storage Bin']);
+setCell(rightSourceX, mixerY, ID['Liquid Storage Bin']);
+setCell(mixerX, mixerY, ID.Mixer);
+setMixerReleaseEnabled(mixerX, mixerY, false);
+for (let x = leftSourceX + 1; x < mixerX; x++) setCell(x, mixerY, ID.Tubing);
+for (let x = mixerX + 1; x < rightSourceX; x++) setCell(x, mixerY, ID.Tubing);
+const leftSource = index(leftSourceX, mixerY);
+const rightSource = index(rightSourceX, mixerY);
+getWorld().storageType[leftSource] = ID.Sand;
+getWorld().storageCount[leftSource] = 120;
+getWorld().storageType[rightSource] = ID.Water;
+getWorld().storageCount[rightSource] = 120;
+run(60);
+const mixer = getMixerInventory(mixerX, mixerY);
+check('Mixer keeps its two disconnected Tubing inputs separate',
+    mixer?.output.types[0] === ID.Sand && mixer?.output.types[1] === ID.Water &&
+    mixer.output.counts[0] > 0 && mixer.output.counts[1] > 0,
+    JSON.stringify(mixer?.output));
+check('Mixer accepts two Tubing entities touching the same machine',
+    getTubingFlows().filter(flow => flow.destination === mixerIndex).length === 2,
+    `${getTubingFlows().length} active flows`);
+run(120);
+const fullMixer = getMixerInventory(mixerX, mixerY);
+check('Mixer output bin stores mixed material while release is off',
+    fullMixer?.output.counts[0] > 0 && fullMixer?.output.counts[1] > 0 &&
+    fullMixer.output.counts[0] + fullMixer.output.counts[1] <= 1000,
+    JSON.stringify(fullMixer?.output));
+purgeMixerBin(mixerX, mixerY, 0);
+check('purging Mixer input one resets only that input',
+    getMixerInventory(mixerX, mixerY)?.bins[0].count === 0 &&
+    getMixerInventory(mixerX, mixerY)?.output.counts[1] > 0);
+setMixerReleaseEnabled(mixerX, mixerY, true);
+const releasedBefore = countOf(ID.Sand) + countOf(ID.Water);
+run(600);
+check('Mixer releases its mixed output at a fixed rate',
+    countOf(ID.Sand) + countOf(ID.Water) > releasedBefore,
+    JSON.stringify(getMixerInventory(mixerX, mixerY)?.output));
+
+clearWorld();
+setCell(30, 30, ID.Mixer);
+setMixerReleaseEnabled(30, 30, true);
+const sequenceMixer = index(30, 30);
+getWorld().mixerInputTypeA[sequenceMixer] = ID.Sand;
+getWorld().mixerInputCountA[sequenceMixer] = 6;
+getWorld().mixerInputTypeB[sequenceMixer] = ID.Water;
+getWorld().mixerInputCountB[sequenceMixer] = 6;
+const emitted = [];
+for (let frame = 0; frame < 360; frame++) {
+    stepSimulation();
+    const output = getWorld().type[index(30, 32)];
+    if (output !== EMPTY) {
+        emitted.push(output);
+        getWorld().type[index(30, 32)] = EMPTY;
+    }
+}
+check('Mixer emits strict alternating output from the third bin',
+    emitted.length >= 4 && emitted.slice(0, 6).every((id, index) => id === (index & 1 ? ID.Water : ID.Sand)),
+    JSON.stringify(emitted.slice(0, 6)));
 
 // ---------------------------------------------------------------------------
 

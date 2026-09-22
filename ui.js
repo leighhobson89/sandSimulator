@@ -29,7 +29,8 @@ import {
     setWindDial, getWorld, index, getMachineSetting, setMachineSetting,
     getStorageInventory, purgeStorageBin, getVentInventory, getVentReleaseRate,
     setVentReleaseRate, isVentReleaseEnabled, setVentReleaseEnabled,
-    getTubingFlows, getVentTubingRate, isMachinePoweredAt
+    getTubingFlows, getVentTubingRate, getMixerInventory, purgeMixerBin,
+    isMixerReleaseEnabled, setMixerReleaseEnabled, isMachinePoweredAt
 } from './physics.js';
 import { loadSavedTheme, buildThemeSwatches, buildThemeSelect } from './themes.js';
 import {
@@ -63,6 +64,7 @@ let machineTooltipTimer = null;
 let machineTooltipTarget = null;
 let machineTooltipAnchor = null;
 let machineDialogTimer = null;
+let mixerPurgeSlot = null;
 
 document.addEventListener('DOMContentLoaded', async () => {
     await loadParticleDefinitions();
@@ -97,6 +99,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     elements.purgeDialogCancel.addEventListener('click', closePurgeDialog);
     elements.machineDialogInput.addEventListener('input', validateMachineInput);
     elements.machineDialogVentToggle.addEventListener('change', updateVentReleaseToggle);
+    elements.mixerDialogCancel.addEventListener('click', closeMixerDialog);
+    elements.mixerDialogToggle.addEventListener('change', updateMixerReleaseToggle);
+    elements.mixerDialogBinPurge0.addEventListener('click', () => purgeMixerDialogBin(0));
+    elements.mixerDialogBinPurge1.addEventListener('click', () => purgeMixerDialogBin(1));
     elements.machineDialogInput.addEventListener('keydown', event => {
         if (event.key === 'Enter') {
             event.preventDefault();
@@ -408,7 +414,7 @@ function machineAtPointer(event) {
     const cellWidth = rect.width / world.cols;
     const cellHeight = rect.height / world.rows;
     const cell = cellFromEvent(event);
-    const iconHalfSize = 16;
+    const iconHalfSize = machineAtCell(cellFromEvent(event))?.def.machine === 'mixer' ? 32 : 16;
     const radiusX = Math.ceil(iconHalfSize / Math.max(1, cellWidth) + 0.5);
     const radiusY = Math.ceil(iconHalfSize / Math.max(1, cellHeight) + 0.5);
 
@@ -439,6 +445,7 @@ function openMachineDialog(x, y, machine = machineAtCell({ x, y })) {
     const spec = MACHINE_CONTROL_SPECS[machine.def.machine];
     const storage = isStorageMachineDefinition(machine.def);
     const vent = machine.def.machine === 'vent';
+    if (machine.def.machine === 'mixer') return openMixerDialog(x, y);
     if (!spec && !storage && !vent) return false;
 
     const elements = getElements();
@@ -495,6 +502,93 @@ function openMachineDialog(x, y, machine = machineAtCell({ x, y })) {
     if (!storage) elements.machineDialogInput.focus();
     else elements.machineDialogCancel.focus();
     return true;
+}
+
+function materialDisplay(type) {
+    if (!type) return { name: 'Empty', color: 'transparent' };
+    const def = getDefinitions()[type];
+    return { name: def?.name || 'Empty', color: def?.color || 'transparent' };
+}
+
+function openMixerDialog(x, y) {
+    const elements = getElements();
+    editingMachine = { x, y, mixer: true };
+    elements.mixerDialog.hidden = false;
+    elements.mixerDialogToggle.checked = isMixerReleaseEnabled(x, y);
+    refreshMixerDialog();
+    if (machineDialogTimer) clearInterval(machineDialogTimer);
+    machineDialogTimer = setInterval(refreshMixerDialog, 150);
+    elements.mixerDialogCancel.focus();
+    return true;
+}
+
+function refreshMixerDialog() {
+    if (!editingMachine?.mixer || getElements().mixerDialog.hidden) return;
+    const inventory = getMixerInventory(editingMachine.x, editingMachine.y);
+    if (!inventory) return closeMixerDialog();
+    const bins = [inventory.bins[0], inventory.bins[1], {
+        counts: inventory.output.counts,
+        count: inventory.output.counts[0] + inventory.output.counts[1],
+        capacity: inventory.output.capacity,
+        type: inventory.output.types[0]
+    }];
+    for (let slot = 0; slot < 3; slot++) {
+        const bin = bins[slot];
+        const elements = getElements();
+        const count = bin.count;
+        const fill = elements[`mixerDialogBinFill${slot}`];
+        const summary = elements[`mixerDialogBinSummary${slot}`];
+        fill.replaceChildren();
+        fill.style.height = slot === 2 ? '100%' : `${Math.min(100, count / bin.capacity * 100)}%`;
+        const types = slot === 2
+            ? inventory.output.types.map((type, index) => inventory.output.counts[index] > 0
+                ? materialDisplay(type).name : null).filter(Boolean).join(' + ') || 'Empty'
+            : materialDisplay(bin.type).name;
+        if (slot === 2) {
+            for (let side = 0; side < 2; side++) {
+                const segment = document.createElement('div');
+                const segmentCount = inventory.output.counts[side];
+                segment.className = 'mixer-bin-segment';
+                segment.style.width = '50%';
+                segment.style.height = `${Math.min(100, segmentCount / 500 * 100)}%`;
+                segment.style.background = materialDisplay(inventory.output.types[side]).color;
+                fill.appendChild(segment);
+            }
+        } else {
+            const segment = document.createElement('div');
+            segment.className = 'mixer-bin-segment';
+            segment.style.width = '100%';
+            segment.style.height = '100%';
+            segment.style.background = materialDisplay(bin.type).color;
+            fill.appendChild(segment);
+        }
+        summary.textContent = `${count}/${bin.capacity} ${types}`;
+    }
+}
+
+function updateMixerReleaseToggle() {
+    if (!editingMachine?.mixer) return;
+    setMixerReleaseEnabled(editingMachine.x, editingMachine.y, getElements().mixerDialogToggle.checked);
+}
+
+function purgeMixerDialogBin(slot) {
+    if (!editingMachine?.mixer) return;
+    mixerPurgeSlot = slot;
+    const inventory = getMixerInventory(editingMachine.x, editingMachine.y);
+    const bin = inventory?.bins[slot];
+    const elements = getElements();
+    elements.purgeDialogDescription.textContent =
+        `Purge ${storageContentsText(bin)} from Mixer input ${slot + 1}? The input will accept a new material type.`;
+    elements.purgeDialog.hidden = false;
+    elements.purgeDialogConfirm.focus();
+}
+
+function closeMixerDialog() {
+    if (machineDialogTimer) clearInterval(machineDialogTimer);
+    machineDialogTimer = null;
+    getElements().mixerDialog.hidden = true;
+    mixerPurgeSlot = null;
+    editingMachine = null;
 }
 
 function renderInventorySummary(summary, inventory) {
@@ -597,10 +691,18 @@ function openPurgeDialog() {
 }
 
 function closePurgeDialog() {
+    mixerPurgeSlot = null;
     getElements().purgeDialog.hidden = true;
 }
 
 function confirmPurgeDialog() {
+    if (editingMachine?.mixer && mixerPurgeSlot !== null) {
+        purgeMixerBin(editingMachine.x, editingMachine.y, mixerPurgeSlot);
+        mixerPurgeSlot = null;
+        closePurgeDialog();
+        refreshMixerDialog();
+        return;
+    }
     if (!editingMachine?.storage) return;
     purgeStorageBin(editingMachine.x, editingMachine.y);
     closePurgeDialog();

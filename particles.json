@@ -1219,6 +1219,20 @@
       "meltPoint": 10000,
       "machine": "vent",
       "corrodible": false
+    },
+    "53": {
+      "name": "Mixer",
+      "description": "Always-active machine with two independent 500-particle Tubing inputs and a 1000-particle mixed output. It alternates the two accepted materials when releasing them below at 10 particles per second.",
+      "group": "Machines",
+      "color": "rgb(178, 132, 62)",
+      "category": "static",
+      "density": 7.8,
+      "conductivity": 0.04,
+      "cooling": 0.002,
+      "bulkInsulation": 0.3,
+      "meltPoint": 10000,
+      "machine": "mixer",
+      "corrodible": false
     }
   }
 }

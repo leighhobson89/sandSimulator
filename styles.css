@@ -1116,11 +1116,16 @@ input[type="range"]::-moz-range-thumb {
 .machine-overlay-icon.machine-storageLiquid { color: #72d2dd; }
 .machine-overlay-icon.machine-storageGas { color: #c39aff; }
 .machine-overlay-icon.machine-vent { color: #b8e2e5; }
+.machine-overlay-icon.machine-mixer { color: #f2c15d; }
 .machine-overlay-icon.machine-storagePowder,
 .machine-overlay-icon.machine-storageLiquid,
 .machine-overlay-icon.machine-storageGas {
     width: 32px;
     height: 32px;
+}
+.machine-overlay-icon.machine-mixer {
+    width: 64px;
+    height: 64px;
 }
 .machine-placement-preview { opacity: 0.82; }
 
@@ -1268,6 +1273,53 @@ canvas.tubing-hover { cursor: help; }
     cursor: pointer;
 }
 .machine-dialog-vent-toggle[hidden] { display: none; }
+.mixer-dialog-card { max-width: 46rem; }
+.mixer-dialog-bins {
+    display: grid;
+    grid-template-columns: minmax(7rem, 1fr) auto minmax(7rem, 1fr) auto minmax(7rem, 1fr);
+    align-items: center;
+    gap: 0.65rem;
+    margin: 1rem 0;
+}
+.mixer-dialog-bin {
+    position: relative;
+    min-height: 8rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    gap: 0.45rem;
+    overflow: hidden;
+    padding: 0.65rem;
+    background: var(--bg-sunken);
+    border: var(--border) solid var(--line-bright);
+    border-radius: var(--radius-sm);
+    text-align: center;
+}
+.mixer-bin-fill {
+    position: absolute;
+    z-index: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    height: 0;
+    display: flex;
+    align-items: flex-end;
+    opacity: 0.72;
+    transition: height 120ms ease;
+}
+.mixer-bin-segment {
+    align-self: flex-end;
+    min-height: 0;
+    transition: height 120ms ease;
+}
+.mixer-dialog-bin strong,
+.mixer-dialog-bin button { position: relative; z-index: 1; }
+.mixer-dialog-bin strong { color: var(--text); font: 0.72rem var(--mono); }
+.mixer-dialog-arrow { color: var(--accent); font-size: 1.5rem; }
+@media (max-width: 620px) {
+    .mixer-dialog-bins { grid-template-columns: 1fr; }
+    .mixer-dialog-arrow { transform: rotate(90deg); justify-self: center; }
+}
 .machine-dialog-vent-toggle input {
     appearance: none;
     width: 2.55rem;

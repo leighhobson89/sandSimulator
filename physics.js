@@ -559,6 +559,10 @@ export function getAmbientTarget() { return ambientTarget; }
 const PERSISTED_WORLD_FIELDS = [
     'type', 'temp', 'life', 'lifeMax', 'residue', 'shade', 'heat', 'data',
     'machineSetting', 'storageType', 'storageCount', 'storageFlowRemainder',
+    'mixerInputTypeA', 'mixerInputCountA', 'mixerInputFlowA',
+    'mixerInputTypeB', 'mixerInputCountB', 'mixerInputFlowB',
+    'mixerOutputCountA', 'mixerOutputCountB', 'mixerOutputFlow', 'mixerNextInput',
+    'mixerOutputNext',
     'power', 'powerDelay', 'charge', 'wind', 'airflowX', 'airflowY',
     'airflowNextX', 'airflowNextY'
 ];
@@ -605,7 +609,8 @@ export function restoreSimulationState(state) {
         // Storage inventory was added after the original machine state. Old
         // saves simply have empty inventories because newly-created arrays are
         // already zero-filled.
-        if ((field === 'storageType' || field === 'storageCount' || field === 'storageFlowRemainder') && !source) continue;
+        if ((field === 'storageType' || field === 'storageCount' || field === 'storageFlowRemainder' ||
+            field.startsWith('mixer')) && !source) continue;
         if (!source || source.length !== cells) {
             throw new Error(`This save has invalid ${field} data.`);
         }
@@ -645,6 +650,17 @@ export function createWorld(cols, rows) {
         storageType: new Uint8Array(n),
         storageCount: new Uint16Array(n),
         storageFlowRemainder: new Float32Array(n),
+        mixerInputTypeA: new Uint8Array(n),
+        mixerInputCountA: new Uint16Array(n),
+        mixerInputFlowA: new Float32Array(n),
+        mixerInputTypeB: new Uint8Array(n),
+        mixerInputCountB: new Uint16Array(n),
+        mixerInputFlowB: new Float32Array(n),
+        mixerOutputCountA: new Uint16Array(n),
+        mixerOutputCountB: new Uint16Array(n),
+        mixerOutputFlow: new Float32Array(n),
+        mixerNextInput: new Uint8Array(n),
+        mixerOutputNext: new Uint8Array(n),
         power: new Uint8Array(n),
         powerDelay: new Uint16Array(n),
         charge: new Float32Array(n),
@@ -659,6 +675,7 @@ export function createWorld(cols, rows) {
     storageFunnelMachines = [];
     storageBarrierMask = null;
     tubingFlows = [];
+    hasMixerMachine = false;
     return world;
 }
 
@@ -667,6 +684,7 @@ export function getWorld() { return world; }
 function defaultMachineSetting(def) {
     if (def?.machine === 'fan') return def.machineWindSpeed ?? 7;
     if (def?.machine === 'vent') return 1;
+    if (def?.machine === 'mixer') return 1;
     return def?.machineTemp ?? 0;
 }
 
@@ -679,6 +697,10 @@ function machineSettingBounds(def) {
 
 const STORAGE_CAPACITY = 500;
 const VENT_CAPACITY = 100;
+const MIXER_INPUT_CAPACITY = 500;
+const MIXER_OUTPUT_SIDE_CAPACITY = 500;
+const MIXER_OUTPUT_CAPACITY = 1000;
+const MIXER_RELEASE_RATE = 10;
 const DEFAULT_VENT_RELEASE_RATE = 10;
 const MAX_VENT_RELEASE_RATE = 100;
 const SIMULATION_STEPS_PER_SECOND = 60;
@@ -693,12 +715,45 @@ const STORAGE_BARRIER_DISTANCE = 1;
 const STORAGE_DIAGONAL_BARRIER_STEPS = 1;
 const STORAGE_SUCTION_DEPTH = 2;
 
+function clearMixerState(i) {
+    world.mixerInputTypeA[i] = EMPTY;
+    world.mixerInputCountA[i] = 0;
+    world.mixerInputFlowA[i] = 0;
+    world.mixerInputTypeB[i] = EMPTY;
+    world.mixerInputCountB[i] = 0;
+    world.mixerInputFlowB[i] = 0;
+    world.mixerOutputCountA[i] = 0;
+    world.mixerOutputCountB[i] = 0;
+    world.mixerOutputFlow[i] = 0;
+    world.mixerNextInput[i] = 0;
+    world.mixerOutputNext[i] = 0;
+}
+
+function resetEmptyMixer(i) {
+    const empty = world.mixerOutputCountA[i] + world.mixerOutputCountB[i] === 0 &&
+        world.mixerInputCountA[i] + world.mixerInputCountB[i] === 0;
+    if (empty) {
+        world.mixerInputTypeA[i] = EMPTY;
+        world.mixerInputTypeB[i] = EMPTY;
+        world.mixerNextInput[i] = 0;
+        world.mixerOutputNext[i] = 0;
+    }
+}
+
 function isStorageMachine(def) {
     return !!def?.storageCategory && def.storageCapacity > 0;
 }
 
 function isVentMachine(def) {
     return def?.machine === 'vent';
+}
+
+function isMixerMachine(def) {
+    return def?.machine === 'mixer';
+}
+
+function isTubingEndpoint(def) {
+    return isStorageMachine(def) || isVentMachine(def) || isMixerMachine(def);
 }
 
 function storageAccepts(def, particle) {
@@ -743,6 +798,59 @@ export function getVentInventory(x, y) {
         releaseEnabled: world.machineSetting[i] !== 0,
         releaseRate: getVentReleaseRate(x, y)
     };
+}
+
+export function getMixerInventory(x, y) {
+    if (!inBounds(x, y)) return null;
+    const i = index(x, y);
+    if (!isMixerMachine(DEFS[world.type[i]])) return null;
+    return {
+        bins: [
+            { type: world.mixerInputTypeA[i], count: world.mixerInputCountA[i], capacity: MIXER_INPUT_CAPACITY },
+            { type: world.mixerInputTypeB[i], count: world.mixerInputCountB[i], capacity: MIXER_INPUT_CAPACITY }
+        ],
+        output: {
+            counts: [world.mixerOutputCountA[i], world.mixerOutputCountB[i]],
+            types: [
+                world.mixerOutputCountA[i] > 0 ? world.mixerInputTypeA[i] : EMPTY,
+                world.mixerOutputCountB[i] > 0 ? world.mixerInputTypeB[i] : EMPTY
+            ],
+            capacity: MIXER_OUTPUT_CAPACITY
+        },
+        releaseEnabled: world.machineSetting[i] !== 0
+    };
+}
+
+export function purgeMixerBin(x, y, slot) {
+    if (!inBounds(x, y) || !Number.isInteger(slot) || slot < 0 || slot > 1) return false;
+    const i = index(x, y);
+    if (!isMixerMachine(DEFS[world.type[i]])) return false;
+    if (slot === 0) {
+        world.mixerInputCountA[i] = 0;
+        world.mixerInputFlowA[i] = 0;
+        if (world.mixerOutputCountA[i] === 0) world.mixerInputTypeA[i] = EMPTY;
+    } else {
+        world.mixerInputCountB[i] = 0;
+        world.mixerInputFlowB[i] = 0;
+        if (world.mixerOutputCountB[i] === 0) world.mixerInputTypeB[i] = EMPTY;
+    }
+    resetEmptyMixer(i);
+    return true;
+}
+
+export function setMixerReleaseEnabled(x, y, enabled) {
+    if (!inBounds(x, y)) return false;
+    const i = index(x, y);
+    if (!isMixerMachine(DEFS[world.type[i]])) return false;
+    world.machineSetting[i] = enabled ? 1 : 0;
+    if (!enabled) world.mixerOutputFlow[i] = 0;
+    return true;
+}
+
+export function isMixerReleaseEnabled(x, y) {
+    if (!inBounds(x, y)) return false;
+    const i = index(x, y);
+    return isMixerMachine(DEFS[world.type[i]]) && world.machineSetting[i] !== 0;
 }
 
 export function getVentReleaseRate(x, y) {
@@ -873,6 +981,17 @@ export function clearWorld() {
     world.storageType.fill(0);
     world.storageCount.fill(0);
     world.storageFlowRemainder.fill(0);
+    world.mixerInputTypeA.fill(0);
+    world.mixerInputCountA.fill(0);
+    world.mixerInputFlowA.fill(0);
+    world.mixerInputTypeB.fill(0);
+    world.mixerInputCountB.fill(0);
+    world.mixerInputFlowB.fill(0);
+    world.mixerOutputCountA.fill(0);
+    world.mixerOutputCountB.fill(0);
+    world.mixerOutputFlow.fill(0);
+    world.mixerNextInput.fill(0);
+    world.mixerOutputNext.fill(0);
     world.power.fill(0);
     world.powerDelay.fill(0);
     world.charge.fill(0);
@@ -884,6 +1003,7 @@ export function clearWorld() {
     storageFunnelMachines = [];
     if (storageBarrierMask) storageBarrierMask.fill(0);
     tubingFlows = [];
+    hasMixerMachine = false;
 }
 
 // What a freshly placed particle starts with in its data slot. A plant gets a
@@ -928,6 +1048,7 @@ export function setCell(x, y, id, keepTemp) {
     const i = y * COLS + x;
     const def = DEFS[id];
     world.type[i] = id;
+    if (def?.machine === 'mixer') hasMixerMachine = true;
     world.residue[i] = EMPTY;
     const lifetime = def.life > 0
         ? def.life + Math.floor((random() - 0.5) * def.lifeVariance)
@@ -941,6 +1062,7 @@ export function setCell(x, y, id, keepTemp) {
     world.storageType[i] = 0;
     world.storageCount[i] = 0;
     world.storageFlowRemainder[i] = 0;
+    clearMixerState(i);
     world.power[i] = 0;
     world.powerDelay[i] = 0;
     world.charge[i] = 0;
@@ -965,6 +1087,7 @@ function transform(i, id, life, residue) {
     world.storageType[i] = 0;
     world.storageCount[i] = 0;
     world.storageFlowRemainder[i] = 0;
+    clearMixerState(i);
     world.power[i] = 0;
     world.powerDelay[i] = 0;
     world.charge[i] = 0;
@@ -990,6 +1113,7 @@ function removeParticle(i) {
     world.storageType[i] = 0;
     world.storageCount[i] = 0;
     world.storageFlowRemainder[i] = 0;
+    clearMixerState(i);
     world.power[i] = 0;
     world.powerDelay[i] = 0;
     world.charge[i] = 0;
@@ -1010,6 +1134,16 @@ function swapCells(i1, i2) {
     let st = world.storageType[i1]; world.storageType[i1] = world.storageType[i2]; world.storageType[i2] = st;
     let sc = world.storageCount[i1]; world.storageCount[i1] = world.storageCount[i2]; world.storageCount[i2] = sc;
     let sfr = world.storageFlowRemainder[i1]; world.storageFlowRemainder[i1] = world.storageFlowRemainder[i2]; world.storageFlowRemainder[i2] = sfr;
+    if (isMixerMachine(DEFS[world.type[i1]]) || isMixerMachine(DEFS[world.type[i2]])) {
+        for (const field of [
+            'mixerInputTypeA', 'mixerInputCountA', 'mixerInputFlowA',
+            'mixerInputTypeB', 'mixerInputCountB', 'mixerInputFlowB',
+            'mixerOutputCountA', 'mixerOutputCountB', 'mixerOutputFlow',
+            'mixerNextInput', 'mixerOutputNext'
+        ]) {
+            const value = world[field][i1]; world[field][i1] = world[field][i2]; world[field][i2] = value;
+        }
+    }
     let p = world.power[i1]; world.power[i1] = world.power[i2]; world.power[i2] = p;
     let pd = world.powerDelay[i1]; world.powerDelay[i1] = world.powerDelay[i2]; world.powerDelay[i2] = pd;
     let c = world.charge[i1]; world.charge[i1] = world.charge[i2]; world.charge[i2] = c;
@@ -1265,6 +1399,7 @@ export function stepSimulation() {
     updateStorageBins();
     updateVents();
     updateTubingFlows();
+    updateMixers();
     // A newly delivered item can use release credit accumulated earlier in
     // this frame, but the rate is accrued only once per frame.
     updateVents(false);
@@ -3052,6 +3187,7 @@ function updateStorageBins() {
 // three-cell-wide tube a three-cell-wide channel and stops diagonal near-misses
 // from becoming invisible pipe connections.
 let tubingFlows = [];
+let hasMixerMachine = false;
 
 export function getTubingFlows() {
     return tubingFlows;
@@ -3087,15 +3223,28 @@ function buildTubingComponents() {
         for (const tube of cells) {
             const x = tube % COLS;
             const y = Math.floor(tube / COLS);
+            const contacts = [];
             for (const [dx, dy] of TUBING_NEIGHBOURS) {
                 const nx = x + dx;
                 const ny = y + dy;
                 if (!inBounds(nx, ny)) continue;
                 const machine = index(nx, ny);
                 const def = DEFS[world.type[machine]];
-                if (!isStorageMachine(def) && !isVentMachine(def)) continue;
-                const contacts = attachments.get(machine);
-                if (contacts) contacts.push(tube);
+                if (isTubingEndpoint(def)) contacts.push(machine);
+            }
+            for (let dy = -2; dy <= 2; dy++) {
+                for (let dx = -2; dx <= 2; dx++) {
+                    if (Math.abs(dx) <= 1 && Math.abs(dy) <= 1) continue;
+                    const nx = x + dx;
+                    const ny = y + dy;
+                    if (!inBounds(nx, ny)) continue;
+                    const machine = index(nx, ny);
+                    if (isMixerMachine(DEFS[world.type[machine]])) contacts.push(machine);
+                }
+            }
+            for (const machine of contacts) {
+                const machineContacts = attachments.get(machine);
+                if (machineContacts) machineContacts.push(tube);
                 else attachments.set(machine, [tube]);
             }
         }
@@ -3204,7 +3353,28 @@ function destinationCanAccept(destination, material) {
         return (world.storageCount[destination] < VENT_CAPACITY || releaseEnabled) &&
             (world.storageType[destination] === EMPTY || world.storageType[destination] === material);
     }
+    if (isMixerMachine(def)) return mixerInputCanAccept(destination, 0, material) ||
+        mixerInputCanAccept(destination, 1, material);
     return false;
+}
+
+function mixerSourceMaterial(i) {
+        const preferred = world.mixerOutputNext[i] & 1;
+    if (preferred === 0 && world.mixerOutputCountA[i] > 0) return world.mixerInputTypeA[i];
+    if (preferred === 1 && world.mixerOutputCountB[i] > 0) return world.mixerInputTypeB[i];
+    if (world.mixerOutputCountA[i] > 0) return world.mixerInputTypeA[i];
+    if (world.mixerOutputCountB[i] > 0) return world.mixerInputTypeB[i];
+    return EMPTY;
+}
+
+function mixerSourceCount(i, material) {
+    return material === world.mixerInputTypeA[i] ? world.mixerOutputCountA[i] : world.mixerOutputCountB[i];
+}
+
+function consumeMixerOutput(i, material) {
+    if (material === world.mixerInputTypeA[i]) world.mixerOutputCountA[i]--;
+    else world.mixerOutputCountB[i]--;
+    resetEmptyMixer(i);
 }
 
 function destinationSpace(destination) {
@@ -3216,6 +3386,101 @@ function destinationSpace(destination) {
 function receiveTubingMaterial(destination, material) {
     world.storageType[destination] = material;
     world.storageCount[destination]++;
+}
+
+function mixerSlotForContact(machine, tubeCell) {
+    const mx = machine % COLS;
+    const my = Math.floor(machine / COLS);
+    const tx = tubeCell % COLS;
+    const ty = Math.floor(tubeCell / COLS);
+    const dx = tx - mx;
+    const dy = ty - my;
+    // Opposite sides are the two independent inlets. Horizontal and vertical
+    // layouts remain stable when a tube is rebuilt or a save is restored.
+    return (dx < 0 || dy < 0) ? 0 : 1;
+}
+
+function mixerSlotState(machine, slot) {
+    return slot === 0
+        ? { type: world.mixerInputTypeA, count: world.mixerInputCountA, flow: world.mixerInputFlowA }
+        : { type: world.mixerInputTypeB, count: world.mixerInputCountB, flow: world.mixerInputFlowB };
+}
+
+function mixerInputCanAccept(machine, slot, material) {
+    const state = mixerSlotState(machine, slot);
+    return state.count[machine] < MIXER_INPUT_CAPACITY &&
+        (state.type[machine] === EMPTY || state.type[machine] === material);
+}
+
+function receiveMixerMaterial(machine, slot, material) {
+    const state = mixerSlotState(machine, slot);
+    state.type[machine] = material;
+    state.count[machine]++;
+}
+
+function mixerOutputTotal(i) {
+    return world.mixerOutputCountA[i] + world.mixerOutputCountB[i];
+}
+
+function mixerOutputType(i, material) {
+    return material === world.mixerInputTypeA[i] ? world.mixerOutputCountA[i] : world.mixerOutputCountB[i];
+}
+
+function receiveMixerOutput(i, slot) {
+    if (slot === 0) world.mixerOutputCountA[i]++;
+    else world.mixerOutputCountB[i]++;
+}
+
+function updateMixers() {
+    if (!hasMixerMachine) return;
+    for (let i = 0; i < world.type.length; i++) {
+        if (!isMixerMachine(DEFS[world.type[i]])) continue;
+        if (mixerOutputTotal(i) < MIXER_OUTPUT_CAPACITY) {
+            const preferred = world.mixerOutputNext[i] & 1;
+            const preferredOutput = preferred === 0
+                ? world.mixerOutputCountA[i] : world.mixerOutputCountB[i];
+            const alternate = preferred ^ 1;
+            const alternateOutput = alternate === 0
+                ? world.mixerOutputCountA[i] : world.mixerOutputCountB[i];
+            const slot = preferredOutput < MIXER_OUTPUT_SIDE_CAPACITY &&
+                (preferred === 0 ? world.mixerInputCountA[i] : world.mixerInputCountB[i]) > 0
+                ? preferred
+                : alternateOutput < MIXER_OUTPUT_SIDE_CAPACITY &&
+                    (alternate === 0 ? world.mixerInputCountA[i] : world.mixerInputCountB[i]) > 0
+                    ? alternate : -1;
+            if (slot >= 0) {
+                const material = slot === 0 ? world.mixerInputTypeA[i] : world.mixerInputTypeB[i];
+                if (slot === 0) world.mixerInputCountA[i]--;
+                else world.mixerInputCountB[i]--;
+                receiveMixerOutput(i, slot);
+                world.mixerOutputNext[i] = slot ^ 1;
+                resetEmptyMixer(i);
+            }
+        }
+        if (!isMixerReleaseEnabled(i % COLS, Math.floor(i / COLS))) continue;
+        world.mixerOutputFlow[i] = Math.min(1,
+            world.mixerOutputFlow[i] + MIXER_RELEASE_RATE / SIMULATION_STEPS_PER_SECOND);
+        if (world.mixerOutputFlow[i] < 1 || mixerOutputTotal(i) === 0) continue;
+        // The Mixer face is twice the normal machine size. Its lower-center
+        // outlet therefore starts two grid cells below the anchor cell.
+        const outputY = Math.floor(i / COLS) + 2;
+        const x = i % COLS;
+        if (!inBounds(x, outputY) || storageIntakeIsWall(x, outputY)) continue;
+        const output = index(x, outputY);
+        if (world.type[output] !== EMPTY) continue;
+        const material = world.mixerOutputNext[i] === 0
+            ? world.mixerInputTypeA[i] : world.mixerInputTypeB[i];
+        const countA = world.mixerOutputCountA[i];
+        const countB = world.mixerOutputCountB[i];
+        const outputSlot = countA > 0 && (world.mixerOutputNext[i] === 0 || countB === 0) ? 0 : 1;
+        const outputMaterial = outputSlot === 0 ? world.mixerInputTypeA[i] : world.mixerInputTypeB[i];
+        if (outputSlot === 0) world.mixerOutputCountA[i]--;
+        else world.mixerOutputCountB[i]--;
+        setCell(x, outputY, outputMaterial);
+        world.mixerOutputFlow[i] -= 1;
+        world.mixerOutputNext[i] = outputSlot ^ 1;
+        resetEmptyMixer(i);
+    }
 }
 
 function updateTubingFlows() {
@@ -3236,17 +3501,24 @@ function updateTubingFlows() {
         const endpoints = [...component.attachments.keys()].sort((a, b) => a - b);
         for (const source of endpoints) {
             if (claimedSources.has(source) || !sourceBins.includes(source)) continue;
+            const mixerSource = false;
             const material = world.storageType[source];
             if (material === EMPTY) continue;
             const destination = endpoints[0] === source ? endpoints[1] : endpoints[0];
-            if (!destinationCanAccept(destination, material)) continue;
+            const destinationDef = DEFS[world.type[destination]];
+            const destinationContacts = component.attachments.get(destination);
+            const mixerSlot = isMixerMachine(destinationDef)
+                ? ((source % COLS) < (destination % COLS) ? 0 : 1) : -1;
+            const accepts = isMixerMachine(destinationDef)
+                ? mixerInputCanAccept(destination, mixerSlot, material)
+                : destinationCanAccept(destination, material);
+            if (!accepts) continue;
 
             const path = shortestTubingPath(component.cellSet, component.attachments.get(source),
                 component.attachments.get(destination));
             if (!path) continue;
             const width = tubingPathCapacity(path, component.cellSet, source, destination);
             const tubingRate = width * 10;
-            const destinationDef = DEFS[world.type[destination]];
             const destinationX = destination % COLS;
             const destinationY = Math.floor(destination / COLS);
             // An active Vent accepts tubing flow while it has room. Once its
@@ -3265,20 +3537,29 @@ function updateTubingFlows() {
             claimedSources.add(source);
             world.storageFlowRemainder[source] += rate / SIMULATION_STEPS_PER_SECOND;
             const transferred = Math.min(
-                world.storageCount[source],
-                destinationSpace(destination),
+                mixerSource ? mixerSourceCount(source, material) : world.storageCount[source],
+                isMixerMachine(destinationDef)
+                    ? MIXER_INPUT_CAPACITY - mixerSlotState(destination, mixerSlot).count[destination]
+                    : destinationSpace(destination),
                 Math.floor(world.storageFlowRemainder[source])
             );
             if (transferred > 0) {
                 world.storageFlowRemainder[source] -= transferred;
-                world.storageCount[source] -= transferred;
-                for (let item = 0; item < transferred; item++) receiveTubingMaterial(destination, material);
-                if (world.storageCount[source] === 0) {
+                if (mixerSource) consumeMixerOutput(source, material);
+                else world.storageCount[source] -= transferred;
+                if (mixerSource && transferred > 1) {
+                    for (let item = 1; item < transferred; item++) consumeMixerOutput(source, material);
+                }
+                for (let item = 0; item < transferred; item++) {
+                    if (isMixerMachine(destinationDef)) receiveMixerMaterial(destination, mixerSlot, material);
+                    else receiveTubingMaterial(destination, material);
+                }
+                if (!mixerSource && world.storageCount[source] === 0) {
                     world.storageType[source] = EMPTY;
                     world.storageFlowRemainder[source] = 0;
                 }
             }
-            if (world.storageCount[source] > 0) {
+            if ((mixerSource ? mixerOutputTotal(source) : world.storageCount[source]) > 0) {
                 tubingFlows.push({
                     source, destination, material, rate, width,
                     // The pulse renderer follows this ordered, physical route
