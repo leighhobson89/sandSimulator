@@ -3779,7 +3779,9 @@ function updateVents(accrueRate = true) {
         if (world.storageFlowRemainder[i] < 1) continue;
         const x = i % COLS;
         const y = Math.floor(i / COLS);
-        const outputY = y + 1;
+        // Release below the full 30px Vent icon. The cell immediately below
+        // the logical anchor is still covered by the drawn housing.
+        const outputY = y + 2;
         if (!inBounds(x, outputY) || storageIntakeIsWall(x, outputY)) continue;
         const output = index(x, outputY);
         if (world.type[output] !== EMPTY) continue;

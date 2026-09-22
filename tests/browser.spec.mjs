@@ -181,6 +181,36 @@ test('mixer browser scenarios preserve single, mixed, and non-mixed outputs', as
     await expect(page.locator('#mixerDialogOutputLabel')).toHaveText('output: Wet Ash');
 });
 
+test('vent browser connection uses the top tubing stub and releases below its icon', async ({ page }) => {
+    await startSandbox(page);
+    await page.getByRole('button', { name: 'Pause' }).click();
+    const state = await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        const defs = physics.getDefinitions();
+        const id = name => defs.findIndex(def => def?.name === name);
+        const world = physics.getWorld();
+        physics.clearWorld();
+        physics.setCell(30, 30, id('Vent'));
+        physics.setCell(30, 29, id('Tubing'));
+        physics.setCell(30, 28, id('Tubing'));
+        const vent = physics.index(30, 30);
+        world.storageType[vent] = id('Water');
+        world.storageCount[vent] = 3;
+        physics.setVentReleaseEnabled(30, 30, true);
+        for (let frame = 0; frame < 7; frame++) physics.stepSimulation();
+        return {
+            stub: world.type[physics.index(30, 29)],
+            outlet: world.type[physics.index(30, 32)],
+            tubing: id('Tubing'),
+            water: id('Water'),
+            remaining: world.storageCount[vent]
+        };
+    });
+    expect(state.stub).toBe(state.tubing);
+    expect(state.outlet).toBe(state.water);
+    expect(state.remaining).toBeLessThan(3);
+});
+
 test('clear requires confirmation and supports cancel', async ({ page }) => {
     await startSandbox(page);
     const clear = page.getByRole('button', { name: 'Clear', exact: true });

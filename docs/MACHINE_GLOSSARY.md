@@ -54,7 +54,10 @@ Accepts non-flaming gases and feeds Tubing.
 
 ### Vent
 
-Receives one material through Tubing and releases it below into the canvas.
+Receives one material through connected Tubing and releases it below into the
+canvas. Placement creates one vertical Tubing stub directly above the Vent;
+connecting Tubing to that stub guarantees a Vent connection. The outlet is two
+grid cells below the logical anchor, outside the drawn icon footprint.
 
 - Release rate: 1-100 particles/s, default 10 particles/s.
 - Release switch: enabled by default; disabled mode retains up to 100 particles.
