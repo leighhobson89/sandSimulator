@@ -1,12 +1,12 @@
 # Completed features
 
-Reviewed against the current source on 20 September 2026. “Completed” means
+Reviewed against the current source on 22 September 2026. “Completed” means
 implemented and exposed in the current simulator; it does not imply a perfect
 real-world model.
 
 ## Materials and motion
 
-The material picker is generated from 52 `particles.json` entries in eight
+The material picker is generated from 53 `particles.json` entries in eight
 groups: Powders, Liquids, Gases, Solids, Metals, Machines, Storage and Tools. Materials
 have category, density, colour, fall/slide/spread behaviour, lifespan and
 optional reaction properties.
@@ -97,6 +97,11 @@ forms.
 - Vent is always active and releases stored material below itself. Its
   default-on Release switch can retain one material type up to 100 particles;
   a full switched-off Vent cuts the connected Tubing flow to 0.
+- Mixer accepts two independent 500-particle inputs at 5 particles/second each,
+  stores up to 1000 output particles, and releases at 8 particles/second.
+  Documented recipes become exclusive full-width mixed output; non-mixing
+  materials remain separate alternating columns. Its invisible 64px footprint
+  accepts tubing anywhere touching the mixer icon.
 
 ## Reliability, discovery and project quality
 
@@ -104,7 +109,8 @@ forms.
   runs with a reproducible default seed, accepts `--seed=` or
   `SIM_TEST_SEED`, and includes the seed in failures.
 - `tests/browser.spec.mjs` covers the six themes, mouse and touch drawing,
-  keyboard focus, material glossary tooltips and narrow layouts. The stand-in
+  keyboard focus, material glossary tooltips, narrow layouts and mixer
+  end-to-end workflows. The stand-in
   smoke test remains useful for fast startup and persistence checks.
 - Unused audio/debug state was removed, `package-lock.json` matches
   `package.json`, and generated dependencies/test output are excluded by

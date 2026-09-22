@@ -1,6 +1,8 @@
 # Mixer Mixtures
 
-This document is the source of truth for mixer recipes and behavior. Update it
+This document is the source of truth for mixer recipes and behavior. The machine
+overview is maintained in [`docs/MACHINE_GLOSSARY.md`](docs/MACHINE_GLOSSARY.md).
+Update it
 whenever mixer logic, recipes, output presentation, or persistence changes.
 
 The mixer checks the two input materials in either order. When a recipe exists,

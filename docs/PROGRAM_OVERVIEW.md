@@ -1,6 +1,6 @@
 # Elemental Foundry: program overview
 
-Reviewed: 20 September 2026
+Reviewed: 22 September 2026
 
 Elemental Foundry is a browser-based **falling-sand / cellular-automata
 sandbox**. The player paints materials into a pixel grid, then watches simple
@@ -69,8 +69,8 @@ rule based on the surface of connected liquid, not a Navier–Stokes solution.
 - It favours readable, game-like rules over physical accuracy. There is no
   continuous pressure field, momentum-conserving liquid solver, real chemical
   stoichiometry, voltage/current/resistance calculation, or rigid-body physics.
-- It is currently a focused 52-entry material set with three powered machines,
-  three storage bins, and an always-active Vent.
+- It is currently a focused 53-entry material set with three powered machines,
+  three storage bins, an always-active Vent and a two-input Mixer.
   That makes it approachable, but limits complex construction compared with
   mature sandboxes.
 - Saves are browser-local or copy/paste strings rather than an online gallery,

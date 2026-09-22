@@ -1,12 +1,12 @@
 # Active issues and improvements
 
-Last reviewed: 20 September 2026. Detailed evidence is in
-[`CODE_REVIEW-2026-09-20.md`](CODE_REVIEW-2026-09-20.md).
+Last reviewed: 22 September 2026.
 
 ## Confirmed defects
 
-None currently recorded. The physics suite now uses a reproducible seed and
-prints it with every failed assertion, so a future regression can be replayed.
+None currently recorded. Mixer workflows are covered by seeded physics tests
+and real-browser tests, including late recipes, accumulation, release and
+mixed-output exclusivity.
 
 ## Code-quality and security improvements
 
@@ -14,8 +14,8 @@ prints it with every failed assertion, so a future regression can be replayed.
   are in place; it is now over 3,000 lines and carries several systems.
 
 - [ ] Expand the real-browser matrix with additional viewport sizes and manual
-  assistive-technology checks as the UI grows. The initial Playwright suite
-  covers the core mouse, touch, theme, focus and narrow-layout paths.
+  assistive-technology checks as the UI grows. The current suite covers mouse,
+  touch, themes, focus, narrow layouts and mixer workflows.
 
 Do not archive an item until the underlying implementation and its verification
 have changed.

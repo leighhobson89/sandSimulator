@@ -1,5 +1,8 @@
 # Elemental Foundry documentation
 
+Machine behavior and controls are documented in
+[`MACHINE_GLOSSARY.md`](MACHINE_GLOSSARY.md).
+
 Storage-machine collision and intake maintenance is documented in
 [`STORAGE_BIN_COLLISION.md`](STORAGE_BIN_COLLISION.md).
 
@@ -17,10 +20,6 @@ This folder is the current documentation index for Elemental Foundry.
   thermal, weather, biological, electrical, machine and UI features.
 - [`FUTURE_IDEAS.md`](FUTURE_IDEAS.md) — a prioritised product and technical
   roadmap.
-- [`CODE_REVIEW-2026-09-20.md`](CODE_REVIEW-2026-09-20.md) — full source review
-  findings and verification results.
-- [`CODE_AUDIT.md`](CODE_AUDIT.md) — the latest code and behavior audit,
-  including the complete verification outcome.
 - [`ISSUES.md`](ISSUES.md) — active findings and maintenance follow-ups only.
 - [`archive/`](archive/) — superseded documentation findings and closed notes.
 
