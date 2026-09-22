@@ -29,7 +29,7 @@ import {
     setWindDial, getWorld, index, getMachineSetting, setMachineSetting,
     getStorageInventory, purgeStorageBin, getVentInventory, getVentReleaseRate,
     setVentReleaseRate, isVentReleaseEnabled, setVentReleaseEnabled,
-    getTubingFlows, isMachinePoweredAt
+    getTubingFlows, getVentTubingRate, isMachinePoweredAt
 } from './physics.js';
 import { loadSavedTheme, buildThemeSwatches, buildThemeSelect } from './themes.js';
 import {
@@ -472,9 +472,15 @@ function openMachineDialog(x, y, machine = machineAtCell({ x, y })) {
     elements.machineDialogInput.setAttribute('aria-label', spec?.label || 'Contents');
     if (spec) {
         elements.machineDialogInput.min = String(spec.min);
-        elements.machineDialogInput.max = String(spec.max);
+        const ventRate = vent ? getVentTubingRate(x, y) : null;
+        const inputMax = vent ? ventRate : spec.max;
+        elements.machineDialogInput.max = String(inputMax || spec.max);
         elements.machineDialogInput.step = '1';
-        elements.machineDialogInput.value = String(Number.isFinite(current) ? current : (spec.defaultValue ?? spec.min));
+        elements.machineDialogInput.placeholder = vent && !ventRate ? 'Not Connected' : '';
+        elements.machineDialogInput.disabled = storage || (vent && !ventRate);
+        elements.machineDialogInput.value = vent && !ventRate
+            ? ''
+            : String(Number.isFinite(current) ? Math.min(current, inputMax) : (spec.defaultValue ?? spec.min));
     }
     elements.machineDialogUnit.textContent = spec?.unit || '';
     elements.machineDialogUnit.hidden = !spec?.unit;
@@ -511,7 +517,25 @@ function refreshMachineDialog() {
     } else if (editingMachine.vent) {
         renderInventorySummary(elements.machineDialogStorageSummary,
             getVentInventory(editingMachine.x, editingMachine.y));
+        updateVentReleaseInput();
     }
+}
+
+function updateVentReleaseInput() {
+    if (!editingMachine?.vent) return;
+    const input = getElements().machineDialogInput;
+    const tubingRate = getVentTubingRate(editingMachine.x, editingMachine.y);
+    input.max = String(tubingRate || 100);
+    input.placeholder = tubingRate ? '' : 'Not Connected';
+    input.disabled = !tubingRate;
+    if (!tubingRate) {
+        input.value = '';
+        return;
+    }
+    const current = getVentReleaseRate(editingMachine.x, editingMachine.y);
+    const value = Math.min(current, tubingRate);
+    if (current !== value) setVentReleaseRate(editingMachine.x, editingMachine.y, value);
+    input.value = String(value);
 }
 
 function updateVentReleaseToggle() {
@@ -531,7 +555,11 @@ function validateMachineInput() {
     if (!raw) return null;
     const numeric = Number(raw);
     if (!Number.isFinite(numeric)) return null;
-    const value = Math.max(spec.min, Math.min(spec.max, Math.round(numeric)));
+    const max = editingMachine.vent
+        ? getVentTubingRate(editingMachine.x, editingMachine.y)
+        : spec.max;
+    if (!max) return null;
+    const value = Math.max(spec.min, Math.min(max, Math.round(numeric)));
     if (String(value) !== raw) input.value = String(value);
     if (editingMachine.vent) setVentReleaseRate(editingMachine.x, editingMachine.y, value);
     getElements().machineDialogError.hidden = true;

@@ -676,11 +676,15 @@ if (dialogSummaryText().includes('3/500')) pass('open storage bin inventory upda
 else fail(`open storage bin inventory did not update (${dialogSummaryText()})`);
 byId('machineDialogCancel').click();
 
+physicsForLine.clearWorld();
+physicsForLine.setCell(60, 50, ventId);
 const ventIndex = physicsForLine.index(60, 50);
 physicsForLine.getWorld().storageType[ventIndex] = ashId;
 physicsForLine.getWorld().storageCount[ventIndex] = 6;
 canvas.fire('mousedown', { button: 0, ...fanClient(60, 50) });
-if (!byId('machineDialog').hidden && dialogSummaryText().includes('6/100')) {
+const disconnectedVentInput = byId('machineDialogInput');
+if (!byId('machineDialog').hidden && dialogSummaryText().includes('6/100') &&
+    disconnectedVentInput.disabled && disconnectedVentInput.placeholder === 'Not Connected') {
     pass('opening a Vent shows its current inventory');
 } else {
     fail(`Vent dialog did not show its inventory (${dialogSummaryText()})`);
@@ -689,6 +693,26 @@ physicsForLine.getWorld().storageCount[ventIndex] = 2;
 await new Promise(resolve => setTimeout(resolve, 180));
 if (dialogSummaryText().includes('2/100')) pass('open Vent inventory updates live');
 else fail(`open Vent inventory did not update (${dialogSummaryText()})`);
+byId('machineDialogCancel').click();
+
+physicsForLine.clearWorld();
+physicsForLine.setCell(50, 50, powderBinId);
+physicsForLine.setCell(60, 50, ventId);
+for (let x = 51; x < 60; x++) physicsForLine.setCell(x, 50, tubingId);
+physicsForLine.getWorld().storageType[physicsForLine.index(50, 50)] = ashId;
+physicsForLine.getWorld().storageCount[physicsForLine.index(50, 50)] = 20;
+runFrames(1);
+canvas.fire('mousedown', { button: 0, ...fanClient(60, 50) });
+const connectedVentInput = byId('machineDialogInput');
+if (!connectedVentInput.disabled && connectedVentInput.max === '10') {
+    pass('connected Vent release rate is capped by Tubing flow');
+} else {
+    fail(`connected Vent input did not use the Tubing cap (${connectedVentInput.max})`);
+}
+connectedVentInput.value = '20';
+connectedVentInput.fire('input');
+if (connectedVentInput.value === '10') pass('Vent release input clamps to connected Tubing flow');
+else fail(`Vent release input exceeded Tubing flow (${connectedVentInput.value})`);
 byId('machineDialogCancel').click();
 
 // Clear is destructive, so it must ask before changing the world. Cancel keeps

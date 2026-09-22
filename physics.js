@@ -753,6 +753,23 @@ export function getVentReleaseRate(x, y) {
         Math.round(world.data[i] || DEFAULT_VENT_RELEASE_RATE)));
 }
 
+export function getVentTubingRate(x, y) {
+    if (!inBounds(x, y)) return null;
+    const vent = index(x, y);
+    if (!isVentMachine(DEFS[world.type[vent]])) return null;
+    let maxRate = 0;
+    for (const component of buildTubingComponents()) {
+        if (component.attachments.size !== 2 || !component.attachments.has(vent)) continue;
+        const destination = [...component.attachments.keys()].find(machine => machine !== vent);
+        if (destination === undefined || !isStorageMachine(DEFS[world.type[destination]])) continue;
+        const path = shortestTubingPath(component.cellSet, component.attachments.get(destination),
+            component.attachments.get(vent));
+        if (!path) continue;
+        maxRate = Math.max(maxRate, tubingPathCapacity(path, component.cellSet, destination, vent) * 10);
+    }
+    return maxRate;
+}
+
 export function setVentReleaseRate(x, y, value) {
     if (!inBounds(x, y) || !Number.isFinite(value)) return false;
     const i = index(x, y);

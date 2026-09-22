@@ -17,6 +17,7 @@ import {
     applyWind, getWindTrails, decayWindTrails,
     setAmbientWindOn, isBreezeBlowing, isPowered, getStoredCharge,
     getConnectedBatteryCharge, getStorageInventory, getVentInventory, getVentReleaseRate,
+    getVentTubingRate,
     getTubingFlows, setVentReleaseEnabled, setVentReleaseRate, setRandomSeed,
     getRandomSeed, EMPTY
 } from '../physics.js';
@@ -2418,6 +2419,8 @@ setCell(40, 20, ID.Vent);
 const releasingVent = index(40, 20);
 getWorld().storageType[releasingVent] = ID.Water;
 getWorld().storageCount[releasingVent] = 20;
+check('an unconnected Vent reports no Tubing rate', getVentTubingRate(40, 20) === 0,
+    `${getVentTubingRate(40, 20)}/s`);
 check('new Vents default to a release rate of 10 particles per second',
     getVentReleaseRate(40, 20) === 10 && getVentInventory(40, 20)?.releaseRate === 10);
 run(60);
@@ -2435,6 +2438,8 @@ setCell(throttledVentX, throttledY, ID.Vent);
 for (let x = throttledSourceX + 1; x < throttledVentX; x++) {
     for (let y = throttledY - 1; y <= throttledY + 1; y++) setCell(x, y, ID.Tubing);
 }
+check('a connected Vent reports its Tubing capacity', getVentTubingRate(throttledVentX, throttledY) === 30,
+    `${getVentTubingRate(throttledVentX, throttledY)}/s`);
 const throttledSource = index(throttledSourceX, throttledY);
 getWorld().storageType[throttledSource] = ID.Ash;
 getWorld().storageCount[throttledSource] = 400;
