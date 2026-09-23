@@ -1,6 +1,11 @@
 import { test, expect } from '@playwright/test';
 import { GamePage } from '../helpers/gamePage.mjs';
 import { clickCanvasCell } from '../helpers/canvas.mjs';
+import { attachGameDiagnostics } from '../helpers/diagnostics.mjs';
+
+test.afterEach(async ({ page }, testInfo) => {
+    if (testInfo.status !== testInfo.expectedStatus) await attachGameDiagnostics(testInfo, page, 'export-import');
+});
 
 test('export and import round-trip restores world and tool settings', async ({ page }) => {
     const game = new GamePage(page); await game.openMenu(); await game.newGame();
@@ -21,5 +26,69 @@ test('export and import round-trip restores world and tool settings', async ({ p
     const after = await game.state();
     const water = after.definitions.find(def => def.name === 'Water').id;
     expect(after.typeCounts[String(water)]).toBeGreaterThan(0);
+    expect(after.cols).toBe(before.cols);
+    expect(after.rows).toBe(before.rows);
+    expect(after.arrays.type).toEqual(before.arrays.type);
+    expect(after.arrays.temp).toEqual(before.arrays.temp);
     await expect(page.locator('#brushSize')).toHaveValue('9');
+});
+
+test('export dialog exposes a selected save and import restores all visible tool state', async ({ page }) => {
+    const game = new GamePage(page); await game.openMenu(); await game.newGame();
+    await page.getByRole('button', { name: 'Water', exact: true }).click();
+    await page.locator('#brushSize').fill('7');
+    await page.getByRole('button', { name: 'Ellipse mode' }).click();
+    await page.getByRole('button', { name: 'Heat view' }).click();
+    await page.getByRole('button', { name: 'Export' }).click();
+    const save = await page.locator('#saveString').inputValue();
+    await expect(page.locator('#saveDialog')).toHaveAttribute('aria-labelledby', 'saveDialogTitle');
+    await expect(page.locator('#saveString')).toHaveAttribute('readonly', '');
+    await expect(page.locator('#copySaveString')).toBeVisible();
+    await page.locator('#closeSaveDialog').click();
+
+    await page.getByRole('button', { name: 'Import' }).click();
+    await page.locator('#saveString').fill(save);
+    await page.getByRole('button', { name: 'Load Game' }).click();
+    if (await page.locator('#autosaveChoiceDialog').isVisible()) await page.getByRole('button', { name: 'Yes, replace it' }).click();
+    await expect(page.locator('#brushSize')).toHaveValue('7');
+    await expect(page.getByRole('button', { name: 'Ellipse mode' })).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('#heatViewButton')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('#saveDialog')).toBeHidden();
+    await expect(game.state()).resolves.toMatchObject({ cols: expect.any(Number) });
+});
+
+test('import replacement choices support Cancel, No, and Yes without losing the live target', async ({ page }) => {
+    const game = new GamePage(page); await game.openMenu(); await game.newGame();
+    const originalResume = await page.evaluate(() => localStorage.getItem('elemental-foundry.autosave.v1'));
+    await page.getByRole('button', { name: 'Water', exact: true }).click();
+    await page.locator('#brushSize').fill('1');
+    await clickCanvasCell(page, { x: 30, y: 30 });
+    await page.getByRole('button', { name: 'Export' }).click();
+    const imported = await page.locator('#saveString').inputValue();
+    await page.locator('#closeSaveDialog').click();
+    await page.getByRole('button', { name: 'Clear' }).click();
+    await page.getByRole('button', { name: 'Clear World' }).click();
+
+    await page.getByRole('button', { name: 'Import' }).click();
+    await page.locator('#saveString').fill(imported);
+    await page.getByRole('button', { name: 'Load Game' }).click();
+    await expect(page.locator('#autosaveChoiceDialog')).toBeVisible();
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+    expect((await game.state()).typeCounts['0']).toBe((await game.state()).cols * (await game.state()).rows);
+    await expect(page.locator('#saveDialog')).toBeVisible();
+    await expect(page.evaluate(() => localStorage.getItem('elemental-foundry.autosave.v1'))).resolves.toBe(originalResume);
+
+    await page.getByRole('button', { name: 'Load Game' }).click();
+    await page.getByRole('button', { name: 'No, play without autosave' }).click();
+    const loaded = await game.state();
+    const water = loaded.definitions.find(definition => definition?.name === 'Water').id;
+    expect(loaded.typeCounts[String(water)]).toBeGreaterThan(0);
+    await expect(page.evaluate(() => localStorage.getItem('elemental-foundry.autosave.v1'))).resolves.toBe(originalResume);
+
+    await page.getByRole('button', { name: 'Import' }).click();
+    await page.locator('#saveString').fill(imported);
+    await page.getByRole('button', { name: 'Load Game' }).click();
+    await page.getByRole('button', { name: 'Yes, replace it' }).click();
+    await expect.poll(() => page.evaluate(() => localStorage.getItem('elemental-foundry.autosave.v1')))
+        .not.toBe(originalResume);
 });

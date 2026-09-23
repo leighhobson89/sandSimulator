@@ -1,8 +1,8 @@
 # Persistence E2E Coverage
 
-Focused specs cover export/import round trips, autosave resume, and malformed
-save validation. The three specs pass in both headless and headed runs (3 tests
-total). The persistence area remains amber in
-[`../../docs/E2E_PROGRESS.md`](../../docs/E2E_PROGRESS.md) until clear,
-replacement-choice, cancellation, boundary, and remaining persistence paths
-satisfy the exhaustive coverage contract.
+The four specs contain 11 tests covering export/import round trips, autosave
+resume, malformed/empty/unsupported save validation, New Game and Import
+replacement choices, clear confirmation, cancellation, and saved-state
+boundaries. Keep persistence assertions aligned with the current architecture,
+commands, and maintenance contract in
+[`../../docs/E2E_TEST_PLAN.md`](../../docs/E2E_TEST_PLAN.md).

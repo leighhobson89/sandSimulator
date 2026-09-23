@@ -25,8 +25,26 @@ test('toolbar theme select stays synchronized with the menu theme', async ({ pag
     await page.goto('/?e2e');
     await page.getByRole('button', { name: 'New Game' }).click();
     const select = page.locator('#themeSelect');
-    await select.selectOption('terminal');
-    await expect(page.locator('body')).toHaveAttribute('data-theme', 'terminal');
-    await expect(select).toHaveValue('terminal');
-    await expect(page.evaluate(() => localStorage.getItem('elementalFoundry.theme'))).resolves.toBe('terminal');
+    for (const theme of themes) {
+        await select.selectOption(theme);
+        await expect(page.locator('body')).toHaveAttribute('data-theme', theme);
+        await expect(select).toHaveValue(theme);
+        // The menu remains in the DOM while the workspace is active, but its
+        // hidden swatches are not exposed through the accessibility tree.
+        await expect(page.locator(`#themeSwatches .theme-swatch[data-theme-id="${theme}"]`))
+            .toHaveClass(/selected/);
+        await expect(page.evaluate(() => localStorage.getItem('elementalFoundry.theme'))).resolves.toBe(theme);
+    }
+});
+
+test('invalid saved theme falls back to Workshop and keeps the picker accessible', async ({ page }) => {
+    await page.goto('/?e2e');
+    await page.evaluate(() => localStorage.setItem('elementalFoundry.theme', 'not-a-theme'));
+    await page.reload();
+    await expect(page.locator('body')).toHaveAttribute('data-theme', 'workshop');
+    const workshop = page.getByRole('button', { name: 'Workshop theme' });
+    await expect(workshop).toHaveClass(/selected/);
+    await expect(workshop).toHaveAttribute('title', /Near black/);
+    await expect(workshop).toHaveAttribute('aria-label', 'Workshop theme');
+    await expect(page.locator('#themeSwatches .theme-swatch')).toHaveCount(themes.length);
 });

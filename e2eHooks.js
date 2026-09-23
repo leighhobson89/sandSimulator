@@ -2,7 +2,7 @@ import {
     captureSimulationState, restoreSimulationState, getWorld, getDefinitions,
     getFrameCount, getRandomSeed, setRandomSeed, stepSimulation, index
 } from './physics.js';
-import { getGridCols, getGridRows, getElements } from './constantsAndGlobalVars.js';
+import { getElements } from './constantsAndGlobalVars.js';
 import { renderWorld } from './game.js';
 
 const HOOK_VERSION = 1;
@@ -39,8 +39,8 @@ function canvasToCell({ x, y }) {
     const canvas = getElements().canvas;
     const rect = canvas.getBoundingClientRect();
     return {
-        x: Math.floor(((x - rect.left) / rect.width) * getGridCols()),
-        y: Math.floor(((y - rect.top) / rect.height) * getGridRows())
+        x: Math.floor(((x - rect.left) / rect.width) * canvas.width),
+        y: Math.floor(((y - rect.top) / rect.height) * canvas.height)
     };
 }
 

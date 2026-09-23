@@ -52,12 +52,10 @@ rule based on the surface of connected liquid, not a Navier–Stokes solution.
   matching centreline Heat Ray/Cold Ray projectiles.
 - The simulator is testable outside the browser. The physics core has no DOM
   dependency, and the headless suite checks 284 assertions with default seed
-  `0`, plus a 260x150 performance budget. A second
-  smoke suite covers startup, input and autosave decisions. The focused browser
-  physics contract has 24 tests across determinism, settling, thermal, and
-  reactions and passes in both headless and headed modes; the remaining
-  Playwright coverage covers real-browser themes, pointer/touch input, focus and
-  desktop interaction.
+  `0`, plus a 260x150 performance budget. A second smoke suite covers startup,
+  input and autosave decisions. The migrated Playwright source of truth has 121
+  browser tests across all fifteen functional areas and passes in both headless
+  and headed modes.
 - The interaction design is polished for a small sandbox: brush and line
   modes, right-click erase, heat view, a move-only-one-material Grabber,
   environmental controls, keyboard shortcuts and six persistent themes are all
@@ -97,9 +95,15 @@ community content, modding, advanced circuitry, or broader toybox variety.
 
 ## Verification basis
 
-The current verification basis includes the seeded headless suite at 284
-assertions with default seed `0`, the passing smoke suite, and the focused
-24-test physics browser contract in both headless and headed modes. A failing
-headless assertion reports the seed needed to reproduce it. Real-browser checks
-are also available through `npm run test:browser`; the remaining testing
-follow-up is broader manual device and assistive-technology coverage.
+The current verification basis includes the seeded headless suite at 284/284
+assertions with default seed `0`, the passing smoke suite, and the complete
+121-test browser suite in both modes:
+
+```text
+npx playwright test --workers=1 --trace=off
+npx playwright test --headed --workers=1 --trace=off
+```
+
+A failing headless assertion reports the seed needed to reproduce it. The
+project shortcut is `npm run test:browser`; dated superseded documentation is
+kept in [`archive/`](archive/) and does not describe current coverage.

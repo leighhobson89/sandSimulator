@@ -12,11 +12,9 @@ Exhaustive browser workflows for machines and material transfer.
 - `persistence.spec.mjs` checks machine settings, inventories, tubing, and
   Mixer inputs through portable export/import.
 
-The physics boundary seeds inventory for deterministic setup; UI placement,
-dialogs, toggles, tooltips, and canvas interaction use Playwright. The area is
-complete only when the focused machine specs pass once with the default
-headless configuration and once with
-`npx playwright test e2e/machines --headed`, using the same server, hooks, seed,
-and test steps. Engine-level flow-rate and reaction matrices remain in
-`tools/simTest.mjs`; they are not duplicated as slow browser tests when no
-additional user-visible contract exists.
+The 30 machine tests pass in both modes as part of the complete browser
+inventory. The physics boundary seeds inventory for deterministic setup; UI
+placement, dialogs, toggles, tooltips, and canvas interaction use Playwright.
+Engine-level flow-rate and reaction matrices remain in `tools/simTest.mjs`; they
+are not duplicated as slow browser tests when no additional user-visible
+contract exists.

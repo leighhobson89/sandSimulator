@@ -1,10 +1,11 @@
 # Physics E2E Coverage
 
 Focused browser contracts for deterministic, user-visible physics outcomes.
-The folder contains 24 Playwright tests:
+The folder contains 24 Playwright tests and is complete within the 121-test
+browser inventory:
 
 - `determinism.spec.mjs`: four tests for seeded snapshots, restore/replay,
-  controlled stepping, and a representative electrical boundary.
+  controlled stepping, and an electrical boundary.
 - `settling.spec.mjs`: six tests for brush settling, liquid flow and level,
   reset, density ordering, sealed boundaries, and gas movement.
 - `thermal.spec.mjs`: six tests for gradual temperature integration, phase
@@ -17,14 +18,19 @@ The folder contains 24 Playwright tests:
 Run the focused area with one worker in both modes:
 
 ```text
-npx playwright test e2e/physics --workers=1
-npx playwright test e2e/physics --workers=1 --headed
+npx playwright test e2e/physics --workers=1 --trace=off
+npx playwright test e2e/physics --headed --workers=1 --trace=off
 ```
 
-The accepted verification passes both commands. The full headless integration
-suite remains `npm test`; its current accepted run passes 284 assertions with
+The focused commands pass in both modes. The full headless integration suite
+remains `npm test`; its current accepted run passes 284/284 assertions with
 default seed `0`. `npm run test:smoke` remains the stand-in browser wiring and
-persistence check.
+persistence check. The full browser commands are:
+
+```text
+npx playwright test --workers=1 --trace=off
+npx playwright test --headed --workers=1 --trace=off
+```
 
 ## Fixture Boundary
 
@@ -41,8 +47,8 @@ a physics behavior has a user-visible contract. Keep exhaustive material,
 conservation, and rule-combination matrices in `tools/simTest.mjs` rather than
 duplicating them as slow browser cases.
 
-This is a representative browser contract, not exhaustive material coverage.
-Under the policy in [`../../docs/E2E_TEST_PLAN.md`](../../docs/E2E_TEST_PLAN.md),
-the focused physics tests pass in both modes but functional areas 9 and 10 stay
-amber while the headless matrix and remaining machine/UI gaps are tracked in
-[`../../docs/E2E_PROGRESS.md`](../../docs/E2E_PROGRESS.md).
+Browser specs cover user-visible physics outcomes, while exhaustive non-UI
+material, conservation, and rule-combination matrices remain owned by
+`npm test`; they are not duplicated as slow browser cases. Keep this boundary
+aligned with the current architecture, commands, and maintenance contract in
+[`../../docs/E2E_TEST_PLAN.md`](../../docs/E2E_TEST_PLAN.md).

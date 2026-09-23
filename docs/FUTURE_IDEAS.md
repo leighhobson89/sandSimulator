@@ -1,14 +1,15 @@
 # Future ideas and recommended roadmap
 
 These are proposals, not promises. They describe unfinished work and ideas
-that may be useful after the current product is dependable. Completed work is
-recorded in [`COMPLETED_FEATURES.md`](COMPLETED_FEATURES.md).
+that may be useful after the current product is dependable. Historical
+completion snapshots are preserved in the [`archive/`](archive/) index.
 
 ## Next: deepen the existing systems
 
 - Add a searchable picker, a dedicated reaction guide and small starter
-  scenarios. The live material glossary now covers hover/focus discovery, but
-  larger-scale onboarding remains useful.
+  scenarios. The material catalogue and live tooltip maintenance contract are in
+  [`GAME_MECHANICS.md`](GAME_MECHANICS.md), but larger-scale onboarding remains
+  useful.
 - Give electricity a model users can reason about: insulators, switches,
   directional diodes, sensors, lamps/heaters, batteries with explicit outputs,
   and overload/short-circuit feedback. Decide whether to remain a gameplay

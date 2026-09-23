@@ -18,6 +18,25 @@ test('startup exposes menu and New Game transitions to the paused workspace', as
     await expect(page.getByRole('button', { name: 'Play' })).toBeVisible();
 });
 
+test('menu import keeps the menu visible and pause transitions are reversible by button and keyboard', async ({ page }) => {
+    const game = new GamePage(page);
+    await game.openMenu();
+    await page.getByRole('button', { name: 'Import Game' }).click();
+    await expect(page.locator('#saveDialog')).toBeVisible();
+    await expect(page.locator('#menu')).toBeVisible();
+    await page.getByRole('button', { name: 'Close' }).click();
+    await expect(page.locator('#saveDialog')).toBeHidden();
+
+    await game.newGame();
+    const pause = page.getByRole('button', { name: 'Play' });
+    await expect(pause).toBeVisible();
+    await pause.click();
+    await expect(page.getByRole('button', { name: 'Pause' })).toBeVisible();
+    await page.keyboard.press(' ');
+    await expect(page.getByRole('button', { name: 'Play' })).toBeVisible();
+    await expect((await game.state()).frameCount).toBeGreaterThanOrEqual(0);
+});
+
 test('workspace tabs transition between tools and blueprints with accessible state', async ({ page }) => {
     const game = new GamePage(page);
     await game.openMenu();
@@ -30,6 +49,8 @@ test('workspace tabs transition between tools and blueprints with accessible sta
     await expect(blueprints).toHaveAttribute('aria-selected', 'true');
     await expect(tools).toHaveAttribute('aria-selected', 'false');
     await expect(page.locator('#blueprintsWorkspace')).toBeVisible();
+    await expect(page.locator('#toolsWorkspace')).toBeHidden();
     await tools.click();
     await expect(page.locator('#toolsWorkspace')).toBeVisible();
+    await expect(page.locator('#blueprintsWorkspace')).toBeHidden();
 });

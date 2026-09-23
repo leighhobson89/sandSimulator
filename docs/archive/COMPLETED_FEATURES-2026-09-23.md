@@ -22,8 +22,8 @@ optional reaction properties.
   and ceramic resist blasts.
 - Every picker entry has a concise implementation-based description. Hovering
   or focusing a material shows its glossary tooltip with live properties,
-  temperatures, conversions and reaction targets; see
-  [`MATERIAL_GLOSSARY.md`](MATERIAL_GLOSSARY.md) for the maintenance contract.
+  temperatures, conversions and reaction targets; see the current
+  [`GAME_MECHANICS.md`](../GAME_MECHANICS.md) for the maintenance contract.
 
 ## Temperature, conduction and insulation
 
@@ -110,10 +110,11 @@ forms.
 - The physics core accepts an injectable random source. `tools/simTest.mjs`
   runs with a reproducible default seed, accepts `--seed=` or
   `SIM_TEST_SEED`, and includes the seed in failures.
-- `tests/browser.spec.mjs` covers the six themes, mouse and touch drawing,
-  keyboard focus, material glossary tooltips, narrow layouts and mixer
-  end-to-end workflows. The stand-in
-  smoke test remains useful for fast startup and persistence checks.
+- The migrated Playwright suite under `e2e/` covers the six themes, mouse and
+  touch drawing, keyboard focus, material glossary tooltips, canvas mapping,
+  machine and Mixer workflows, persistence, blueprints, physics, and
+  accessibility. The stand-in smoke test remains useful for fast startup and
+  persistence checks.
 - Unused audio/debug state was removed, `package-lock.json` matches
   `package.json`, and generated dependencies/test output are excluded by
   `.gitignore`.
@@ -147,8 +148,9 @@ forms.
   existing resume slot with an explicit replace-or-play-without-autosave
   choice, plus Cancel to leave the current world and saved resume unchanged.
 - The source is separated into data, headless physics, rendering and UI.
-  Automated coverage includes 284 headless assertions with default seed `0`, a
-  260x150 speed check, syntax/JSON validation, a passing stand-in-browser UI
-  smoke test, and a Playwright real-browser suite. Its focused physics area
-  contains 24 browser tests across determinism, settling, thermal, and
-  reactions, passing in both headless and headed modes.
+  Automated coverage includes 284/284 headless assertions with default seed
+  `0`, a 260x150 speed check, syntax/JSON validation, a passing stand-in-browser
+  UI smoke test, and 121 Playwright real-browser tests across all fifteen
+  functional areas. The full browser suite passes in both modes with
+  `npx playwright test --workers=1 --trace=off` and
+  `npx playwright test --headed --workers=1 --trace=off`.

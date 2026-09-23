@@ -13,9 +13,11 @@ mixed-output exclusivity.
 - [ ] Split `physics.js` by stable domain boundaries after deterministic tests
   are in place; it is now over 3,000 lines and carries several systems.
 
-- [ ] Expand the real-browser matrix with additional viewport sizes and manual
-  assistive-technology checks as the UI grows. The current suite covers mouse,
-  touch, themes, focus, narrow layouts and mixer workflows.
+- [ ] Add broader manual device and assistive-technology checks as the UI grows.
+  The current 121-test browser suite covers mouse, touch, themes, focus,
+  rendered canvas mapping, dialogs, keyboard state, persistence, machines,
+  blueprints, physics, and Mixer workflows; this follow-up is supplementary to
+  the complete functional-area E2E matrix.
 
 Do not archive an item until the underlying implementation and its verification
 have changed.

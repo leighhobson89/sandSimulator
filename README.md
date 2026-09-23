@@ -16,16 +16,21 @@ in [`docs/ISSUES.md`](docs/ISSUES.md), while superseded documentation findings
 are kept in [`docs/archive/`](docs/archive/).
 
 The latest accepted verification on 23 September 2026 is green: `npm test`
-passes 284 assertions with default seed `0`, and `npm run test:smoke` passes.
-A Playwright suite is also included for real-browser navigation, tools,
-persistence, themes, machines, blueprints, physics, and desktop interaction
-coverage. Focused navigation, tools, and persistence suites cover 13 tests;
-the focused physics area adds 24 tests across determinism, settling, thermal,
-and reactions, for 37 focused tests across these areas. The physics area passes
-in both headless and headed modes with
-the commands documented in [`e2e/physics/README.md`](e2e/physics/README.md);
-the detailed status and remaining exhaustive coverage gaps are tracked in
-[`docs/E2E_PROGRESS.md`](docs/E2E_PROGRESS.md).
+passes 284/284 assertions with default seed `0`, and `npm run test:smoke` passes.
+The migrated Playwright source of truth contains 121 real-browser tests for
+navigation, accessibility, tools, materials, machines, blueprints, physics,
+electrical behavior, persistence, and helper contracts. The full suite passes
+in both modes:
+
+```
+npx playwright test --workers=1 --trace=off
+npx playwright test --headed --workers=1 --trace=off
+```
+
+The historical 15/15 matrix is preserved in
+[`docs/archive/E2E_PROGRESS-2026-09-23.md`](docs/archive/E2E_PROGRESS-2026-09-23.md).
+Historical documentation snapshots remain in [`docs/archive/`](docs/archive/)
+and are not the current source of truth.
 
 ## Running it
 
@@ -41,7 +46,7 @@ with no dependencies.
 npm test                   # physics checks, no browser needed
 npm run test:smoke         # UI and persistence checks against a stand-in browser
 npx playwright install chromium
-npm run test:browser       # real-browser visual and interaction checks
+npm run test:browser       # all 121 current real-browser checks
 ```
 
 The physics checks use seed `0` by default. Pass `--seed=1234` to
@@ -77,8 +82,9 @@ the left of the canvas; the icon-based Tools panel to its right contains
 Brush/Line mode and size, Grabber, air temperature, Heat View, air layering,
 wind strength and the natural breeze. Hover an icon for a short explanation;
 hover or focus any material button for its glossary description, properties and
-implemented reactions. The glossary maintenance contract is in
-[`docs/MATERIAL_GLOSSARY.md`](docs/MATERIAL_GLOSSARY.md).
+implemented reactions. The material and machine mechanics reference, including
+the glossary maintenance contract, is in
+[`docs/GAME_MECHANICS.md`](docs/GAME_MECHANICS.md).
 
 **Grabber** moves existing material instead of painting more. Its fairground
 claw button and separate 1-to-60-pixel square size sit in the Tools panel.

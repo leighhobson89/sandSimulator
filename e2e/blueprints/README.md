@@ -9,9 +9,8 @@ Exhaustive Playwright coverage for the blueprint workflow:
 - `persistence.spec.mjs` verifies all 24 library slots, slot wrapping, and a
   portable export/import round trip through the real Save dialogs.
 
-The setup seeds deterministic source cells through the public browser module
-boundary, while all user workflow actions remain Playwright interactions. The
-area is complete only when lifecycle, field preservation, clipping, history,
-slot capacity, and persistence scenarios pass once with the default headless
-configuration and once with `npx playwright test e2e/blueprints --headed`, using
-the same server, hooks, seed, and test steps.
+The eight blueprint tests pass in both modes as part of the complete browser
+inventory. The setup seeds deterministic source cells through the public
+browser module boundary, while all user workflow actions remain Playwright
+interactions. Lifecycle, field preservation, clipping, history, slot capacity,
+and persistence scenarios use the same server, hooks, seed, and test steps.
