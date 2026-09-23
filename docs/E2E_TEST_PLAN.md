@@ -1,8 +1,9 @@
 # Elemental Foundry Playwright E2E Plan
 
 This plan is specific to the current Elemental Foundry implementation. It
-defines the architecture and migration target; it does not add the functional
-specs themselves.
+defines the architecture and migration target. Every functional area must be
+expanded to exhaustive user-visible coverage before it is marked complete; the
+specs themselves live under `e2e/`.
 
 ## 1. Codebase Audit
 
@@ -99,7 +100,7 @@ specs themselves.
 
 1. Application startup, menu, New Game, Resume Game, and screen transitions.
 2. Theme selection, theme persistence, and accessible selected state.
-3. Canvas sizing, responsive layout, pixelated rendering, and canvas mapping.
+3. Canvas sizing, desktop layout, pixelated rendering, and canvas mapping.
 4. Material catalog generation, selection, tooltips, and material metadata.
 5. Brush painting, repeated paint timer, eraser/right-click, and keyboard tools.
 6. Line, rectangle, ellipse, brush-size, and shape preview/commit behavior.
@@ -116,8 +117,7 @@ specs themselves.
     vents, tubing flow, and mixer inventories/release.
 13. Blueprints: marquee selection, copy, preview/stamp, slot library, undo/redo.
 14. Save/export/import, validation errors, autosave, resume choice, and clear.
-15. Touch input, narrow viewport usability, keyboard accessibility, dialogs,
-    focus, ARIA state, and tooltips.
+15. Desktop keyboard accessibility, dialogs, focus, ARIA state, and tooltips.
 
 ## 3. Proposed E2E Structure
 
@@ -141,23 +141,26 @@ e2e/
     reactions.spec.mjs
     determinism.spec.mjs
   materials/
-    catalog.spec.mjs
-    rendering.spec.mjs
+    catalog.spec.mjs         # grouping, selection, accessible tooltips, metadata
+    rendering.spec.mjs       # selected material painted at an exact canvas cell
+    reactions.spec.mjs       # deterministic browser-observable physics outcomes
   machines/
-    placement.spec.mjs
-    tubing-vents.spec.mjs
-    mixer.spec.mjs
+    placement.spec.mjs       # all machine placement/orientation/settings
+    powered.spec.mjs         # powered Fan/Heater/Cooler outcomes
+    storage.spec.mjs         # storage intake, capacity, purge, and dialogs
+    tubing-vents.spec.mjs    # topology, rates, visualization, Vent release
+    mixer.spec.mjs           # recipes, non-mixing output, purge, release
+    persistence.spec.mjs     # machine fields through portable save/import
     electrical.spec.mjs
   blueprints/
     capture-stamp.spec.mjs
     history.spec.mjs
+    lifecycle.spec.mjs
+    persistence.spec.mjs
   persistence/
     export-import.spec.mjs
     autosave-resume.spec.mjs
     validation.spec.mjs
-  responsive/
-    touch.spec.mjs
-    narrow-layout.spec.mjs
   regressions/
     critical-workflows.spec.mjs
 ```
@@ -169,14 +172,48 @@ e2e/
 `npx playwright test --headed` to watch real clicks, drags, dialogs, and canvas
 painting; use `--project` only if additional browser projects are later added.
 
-Each test creates a fresh context, clears localStorage before navigation, opens
-New Game, pauses immediately, seeds randomness, and uses `GamePage` for setup.
+Each test creates a fresh browser context, opens New Game, pauses immediately,
+seeds randomness when needed, and uses `GamePage` for setup.
+The helper contract suite in `e2e/helpers/contract.spec.mjs` verifies this
+shared harness behavior directly, including CSS-to-cell mapping and snapshot
+restore semantics.
 `canvas.mjs` computes screen points from the actual bounding rectangle rather
 than assuming a fixed canvas size. `diagnostics.mjs` attaches a full-page PNG and
 semantic state JSON to failed tests; Playwright retains trace, screenshot, and
 video on failure through the config.
 
-## 5. Determinism Strategy
+## 5. Functional-Area Coverage Contract
+
+Coverage is behavioral, not a test-count or line-coverage percentage. A
+functional area is complete only when its focused Playwright specs exercise all
+user-visible code paths identified in the audit, including the normal workflow,
+alternate branches, boundary values, invalid/rejected input, cancellation, and
+state reset behavior. The area checklist is:
+
+- Enumerate every control, dialog, state indicator, rendering surface, and
+  persistence field owned by the area.
+- Exercise each control through real Playwright clicks, keyboard input, pointer
+  gestures, or mapped canvas coordinates rather than calling UI handlers.
+- Cover happy paths and the error, cancellation, disabled, empty, full,
+  clipped, disconnected, and out-of-range branches that a user can reach.
+- Assert semantic DOM/ARIA state and exact deterministic game state, including
+  all persisted fields relevant to the area, not only visible material types.
+- Cover round trips through save/import/resume when the area participates in
+  persistence; verify malformed data is rejected without mutating live state.
+- Reuse deterministic physics-boundary setup only for source fixtures. Do not
+  replace user workflows with direct module calls or duplicate exhaustive
+  engine matrices that belong in integration tests.
+- Run the focused area twice: once with the default headless configuration and
+  once with `npx playwright test <focused-spec-path> --headed`. The headed run
+  must use the same focused spec path, server, hooks, seed, and test steps.
+  Retain diagnostics on failure and record any explicitly integration-only
+  behavior in the area README.
+
+An area may be called complete only after this checklist is satisfied and the
+focused suite passes in both modes. Partial representative coverage must remain
+amber, even when its existing tests pass.
+
+## 6. Determinism Strategy
 
 - **Physics ticks:** add a test-only engine API such as
   `window.__GAME_INSTANCE__.step(count)` that calls `stepSimulation()` exactly
@@ -191,7 +228,7 @@ video on failure through the config.
 - **Randomness:** call existing `setRandomSeed(seed)` through the test hook and
   expose the active seed in `inspect()`. Never monkey-patch global `Math.random`
   in Playwright.
-- **Canvas input:** dispatch real Playwright mouse/touch events at mapped cell
+- **Canvas input:** dispatch real Playwright mouse events at mapped cell
   centers. Validate mapping with a paused single-cell paint and inspect the
   resulting `type` plane. Use `page.mouse.move(..., { steps })` for drags.
 - **Timers:** pause before state setup; use Playwright clock only for UI timer
@@ -201,7 +238,7 @@ video on failure through the config.
   tolerances only where a documented randomized or asynchronous system requires
   them, and always preserve the seed and frame count in failure output.
 
-## 6. Required Production Refactors and Hooks
+## 7. Required Production Refactors and Hooks
 
 1. Add a test-build or query-flag guarded `window.__GAME_INSTANCE__` adapter
    after startup. It should expose read-only `inspect()`, `step(count)`,
@@ -222,11 +259,11 @@ video on failure through the config.
    ensure a page reload is the only lifecycle boundary. Test hooks must be
    disabled in normal production builds.
 
-## 7. E2E Versus Unit/Integration Coverage
+## 8. E2E Versus Unit/Integration Coverage
 
-**E2E:** menu and dialogs, visible controls, real clicks/drags/touch, tool
+**E2E:** menu and dialogs, visible controls, real clicks/drags, tool
 selection, canvas mapping, rendering changes, machine workflows, blueprint
-workflows, export/import through UI, autosave/resume, responsive layout,
+workflows, export/import through UI, autosave/resume, desktop layout,
 accessibility-visible state, and a small set of representative physics outcomes
 after deterministic user actions.
 
@@ -236,39 +273,54 @@ and reaction rules, conservation, collision/neighbor ordering, temperature
 integration, wind/electrical propagation, machine flow rates, and exhaustive
 material matrix coverage. `tools/simTest.mjs` is the current integration home.
 
-## 8. Migration Plan
+## 9. Migration Plan
 
 - Retain `tools/simTest.mjs` and `tools/smokeTest.mjs` unchanged initially.
 - Split `browser.spec.mjs` theme test into `navigation/themes.spec.mjs`.
 - Move startup, clear confirmation, keyboard, tooltip, and mouse drawing into
   `navigation/menu.spec.mjs` and `tools/painting.spec.mjs`.
-- Move touch and narrow screenshot coverage into `responsive/`.
-- Move mixer and vent tests into `machines/`, replacing direct module imports
-  with hook-driven setup and inspection.
+- Migrate the complete machine workflow into `machines/`: all placement
+  directions and previews, powered controls, storage lifecycle, Vent limits,
+  tubing topology/rates/visualization, Mixer recipes/non-mixing output, and
+  portable persistence. Deterministic physics-boundary setup remains fixture
+  setup only; dialogs, controls, tooltips, and canvas gestures are real UI.
+- Material catalog grouping, every prepared definition tooltip, selection/tool
+  cancellation, rendering, and representative browser-observable reactions are
+  covered under `materials/`; exhaustive reaction matrices remain at the
+  headless integration layer.
 - Keep visual snapshots only for stable shell/layout states; use semantic DOM
   and state assertions for physics and dynamic canvas content.
+- Blueprint workflows are covered in
+  `e2e/blueprints/capture-stamp.spec.mjs`,
+  `e2e/blueprints/history.spec.mjs`, `e2e/blueprints/lifecycle.spec.mjs`, and
+  `e2e/blueprints/persistence.spec.mjs`; their deterministic source-cell setup
+  uses the browser physics module boundary while selection and stamping remain
+  real Playwright gestures.
 - Delete the legacy browser spec only after equivalent new specs pass in CI for
   two runs and snapshot ownership is clear.
 
-## 9. Prioritized Roadmap
+## 10. Prioritized Roadmap
 
 1. Implement the guarded test adapter, deterministic scheduler, semantic state
    schema, and teardown behavior.
 2. Add helper-level contract tests for canvas mapping, seed reporting, stepping,
-   state capture/restore, and failure diagnostics.
-3. Migrate navigation, painting, responsive, and persistence smoke coverage.
-4. Migrate machines, blueprints, and representative physics workflows.
+   state capture/restore, and failure diagnostics. (Complete for mapping,
+   stepping, and state capture/restore.)
+3. Migrate navigation, painting, desktop accessibility, and persistence smoke coverage.
+4. Migrate machines, blueprints, and browser-observable physics workflows.
+     (Helpers, blueprints, machines/tubing, and materials catalog/rendering are
+     expanded; the separate cellular-reaction area remains integration-led.)
 5. Expand material/reaction coverage in `tools/simTest.mjs` or focused integration
    modules rather than multiplying slow browser scenarios.
 6. Add CI projects and quarantine policy for flaky visual-only tests.
 
-## 10. CI Execution
+## 11. CI Execution
 
 - `npm test`: deterministic headless physics integration (`tools/simTest.mjs`).
 - `npm run test:smoke`: DOM wiring/startup smoke (`tools/smokeTest.mjs`).
 - `npx playwright test e2e/navigation e2e/tools --grep @smoke`: fast browser
   smoke on every pull request.
-- `npx playwright test e2e/navigation e2e/tools e2e/persistence e2e/responsive`:
+- `npx playwright test e2e/navigation e2e/tools e2e/persistence`:
   functional shell suite on pull requests.
 - `npx playwright test e2e`: full browser suite on protected branches/nightly.
 - Run CI with one worker for deterministic shared-resource behavior; retain

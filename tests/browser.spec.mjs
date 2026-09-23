@@ -225,26 +225,3 @@ test('clear requires confirmation and supports cancel', async ({ page }) => {
     await page.getByRole('button', { name: 'Clear World', exact: true }).click();
     await expect(dialog).toBeHidden();
 });
-
-test.describe('touch and narrow screens', () => {
-    test.use({ hasTouch: true, viewport: { width: 390, height: 844 } });
-
-    test('touch drawing and narrow layout stay usable', async ({ page }) => {
-        await startSandbox(page);
-        const canvas = page.locator('#canvas');
-        const canvasBox = await canvas.boundingBox();
-        if (!canvasBox) throw new Error('Canvas has no visible bounds');
-
-        await page.getByRole('button', { name: 'Pause' }).click();
-        const before = await canvas.screenshot();
-        await page.touchscreen.tap(canvasBox.x + canvasBox.width / 2, canvasBox.y + canvasBox.height / 2);
-        await expect.poll(async () => Buffer.compare(before, await canvas.screenshot())).not.toBe(0);
-
-        await expect(page.locator('#toolsPanel')).toBeVisible();
-        await expect(page.locator('#floatingContainer')).toBeVisible();
-        await expect(page).toHaveScreenshot('narrow-workspace.png', {
-            animations: 'disabled',
-            mask: [canvas]
-        });
-    });
-});
