@@ -1,9 +1,9 @@
 # Mixer Mixtures
 
 This document is the source of truth for mixer recipes and behavior. The machine
-overview is maintained in [`docs/MACHINE_GLOSSARY.md`](docs/MACHINE_GLOSSARY.md).
-Update it
-whenever mixer logic, recipes, output presentation, or persistence changes.
+overview is maintained in [`MACHINE_GLOSSARY.md`](MACHINE_GLOSSARY.md).
+Update it whenever mixer logic, recipes, output presentation, or persistence
+changes.
 
 The mixer checks the two input materials in either order. When a recipe exists,
 one particle from each input becomes one particle of the result. When no recipe
@@ -30,8 +30,8 @@ source material can become a normal single output stream.
 
 The mixer never overwrites an existing non-mixed output stream while creating a
 recipe result. A lone non-mixing output remains a single half-width stream until
-the complementary material arrives; only then can the pair be converted into
-the documented mixed result.
+the complementary material arrives; only then can the pair be converted into the
+documented mixed result.
 
 When both source bins contain a valid recipe, one particle is consumed from each
 bin immediately and one result particle is added to bin 3. Production continues
