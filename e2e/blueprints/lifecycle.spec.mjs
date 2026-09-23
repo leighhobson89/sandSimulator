@@ -93,6 +93,39 @@ test('stamping preserves every blueprint field and overwrites air', async ({ pag
     expect(state.arrays.type[21 + 21 * state.cols]).toBe(0);
 });
 
+test('middle click is inert in marquee and blueprint-stamp modes', async ({ page }) => {
+    const game = new GamePage(page);
+    await game.openMenu();
+    await game.newGame();
+    await game.setFixture([{ x: 30, y: 20, type: 'Water' }]);
+    const state = await game.state();
+    const water = state.definitions.find(definition => definition?.name === 'Water').id;
+    const sand = state.definitions.find(definition => definition?.name === 'Sand').id;
+    const cell = { x: 30, y: 20 };
+
+    await page.getByRole('button', { name: 'Sand', exact: true }).click();
+    await page.getByRole('tab', { name: 'Blueprints' }).click();
+    await page.getByRole('button', { name: /Marquee/ }).click();
+    await dragCanvasCells(page, { x: 5, y: 5 }, { x: 7, y: 7 });
+    const beforeMarqueeClick = await game.state();
+    await page.mouse.click(...Object.values(await canvasPoint(page, cell)), { button: 'middle' });
+    await expect(page.locator('#marqueeButton')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator(`#particleButtons [data-particle-id="${sand}"]`)).toHaveClass(/selected/);
+    expect((await game.state()).arrays.type).toEqual(beforeMarqueeClick.arrays.type);
+
+    await page.getByRole('button', { name: 'Copy selection' }).click();
+    await page.getByRole('button', { name: 'Blueprint 1', exact: true }).click();
+    await expect(page.locator('#blueprintStampPreview')).toBeVisible();
+    const beforeStampClick = await game.state();
+    await page.mouse.click(...Object.values(await canvasPoint(page, cell)), { button: 'middle' });
+    await expect(page.locator('#blueprintStampPreview')).toBeVisible();
+    await expect(page.locator('#blueprintSlots .active-toggle')).toHaveCount(1);
+    await expect(page.locator(`#particleButtons [data-particle-id="${sand}"]`)).toHaveClass(/selected/);
+    const afterStampClick = await game.state();
+    expect(afterStampClick.arrays.type).toEqual(beforeStampClick.arrays.type);
+    expect(afterStampClick.arrays.type[cell.y * afterStampClick.cols + cell.x]).toBe(water);
+});
+
 test('edge clipping supports keyboard undo redo and clears redo after a new stamp', async ({ page }) => {
     const game = new GamePage(page);
     await game.openMenu();

@@ -12,8 +12,9 @@ Exhaustive browser workflows for machines and material transfer.
 - `persistence.spec.mjs` checks machine settings, inventories, tubing, and
   Mixer inputs through portable export/import.
 
-The 30 machine tests pass in both modes as part of the complete browser
-inventory. The physics boundary seeds inventory for deterministic setup; UI
+Run the 30 machine browser tests headlessly for required verification; headed
+runs are optional diagnostics only and are never an acceptance or release
+prerequisite. The physics boundary seeds inventory for deterministic setup; UI
 placement, dialogs, toggles, tooltips, and canvas interaction use Playwright.
 Engine-level flow-rate and reaction matrices remain in `tools/simTest.mjs`; they
 are not duplicated as slow browser tests when no additional user-visible

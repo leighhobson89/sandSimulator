@@ -143,3 +143,90 @@ test('hand-painted rays choose, retain, reset, and move with stroke direction', 
         expect(typeAt(state, { x: nextStroke.x, y: nextStroke.y + ray.stepY })).toBe(rayId);
     }
 });
+
+test('middle click samples materials in every drawing mode and ignores empty cells', async ({ page }) => {
+    const game = await start(page);
+    await game.setFixture([{ x: 30, y: 20, type: 'Water' }]);
+    const state = await game.state();
+    const water = state.definitions.find(definition => definition?.name === 'Water').id;
+    const sand = state.definitions.find(definition => definition?.name === 'Sand').id;
+
+    for (const [mode, cell] of [
+        ['Brush mode', { x: 30, y: 20 }],
+        ['Line mode', { x: 30, y: 20 }],
+        ['Rectangle mode', { x: 30, y: 20 }],
+        ['Ellipse mode', { x: 30, y: 20 }]
+    ]) {
+        await page.getByRole('button', { name: mode }).click();
+        await page.getByRole('button', { name: 'Sand', exact: true }).click();
+        await clickCanvasCell(page, cell, { button: 'middle' });
+
+        await expect(page.locator(`#particleButtons [data-particle-id="${water}"]`)).toHaveClass(/selected/);
+        expect(typeAt(await game.state(), cell)).toBe(water);
+    }
+
+    await page.getByRole('button', { name: 'Sand', exact: true }).click();
+    await clickCanvasCell(page, { x: 70, y: 30 }, { button: 'middle' });
+    await expect(page.locator(`#particleButtons [data-particle-id="${sand}"]`)).toHaveClass(/selected/);
+    expect(typeAt(await game.state(), { x: 70, y: 30 })).toBe(0);
+});
+
+test('middle click does not sample while eraser, Grabber, or machine placement is active', async ({ page }) => {
+    const game = await start(page);
+    await game.setFixture([{ x: 30, y: 20, type: 'Water' }]);
+    const state = await game.state();
+    const water = state.definitions.find(definition => definition?.name === 'Water').id;
+    const sand = state.definitions.find(definition => definition?.name === 'Sand').id;
+    const cell = { x: 30, y: 20 };
+
+    await page.getByRole('button', { name: 'Sand', exact: true }).click();
+    await page.locator('#eraserButton').click();
+    await clickCanvasCell(page, cell, { button: 'middle' });
+    await expect(page.locator(`#particleButtons [data-particle-id="${sand}"]`)).toHaveClass(/selected/);
+    await expect(page.locator('#eraserButton')).toHaveClass(/active-toggle/);
+    expect(typeAt(await game.state(), cell)).toBe(water);
+
+    await page.locator('#grabberButton').click();
+    await clickCanvasCell(page, cell, { button: 'middle' });
+    await expect(page.locator(`#particleButtons [data-particle-id="${sand}"]`)).toHaveClass(/selected/);
+    await expect(page.locator('#grabberButton')).toHaveAttribute('aria-pressed', 'true');
+    expect(typeAt(await game.state(), cell)).toBe(water);
+
+    await page.getByRole('button', { name: 'Fan', exact: true }).click();
+    const fan = (await game.state()).definitions.find(definition => definition?.name === 'Fan').id;
+    const fanButton = page.locator(`#particleButtons [data-particle-id="${fan}"]`);
+    const brushModeButton = page.locator('#brushModeButton');
+    const emptyCell = { x: 70, y: 30 };
+    await expect(fanButton).toHaveClass(/selected/);
+    await expect(brushModeButton).toHaveAttribute('aria-pressed', 'true');
+    await clickCanvasCell(page, emptyCell, { button: 'middle' });
+    await game.step(0);
+    await expect(page.locator('#machineOverlay .machine-placement-preview')).toHaveCount(0);
+    await expect(fanButton).toHaveClass(/selected/);
+    await expect(brushModeButton).toHaveAttribute('aria-pressed', 'true');
+    expect((await game.state()).arrays.type).toEqual(state.arrays.type);
+});
+
+test('middle-click sampling cancels pending line and shape gestures without committing them', async ({ page }) => {
+    const game = await start(page);
+    const cell = { x: 30, y: 20 };
+    await game.setFixture([{ ...cell, type: 'Water' }]);
+    const before = await game.state();
+    const water = before.definitions.find(definition => definition?.name === 'Water').id;
+    const startPoint = await canvasPoint(page, { x: 40, y: 20 });
+    const endPoint = await canvasPoint(page, { x: 48, y: 20 });
+    const samplePoint = await canvasPoint(page, cell);
+
+    for (const mode of ['Line mode', 'Rectangle mode', 'Ellipse mode']) {
+        await page.getByRole('button', { name: mode }).click();
+        await page.mouse.move(startPoint.x, startPoint.y);
+        await page.mouse.down();
+        await page.mouse.move(endPoint.x, endPoint.y);
+        await page.mouse.click(samplePoint.x, samplePoint.y, { button: 'middle' });
+        await page.mouse.up();
+
+        const after = await game.state();
+        await expect(page.locator(`#particleButtons [data-particle-id="${water}"]`)).toHaveClass(/selected/);
+        expect(after.arrays.type).toEqual(before.arrays.type);
+    }
+});

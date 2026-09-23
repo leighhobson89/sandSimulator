@@ -15,17 +15,23 @@ The current program overview and verification basis are recorded in
 in [`docs/ISSUES.md`](docs/ISSUES.md), while superseded documentation findings
 are kept in [`docs/archive/`](docs/archive/).
 
-The latest accepted verification on 23 September 2026 is green: `npm test`
+The latest recorded full verification on 23 September 2026 is green: `npm test`
 passes 284/284 assertions with default seed `0`, and `npm run test:smoke` passes.
-The migrated Playwright source of truth contains 121 real-browser tests for
-navigation, accessibility, tools, materials, machines, blueprints, physics,
-electrical behavior, persistence, and helper contracts. The full suite passes
-in both modes:
+The last full Playwright run covered 121 real-browser tests and passed in both
+headless mode and a headed diagnostic run. Headed runs are optional diagnostics,
+never an acceptance or release prerequisite.
+The current source discovers 135 browser tests across navigation,
+accessibility, tools, materials, machines, blueprints, physics, electrical
+behavior, persistence, and helper contracts. The middle-click picker changes
+were verified headlessly in their three focused specs (21/21); the current full
+inventory has not been rerun.
 
 ```
 npx playwright test --workers=1 --trace=off
-npx playwright test --headed --workers=1 --trace=off
 ```
+
+Use the headless command as the required browser verification path. No headed
+run is needed for acceptance or release.
 
 The historical 15/15 matrix is preserved in
 [`docs/archive/E2E_PROGRESS-2026-09-23.md`](docs/archive/E2E_PROGRESS-2026-09-23.md).
@@ -46,7 +52,7 @@ with no dependencies.
 npm test                   # physics checks, no browser needed
 npm run test:smoke         # UI and persistence checks against a stand-in browser
 npx playwright install chromium
-npm run test:browser       # all 121 current real-browser checks
+npm run test:browser       # all 135 currently discovered browser tests
 ```
 
 The physics checks use seed `0` by default. Pass `--seed=1234` to
@@ -76,16 +82,17 @@ node tools/tuneIce.mjs                             # ice: lasts at room temperat
 | Horizontal or Shift + wheel | Leave horizontal scrolling to the browser where the viewport supports it |
 | Arrow keys (above zoom level 1) | Scroll the zoomed canvas; focused controls keep their normal arrow-key behavior |
 | Edge pan checkbox (beside Import) | When checked, slowly pan while the mouse hovers in the outer 5% of a zoomed canvas; it is off by default |
-| Middle click | Remains browser-owned/native where supported; it is not an app drag-pan gesture |
+| Middle click | Pick the material under the pointer in Brush, Line, Rectangle, or Ellipse mode; no-op on empty cells or in eraser, Grabber, machine-placement, marquee, or blueprint-stamp modes; never pans or triggers browser autoscroll |
 
 The canvas starts at **Zoom: 1/4**, fitted to the workspace. Levels 2-4 make
 the canvas larger and expose thin, theme-responsive scrollbars; the simulation
 continues while the viewport is scrolled. Zoom changes briefly show a top-right
 `Zoom: N/4` notice that fades after one second. Zoom and scroll position are
 view state only: entering the workspace or reloading resets them to the fitted
-view and they are not saved. There is no app-owned drag-to-pan mode. Existing
-coordinate mapping, painting, erasing, touch input and machine overlays remain
-unchanged while zoomed or scrolled.
+view and they are not saved. There is no app-owned drag-to-pan mode. Middle
+click sampling uses the same cell mapping while zoomed or scrolled, and prevents
+the browser's middle-button autoscroll behavior. Existing painting, erasing,
+touch input and machine overlays remain unchanged.
 
 **Clear** is deliberately confirm-first: the toolbar button opens a warning,
 Cancel leaves the current world untouched, and Clear World removes all

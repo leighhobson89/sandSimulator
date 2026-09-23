@@ -351,12 +351,14 @@ settings, inventories, Tubing, and Mixer inputs through the supported save path.
 The headless regression coverage in `tools/simTest.mjs` checks the `30/s` and
 `20/s` bottlenecks, material transfer, non-conductive Tubing, Vent release, and
 full-Vent flow cutoff. For browser-visible changes, run the owning machine area
-in both modes:
+headlessly:
 
 ```text
 npx playwright test e2e/machines --workers=1 --trace=off
-npx playwright test e2e/machines --headed --workers=1 --trace=off
 ```
+
+Headed runs are optional visual or input diagnostics only and are never an
+acceptance or release prerequisite.
 
 Keep focused machine regressions beside their owning specs, and use the
 regression policy in [`E2E_TEST_PLAN.md`](E2E_TEST_PLAN.md) when no functional

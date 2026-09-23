@@ -796,20 +796,22 @@ function makeParticleButton(def, id) {
     button.dataset.particleId = String(id);
     button.dataset.tooltip = formatMaterialTooltip(def);
 
-    button.addEventListener('click', () => {
-        // Choosing a material always leaves Grabber mode first. If the claw is
-        // holding anything, setGrabberMode restores it before the new brush is
-        // selected, so changing tools can never make lifted pixels disappear.
-        cancelPainting();
-        cancelBlueprintModes();
-        setGrabberMode(false);
-        setParticleTypeIdSelected(id);
-        setEraserOn(false);
-        getElements().eraserButton.classList.remove('active-toggle');
-        highlightSelectedParticle();
-    });
+    button.addEventListener('click', () => selectParticleType(id));
 
     return button;
+}
+
+function selectParticleType(id) {
+    // Choosing a material always leaves Grabber mode first. If the claw is
+    // holding anything, setGrabberMode restores it before the new brush is
+    // selected, so changing tools can never make lifted pixels disappear.
+    cancelPainting();
+    cancelBlueprintModes();
+    setGrabberMode(false);
+    setParticleTypeIdSelected(id);
+    setEraserOn(false);
+    getElements().eraserButton.classList.remove('active-toggle');
+    highlightSelectedParticle();
 }
 
 // Material buttons use the same fixed tooltip layer as the tools panel. The
@@ -1643,12 +1645,23 @@ function setUpCanvasInput() {
     const canvas = getElements().canvas;
 
     canvas.addEventListener('contextmenu', event => event.preventDefault());
+    canvas.addEventListener('auxclick', event => {
+        if (event.button === 1) event.preventDefault();
+    });
 
     canvas.addEventListener('mousedown', event => {
-        // Middle button remains browser-owned (including native autoscroll).
-        // It must never enter painting, Grabber, or application pan state.
         if (event.button === 1) {
+            event.preventDefault();
             stopEdgePan();
+            if (!['brush', 'line', 'rectangle', 'ellipse'].includes(getDrawMode()) ||
+                getGrabberOn() || getEraserOn() || hasBlueprintMode() || selectedMachine()) return;
+
+            const cell = cellFromEvent(event);
+            const world = getWorld();
+            if (!world || cell.x < 0 || cell.y < 0 || cell.x >= world.cols || cell.y >= world.rows) return;
+            const type = world.type[index(cell.x, cell.y)];
+            if (type <= 0 || !getDefinitions()[type]) return;
+            selectParticleType(type);
             return;
         }
         stopEdgePan();

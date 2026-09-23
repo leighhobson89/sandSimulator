@@ -14,10 +14,11 @@ mixed-output exclusivity.
   are in place; it is now over 3,000 lines and carries several systems.
 
 - [ ] Add broader manual device and assistive-technology checks as the UI grows.
-  The current 121-test browser suite covers mouse, touch, themes, focus,
-  rendered canvas mapping, dialogs, keyboard state, persistence, machines,
-  blueprints, physics, and Mixer workflows; this follow-up is supplementary to
-  the complete functional-area E2E matrix.
+  The current source discovers 135 browser tests covering mouse, touch, themes,
+  focus, rendered canvas mapping, dialogs, keyboard state, persistence, machines,
+  blueprints, physics, and Mixer workflows. The last full run covered 121 tests;
+  the middle-click picker changes have only focused verification so far. This
+  follow-up is supplementary to the functional-area E2E matrix.
 
 Do not archive an item until the underlying implementation and its verification
 have changed.

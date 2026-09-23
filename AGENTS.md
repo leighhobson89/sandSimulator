@@ -46,3 +46,11 @@ After implementation, archive every executed or finalized plan in
 Always ask the user for approval before running a full test suite. Focused test
 runs for specific functional areas may be run without prior approval, up to
 three areas per request.
+
+## Playwright Verification Policy
+
+The required Playwright verification path is headless, using the default
+configuration. Headed runs are optional diagnostics for investigating visual or
+input issues; they are never required for acceptance, release, or routine
+verification. Do not rerun a passing headless test in headed mode solely for
+mode parity. This does not change the approval requirement for full suites.

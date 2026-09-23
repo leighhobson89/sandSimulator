@@ -137,31 +137,51 @@ test('arrow keys scroll only above level one and never hijack focused controls',
     expect(after.scrollTop).toBeGreaterThan(0);
 });
 
-test('painting and erasing remain mapped after scroll and middle click is inert', async ({ page }) => {
+test('middle click samples after viewport scroll without panning the zoomed canvas', async ({ page }) => {
     const game = await start(page);
+    // Keep this one-cell paint assertion deterministic: loose particles are
+    // intentionally sprinkled across brushes larger than one cell.
+    await page.locator('#brushSize').fill('1');
     await zoom(page, 1);
     await expectZoom(page, 2);
     const initial = await game.state();
     const cell = { x: initial.cols - 8, y: 24 };
+    await game.setFixture([{ ...cell, type: 'Water' }]);
     await scrollCanvasToCell(page, cell);
     await page.getByRole('button', { name: 'Sand', exact: true }).click();
 
+    await page.evaluate(() => {
+        window.__middleDefaults = [];
+        const canvas = document.querySelector('#canvas');
+        for (const type of ['mousedown', 'auxclick']) {
+            canvas.addEventListener(type, event => {
+                if (event.button === 1) window.__middleDefaults.push({ type, prevented: event.defaultPrevented });
+            });
+        }
+    });
     const before = await canvasViewportMetrics(page);
     await clickCanvasCell(page, cell, { button: 'middle' });
-    let state = await game.state();
-    expect(typeAt(state, cell)).toBe(0);
+    const state = await game.state();
+    const water = state.definitions.find(definition => definition?.name === 'Water').id;
+    expect(typeAt(state, cell)).toBe(water);
+    await expect(page.locator(`#particleButtons [data-particle-id="${water}"]`)).toHaveClass(/selected/);
+    expect(await page.evaluate(() => window.__middleDefaults)).toEqual([
+        { type: 'mousedown', prevented: true },
+        { type: 'auxclick', prevented: true }
+    ]);
     const middle = await canvasViewportMetrics(page);
     expect(middle.scrollLeft).toBe(before.scrollLeft);
     expect(middle.scrollTop).toBe(before.scrollTop);
-    await page.keyboard.press('Escape');
 
+    await game.setFixture([]);
+    await page.getByRole('button', { name: 'Sand', exact: true }).click();
     await clickCanvasCell(page, cell);
-    state = await game.state();
+    const painted = await game.state();
     const sand = state.definitions.find(definition => definition?.name === 'Sand').id;
-    expect(typeAt(state, cell)).toBe(sand);
+    expect(typeAt(painted, cell)).toBe(sand);
     await clickCanvasCell(page, cell, { button: 'right' });
-    state = await game.state();
-    expect(typeAt(state, cell)).toBe(0);
+    const erased = await game.state();
+    expect(typeAt(erased, cell)).toBe(0);
 });
 
 test('simulation continues while zoomed and scrolled', async ({ page }) => {

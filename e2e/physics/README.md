@@ -1,8 +1,10 @@
 # Physics E2E Coverage
 
 Focused browser contracts for deterministic, user-visible physics outcomes.
-The folder contains 24 Playwright tests and is complete within the 121-test
-browser inventory:
+The folder contains 24 Playwright tests within the current 135-test browser
+inventory. The last full browser run covered 121 tests and passed headlessly; an
+additional headed diagnostic run also passed. The current 135-test inventory
+has not been rerun.
 
 - `determinism.spec.mjs`: four tests for seeded snapshots, restore/replay,
   controlled stepping, and an electrical boundary.
@@ -15,21 +17,20 @@ browser inventory:
 
 ## Run
 
-Run the focused area with one worker in both modes:
+Run the focused area headlessly with one worker. Headed runs are optional visual
+or input diagnostics only and are never an acceptance or release prerequisite.
 
 ```text
 npx playwright test e2e/physics --workers=1 --trace=off
-npx playwright test e2e/physics --headed --workers=1 --trace=off
 ```
 
-The focused commands pass in both modes. The full headless integration suite
-remains `npm test`; its current accepted run passes 284/284 assertions with
-default seed `0`. `npm run test:smoke` remains the stand-in browser wiring and
-persistence check. The full browser commands are:
+The full headless integration suite remains `npm test`; its current accepted run
+passes 284/284 assertions with default seed `0`. `npm run test:smoke` remains the
+stand-in browser wiring and persistence check. The headless full-browser-suite
+command is:
 
 ```text
 npx playwright test --workers=1 --trace=off
-npx playwright test --headed --workers=1 --trace=off
 ```
 
 ## Fixture Boundary

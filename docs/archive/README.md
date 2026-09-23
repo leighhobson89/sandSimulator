@@ -23,6 +23,9 @@ in [`../README.md`](../README.md); active findings remain in
 - [`plans/canvas-zoom-edge-pan-2026-09-23.md`](plans/canvas-zoom-edge-pan-2026-09-23.md)
   — the executed canvas zoom, scrolling, and optional edge-pan implementation
   plan from 23 September 2026.
+- [`plans/middle-click-material-picker-2026-09-23.md`](plans/middle-click-material-picker-2026-09-23.md)
+  — the executed middle-click material picking and regression-verification plan
+  from 23 September 2026.
 
 ## Earlier Dated Archives
 

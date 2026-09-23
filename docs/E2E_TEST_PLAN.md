@@ -22,10 +22,16 @@ integration suite.
 - `e2e/tools/zoom.spec.mjs` covers the transient four-level canvas zoom,
   zoom-only vertical wheel behavior and fading status, fitted versus scrollable
   layouts, thin themed scrollbars, arrow-key scrolling, coordinate-preserving
-  painting/erasing, native middle-click ownership, continued simulation,
+  painting/erasing, mode-gated middle-click material sampling, prevented
+  middle-button defaults and unchanged viewport offsets, continued simulation,
   workspace reset, machine-overlay hit testing, and the optional five-percent
-  edge-pan behavior. Horizontal and Shift + wheel remain browser-owned rather
-  than entering the application zoom path.
+  edge-pan behavior. `e2e/tools/painting.spec.mjs` covers all four eligible
+  drawing modes, empty-cell and active-tool no-ops, selection synchronization,
+  and cancellation of pending Line, Rectangle, and Ellipse gestures.
+  `e2e/blueprints/lifecycle.spec.mjs` verifies middle-click no-ops during
+  marquee selection and blueprint stamping.
+  Horizontal and Shift + wheel remain browser-owned rather than entering the
+  application zoom path.
 - `e2e/materials/` covers catalog metadata, rendering, and browser-observable
   material reactions.
 - `e2e/physics/` covers deterministic, user-visible settling, thermal, and
@@ -53,6 +59,11 @@ in `tools/smokeTest.mjs`.
 
 ## Commands
 
+Required Playwright verification is headless, using the default configuration.
+Headed runs are optional visual or input diagnostics only; they are never an
+acceptance or release prerequisite. Do not rerun a passing headless test in
+headed mode just to establish mode parity.
+
 Install the browser once when needed:
 
 ```text
@@ -65,26 +76,31 @@ Run the non-browser checks and the browser suite with one worker:
 npm test
 npm run test:smoke
 npm run test:browser
-npx playwright test --workers=1 --trace=off
-npx playwright test --headed --workers=1 --trace=off
 ```
 
-Run a focused area in both modes. Replace the path with the owning folder or
-spec when investigating a change:
+`npm run test:browser` is the headless full-browser-suite command. To run a
+focused area, replace the path with its owning folder or spec:
 
 ```text
 npx playwright test e2e/physics --workers=1 --trace=off
-npx playwright test e2e/physics --headed --workers=1 --trace=off
 ```
 
-For the canvas viewport feature, run the focused spec in both modes:
+Run the middle-click picker regressions without running the full suite:
+
+```text
+npm run test:browser -- e2e/tools/painting.spec.mjs e2e/tools/zoom.spec.mjs e2e/blueprints/lifecycle.spec.mjs
+```
+
+For the canvas viewport feature, run the focused spec headlessly:
 
 ```text
 npx playwright test e2e/tools/zoom.spec.mjs --workers=1 --trace=off
-npx playwright test e2e/tools/zoom.spec.mjs --headed --workers=1 --trace=off
 ```
 
-Headed and headless runs must use the same server, hooks, seed, and test steps.
+If a visual or input issue needs inspection, an optional headed diagnostic can
+use `npx playwright test <path> --headed --workers=1 --trace=off`. It is not
+required after a passing headless run and must never be treated as an
+acceptance/release gate.
 
 ## Ongoing Maintenance Contract
 
@@ -101,8 +117,10 @@ Headed and headless runs must use the same server, hooks, seed, and test steps.
   for UI timer behavior such as autosave or repeated painting.
 - Use rendered canvas dimensions for coordinate mapping and retain state JSON,
   screenshots, traces, videos, and the HTML report when failures occur.
-- Run the focused area headless and headed after changes. Update the owning area
-  README when its scope, fixture boundary, or maintenance contract changes.
+- Run the focused area headlessly after changes. Use headed mode only as an
+  optional diagnostic, never as an acceptance/release prerequisite. Update the
+  owning area README when its scope, fixture boundary, or maintenance contract
+  changes.
 
 ## Regression Policy
 

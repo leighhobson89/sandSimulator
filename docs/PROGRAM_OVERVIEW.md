@@ -51,13 +51,14 @@ of the saved world state:
 - The optional, unchecked **Edge pan** checkbox beside Import enables slow
   pointer-hover panning only inside the outer 5% of the viewport, and only
   above level 1. There is no application-owned drag-pan gesture. Middle-click
-  remains browser-owned/native where supported, rather than entering painting or
-  custom panning.
+  samples a non-empty material only in Brush, Line, Rectangle, or Ellipse mode;
+  other active tools are unchanged. Its browser default is prevented, so it
+  cannot trigger native autoscroll or pan the viewport.
 - `cellFromEvent()` continues to map pointer coordinates through the rendered
-  canvas rectangle. Painting, erasing, touch input, and machine overlay hit
-  testing therefore retain their existing coordinate behavior at every zoom and
-  scroll position. Scrolling changes only what is visible; the simulation loop
-  continues running.
+  canvas rectangle. Painting, erasing, material sampling, touch input, and
+  machine overlay hit testing therefore retain their existing coordinate
+  behavior at every zoom and scroll position. Scrolling changes only what is
+  visible; the simulation loop continues running.
 
 The scan direction alternates, and a per-cell moved flag prevents a particle
 from moving twice in one frame. This is a pragmatic, fast cellular model rather
@@ -81,14 +82,20 @@ rule based on the surface of connected liquid, not a Navier–Stokes solution.
 - The simulator is testable outside the browser. The physics core has no DOM
   dependency, and the headless suite checks 284 assertions with default seed
   `0`, plus a 260x150 performance budget. A second smoke suite covers startup,
-  input and autosave decisions. The migrated Playwright source of truth has 121
-  browser tests across all fifteen functional areas and passes in both headless
-  and headed modes.
+  input and autosave decisions. The last recorded full Playwright run covered
+  121 browser tests and passed headlessly (a headed diagnostic run also passed);
+  the current source discovers 135 tests across all fifteen functional areas.
+  The focused middle-click picker specs passed 21/21 headlessly; the current
+  full inventory has not been rerun. Headed runs are optional diagnostics and
+  never an acceptance or release prerequisite.
 - The interaction design is polished for a small sandbox: brush and line
-  modes, right-click erase, heat view, a move-only-one-material Grabber,
-  environmental controls, keyboard shortcuts and six persistent themes are all
-  present. The material picker doubles as a glossary: every entry has a
-  keyboard-accessible tooltip built from its live properties and reactions.
+  modes, right-click erase, mode-gated middle-click material sampling, heat
+  view, a move-only-one-material Grabber, environmental controls, keyboard
+  shortcuts and six persistent themes are all present. Middle-click picks only
+  in Brush, Line, Rectangle, and Ellipse modes; it leaves empty cells and other
+  active tools untouched, and never pans or triggers browser autoscroll. The
+  material picker doubles as a glossary: every entry has a keyboard-accessible
+  tooltip built from its live properties and reactions.
 - Full worlds can be exported as an LZString and imported by pasting it back.
   The current game also autosaves locally once per minute and can be resumed
   from the menu.
@@ -123,14 +130,20 @@ community content, modding, advanced circuitry, or broader toybox variety.
 
 ## Verification basis
 
-The current verification basis includes the seeded headless suite at 284/284
-assertions with default seed `0`, the passing smoke suite, and the complete
-121-test browser suite in both modes:
+The recorded verification includes the seeded headless suite at 284/284
+assertions with default seed `0`, the passing smoke suite, and a last full
+Playwright run of 121 tests that passed headlessly (with an additional headed
+diagnostic run also passing). The current source discovers 135 browser tests;
+the full inventory has not been rerun for the middle-click picker changes.
+Their three focused specs passed 21/21 headlessly:
 
 ```text
 npx playwright test --workers=1 --trace=off
-npx playwright test --headed --workers=1 --trace=off
 ```
+
+Headless Playwright is the required verification path. Headed runs may be used
+to diagnose visual or input issues, but are never required for acceptance or
+release.
 
 A failing headless assertion reports the seed needed to reproduce it. The
 project shortcut is `npm run test:browser`; dated superseded documentation is

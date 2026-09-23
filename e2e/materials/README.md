@@ -11,6 +11,6 @@ Exhaustive browser contracts for the material catalog and canvas behavior.
 The complete reaction matrix remains in the headless physics integration tests;
 browser specs cover user-observable rendering and reaction outcomes, while the
 integration suite covers every rule combination and conservation edge case
-without duplicating slow UI setup. The 11 material tests pass in both modes as
-part of the complete browser inventory, using the same server, hooks, seed, and
-test steps.
+without duplicating slow UI setup. Run the 11 material browser tests headlessly
+for required verification. Headed runs are optional diagnostics only and are
+never an acceptance or release prerequisite.
