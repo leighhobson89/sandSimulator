@@ -1,6 +1,6 @@
 # Active issues and improvements
 
-Last reviewed: 22 September 2026.
+Last reviewed: 23 September 2026.
 
 ## Confirmed defects
 

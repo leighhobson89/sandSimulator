@@ -1,6 +1,6 @@
 # Elemental Foundry: program overview
 
-Reviewed: 22 September 2026
+Reviewed: 23 September 2026
 
 Elemental Foundry is a browser-based **falling-sand / cellular-automata
 sandbox**. The player paints materials into a pixel grid, then watches simple
@@ -51,10 +51,13 @@ rule based on the surface of connected liquid, not a Navier–Stokes solution.
   while Heater and Cooler convert it into directional temperature forces and
   matching centreline Heat Ray/Cold Ray projectiles.
 - The simulator is testable outside the browser. The physics core has no DOM
-  dependency, and the headless suite checks 250 reproducibly seeded behavioural
-  assertions plus a 260x150 performance budget. A second smoke suite covers
-  startup, input and autosave decisions, while Playwright covers real-browser
-  themes, pointer/touch input, focus and narrow layouts.
+  dependency, and the headless suite checks 284 assertions with default seed
+  `0`, plus a 260x150 performance budget. A second
+  smoke suite covers startup, input and autosave decisions. The focused browser
+  physics contract has 24 tests across determinism, settling, thermal, and
+  reactions and passes in both headless and headed modes; the remaining
+  Playwright coverage covers real-browser themes, pointer/touch input, focus and
+  desktop interaction.
 - The interaction design is polished for a small sandbox: brush and line
   modes, right-click erase, heat view, a move-only-one-material Grabber,
   environmental controls, keyboard shortcuts and six persistent themes are all
@@ -94,8 +97,9 @@ community content, modding, advanced circuitry, or broader toybox variety.
 
 ## Verification basis
 
-The review read the source, data definitions, UI and tools; validated JavaScript
-syntax and JSON; and ran the seeded headless and smoke suites. A failing
-headless assertion now reports the seed needed to reproduce it. Real-browser
-checks are available through `npm run test:browser`; the remaining testing
+The current verification basis includes the seeded headless suite at 284
+assertions with default seed `0`, the passing smoke suite, and the focused
+24-test physics browser contract in both headless and headed modes. A failing
+headless assertion reports the seed needed to reproduce it. Real-browser checks
+are also available through `npm run test:browser`; the remaining testing
 follow-up is broader manual device and assistive-technology coverage.

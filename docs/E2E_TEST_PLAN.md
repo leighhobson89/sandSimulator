@@ -3,7 +3,9 @@
 This plan is specific to the current Elemental Foundry implementation. It
 defines the architecture and migration target. Every functional area must be
 expanded to exhaustive user-visible coverage before it is marked complete; the
-specs themselves live under `e2e/`.
+specs themselves live under `e2e/`. The focused browser physics contract in
+`e2e/physics/` is representative browser coverage, while exhaustive material
+and rule matrices remain in the headless integration suite.
 
 ## 1. Codebase Audit
 
@@ -248,26 +250,24 @@ incomplete.
   tolerances only where a documented randomized or asynchronous system requires
   them, and always preserve the seed and frame count in failure output.
 
-## 7. Required Production Refactors and Hooks
+## 7. Production Refactors and Hooks
 
-1. Add a test-build or query-flag guarded `window.__GAME_INSTANCE__` adapter
-   after startup. It should expose read-only `inspect()`, `step(count)`,
+The current test adapter and scheduler provide the migration seams required by
+the focused suites:
+
+1. A test-build or query-flag guarded `window.__GAME_INSTANCE__` adapter is
+   available after startup. It exposes read-only `inspect()`, `step(count)`,
    `setRandomSeed(seed)`, `canvasToCell({x,y})`, `captureState()`, and
-   `restoreState(state)` methods. Return copied arrays or compact summaries, not
-   mutable live references.
-2. Add an explicit `render()`/`stepAndRender()` seam in `game.js`, and a test
-   scheduler switch that prevents uncontrolled RAF progression while the test
-   controls ticks.
-3. Keep `physics.js` as the stable public physics boundary. Do not expose
-   volatile implementation variables; define a versioned inspection schema with
-   dimensions, frame, seed, material counts, selected cells, and selected typed
-   array planes.
-4. Extract `cellFromEvent` mapping into a shared exported helper or expose the
-   equivalent through the adapter so the helper and production mapping cannot
-   drift.
-5. Add teardown functions for paint/dialog/autosave intervals where needed, or
-   ensure a page reload is the only lifecycle boundary. Test hooks must be
-   disabled in normal production builds.
+   `restoreState(state)` methods, returning copied arrays or compact summaries.
+2. The test scheduler suppresses uncontrolled RAF progression while `step()`
+   controls exact physics ticks; production behavior remains RAF-driven.
+3. `physics.js` remains the stable browser physics boundary, with inspection
+   data for dimensions, frame, seed, material counts, selected cells, and
+   selected typed-array planes.
+4. The adapter exposes the production-equivalent canvas mapping so helper
+   coordinates and application mapping cannot drift.
+5. Page lifecycle is the cleanup boundary for paint, dialog, and autosave
+   activity. Test hooks are disabled unless the `?e2e` query flag is present.
 
 ## 8. E2E Versus Unit/Integration Coverage
 
@@ -311,15 +311,16 @@ material matrix coverage. `tools/simTest.mjs` is the current integration home.
 
 ## 10. Prioritized Roadmap
 
-1. Implement the guarded test adapter, deterministic scheduler, semantic state
-   schema, and teardown behavior.
-2. Add helper-level contract tests for canvas mapping, seed reporting, stepping,
+1. Guarded test adapter, deterministic scheduler, semantic state schema, and
+   page-lifecycle cleanup are implemented.
+2. Helper-level contract tests cover canvas mapping, seed reporting, stepping,
    state capture/restore, and failure diagnostics. (Complete for mapping,
    stepping, and state capture/restore.)
 3. Migrate navigation, painting, desktop accessibility, and persistence smoke coverage.
 4. Migrate machines, blueprints, and browser-observable physics workflows.
-     (Helpers, blueprints, machines/tubing, and materials catalog/rendering are
-     expanded; the separate cellular-reaction area remains integration-led.)
+   (Helpers, blueprints, machines/tubing, materials catalog/rendering, and the
+   24-test physics browser contract are expanded; exhaustive cellular and
+   material-reaction matrices remain integration-led.)
 5. Expand material/reaction coverage in `tools/simTest.mjs` or focused integration
    modules rather than multiplying slow browser scenarios.
 6. Add CI projects and quarantine policy for flaky visual-only tests.
@@ -332,6 +333,9 @@ material matrix coverage. `tools/simTest.mjs` is the current integration home.
   smoke on every pull request.
 - `npx playwright test e2e/navigation e2e/tools e2e/persistence`:
   functional shell suite on pull requests.
+- `npx playwright test e2e/physics --workers=1`: focused physics browser
+  contract; use `npx playwright test e2e/physics --workers=1 --headed` for the
+  equivalent headed run.
 - `npx playwright test e2e`: full browser suite on protected branches/nightly.
 - Run CI with one worker for deterministic shared-resource behavior; retain
   traces, videos, screenshots, HTML report, and attached state JSON as artifacts.

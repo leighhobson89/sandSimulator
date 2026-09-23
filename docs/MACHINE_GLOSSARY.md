@@ -82,7 +82,7 @@ Has two independent 500-particle inputs and a 1000-particle output.
 - The icon is symmetric, includes matching tubing connections, and is rotated
   90 degrees counterclockwise.
 
-See [`MIXER_MIXTURES.md`](../MIXER_MIXTURES.md) for recipes and lifecycle rules.
+See [`MIXER_MIXTURES.md`](MIXER_MIXTURES.md) for recipes and lifecycle rules.
 
 ## Connection Material
 

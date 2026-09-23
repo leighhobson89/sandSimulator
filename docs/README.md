@@ -25,8 +25,12 @@ This folder is the current documentation index for Elemental Foundry.
   and bug-fix regression policy.
 - [`E2E_PROGRESS.md`](E2E_PROGRESS.md) — current E2E migration status and gates.
 - Focused Playwright specs are grouped under `e2e/navigation/`, `e2e/tools/`,
-  and `e2e/persistence/`; their current 13-test headless/headed status and
-  remaining coverage gaps are tracked in `E2E_PROGRESS.md`.
+  `e2e/persistence/`, and `e2e/physics/`. Navigation, tools, and persistence
+  cover 13 tests; the physics folder covers 24 browser-contract tests. Together
+  these four focused folders contain 37 tests, with current headless/headed
+  status and remaining coverage gaps tracked in
+  [`E2E_PROGRESS.md`](E2E_PROGRESS.md) and the physics maintenance guide at
+  [`../e2e/physics/README.md`](../e2e/physics/README.md).
 - [`archive/`](archive/) — superseded documentation findings and closed notes.
 
 The repository root [`README.md`](../README.md) remains the user-facing guide

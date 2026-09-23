@@ -20,16 +20,16 @@ materials come from the rules that actually run.
 
 ## Current catalogue
 
-The 52 entries are grouped in the same order as the picker:
+The 53 entries are grouped in the same order as the picker:
 
 | Group | Materials |
 | --- | --- |
-| Powders | Sand, Ash, Wet Sand, Dry Mud, Seed, Gunpowder, Snow, Wet Ash, Spark Dust |
+| Powders | Sand, Wet Mud, Ash, Wet Sand, Dry Mud, Seed, Gunpowder, Snow, Scoria, Wet Ash, Spark Dust |
 | Liquids | Water, Oil, Lava, Acid |
 | Gases | Fire, Steam, Smoke, Toxic Gas |
-| Solids | Ice, Stone, Wood, Glass, Plant, Wall, Flower, Grass, Lily Stem, Lily Pad, Lily Flower, Scoria, Ash Grass, Clay, Ceramic, Spark Block |
+| Solids | Ice, Stone, Wood, Glass, Plant, Wall, Flower, Grass, Lily Stem, Lily Pad, Lily Flower, Ash Grass, Clay, Ceramic, Spark Block |
 | Metals | Spark, Copper, Molten Copper, Battery, Molten Aluminum, Iron, Molten Iron, Tubing |
-| Machines | Fan, Heater, Cooler, Vent |
+| Machines | Fan, Heater, Cooler, Vent, Mixer |
 | Storage | Powder Storage Bin, Liquid Storage Bin, Gas Storage Bin |
 | Tools | Heat Ray, Cold Ray, Wind |
 

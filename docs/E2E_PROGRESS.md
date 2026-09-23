@@ -4,20 +4,24 @@
 
 The E2E audit, baseline architecture, helper contract coverage, blueprint
 migration, expanded machine/material browser contracts, and focused navigation,
-tools, and persistence specs are now recorded in the functional-area folders.
-The Playwright suite continues incrementally using the production deterministic
-test adapter (`window.__GAME_INSTANCE__`).
+tools, persistence, and physics specs are now recorded in the functional-area
+folders. The Playwright suite continues incrementally using the production
+deterministic test adapter (`window.__GAME_INSTANCE__`).
 
 **Overall status:** Helpers, blueprints, material catalog/rendering, and the
 machines/tubing browser contract are complete under the exhaustive area policy.
-The focused navigation, tools, and persistence suites pass in both headless
-and headed modes (13 tests total), but those areas remain amber until their
-exhaustive coverage contracts are satisfied. The separate cellular-physics and
-material-reaction matrix remains integration-led and amber while its browser
-contract is narrower than the full integration matrix. Three of 15 functional
-areas are complete (20%).
+The focused navigation, tools, and persistence suites cover 13 tests, and the
+focused physics area covers 24 tests across determinism, settling, thermal, and
+reactions, for 37 focused tests across these areas. The accepted physics run
+passes in both headless and headed modes,
+but the cellular-physics and material-reaction areas remain amber: these browser
+tests are contracts for representative user-visible outcomes, not the exhaustive
+headless material and rule matrices. Three of 15 functional areas are complete
+(20%).
 
-The baseline contract passes against the real served application. Mobile and
+The baseline contract passes against the real served application. The latest
+accepted verification also has `npm test` passing 284 assertions with default
+seed `0` and `npm run test:smoke` passing. Mobile and
 narrow-viewport coverage is intentionally out of scope because this is a
 desktop-only web application. The original `npm run test:smoke` suite remains
 fully passing.
@@ -40,8 +44,8 @@ fully passing.
 | 6 | Line, rectangle, ellipse, brush-size, and shape preview/commit behavior | 🟡 | No | Focused line/rectangle/ellipse commit and cancelled-preview coverage passes in both modes in `e2e/tools/shapes.spec.mjs`; brush-size and exhaustive boundary/cancellation coverage remains. |
 | 7 | Grabber pickup, movement, cancellation, and drop behavior | 🟡 | No | Focused pickup, movement, drop, and mode-exit coverage passes in both modes in `e2e/tools/grabber.spec.mjs`; cancellation, sizing, and blocked/alternate paths remain. |
 | 8 | Environment controls: air temperature, layers, lapse, breeze, wind strength, heat view, and readouts | 🟡 | No | Focused temperature, layers, breeze, lapse, heat-view, and readout coverage passes in both modes in `e2e/tools/environment.spec.mjs`; wind-strength and exhaustive bounds/reset coverage remains. |
-| 9 | Cellular physics: gravity/settling, collision/blocking, liquid flow, gas/fire rise, conservation, and temperature integration | 🟡 | No | Headless integration coverage is strong; add representative user-driven E2E after deterministic stepping hook. |
-| 10 | Material reactions: phase changes, burning, extinguishing, growth, and decay/residue | 🟡 | No | Headless integration coverage is strong; retain detailed matrix at integration level and add smoke E2E. |
+| 9 | Cellular physics: gravity/settling, collision/blocking, liquid flow, gas/fire rise, conservation, and temperature integration | 🟡 | No | `e2e/physics/settling.spec.mjs`, `thermal.spec.mjs`, and `determinism.spec.mjs` provide representative browser contracts and pass in both modes; exhaustive engine and material coverage remains headless. |
+| 10 | Material reactions: phase changes, burning, extinguishing, growth, and decay/residue | 🟡 | No | `e2e/physics/reactions.spec.mjs` provides representative browser contracts and passes in both modes; the exhaustive material/reaction matrix remains in `npm test`. |
 | 11 | Electrical systems: batteries, conductors, charge, pulses, and powered machines | 🟡 | No | Headless integration coverage exists; add representative browser workflows after hook migration. |
 | 12 | Machines and tubing: placement/orientation, heaters/coolers/fans, storage, vents, tubing flow, and mixer inventories/release | 🟢 | Yes | Placement previews/blocked cells/all eight directions, powered Fan/Heater/Cooler, settings bounds, all storage dialogs/purge/capacity/intake, Vent release/rate limits, tubing topology/rates/visualization/storage transfer, all recipes/non-mixing output, and portable machine persistence in `e2e/machines/`. |
 | 13 | Blueprints: marquee selection, copy, preview/stamp, slot library, undo/redo | 🟢 | Yes | Lifecycle, reverse/edge clipping, all persisted blueprint fields, air overwrite, preview, 24-slot wrap, keyboard history, redo invalidation, and portable export/import in `e2e/blueprints/`. |
@@ -95,6 +99,24 @@ non-mixing streams, and portable persistence. Fixtures seed machine inventory at
 the physics boundary while placement, dialogs, toggles, tooltips, and canvas
 interaction remain real UI workflows.
 
+## Focused Physics Browser Contract
+
+The `e2e/physics/` folder contains 24 tests: four determinism tests, six
+settling tests, six thermal tests, and eight reaction tests. The accepted
+focused commands are:
+
+```text
+npx playwright test e2e/physics --workers=1
+npx playwright test e2e/physics --workers=1 --headed
+```
+
+The specs use the physics module boundary for deterministic source fixtures,
+seeded setup, and state inspection. Real user workflows remain Playwright
+actions, such as material selection and canvas painting; fixture calls must not
+stand in for controls, gestures, dialogs, or rendered UI behavior. This browser
+contract complements rather than replaces the exhaustive headless material and
+rule matrix covered by `npm test`, so functional areas 9 and 10 remain amber.
+
 ## Exhaustive Coverage Policy
 
 The migration now treats a green area as exhaustive behavioral coverage, not
@@ -124,6 +146,7 @@ the default headless configuration and once with
 screenshots/traces/state JSON. Both runs use the same server, hooks, seed, and
 test steps.
 Material catalog/rendering, machines/tubing, and blueprints/helpers are green
-only after their expanded focused suites pass in both modes. The separate
-cellular-physics/material-reaction area remains amber where its browser contract
-is still narrower than the full integration matrix.
+only after their expanded focused suites pass in both modes. The 24-test
+cellular-physics/material-reaction browser contract passes in both modes, but
+areas 9 and 10 remain amber because it is narrower than the full integration
+matrix.

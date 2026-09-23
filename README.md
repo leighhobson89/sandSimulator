@@ -1,6 +1,6 @@
 # Elemental Foundry
 
-A living elemental sandbox: 52 materials and tools on a 150-row grid that adds
+A living elemental sandbox: 53 materials and tools on a 150-row grid that adds
 enough columns to fill about 90% of the workspace beside the material picker,
 with heat that spreads from cell to cell so that things melt, boil, freeze and
 catch fire on their own, weather that blows across the world of its own accord,
@@ -10,18 +10,21 @@ moods.
 
 ## Current status
 
-The current code audit is recorded in [`docs/CODE_AUDIT.md`](docs/CODE_AUDIT.md).
-Active findings are kept in [`docs/ISSUES.md`](docs/ISSUES.md), while superseded
-documentation findings are kept in [`docs/archive/`](docs/archive/).
+The current program overview and verification basis are recorded in
+[`docs/PROGRAM_OVERVIEW.md`](docs/PROGRAM_OVERVIEW.md). Active findings are kept
+in [`docs/ISSUES.md`](docs/ISSUES.md), while superseded documentation findings
+are kept in [`docs/archive/`](docs/archive/).
 
-The latest verification on 21 September 2026 is green: `npm test` reports 250
-passed and 0 failed with the default reproducible seed, and
-`npm run test:smoke` passes its browser-startup, interaction and autosave
-cancel checks. A Playwright suite is also included for real-browser navigation,
-tools, persistence, themes, machines, blueprints, and desktop interaction
-coverage. Focused navigation, tools, and persistence suites currently pass 13
-tests in both headless and headed modes; the detailed status and remaining
-exhaustive coverage gaps are tracked in
+The latest accepted verification on 23 September 2026 is green: `npm test`
+passes 284 assertions with default seed `0`, and `npm run test:smoke` passes.
+A Playwright suite is also included for real-browser navigation, tools,
+persistence, themes, machines, blueprints, physics, and desktop interaction
+coverage. Focused navigation, tools, and persistence suites cover 13 tests;
+the focused physics area adds 24 tests across determinism, settling, thermal,
+and reactions, for 37 focused tests across these areas. The physics area passes
+in both headless and headed modes with
+the commands documented in [`e2e/physics/README.md`](e2e/physics/README.md);
+the detailed status and remaining exhaustive coverage gaps are tracked in
 [`docs/E2E_PROGRESS.md`](docs/E2E_PROGRESS.md).
 
 ## Running it
@@ -101,7 +104,7 @@ No keeps the existing resume save and plays the new/imported world without
 autosave for that session. **Cancel** dismisses the choice and leaves the
 current world, import dialog and existing resume save unchanged.
 
-The **air temperature** runs from -60C to 2000C. Drag the slider for a rough
+The **air temperature** runs from -60C to 4000C. Drag the slider for a rough
 setting, or type an exact number in the box beside it and press Enter - each one
 fills in the other. The world drifts towards whatever is set slowly rather than
 snapping to it, and it is deliberately a weak effect next to a flame or a block
@@ -165,11 +168,12 @@ is not what someone laying out a scene wants.
 **Fan, Heater and Cooler** are powered machines in the Machines section. Their
 picker buttons place one machine cell regardless of brush size or drawing mode;
 drag while placing to face any of the eight cardinal or diagonal directions.
-A powered Fan blows a strength-21, 28-cell cone, while a powered Heater and
-Cooler drive 28-cell cones toward 2000 C and -60 C and launch matching ray
-particles along their centreline. Their faint cone and directional icon preview
-the facing while dragging; the machine is committed, and starts affecting the
-world, only when the mouse is released. The Heater and Cooler each draw 100
+A powered Fan blows at its configured strength (default 7, range 1 to 20)
+through a 28-cell cone, while a powered Heater and Cooler drive 28-cell cones
+toward 2000 C and -60 C and launch matching ray particles along their
+centreline. Their faint cone and directional icon preview the facing while
+dragging; the machine is committed, and starts affecting the world, only when
+the mouse is released. The Heater and Cooler each draw 100
 power load, twice the Fan's 50, and all three switch off when they are not
 powered. Copper and Iron wire can reach conductive machines through up to two
 empty cells beyond the physical wire end, making it possible to place a machine

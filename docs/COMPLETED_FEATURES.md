@@ -1,6 +1,6 @@
 # Completed features
 
-Reviewed against the current source on 22 September 2026. “Completed” means
+Reviewed against the current source on 23 September 2026. “Completed” means
 implemented and exposed in the current simulator; it does not imply a perfect
 real-world model.
 
@@ -147,7 +147,8 @@ forms.
   existing resume slot with an explicit replace-or-play-without-autosave
   choice, plus Cancel to leave the current world and saved resume unchanged.
 - The source is separated into data, headless physics, rendering and UI.
-  Automated coverage includes 250 seeded physics assertions, a 260x150 speed
-  check, syntax/JSON validation, a stand-in-browser UI smoke test and a
-  Playwright real-browser suite for themes, pointer/touch input, focus and
-  narrow layouts.
+  Automated coverage includes 284 headless assertions with default seed `0`, a
+  260x150 speed check, syntax/JSON validation, a passing stand-in-browser UI
+  smoke test, and a Playwright real-browser suite. Its focused physics area
+  contains 24 browser tests across determinism, settling, thermal, and
+  reactions, passing in both headless and headed modes.
