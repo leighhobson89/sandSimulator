@@ -138,8 +138,10 @@ the whole sky.
 
 **Heat Ray** and **Cold Ray** are brushes rather than materials. They burn out
 after a few frames instead of collecting on the floor. While they last, the
-Heat Ray holds its cell at 2000C and radiates enough heat to melt even iron;
-the Cold Ray holds its cell at -120C.
+each ray ramps each cell toward 2000C or -120C over several frames rather than
+initializing an instant temperature source. Its bounded temperature change
+remains separate from ambient cooling, source radiation and latent state
+changes.
 
 **Wind** is a brush too. Drag it and it shoves along whatever is light enough to
 pick up - flame, steam, smoke, dry sand, dry mud, ash, snow, seeds - while wet
@@ -235,11 +237,13 @@ left-to-right scan order flips every frame so piles do not drift sideways.
 
 ### Heat
 
-Every cell has a temperature in degrees C. It pulls towards the average of its
-four neighbours at a rate set by the material, and leaks towards the ambient air
-temperature of 8C. Fire holds itself at its own temperature and throws heat at
-everything around it, which is what makes it a heat source. Lava does not hold
-itself up: it starts white hot and gives its heat up slowly, at its own rate.
+Every cell has a temperature in degrees C. Ordinary contact transfer is pairwise:
+each neighbouring pair moves toward one another according to both materials'
+thermal conductivity, with bounded updates. Cells also exchange heat with the
+ambient air, while heat sources can radiate separately. Fire holds itself at its
+own temperature and throws heat at everything around it, which is what makes it
+a heat source. Lava does not hold itself up: it starts white hot and gives its
+heat up slowly, at its own rate.
 
 Material in bulk adds another modest layer to that calculation. An exposed cell
 responds almost normally, a cell with three neighbours of its own kind is partly
@@ -622,10 +626,10 @@ Everything is in `particles.json`, including a description of what each field
 does. Adding a material there is enough to get a button for it in the UI. Some
 things worth knowing:
 
-- Heat spreads by averaging with four neighbours, so a cell next to a single
-  flame settles at roughly a quarter of the flame's temperature. That is why
-  wood ignites at 160 rather than a realistic 300 - 160 is a temperature a cell
-  next to a fire can actually reach.
+- Heat spreads through pairwise contact exchange: both materials' thermal
+  conductivities affect the transfer, and bulk insulation slows buried cells.
+  Ambient cooling, source radiation and latent state changes remain separate
+  effects, so contact does not act as an instant temperature source.
 - `ambientTemp` at the top of the file is the starting air temperature (8C by
   default). Set it below zero
   and ice stops melting on its own.

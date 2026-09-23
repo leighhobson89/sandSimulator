@@ -683,6 +683,84 @@ run(250);
 check('the cold ray froze the water into ice', countOf(ID.Ice) > 0,
     `${countOf(ID.Ice)} ice, ${countOf(ID.Water)} water`);
 
+section('Ray temperature ramps are gradual and contact transfer uses both materials');
+// Surround a ray on all sides except its target so the test measures sustained
+// contact rather than a moving particle that happens to pass by once.
+function surroundRay(x, y, targetId) {
+    for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+            if (dx === 0 && dy === 0) continue;
+            if (dx === 1 && dy === 0) continue;
+            setCell(x + dx, y + dy, ID.Wall);
+        }
+    }
+    setCell(x + 1, y, targetId);
+}
+
+const rayX = 20;
+const rayY = 20;
+surroundRay(rayX, rayY, ID.Wall);
+setCell(rayX, rayY, ID['Heat Ray']);
+const heatContactStart = tempAt(rayX + 1, rayY);
+stepSimulation();
+const heatRayFirst = tempAt(rayX, rayY);
+const heatContactFirst = tempAt(rayX + 1, rayY);
+for (let f = 0; f < 9; f++) {
+    setCell(rayX, rayY, ID['Heat Ray']);
+    stepSimulation();
+}
+const heatRayLater = tempAt(rayX, rayY);
+const heatContactLater = tempAt(rayX + 1, rayY);
+check('Heat Ray does not arrive at its target temperature instantly',
+    heatRayFirst > heatContactStart && heatRayFirst < defs[ID['Heat Ray']].forceTemp &&
+    heatContactFirst > heatContactStart && heatContactFirst < defs[ID['Heat Ray']].forceTemp,
+    `ray ${heatRayFirst.toFixed(1)}C, contact ${heatContactFirst.toFixed(1)}C`);
+check('Heat Ray ramps its own cell and the touched material toward target',
+    heatRayLater > heatRayFirst + 500 && heatContactLater > heatContactFirst + 500 &&
+    heatRayLater < defs[ID['Heat Ray']].forceTemp &&
+    heatContactLater < defs[ID['Heat Ray']].forceTemp,
+    `ray ${heatRayLater.toFixed(1)}C, contact ${heatContactLater.toFixed(1)}C`);
+
+clearWorld();
+surroundRay(rayX, rayY, ID.Wall);
+setCell(rayX, rayY, ID['Cold Ray']);
+const coldContactStart = tempAt(rayX + 1, rayY);
+stepSimulation();
+const coldRayFirst = tempAt(rayX, rayY);
+const coldContactFirst = tempAt(rayX + 1, rayY);
+for (let f = 0; f < 9; f++) {
+    setCell(rayX, rayY, ID['Cold Ray']);
+    stepSimulation();
+}
+const coldRayLater = tempAt(rayX, rayY);
+const coldContactLater = tempAt(rayX + 1, rayY);
+check('Cold Ray does not arrive at its target temperature instantly',
+    coldRayFirst > defs[ID['Cold Ray']].forceTemp && coldRayFirst < coldContactStart &&
+    coldContactFirst < coldContactStart + 0.25 &&
+    coldContactFirst > defs[ID['Cold Ray']].forceTemp,
+    `ray ${coldRayFirst.toFixed(1)}C, contact ${coldContactFirst.toFixed(1)}C`);
+check('Cold Ray ramps its own cell and the touched material toward target',
+    coldRayLater < coldRayFirst - 30 && coldContactLater < coldContactFirst - 10 &&
+    coldRayLater > defs[ID['Cold Ray']].forceTemp &&
+    coldContactLater > defs[ID['Cold Ray']].forceTemp,
+    `ray ${coldRayLater.toFixed(1)}C, contact ${coldContactLater.toFixed(1)}C`);
+
+clearWorld();
+setCell(18, 20, ID.Copper);
+setCell(19, 20, ID.Stone);
+setCell(18, 30, ID.Wall);
+setCell(19, 30, ID.Stone);
+getWorld().temp[index(18, 20)] = 1000;
+getWorld().temp[index(19, 20)] = 0;
+getWorld().temp[index(18, 30)] = 1000;
+getWorld().temp[index(19, 30)] = 0;
+stepSimulation();
+const copperToStone = tempAt(19, 20);
+const wallToStone = tempAt(19, 30);
+check('contact heat transfer responds to both source and target materials',
+    copperToStone > wallToStone + 100 && copperToStone < 1000,
+    `copper source ${copperToStone.toFixed(1)}C, wall source ${wallToStone.toFixed(1)}C`);
+
 section('The ray tools do not pile up');
 clearWorld();
 for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);

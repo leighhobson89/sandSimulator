@@ -10,6 +10,11 @@ Keep the recipe table, output behavior, bin reset rules, release behavior, and
 any new persistence fields accurate. Add or update regression tests when
 behavior changes.
 
+## Plan Archiving
+
+After implementation, archive every executed or finalized plan in
+`docs/archive/plans/`, preserving its content in a dated, descriptive filename.
+
 ## Test Execution Approval
 
 Always ask the user for approval before running a full test suite. Focused test

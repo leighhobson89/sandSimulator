@@ -92,13 +92,20 @@ simulation description in [`PROGRAM_OVERVIEW.md`](PROGRAM_OVERVIEW.md).
   than changing immediately at a threshold. Water extinguishes Fire on contact,
   Lava chills to Scoria when Water touches it, and water wetting is limited to
   the declared powder reactions.
+- Ordinary contact exchange is pairwise:
+  each neighbouring pair uses both materials' thermal conductivity. Bulk
+  insulation still slows exchange for buried cells. Temperature updates remain
+  bounded; ambient cooling, source radiation, and latent state changes remain
+  separate effects.
 - Ordinary materials are non-conductive by default. Copper, Iron, and Battery
   participate in the electrical network; Spark is absorbed by connected metal,
   Battery stores charge, and Copper or Iron can discharge a charged Battery
   through their connected length. Tubing has no electrical or thermal
   conductivity.
-- Heat Ray holds its cell at `2000 C` while it lasts. Cold Ray holds its cell at
-  `-120 C`. Both burn out after a few frames instead of collecting as material.
+- Heat Ray and Cold Ray ramp their cells toward `2000 C`
+  and `-120 C` over several frames rather than initializing an instant
+  temperature source. Both burn out after a few frames instead of collecting as
+  material.
 
 ## 3. Powered, storage, transfer, and connection machines
 

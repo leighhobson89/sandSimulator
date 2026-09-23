@@ -1086,6 +1086,7 @@ export function setCell(x, y, id, keepTemp) {
     if (!inBounds(x, y)) return;
     const i = y * COLS + x;
     const def = DEFS[id];
+    const wasSameRay = world.type[i] === id && def?.forceRate > 0;
     world.type[i] = id;
     if (def?.machine === 'mixer') hasMixerMachine = true;
     world.residue[i] = EMPTY;
@@ -1094,7 +1095,12 @@ export function setCell(x, y, id, keepTemp) {
         : 0;
     world.life[i] = lifetime;
     world.lifeMax[i] = lifetime;
-    if (!keepTemp) world.temp[i] = def.defaultTemp;
+    if (!keepTemp) {
+        // Ray tools ramp from the local air temperature instead of arriving as
+        // a fully hot or cold cell on the first painted frame.
+        world.temp[i] = wasSameRay ? world.temp[i]
+            : (def.forceRate > 0 ? getAirTempAt(y) : def.defaultTemp);
+    }
     world.heat[i] = 0;
     world.data[i] = startingData(def);
     world.machineSetting[i] = def.machine ? defaultMachineSetting(def) : 0;
@@ -1498,8 +1504,8 @@ export function getFrameCount() { return frameCount; }
 
 // ------------------------------------------------------------------ heat flow
 //
-// Every cell pulls its temperature towards the average of its four neighbours,
-// at a rate set by the material it contains, and separately leaks towards the
+// Every cell exchanges heat with each of its four neighbours using a symmetric
+// contact rate derived from both materials, then separately leaks towards the
 // ambient air temperature. At the boundary the missing neighbour is the cell
 // itself: ambient cooling already applies evenly everywhere, so treating an
 // off-grid neighbour as extra air would cool edges and corners faster and make
@@ -1507,6 +1513,20 @@ export function getFrameCount() { return frameCount; }
 //
 // This single pass is what drives melting, boiling, freezing and ignition, so
 // there are no special "is there a fire next to me" checks anywhere.
+
+// Four contacts can contribute in one frame, so keep the per-edge rate below a
+// quarter. The geometric mean makes a high-conductivity source matter while a
+// very insulating material still limits the shared interface.
+const THERMAL_TRANSFER_SCALE = 1.35;
+const MAX_CONTACT_TRANSFER = 0.24;
+
+function thermalContactRate(first, second) {
+    const firstConductivity = Math.max(0, first.conductivity);
+    const secondConductivity = Math.max(0, second.conductivity);
+    if (firstConductivity === 0 || secondConductivity === 0) return 0;
+    return Math.min(MAX_CONTACT_TRANSFER,
+        Math.sqrt(firstConductivity * secondConductivity) * THERMAL_TRANSFER_SCALE);
+}
 
 function diffuseHeat() {
     const type = world.type;
@@ -1522,13 +1542,6 @@ function diffuseHeat() {
             const def = DEFS[type[i]];
             const t = temp[i];
 
-            const up = y > 0 ? temp[i - COLS] : t;
-            const down = y < ROWS - 1 ? temp[i + COLS] : t;
-            const left = x > 0 ? temp[i - 1] : t;
-            const right = x < COLS - 1 ? temp[i + 1] : t;
-
-            const average = (up + down + left + right) * 0.25;
-
             // A surface still responds almost normally, but heat has a harder
             // time reaching a cell buried behind several layers of the same
             // material. Four matching neighbours is a true interior cell;
@@ -1543,7 +1556,24 @@ function diffuseHeat() {
             const conductionScale = 1 - def.bulkInsulation * buried;
             const coolingScale = 1 - def.bulkInsulation * buried * 0.7;
 
-            let result = t + (average - t) * def.conductivity * conductionScale;
+            let result = t;
+            if (y > 0) {
+                const neighbour = i - COLS;
+                result += (temp[neighbour] - t) * thermalContactRate(def, DEFS[type[neighbour]]);
+            }
+            if (y < ROWS - 1) {
+                const neighbour = i + COLS;
+                result += (temp[neighbour] - t) * thermalContactRate(def, DEFS[type[neighbour]]);
+            }
+            if (x > 0) {
+                const neighbour = i - 1;
+                result += (temp[neighbour] - t) * thermalContactRate(def, DEFS[type[neighbour]]);
+            }
+            if (x < COLS - 1) {
+                const neighbour = i + 1;
+                result += (temp[neighbour] - t) * thermalContactRate(def, DEFS[type[neighbour]]);
+            }
+            result = t + (result - t) * conductionScale;
             let coolingRate = def.cooling;
             if (def.coolingVariance > 0) {
                 const variation = (shade[i] / 255 - 0.5) * 2;

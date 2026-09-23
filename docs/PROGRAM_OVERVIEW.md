@@ -42,9 +42,10 @@ rule based on the surface of connected liquid, not a Navier–Stokes solution.
 - It has a coherent, connected material loop rather than isolated effects:
   heat drives ice/water/steam, sand/glass/lava, and lava/scoria/stone; water
   changes ground; ground supports plant life; fire and acid reshape it.
-- Thermal behaviour is unusually legible for a browser sand game. Four-way
-  conduction, ambient cooling, eight-way radiation, latent-heat accumulation,
-  and bulk insulation make thick material and heat sources feel distinct.
+- Thermal behaviour is unusually legible for a browser sand game. Pairwise
+  four-way contact transfer uses both materials' conductivity; ambient cooling,
+  eight-way radiation, latent-heat accumulation, and bulk insulation remain
+  distinct effects that make thick material and heat sources feel different.
 - The electrical system is more than a colour change. Sparks launch visible
   pulses through conductive networks; Battery stores shared charge; Copper,
   Iron and machines consume it; a Fan converts power into directional airflow,

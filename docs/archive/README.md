@@ -15,6 +15,12 @@ in [`../README.md`](../README.md); active findings remain in
 - [`E2E_TEST_PLAN-2026-09-23.md`](E2E_TEST_PLAN-2026-09-23.md) — the E2E plan's
   completed migration record and policy snapshot from 23 September 2026.
 
+## Executed Plans
+
+- [`plans/heat-transfer-rays-2026-09-23.md`](plans/heat-transfer-rays-2026-09-23.md)
+  — the executed heat-transfer and ray-tuning implementation plan from 23
+  September 2026.
+
 ## Earlier Dated Archives
 
 - [`DOCUMENTATION-2026-09-20.md`](DOCUMENTATION-2026-09-20.md) — documentation
