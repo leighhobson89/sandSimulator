@@ -89,7 +89,7 @@ export function startGame({ preserveWorldSize = false } = {}) {
     if (loopRunning) return;
     loopRunning = true;
     lastFpsCheck = performance.now();
-    requestAnimationFrame(gameLoop);
+    if (!window.__E2E_MODE__) requestAnimationFrame(gameLoop);
 }
 
 // Keep the original cell size and spend the horizontal room between the
@@ -153,10 +153,14 @@ export function gameLoop(now) {
         updateReadout();
     }
 
-    requestAnimationFrame(gameLoop);
+    if (!window.__E2E_MODE__) requestAnimationFrame(gameLoop);
 }
 
 //------------------------------------------------------------------- rendering
+
+export function renderWorld() {
+    drawWorld();
+}
 
 function drawWorld() {
     const world = getWorld();

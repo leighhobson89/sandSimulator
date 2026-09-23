@@ -70,6 +70,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     await loadParticleDefinitions();
     initializeWorld();
     setElements();
+    if (window.__E2E_MODE__) await import('./e2eHooks.js');
     buildParticleButtons();
 
     const elements = getElements();

@@ -3,6 +3,7 @@ import { defineConfig } from '@playwright/test';
 export default defineConfig({
     testDir: '.',
     testMatch: ['e2e/**/*.spec.mjs', 'tests/**/*.spec.mjs'],
+    testIgnore: ['.kilo/**', 'node_modules/**', 'test-results/**'],
     timeout: 30_000,
     expect: { timeout: 8_000 },
     fullyParallel: true,

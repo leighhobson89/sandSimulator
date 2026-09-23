@@ -8,7 +8,11 @@ production deterministic test adapter (`window.__GAME_INSTANCE__`) is not yet
 implemented. The next phase is migration, beginning with navigation and shell
 workflows.
 
-**Overall status:** 0 of 15 functional areas fully migrated (0%).
+**Overall status:** Baseline complete; 0 of 15 functional areas migrated (0%).
+
+The baseline contract passes against the real served application. The legacy
+browser suite has one pre-existing 9-pixel narrow-layout screenshot mismatch;
+the original `npm run test:smoke` suite remains fully passing.
 
 | Status | Meaning |
 | --- | --- |
@@ -43,12 +47,12 @@ workflows.
 | Full codebase E2E audit | 🟢 | Yes | Recorded in `docs/E2E_TEST_PLAN.md`. |
 | Functional-area taxonomy | 🟢 | Yes | Fifteen areas derived from the application code. |
 | Playwright config diagnostics | 🟢 | Yes | Headed override, CI retries, traces, screenshots, videos, and HTML report configured. |
-| E2E folder skeleton | 🟢 | Yes | Functional-area folders and helper files created under `e2e/`. |
-| Canvas mapping helper | 🟡 | No | Baseline helper exists; must be validated against the production test adapter. |
-| Deterministic game-loop control | 🔴 | No | Requires guarded production hook and explicit step/render seam. |
-| Deterministic random seed control | 🟡 | No | Physics seed API exists; browser exposure is still required. |
-| Test-only state inspection | 🔴 | No | Requires `window.__GAME_INSTANCE__` adapter. |
-| Failure snapshots and state dumps | 🟢 | Yes | Playwright attachments and retained diagnostics helper are in place. |
+| E2E folder skeleton | 🟢 | Yes | Functional-area folders, reusable helpers, and baseline contract spec created under `e2e/`. |
+| Canvas mapping helper | 🟢 | Yes | `e2e/helpers/canvas.mjs` maps CSS coordinates to cell centers; the guarded adapter exposes matching `canvasToCell()`. |
+| Deterministic game-loop control | 🟢 | Yes | `?e2e` suppresses automatic RAF scheduling; `step(count)` runs exact physics ticks and renders once. |
+| Deterministic random seed control | 🟢 | Yes | E2E adapter exposes the existing seeded PRNG and active seed. |
+| Test-only state inspection | 🟢 | Yes | Guarded `window.__GAME_INSTANCE__` returns copied state and supports snapshot/restore. |
+| Failure snapshots and state dumps | 🟢 | Yes | Playwright retains trace/screenshot/video; diagnostics helper attaches screenshot and state JSON on failed baseline tests. |
 
 ## Migration Gates
 
