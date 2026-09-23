@@ -20,6 +20,9 @@ in [`../README.md`](../README.md); active findings remain in
 - [`plans/heat-transfer-rays-2026-09-23.md`](plans/heat-transfer-rays-2026-09-23.md)
   — the executed heat-transfer and ray-tuning implementation plan from 23
   September 2026.
+- [`plans/canvas-zoom-edge-pan-2026-09-23.md`](plans/canvas-zoom-edge-pan-2026-09-23.md)
+  — the executed canvas zoom, scrolling, and optional edge-pan implementation
+  plan from 23 September 2026.
 
 ## Earlier Dated Archives
 

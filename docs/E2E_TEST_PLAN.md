@@ -10,13 +10,22 @@ integration suite.
 - `playwright.config.mjs` starts `tools/serve.mjs`, runs `e2e/**/*.spec.mjs`,
   and retains traces, screenshots, videos, and the HTML report for failures.
 - `e2e/helpers/canvas.mjs` maps pointer coordinates through the rendered canvas
-  rectangle. `gamePage.mjs` owns startup, pause, deterministic stepping, and
-  state inspection. `diagnostics.mjs` attaches screenshots and semantic state.
+  rectangle and provides `canvasViewportMetrics()` plus
+  `scrollCanvasToCell()` for zoomed/scrollable viewports. `gamePage.mjs` owns
+  startup, pause, deterministic stepping, and state inspection. `diagnostics.mjs`
+  attaches screenshots and semantic state.
 - `e2e/helpers/contract.spec.mjs` protects helper, mapping, rendering, stepping,
   and snapshot-restore contracts.
 - `e2e/navigation/` and `e2e/accessibility/` cover startup, themes, dialogs,
   focus, keyboard behavior, ARIA state, and tooltips.
 - `e2e/tools/` covers painting, shapes, Grabber, and environment controls.
+- `e2e/tools/zoom.spec.mjs` covers the transient four-level canvas zoom,
+  zoom-only vertical wheel behavior and fading status, fitted versus scrollable
+  layouts, thin themed scrollbars, arrow-key scrolling, coordinate-preserving
+  painting/erasing, native middle-click ownership, continued simulation,
+  workspace reset, machine-overlay hit testing, and the optional five-percent
+  edge-pan behavior. Horizontal and Shift + wheel remain browser-owned rather
+  than entering the application zoom path.
 - `e2e/materials/` covers catalog metadata, rendering, and browser-observable
   material reactions.
 - `e2e/physics/` covers deterministic, user-visible settling, thermal, and
@@ -66,6 +75,13 @@ spec when investigating a change:
 ```text
 npx playwright test e2e/physics --workers=1 --trace=off
 npx playwright test e2e/physics --headed --workers=1 --trace=off
+```
+
+For the canvas viewport feature, run the focused spec in both modes:
+
+```text
+npx playwright test e2e/tools/zoom.spec.mjs --workers=1 --trace=off
+npx playwright test e2e/tools/zoom.spec.mjs --headed --workers=1 --trace=off
 ```
 
 Headed and headless runs must use the same server, hooks, seed, and test steps.

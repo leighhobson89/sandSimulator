@@ -51,6 +51,8 @@ export function setElements() {
         eraserButton: document.getElementById('eraserButton'),
         exportGameButton: document.getElementById('exportGame'),
         importGameButton: document.getElementById('importGame'),
+        edgePanToggle: document.getElementById('edgePanToggle'),
+        zoomStatus: document.getElementById('zoomStatus'),
         grabberButton: document.getElementById('grabberButton'),
         brushModeButton: document.getElementById('brushModeButton'),
         lineModeButton: document.getElementById('lineModeButton'),

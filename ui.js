@@ -17,6 +17,7 @@ import {
 } from './constantsAndGlobalVars.js';
 import {
     loadParticleDefinitions, initializeWorld, setGameState, startGame,
+    getCanvasZoomLevel, setCanvasZoomLevel,
     paintLine, paintCell, clearCanvasWorld, setHoverCell,
     canPlaceMachine, placeMachine, setMachinePlacementPreview, clearMachinePlacementPreview,
     beginGrab, dropGrab, cancelGrab, setLinePreview, clearLinePreview,
@@ -70,6 +71,11 @@ let machineTooltipTarget = null;
 let machineTooltipAnchor = null;
 let machineDialogTimer = null;
 let mixerPurgeSlot = null;
+let edgePanPointer = null;
+let edgePanFrame = null;
+let edgePanLastTime = 0;
+const EDGE_PAN_MAX_SPEED = 180;
+const CANVAS_SCROLL_STEP = 80;
 
 document.addEventListener('DOMContentLoaded', async () => {
     await loadParticleDefinitions();
@@ -185,6 +191,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     setUpAmbientWind();
     setUpTooltips();
     setUpCanvasInput();
+    setUpCanvasViewportInput();
     setUpKeyboardShortcuts();
 });
 
@@ -1536,12 +1543,115 @@ function commitAirTemperature(apply, box) {
 
 //------------------------------------------------------------- canvas input
 
+function setUpCanvasViewportInput() {
+    const elements = getElements();
+    const area = elements.canvasArea;
+    if (!area) return;
+
+    area.addEventListener('wheel', event => {
+        // Vertical wheel input belongs exclusively to zoom. Modified and
+        // horizontal-only gestures remain available to the browser/viewport.
+        if (event.ctrlKey || event.metaKey || event.shiftKey || event.deltaY === 0) return;
+        event.preventDefault();
+        const next = getCanvasZoomLevel() + (event.deltaY < 0 ? 1 : -1);
+        const changed = setCanvasZoomLevel(next, {
+            anchorX: event.clientX,
+            anchorY: event.clientY
+        });
+        if (changed && getCanvasZoomLevel() === 1) stopEdgePan();
+    }, { passive: false });
+
+    area.addEventListener('pointermove', event => {
+        if (event.pointerType !== 'mouse') {
+            stopEdgePan();
+            return;
+        }
+        edgePanPointer = { x: event.clientX, y: event.clientY };
+        if (canEdgePan()) startEdgePan();
+        else stopEdgePanFrame();
+    });
+    area.addEventListener('pointerleave', () => stopEdgePan());
+    window.addEventListener('blur', () => stopEdgePan());
+
+    if (elements.edgePanToggle) {
+        elements.edgePanToggle.checked = false;
+        elements.edgePanToggle.addEventListener('change', () => {
+            if (!elements.edgePanToggle.checked) stopEdgePan();
+            else if (edgePanPointer) startEdgePan();
+        });
+    }
+}
+
+function canEdgePan() {
+    const elements = getElements();
+    return !!elements.edgePanToggle?.checked && getCanvasZoomLevel() > 1 &&
+        !isPainting && !isGrabbing && !getGrabberOn() && !marqueeMode && !isMarqueeDrawing;
+}
+
+function startEdgePan() {
+    if (edgePanFrame !== null || !canEdgePan()) return;
+    edgePanLastTime = performance.now();
+    edgePanFrame = requestAnimationFrame(edgePanTick);
+}
+
+function stopEdgePanFrame() {
+    if (edgePanFrame !== null) cancelAnimationFrame(edgePanFrame);
+    edgePanFrame = null;
+}
+
+function stopEdgePan() {
+    stopEdgePanFrame();
+    edgePanPointer = null;
+}
+
+function edgePanTick(now) {
+    edgePanFrame = null;
+    if (!canEdgePan() || !edgePanPointer) return;
+    const area = getElements().canvasArea;
+    const rect = area.getBoundingClientRect();
+    const edgeX = rect.width * 0.05;
+    const edgeY = rect.height * 0.05;
+    if (edgeX <= 0 || edgeY <= 0 ||
+        edgePanPointer.x < rect.left || edgePanPointer.x > rect.right ||
+        edgePanPointer.y < rect.top || edgePanPointer.y > rect.bottom) {
+        stopEdgePan();
+        return;
+    }
+
+    let directionX = 0;
+    let directionY = 0;
+    if (edgePanPointer.x < rect.left + edgeX) {
+        directionX = -1 + (edgePanPointer.x - rect.left) / edgeX;
+    } else if (edgePanPointer.x > rect.right - edgeX) {
+        directionX = 1 - (rect.right - edgePanPointer.x) / edgeX;
+    }
+    if (edgePanPointer.y < rect.top + edgeY) {
+        directionY = -1 + (edgePanPointer.y - rect.top) / edgeY;
+    } else if (edgePanPointer.y > rect.bottom - edgeY) {
+        directionY = 1 - (rect.bottom - edgePanPointer.y) / edgeY;
+    }
+    if (directionX === 0 && directionY === 0) return;
+
+    const elapsed = Math.min(50, Math.max(0, now - edgePanLastTime));
+    edgePanLastTime = now;
+    area.scrollLeft += directionX * EDGE_PAN_MAX_SPEED * elapsed / 1000;
+    area.scrollTop += directionY * EDGE_PAN_MAX_SPEED * elapsed / 1000;
+    if (canEdgePan()) edgePanFrame = requestAnimationFrame(edgePanTick);
+}
+
 function setUpCanvasInput() {
     const canvas = getElements().canvas;
 
     canvas.addEventListener('contextmenu', event => event.preventDefault());
 
     canvas.addEventListener('mousedown', event => {
+        // Middle button remains browser-owned (including native autoscroll).
+        // It must never enter painting, Grabber, or application pan state.
+        if (event.button === 1) {
+            stopEdgePan();
+            return;
+        }
+        stopEdgePan();
         currentCell = cellFromEvent(event);
         setHoverCell(currentCell.x, currentCell.y);
         const pointerMachine = machineAtPointer(event);
@@ -1646,6 +1756,7 @@ function setUpCanvasInput() {
     });
 
     window.addEventListener('mouseup', event => {
+        if (event.button === 1) return;
         if (isMarqueeDrawing) {
             if (event.button === 0) updateMarqueeAt(currentCell);
             isMarqueeDrawing = false;
@@ -1669,6 +1780,7 @@ function setUpCanvasInput() {
 
     // Touch support, so it works on a tablet as well.
     canvas.addEventListener('touchstart', event => {
+        stopEdgePan();
         event.preventDefault();
         currentCell = cellFromEvent(event.touches[0]);
         setHoverCell(currentCell.x, currentCell.y);
@@ -1917,6 +2029,24 @@ function stopPaintTimer() {
 
 function setUpKeyboardShortcuts() {
     document.addEventListener('keydown', event => {
+        const keyScrolls = {
+            ArrowLeft: { left: -CANVAS_SCROLL_STEP, top: 0 },
+            ArrowRight: { left: CANVAS_SCROLL_STEP, top: 0 },
+            ArrowUp: { left: 0, top: -CANVAS_SCROLL_STEP },
+            ArrowDown: { left: 0, top: CANVAS_SCROLL_STEP }
+        };
+        const scrollDelta = keyScrolls[event.key];
+        const target = event.target;
+        const controlFocused = target &&
+            (/^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(target.tagName) || target.isContentEditable);
+        if (scrollDelta && getCanvasZoomLevel() > 1 && !controlFocused &&
+            !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
+            const area = getElements().canvasArea;
+            area.scrollLeft += scrollDelta.left;
+            area.scrollTop += scrollDelta.top;
+            event.preventDefault();
+            return;
+        }
         // Not while someone is typing a temperature into the box, or pressing
         // space would pause the game instead of going into the number.
         const typing = event.target && /^(INPUT|TEXTAREA)$/.test(event.target.tagName);

@@ -7,7 +7,7 @@ options:
 permission:
   read: allow
   edit:
-    "*": deny
+    "*": allow
     "*.ts": allow
     "*.tsx": allow
     "*.js": allow
@@ -15,6 +15,8 @@ permission:
     "*.mjs": allow
     "*.json": allow
     "*.md": allow
+    "*.html": allow
+    "*.txt": allow
     "*.css": allow
     "*.scss": allow
     "*.less": allow
@@ -27,3 +29,8 @@ You are a frontend developer expert in React, TypeScript, and modern CSS. You fo
 
 
 Prioritize accessibility, responsive design, and performance. Use semantic HTML and follow React best practices.
+
+Editing policy:
+
+- Do not use the `write` tool; it is blocked by the agent runtime.
+- Use `apply_patch` for all file creation and edits.

@@ -8,10 +8,10 @@ Every development prompt must pass through this ordered agent handoff process:
    verification scope.
 2. The `test-engineer` agent writes focused failing regression tests from that
    plan before implementation begins.
-3. The `frontend-specialist` agent implements the plan until the focused tests
-   pass, preserving existing behavior outside the requested scope.
-4. The `docs-specialist` agent updates the relevant project documentation after
-   implementation and verification are complete.
+3. The `frontend-specialist` agent implements the plan, preserving existing behavior outside the requested scope.
+4. The focussed tests are run and we iterate until they all pass.
+5. The `docs-specialist` agent updates the relevant project documentation after
+   implementation, review, and verification are complete.
 
 Agents may use `write`, but should prefer `apply_patch` and other patch-based
 editing over `write` or `edit` because patch operations are more reliable for

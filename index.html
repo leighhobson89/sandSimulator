@@ -44,6 +44,10 @@
                     <button id="eraserButton" class="btn btn-tool">Eraser</button>
                     <button id="exportGame" class="btn btn-tool">Export</button>
                     <button id="importGame" class="btn btn-tool">Import</button>
+                    <label class="toggle edge-pan-toggle" title="Slowly pan when the pointer reaches the canvas edge">
+                        <input id="edgePanToggle" type="checkbox">
+                        <span>Edge pan</span>
+                    </label>
                 </div>
 
                 <div class="toolbar-group toolbar-end">
@@ -67,7 +71,10 @@
                 <div id="particleButtons"></div>
             </aside>
 
-            <main id="canvasArea">
+            <main id="canvasArea" data-zoom-level="1" tabindex="0"
+                  aria-label="Simulation canvas viewport. Use arrow keys to scroll when zoomed.">
+                <div id="zoomStatus" class="zoom-status" role="status" aria-live="polite"
+                     aria-atomic="true" hidden></div>
                 <div id="canvasStage">
                     <canvas id="canvas"></canvas>
                     <div id="machineOverlay" aria-hidden="true"></div>

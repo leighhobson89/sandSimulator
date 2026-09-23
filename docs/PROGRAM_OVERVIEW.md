@@ -32,6 +32,33 @@ ambient temperature eases toward its setting
   -> canvas draws the resulting world
 ```
 
+## View and input ownership
+
+The canvas viewport is a view layer around the same simulation canvas, not part
+of the saved world state:
+
+- `game.js` keeps the fitted canvas dimensions, applies four transient zoom
+  levels (level 1 fits the full view; levels 2-4 enlarge it), sizes the scroll
+  stage, and displays the top-right `Zoom: N/4` status for one second after a
+  change. Entering the workspace and reloading reset the level and scroll
+  offsets; no zoom state is serialized.
+- `ui.js` owns viewport gestures. An unmodified vertical mouse wheel is
+  exclusively zoom input and is prevented from vertically scrolling. Horizontal
+  or Shift + wheel remains available to the browser for native horizontal
+  scrolling where supported. Above level 1, thin theme-responsive scrollbars
+  and unmodified arrow keys scroll the viewport; arrow keys continue to belong
+  to focused controls instead of the canvas.
+- The optional, unchecked **Edge pan** checkbox beside Import enables slow
+  pointer-hover panning only inside the outer 5% of the viewport, and only
+  above level 1. There is no application-owned drag-pan gesture. Middle-click
+  remains browser-owned/native where supported, rather than entering painting or
+  custom panning.
+- `cellFromEvent()` continues to map pointer coordinates through the rendered
+  canvas rectangle. Painting, erasing, touch input, and machine overlay hit
+  testing therefore retain their existing coordinate behavior at every zoom and
+  scroll position. Scrolling changes only what is visible; the simulation loop
+  continues running.
+
 The scan direction alternates, and a per-cell moved flag prevents a particle
 from moving twice in one frame. This is a pragmatic, fast cellular model rather
 than continuous mechanics: “water pressure,” for example, is an equalising

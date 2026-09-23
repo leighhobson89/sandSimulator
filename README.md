@@ -72,6 +72,20 @@ node tools/tuneIce.mjs                             # ice: lasts at room temperat
 | E | eraser |
 | H | heat view (shows temperature instead of materials) |
 | `[` `]` | brush size |
+| Vertical mouse wheel over the canvas | Zoom one transient level at a time, from fitted level 1 through level 4; the wheel does not vertically scroll the page |
+| Horizontal or Shift + wheel | Leave horizontal scrolling to the browser where the viewport supports it |
+| Arrow keys (above zoom level 1) | Scroll the zoomed canvas; focused controls keep their normal arrow-key behavior |
+| Edge pan checkbox (beside Import) | When checked, slowly pan while the mouse hovers in the outer 5% of a zoomed canvas; it is off by default |
+| Middle click | Remains browser-owned/native where supported; it is not an app drag-pan gesture |
+
+The canvas starts at **Zoom: 1/4**, fitted to the workspace. Levels 2-4 make
+the canvas larger and expose thin, theme-responsive scrollbars; the simulation
+continues while the viewport is scrolled. Zoom changes briefly show a top-right
+`Zoom: N/4` notice that fades after one second. Zoom and scroll position are
+view state only: entering the workspace or reloading resets them to the fitted
+view and they are not saved. There is no app-owned drag-to-pan mode. Existing
+coordinate mapping, painting, erasing, touch input and machine overlays remain
+unchanged while zoomed or scrolled.
 
 **Clear** is deliberately confirm-first: the toolbar button opens a warning,
 Cancel leaves the current world untouched, and Clear World removes all

@@ -37,6 +37,11 @@ let grabbedPixels = null;
 let linePreview = null;
 let shapePreview = null;
 let machinePlacementPreview = null;
+const CANVAS_ZOOM_FACTORS = [1, 1.5, 2, 3];
+let canvasZoomLevel = 1;
+let fittedCanvasWidth = 0;
+let fittedCanvasHeight = 0;
+let zoomStatusTimer = null;
 
 // A blueprint is a compact, rectangular copy of the persistent cell state.
 // Transient frame bookkeeping (moved and tempNext) is intentionally excluded:
@@ -59,6 +64,9 @@ export const BLUEPRINT_FIELDS = [
 
 export function startGame({ preserveWorldSize = false } = {}) {
     const canvas = getElements().canvas;
+    // Zoom is a view preference for the current workspace, not part of the
+    // simulation. Every new or restored workspace starts with the fitted view.
+    resetCanvasZoom();
     if (!gridFittedToWorkspace && !preserveWorldSize) fitGridToWorkspace();
     if (preserveWorldSize) gridFittedToWorkspace = true;
     const cols = getGridCols();
@@ -112,22 +120,130 @@ function fitGridToWorkspace() {
 // Makes the canvas as big as it fits in the work area while keeping cells
 // square. The canvas itself stays at one pixel per cell; this only stretches it.
 function fitCanvasToScreen() {
-    const canvas = getElements().canvas;
     const area = getElements().canvasArea;
     const cols = getGridCols();
     const rows = getGridRows();
+    const previousScrollLeft = area.scrollLeft;
+    const previousScrollTop = area.scrollTop;
 
     const availableWidth = area.clientWidth - 32;
     const availableHeight = area.clientHeight - 32;
     const scale = Math.max(1, Math.min(availableWidth / cols, availableHeight / rows));
 
-    canvas.style.width = Math.floor(cols * scale) + 'px';
-    canvas.style.height = Math.floor(rows * scale) + 'px';
-    const stage = getElements().canvasStage || canvas.parentElement;
-    if (stage) {
-        stage.style.width = canvas.style.width;
-        stage.style.height = canvas.style.height;
+    fittedCanvasWidth = Math.max(1, Math.floor(cols * scale));
+    fittedCanvasHeight = Math.max(1, Math.floor(rows * scale));
+    applyCanvasZoom();
+
+    // Resizing may change the scrollable extent, but it must not silently
+    // return an already zoomed workspace to level one or jump to its origin.
+    if (canvasZoomLevel > 1) {
+        const maxLeft = Math.max(0, area.scrollWidth - area.clientWidth);
+        const maxTop = Math.max(0, area.scrollHeight - area.clientHeight);
+        area.scrollLeft = Math.min(maxLeft, previousScrollLeft);
+        area.scrollTop = Math.min(maxTop, previousScrollTop);
     }
+    positionZoomStatus();
+}
+
+function applyCanvasZoom() {
+    const canvas = getElements().canvas;
+    const area = getElements().canvasArea;
+    const stage = getElements().canvasStage || canvas.parentElement;
+    if (!canvas || !area || !stage) return;
+
+    const factor = CANVAS_ZOOM_FACTORS[canvasZoomLevel - 1] || 1;
+    const width = Math.max(1, Math.floor(fittedCanvasWidth * factor));
+    const height = Math.max(1, Math.floor(fittedCanvasHeight * factor));
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
+    stage.style.width = `${width}px`;
+    stage.style.height = `${height}px`;
+    area.dataset.zoomLevel = String(canvasZoomLevel);
+    area.classList.toggle('zoomed', canvasZoomLevel > 1);
+    if (canvasZoomLevel === 1) {
+        area.scrollLeft = 0;
+        area.scrollTop = 0;
+    }
+}
+
+function hideZoomStatus() {
+    const status = getElements().zoomStatus;
+    if (!status) return;
+    clearTimeout(zoomStatusTimer);
+    zoomStatusTimer = null;
+    status.hidden = true;
+    status.classList.remove('zoom-status-fade');
+}
+
+function positionZoomStatus() {
+    const status = getElements().zoomStatus;
+    const area = getElements().canvasArea;
+    if (!status || !area) return;
+    const rect = area.getBoundingClientRect();
+    status.style.top = `${Math.max(8, rect.top + 12)}px`;
+    status.style.right = `${Math.max(8, window.innerWidth - rect.right + 12)}px`;
+}
+
+function showZoomStatus() {
+    const status = getElements().zoomStatus;
+    if (!status) return;
+    clearTimeout(zoomStatusTimer);
+    status.textContent = `Zoom: ${canvasZoomLevel}/${CANVAS_ZOOM_FACTORS.length}`;
+    status.hidden = false;
+    positionZoomStatus();
+    status.classList.remove('zoom-status-fade');
+    void status.offsetWidth;
+    status.classList.add('zoom-status-fade');
+    zoomStatusTimer = setTimeout(() => {
+        status.hidden = true;
+        status.classList.remove('zoom-status-fade');
+        zoomStatusTimer = null;
+    }, 1000);
+}
+
+export function getCanvasZoomLevel() {
+    return canvasZoomLevel;
+}
+
+export function resetCanvasZoom() {
+    canvasZoomLevel = 1;
+    applyCanvasZoom();
+    hideZoomStatus();
+}
+
+export function setCanvasZoomLevel(level, { anchorX, anchorY } = {}) {
+    const nextLevel = Math.max(1, Math.min(CANVAS_ZOOM_FACTORS.length, Math.round(level)));
+    if (nextLevel === canvasZoomLevel) return false;
+
+    const area = getElements().canvasArea;
+    const canvas = getElements().canvas;
+    const areaRect = area.getBoundingClientRect();
+    const oldRect = canvas.getBoundingClientRect();
+    const pointerX = Number.isFinite(anchorX) ? anchorX : areaRect.left + area.clientWidth / 2;
+    const pointerY = Number.isFinite(anchorY) ? anchorY : areaRect.top + area.clientHeight / 2;
+    const oldFractionX = oldRect.width > 0
+        ? Math.max(0, Math.min(1, (pointerX - oldRect.left) / oldRect.width)) : 0.5;
+    const oldFractionY = oldRect.height > 0
+        ? Math.max(0, Math.min(1, (pointerY - oldRect.top) / oldRect.height)) : 0.5;
+
+    canvasZoomLevel = nextLevel;
+    applyCanvasZoom();
+    showZoomStatus();
+    if (context && imageData) drawWorld();
+    if (nextLevel === 1) return true;
+
+    // Keep the cell under the pointer under the pointer while changing level.
+    // This also gives keyboard and test-driven zoom changes a useful centered
+    // starting position without inventing a separate pan model.
+    const nextRect = canvas.getBoundingClientRect();
+    const nextAreaRect = area.getBoundingClientRect();
+    const contentX = nextRect.left - nextAreaRect.left + area.scrollLeft + oldFractionX * nextRect.width;
+    const contentY = nextRect.top - nextAreaRect.top + area.scrollTop + oldFractionY * nextRect.height;
+    const maxLeft = Math.max(0, area.scrollWidth - area.clientWidth);
+    const maxTop = Math.max(0, area.scrollHeight - area.clientHeight);
+    area.scrollLeft = Math.min(maxLeft, Math.max(0, contentX - (pointerX - nextAreaRect.left)));
+    area.scrollTop = Math.min(maxTop, Math.max(0, contentY - (pointerY - nextAreaRect.top)));
+    return true;
 }
 
 export function gameLoop(now) {
@@ -1120,6 +1236,7 @@ export function setGameState(newState) {
 
     switch (newState) {
         case getMenuState():
+            resetCanvasZoom();
             elements.menu.classList.remove('d-none');
             elements.menu.classList.add('d-flex');
             elements.buttonRow.classList.add('d-none');
