@@ -162,7 +162,7 @@ e2e/
     autosave-resume.spec.mjs
     validation.spec.mjs
   regressions/
-    critical-workflows.spec.mjs
+    # Focused bug-fix regression specs; currently empty as this regimen starts.
 ```
 
 ## 4. Harness Architecture
@@ -212,6 +212,16 @@ state reset behavior. The area checklist is:
 An area may be called complete only after this checklist is satisfied and the
 focused suite passes in both modes. Partial representative coverage must remain
 amber, even when its existing tests pass.
+
+## 5a. Bug-Fix Regression Coverage
+
+Whenever a bug is found and fixed, add a focused regression test to the
+appropriate spec under `e2e/regressions/`. If the established owner is a
+functional-area spec, keep the test there while ensuring the regression
+scenario remains discoverable. The `e2e/regressions/` folder is the ongoing
+home for bug-fix regression coverage. It currently has no regression specs
+because this regimen is just starting, not because the folder is omitted or
+incomplete.
 
 ## 6. Determinism Strategy
 

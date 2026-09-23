@@ -17,8 +17,12 @@ documentation findings are kept in [`docs/archive/`](docs/archive/).
 The latest verification on 21 September 2026 is green: `npm test` reports 250
 passed and 0 failed with the default reproducible seed, and
 `npm run test:smoke` passes its browser-startup, interaction and autosave
-cancel checks. A Playwright suite is also included for real-browser theme,
-mouse, touch, keyboard-focus and narrow-layout coverage.
+cancel checks. A Playwright suite is also included for real-browser navigation,
+tools, persistence, themes, machines, blueprints, and desktop interaction
+coverage. Focused navigation, tools, and persistence suites currently pass 13
+tests in both headless and headed modes; the detailed status and remaining
+exhaustive coverage gaps are tracked in
+[`docs/E2E_PROGRESS.md`](docs/E2E_PROGRESS.md).
 
 ## Running it
 

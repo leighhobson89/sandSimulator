@@ -3,16 +3,19 @@
 ## Summary
 
 The E2E audit, baseline architecture, helper contract coverage, blueprint
-migration, and expanded machine/material browser contracts are complete for the
-areas currently under migration. The Playwright suite continues incrementally
-into the functional-area folders using the production deterministic test
-adapter (`window.__GAME_INSTANCE__`).
+migration, expanded machine/material browser contracts, and focused navigation,
+tools, and persistence specs are now recorded in the functional-area folders.
+The Playwright suite continues incrementally using the production deterministic
+test adapter (`window.__GAME_INSTANCE__`).
 
 **Overall status:** Helpers, blueprints, material catalog/rendering, and the
 machines/tubing browser contract are complete under the exhaustive area policy.
-The separate cellular-physics/material-reaction matrix remains integration-led
-and is still amber until its broader browser scenarios are migrated. Three of
-15 functional areas are complete (20%).
+The focused navigation, tools, and persistence suites pass in both headless
+and headed modes (13 tests total), but those areas remain amber until their
+exhaustive coverage contracts are satisfied. The separate cellular-physics and
+material-reaction matrix remains integration-led and amber while its browser
+contract is narrower than the full integration matrix. Three of 15 functional
+areas are complete (20%).
 
 The baseline contract passes against the real served application. Mobile and
 narrow-viewport coverage is intentionally out of scope because this is a
@@ -29,21 +32,21 @@ fully passing.
 
 | # | Functional area | Status | Completed | Summary / next action |
 | ---: | --- | :---: | :---: | --- |
-| 1 | Application startup, menu, New Game, Resume Game, and screen transitions | 🟡 | No | Existing legacy browser coverage; migrate to `e2e/navigation/menu.spec.mjs`. |
-| 2 | Theme selection, theme persistence, and accessible selected state | 🟡 | No | Existing theme browser coverage; migrate to `e2e/navigation/themes.spec.mjs`. |
+| 1 | Application startup, menu, New Game, Resume Game, and screen transitions | 🟡 | No | Focused startup, New Game, and workspace-tab coverage passes in both modes in `e2e/navigation/menu.spec.mjs`; Resume Game and exhaustive transition/confirmation paths remain. |
+| 2 | Theme selection, theme persistence, and accessible selected state | 🟡 | No | Focused six-theme persistence and menu/toolbar synchronization coverage passes in both modes in `e2e/navigation/themes.spec.mjs`; exhaustive accessibility and alternate-path coverage remains. |
 | 3 | Canvas sizing, desktop layout, pixelated rendering, and canvas mapping | 🟡 | No | Baseline canvas helper and production mapping adapter exist; focused canvas/layout coverage remains. |
 | 4 | Material catalog generation, selection, tooltips, and material metadata | 🟢 | Yes | All prepared definition buttons are checked for IDs, order/count, generated tooltip metadata, hover/focus behavior, selection state, category rendering, tool exit behavior, and representative canvas colors in `e2e/materials/`. |
-| 5 | Brush painting, repeated paint timer, eraser/right-click, and keyboard tools | 🟡 | No | Existing basic browser coverage; migrate to `e2e/tools/painting.spec.mjs`. |
-| 6 | Line, rectangle, ellipse, brush-size, and shape preview/commit behavior | 🟡 | No | Smoke coverage exists; add real Playwright migration in `e2e/tools/shapes.spec.mjs`. |
-| 7 | Grabber pickup, movement, cancellation, and drop behavior | 🟡 | No | Smoke coverage exists; migrate to `e2e/tools/grabber.spec.mjs`. |
-| 8 | Environment controls: air temperature, layers, lapse, breeze, wind strength, heat view, and readouts | 🟡 | No | Smoke coverage exists; migrate to `e2e/tools/environment.spec.mjs`. |
+| 5 | Brush painting, repeated paint timer, eraser/right-click, and keyboard tools | 🟡 | No | Focused brush, repeated drag, right-click erase, and eraser shortcut coverage passes in both modes in `e2e/tools/painting.spec.mjs`; keyboard-tool and timer boundary coverage remains. |
+| 6 | Line, rectangle, ellipse, brush-size, and shape preview/commit behavior | 🟡 | No | Focused line/rectangle/ellipse commit and cancelled-preview coverage passes in both modes in `e2e/tools/shapes.spec.mjs`; brush-size and exhaustive boundary/cancellation coverage remains. |
+| 7 | Grabber pickup, movement, cancellation, and drop behavior | 🟡 | No | Focused pickup, movement, drop, and mode-exit coverage passes in both modes in `e2e/tools/grabber.spec.mjs`; cancellation, sizing, and blocked/alternate paths remain. |
+| 8 | Environment controls: air temperature, layers, lapse, breeze, wind strength, heat view, and readouts | 🟡 | No | Focused temperature, layers, breeze, lapse, heat-view, and readout coverage passes in both modes in `e2e/tools/environment.spec.mjs`; wind-strength and exhaustive bounds/reset coverage remains. |
 | 9 | Cellular physics: gravity/settling, collision/blocking, liquid flow, gas/fire rise, conservation, and temperature integration | 🟡 | No | Headless integration coverage is strong; add representative user-driven E2E after deterministic stepping hook. |
 | 10 | Material reactions: phase changes, burning, extinguishing, growth, and decay/residue | 🟡 | No | Headless integration coverage is strong; retain detailed matrix at integration level and add smoke E2E. |
 | 11 | Electrical systems: batteries, conductors, charge, pulses, and powered machines | 🟡 | No | Headless integration coverage exists; add representative browser workflows after hook migration. |
 | 12 | Machines and tubing: placement/orientation, heaters/coolers/fans, storage, vents, tubing flow, and mixer inventories/release | 🟢 | Yes | Placement previews/blocked cells/all eight directions, powered Fan/Heater/Cooler, settings bounds, all storage dialogs/purge/capacity/intake, Vent release/rate limits, tubing topology/rates/visualization/storage transfer, all recipes/non-mixing output, and portable machine persistence in `e2e/machines/`. |
 | 13 | Blueprints: marquee selection, copy, preview/stamp, slot library, undo/redo | 🟢 | Yes | Lifecycle, reverse/edge clipping, all persisted blueprint fields, air overwrite, preview, 24-slot wrap, keyboard history, redo invalidation, and portable export/import in `e2e/blueprints/`. |
-| 14 | Save/export/import, validation errors, autosave, resume choice, and clear | 🟡 | No | Export/import and clear have legacy/smoke coverage; migrate to `e2e/persistence/`. |
-| 15 | Desktop keyboard accessibility, dialogs, focus, ARIA state, and tooltips | 🟡 | No | Existing browser coverage for focus, ARIA, and tooltips; migrate to navigation/tools. Mobile and narrow viewport behavior are out of scope. |
+| 14 | Save/export/import, validation errors, autosave, resume choice, and clear | 🟡 | No | Focused export/import, autosave/resume, and validation coverage passes in both modes in `e2e/persistence/`; exhaustive clear, replacement-choice, cancellation, and boundary coverage remains. |
+| 15 | Desktop keyboard accessibility, dialogs, focus, ARIA state, and tooltips | 🟡 | No | Focused navigation and tool specs exercise selected ARIA states, keyboard shortcuts, and tooltips; broader dialog, focus-order, and tooltip coverage remains. Mobile and narrow viewport behavior are out of scope. |
 
 ## Baseline Deliverables
 
@@ -102,6 +105,15 @@ real Playwright workflows for user actions, deterministic physics setup only for
 fixtures, and keep non-user-visible rule matrices in integration tests. Each
 focused area must pass both headless and headed runs with useful failure
 diagnostics. See the full checklist in section 5 of `E2E_TEST_PLAN.md`.
+
+## Bug-Fix Regression Policy
+
+Whenever a bug is found and fixed, add a focused regression test to the
+appropriate spec under `e2e/regressions/`. Use the relevant functional-area
+spec instead when that is the established owner, while keeping the regression
+scenario discoverable. The regressions folder is the ongoing home for bug-fix
+regression coverage. It currently has no regression specs because this regimen
+is just starting, not because the folder is omitted or incomplete.
 
 ## Migration Gates
 
