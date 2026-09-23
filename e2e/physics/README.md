@@ -1,10 +1,10 @@
 # Physics E2E Coverage
 
 Focused browser contracts for deterministic, user-visible physics outcomes.
-The folder contains 24 Playwright tests within the current 135-test browser
+The folder contains 24 Playwright tests within the current 137-test browser
 inventory. The last full browser run covered 121 tests and passed headlessly; an
-additional headed diagnostic run also passed. The current 135-test inventory
-has not been rerun.
+additional headed diagnostic run also passed. The current 137-test inventory
+has not been run as a full suite.
 
 - `determinism.spec.mjs`: four tests for seeded snapshots, restore/replay,
   controlled stepping, and an electrical boundary.

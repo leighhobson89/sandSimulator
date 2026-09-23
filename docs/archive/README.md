@@ -8,6 +8,8 @@ in [`../README.md`](../README.md); active findings remain in
 
 ## New Dated Archives
 
+- [`scale-profiling-2026-09-23.md`](scale-profiling-2026-09-23.md) — completion
+  record for the headless scale-profiling baseline from 23 September 2026.
 - [`E2E_PROGRESS-2026-09-23.md`](E2E_PROGRESS-2026-09-23.md) — the E2E
   completion matrix and verification snapshot from 23 September 2026.
 - [`COMPLETED_FEATURES-2026-09-23.md`](COMPLETED_FEATURES-2026-09-23.md) — the
@@ -17,6 +19,9 @@ in [`../README.md`](../README.md); active findings remain in
 
 ## Executed Plans
 
+- [`plans/scale-profile-infrastructure-2026-09-23.md`](plans/scale-profile-infrastructure-2026-09-23.md)
+  — the executed headless scale-profile infrastructure plan from 23 September
+  2026.
 - [`plans/heat-transfer-rays-2026-09-23.md`](plans/heat-transfer-rays-2026-09-23.md)
   — the executed heat-transfer and ray-tuning implementation plan from 23
   September 2026.

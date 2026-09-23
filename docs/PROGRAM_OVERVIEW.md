@@ -1,6 +1,6 @@
 # Elemental Foundry: program overview
 
-Reviewed: 23 September 2026
+Reviewed: 24 September 2026
 
 Elemental Foundry is a browser-based **falling-sand / cellular-automata
 sandbox**. The player paints materials into a pixel grid, then watches simple
@@ -82,12 +82,22 @@ rule based on the surface of connected liquid, not a Navier–Stokes solution.
 - The simulator is testable outside the browser. The physics core has no DOM
   dependency, and the headless suite checks 284 assertions with default seed
   `0`, plus a 260x150 performance budget. A second smoke suite covers startup,
-  input and autosave decisions. The last recorded full Playwright run covered
-  121 browser tests and passed headlessly (a headed diagnostic run also passed);
-  the current source discovers 135 tests across all fifteen functional areas.
-  The focused middle-click picker specs passed 21/21 headlessly; the current
-  full inventory has not been rerun. Headed runs are optional diagnostics and
-  never an acceptance or release prerequisite.
+  input and autosave decisions. The last recorded full Playwright execution
+  covered 121 browser tests and passed headlessly. Separately, the current test
+  inventory discovers 137 tests in 34 spec files; that inventory count is not a
+  claim that a 137-test full run has passed. The focused middle-click picker
+  specs passed 21/21 headlessly. Headed runs are optional diagnostics and never
+  an acceptance or release prerequisite.
+- `npm run profile:scale` is a fixed, no-CLI-option, headless physics-only
+  synthetic profile of 260x150, 520x300, and 1040x600. The 1040x600 case is
+  profiler-only: there is no world-size selector or larger playable world, and
+  new worlds still default to 150 rows with workspace-fitted columns. Profiling
+  does not measure canvas rendering or SVG overlays. World creation is checked
+  against a 2,000,000-cell limit before dimensions change or arrays allocate;
+  its memory figures estimate 85 bytes of primary physics arrays plus 8 bytes
+  of render memory per cell, not process RSS. Timings are machine-specific and
+  informational. `npm run test:scale-profile` runs the profile math/CLI checks
+  and the world-allocation checks.
 - The interaction design is polished for a small sandbox: brush and line
   modes, right-click erase, mode-gated middle-click material sampling, heat
   view, a move-only-one-material Grabber, environmental controls, keyboard
@@ -132,13 +142,18 @@ community content, modding, advanced circuitry, or broader toybox variety.
 
 The recorded verification includes the seeded headless suite at 284/284
 assertions with default seed `0`, the passing smoke suite, and a last full
-Playwright run of 121 tests that passed headlessly (with an additional headed
-diagnostic run also passing). The current source discovers 135 browser tests;
-the full inventory has not been rerun for the middle-click picker changes.
-Their three focused specs passed 21/21 headlessly:
+Playwright run of 121 tests that passed headlessly. The current inventory
+discovery is 137 tests in 34 files; it is an inventory count, not a full-suite
+pass. Focused middle-click picker specs passed 21/21 headlessly. For the scale
+profile change, both `test:scale-profile` checks passed, the focused headless
+Playwright run passed 5/5, and the fixed profile completed with informational
+timings; no full suite was run for that change:
 
 ```text
-npx playwright test --workers=1 --trace=off
+npm run test:scale-profile
+npm run test:browser -- e2e/scaling/default-world.spec.mjs e2e/physics/determinism.spec.mjs --workers=1 --trace=off
+npm run profile:scale
+npm run test:browser -- --list
 ```
 
 Headless Playwright is the required verification path. Headed runs may be used

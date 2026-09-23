@@ -7,7 +7,7 @@ options:
 permission:
   read: allow
   edit:
-    "*": deny
+    "*": allow
     "*.test.js": allow
     "*.test.ts": allow
     "*.test.jsx": allow

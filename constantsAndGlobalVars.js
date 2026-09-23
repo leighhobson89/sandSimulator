@@ -1,3 +1,5 @@
+import { assertValidWorldDimensions } from './worldConfig.js';
+
 export let stateLoading = false;
 
 //ELEMENTS
@@ -198,7 +200,9 @@ export function getGridCols() {
 }
 
 export function setGridCols(value) {
-    GRID_COLS = Math.max(200, Math.floor(value));
+    const cols = Math.max(200, Math.floor(value));
+    assertValidWorldDimensions(cols, GRID_ROWS);
+    GRID_COLS = cols;
 }
 
 export function getGridRows() {
@@ -206,7 +210,9 @@ export function getGridRows() {
 }
 
 export function setGridRows(value) {
-    GRID_ROWS = Math.max(1, Math.floor(value));
+    const rows = Math.max(1, Math.floor(value));
+    assertValidWorldDimensions(GRID_COLS, rows);
+    GRID_ROWS = rows;
 }
 
 export function getParticleDefinitions() {

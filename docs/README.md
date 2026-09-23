@@ -18,6 +18,9 @@ short [`Archive`](archive/README.md) index and are not current guidance.
   roadmap ideas.
 - [`E2E_TEST_PLAN.md`](E2E_TEST_PLAN.md) — current Playwright architecture,
   commands, maintenance contract, regression policy, and next coverage work.
+- [`PHYSICS_REFACTOR_AUDIT.md`](PHYSICS_REFACTOR_AUDIT.md) — source-backed
+  inventory, contracts, risks, and incremental extraction plan for a possible
+  future `physics.js` refactor; it is not implementation authorization.
 
 The repository root [`README.md`](../README.md) remains the user-facing guide
 for running and extending the simulator.

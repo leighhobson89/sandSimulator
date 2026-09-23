@@ -40,8 +40,6 @@ completion snapshots are preserved in the [`archive/`](archive/) index.
 
 ## Scale and technical investment
 
-- Profile before changing architecture. At the tested 260x150 grid the core
-  meets its 8 ms/frame assertion, so premature GPU work is unnecessary.
 - If larger canvases become a product goal, move the simulation to Web Workers
   or WASM and investigate WebGL/WebGPU rendering/compute. Sandspiel is a useful
   reference for Rust/WASM/WebGL; do this only after deterministic regression

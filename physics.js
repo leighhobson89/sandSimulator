@@ -1,3 +1,5 @@
+import { assertValidWorldDimensions } from './worldConfig.js';
+
 // physics.js
 // -----------------------------------------------------------------------------
 // The whole simulation lives here. Nothing in this file touches the DOM, so it
@@ -644,6 +646,7 @@ export function restoreSimulationState(state) {
 // --------------------------------------------------------------------- world
 
 export function createWorld(cols, rows) {
+    assertValidWorldDimensions(cols, rows);
     COLS = cols;
     ROWS = rows;
     const n = cols * rows;

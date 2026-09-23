@@ -40,9 +40,18 @@ integration suite.
   Mixers, electrical behavior, and machine persistence.
 - `e2e/blueprints/` covers capture, stamping, history, lifecycle, and portable
   persistence.
+- `e2e/scaling/default-world.spec.mjs` protects the existing fitted 150-row
+  new-world default and verifies that no world-size selector is exposed. It
+  does not exercise the profiler's larger synthetic dimensions; those are not
+  playable-world options.
 - `e2e/persistence/` covers export/import, autosave, resume choices, validation,
   and clear behavior. `e2e/regressions/` is available for defects without a
   more specific functional-area owner.
+
+The current Playwright discovery inventory is 137 tests in 34 spec files
+(`npm run test:browser -- --list`). The last recorded full execution remains a
+historical 121-test headless pass; discovery does not imply that the current
+inventory has been run as a full suite.
 
 Each test uses a fresh browser context, opens a New Game, pauses before
 deterministic setup, and seeds randomness when the scenario needs it. The
@@ -75,6 +84,7 @@ Run the non-browser checks and the browser suite with one worker:
 ```text
 npm test
 npm run test:smoke
+npm run test:scale-profile
 npm run test:browser
 ```
 
@@ -83,6 +93,18 @@ focused area, replace the path with its owning folder or spec:
 
 ```text
 npx playwright test e2e/physics --workers=1 --trace=off
+```
+
+The scale profile's allocation and pure math/CLI checks are headless Node tests
+and can be run independently from Playwright. `npm run profile:scale` reports
+the fixed physics-only synthetic matrix; it is a diagnostic command rather
+than a test or a playable-world size option. To verify that scaling work has
+not changed the product default, run the scaling guard together with the
+determinism regression:
+
+```text
+npm run test:scale-profile
+npm run test:browser -- e2e/scaling/default-world.spec.mjs e2e/physics/determinism.spec.mjs --workers=1 --trace=off
 ```
 
 Run the middle-click picker regressions without running the full suite:

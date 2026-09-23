@@ -92,3 +92,36 @@ test('import replacement choices support Cancel, No, and Yes without losing the 
     await expect.poll(() => page.evaluate(() => localStorage.getItem('elemental-foundry.autosave.v1')))
         .not.toBe(originalResume);
 });
+
+test('failed autosave replacement preserves the previous resume game', async ({ page }) => {
+    const game = new GamePage(page); await game.openMenu(); await game.newGame();
+    const key = 'elemental-foundry.autosave.v1';
+    await expect.poll(() => page.evaluate(storageKey => localStorage.getItem(storageKey), key))
+        .not.toBeNull();
+    const previousSave = await page.evaluate(storageKey => localStorage.getItem(storageKey), key);
+
+    await page.getByRole('button', { name: 'Export' }).click();
+    const save = await page.locator('#saveString').inputValue();
+    await page.locator('#closeSaveDialog').click();
+    await page.getByRole('button', { name: 'Clear' }).click();
+    await page.getByRole('button', { name: 'Clear World' }).click();
+
+    await page.evaluate(storageKey => {
+        const setItem = localStorage.setItem.bind(localStorage);
+        localStorage.setItem = (keyName, value) => {
+            if (keyName === storageKey) throw new DOMException('Quota exceeded', 'QuotaExceededError');
+            setItem(keyName, value);
+        };
+    }, key);
+    await page.getByRole('button', { name: 'Import' }).click();
+    await page.locator('#saveString').fill(save);
+    await page.getByRole('button', { name: 'Load Game' }).click();
+    await page.getByRole('button', { name: 'Yes, replace it' }).click();
+
+    await expect(page.locator('#autosaveStatus')).toBeVisible();
+    await expect(page.locator('#autosaveStatus')).toContainText(/autosave|resume/i);
+    await expect(page.evaluate(storageKey => localStorage.getItem(storageKey), key))
+        .resolves.toBe(previousSave);
+    const loaded = await game.state();
+    expect(loaded.cols).toBeGreaterThan(0);
+});

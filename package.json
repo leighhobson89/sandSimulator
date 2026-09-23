@@ -7,6 +7,8 @@
     "start": "node tools/serve.mjs",
     "test": "node tools/simTest.mjs",
     "test:smoke": "node tools/smokeTest.mjs",
+    "profile:scale": "node tools/scaleProfile.mjs",
+    "test:scale-profile": "node tools/scaleProfileTest.mjs && node tools/worldAllocationTest.mjs",
     "test:browser": "playwright test"
   },
   "devDependencies": {
