@@ -82,3 +82,64 @@ test('holding a real brush gesture repeats paint until release', async ({ page }
     await page.mouse.up();
     await expect(game.state()).resolves.toMatchObject({ frameCount: expect.any(Number) });
 });
+
+function dataAt(state, { x, y }) {
+    return state.arrays.data[y * state.cols + x];
+}
+
+function typeAt(state, { x, y }) {
+    return state.arrays.type[y * state.cols + x];
+}
+
+test('hand-painted rays choose, retain, reset, and move with stroke direction', async ({ page }) => {
+    const game = await start(page);
+    await page.locator('#brushSize').fill('1');
+
+    for (const ray of [
+        { name: 'Heat Ray', defaultDirection: 2, stepY: -2 },
+        { name: 'Cold Ray', defaultDirection: 3, stepY: 2 }
+    ]) {
+        await game.setFixture([]);
+        await page.getByRole('button', { name: ray.name, exact: true }).click();
+        const rayId = (await game.state()).definitions.find(definition => definition?.name === ray.name).id;
+        const origin = await canvasPoint(page, { x: 40, y: 50 });
+        const right = await canvasPoint(page, { x: 44, y: 50 });
+        const left = await canvasPoint(page, { x: 36, y: 50 });
+        const nextStroke = { x: 60, y: 50 };
+        const nextPoint = await canvasPoint(page, nextStroke);
+
+        await page.mouse.move(origin.x, origin.y);
+        await page.mouse.down();
+        let state = await game.state();
+        expect(typeAt(state, { x: 40, y: 50 })).toBe(rayId);
+        expect(dataAt(state, { x: 40, y: 50 })).toBe(ray.defaultDirection);
+
+        await page.mouse.move(right.x, right.y);
+        state = await game.state();
+        expect(dataAt(state, { x: 44, y: 50 })).toBe(0);
+
+        // Timer painting while the pointer is stationary must not reset the
+        // heading selected by the preceding movement.
+        await page.waitForTimeout(70);
+        state = await game.state();
+        expect(dataAt(state, { x: 44, y: 50 })).toBe(0);
+
+        await page.mouse.move(left.x, left.y);
+        state = await game.state();
+        expect(dataAt(state, { x: 36, y: 50 })).toBe(1);
+        await page.mouse.up();
+
+        // A fresh left-button stroke returns to the tool-specific default.
+        await page.mouse.move(nextPoint.x, nextPoint.y);
+        await page.mouse.down();
+        state = await game.state();
+        expect(dataAt(state, nextStroke)).toBe(ray.defaultDirection);
+        await page.mouse.up();
+
+        // The stored heading is also used by the simulation projectile pass.
+        await game.step(1);
+        state = await game.state();
+        expect(typeAt(state, nextStroke)).toBe(0);
+        expect(typeAt(state, { x: nextStroke.x, y: nextStroke.y + ray.stepY })).toBe(rayId);
+    }
+});

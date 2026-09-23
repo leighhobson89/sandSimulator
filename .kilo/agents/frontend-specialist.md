@@ -12,6 +12,9 @@ permission:
     "*.tsx": allow
     "*.js": allow
     "*.jsx": allow
+    "*.mjs": allow
+    "*.json": allow
+    "*.md": allow
     "*.css": allow
     "*.scss": allow
     "*.less": allow

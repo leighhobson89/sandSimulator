@@ -16,6 +16,7 @@ permission:
     "*.spec.ts": allow
     "*.spec.jsx": allow
     "*.spec.tsx": allow
+    "*.spec.mjs": allow
   bash: allow
   mcp: deny
   question: allow

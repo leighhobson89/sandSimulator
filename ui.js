@@ -1,6 +1,6 @@
 // ui.js
 // -----------------------------------------------------------------------------
-// Buttons, the particle picker and mouse handling.
+// Buttons, the particle picker and mouse/stroke handling.
 //
 // The particle buttons are built from particles.json at startup, so adding a new
 // particle to that file is all it takes to get a button for it.
@@ -43,6 +43,11 @@ let isPainting = false;
 let isGrabbing = false;
 let lastCell = null;
 let paintTimer = null;
+// Hand-painted rays carry their direction in the cell data. A stroke starts at
+// the tool's default heading, then adopts the heading of the first non-zero
+// pointer movement and keeps it until movement selects another heading.
+let strokeRayDirection = null;
+let lastStrokePointer = null;
 let currentCell = { x: 0, y: 0 };
 let lineStart = null;
 let shapeStart = null;
@@ -1581,6 +1586,7 @@ function setUpCanvasInput() {
         }
 
         isPainting = true;
+        beginRayStroke(event, event.button === 0);
         // Right button erases without having to switch tool.
         if (event.button === 2) setEraserOn(true);
         lastCell = null;
@@ -1619,6 +1625,7 @@ function setUpCanvasInput() {
         }
         if (isGrabbing) return;
         if (!isPainting) return;
+        updateRayStrokeDirection(event);
         if (machinePlacement || selectedMachine()) {
             if (machinePlacement) {
                 machinePlacement.direction = fanDirection(
@@ -1685,6 +1692,7 @@ function setUpCanvasInput() {
             return;
         }
         isPainting = true;
+        beginRayStroke(event.touches[0], true);
         lastCell = null;
         const machine = selectedMachine();
         if (machine) {
@@ -1719,6 +1727,8 @@ function setUpCanvasInput() {
             return;
         }
         if (isGrabbing) return;
+        if (!isPainting) return;
+        updateRayStrokeDirection(event.touches[0]);
         if (machinePlacement || selectedMachine()) {
             if (machinePlacement) {
                 machinePlacement.direction = fanDirection(
@@ -1760,6 +1770,7 @@ function finishPainting(button) {
         clearMachinePlacementPreview();
         isPainting = false;
         lastCell = null;
+        clearRayStrokeState();
         stopPaintTimer();
         if (button === 0) placeMachine(placement.x, placement.y,
             placement.machine, placement.direction);
@@ -1770,16 +1781,18 @@ function finishPainting(button) {
         const start = shapeStart;
         const shape = shapeMode;
         clearShapePreview();
-        if (button === 0) paintShape(shape, start.x, start.y, currentCell.x, currentCell.y);
+        if (button === 0) paintShape(shape, start.x, start.y, currentCell.x, currentCell.y,
+            strokeRayDirection);
     } else if (getDrawMode() === 'line' && lineStart) {
         clearLinePreview();
-        paintLine(lineStart.x, lineStart.y, currentCell.x, currentCell.y);
+        paintLine(lineStart.x, lineStart.y, currentCell.x, currentCell.y, strokeRayDirection);
     }
     isPainting = false;
     lineStart = null;
     shapeStart = null;
     shapeMode = null;
     lastCell = null;
+    clearRayStrokeState();
     stopPaintTimer();
     if (button === 2) setEraserOn(false);
 }
@@ -1792,6 +1805,7 @@ function cancelPainting() {
     shapeStart = null;
     shapeMode = null;
     lastCell = null;
+    clearRayStrokeState();
     stopPaintTimer();
     clearLinePreview();
     clearShapePreview();
@@ -1807,6 +1821,37 @@ function selectedMachine() {
     return def?.machine || null;
 }
 
+function rayDirectionForDefinition(definition) {
+    if (definition?.name === 'Heat Ray') return 2; // up
+    if (definition?.name === 'Cold Ray') return 3; // down
+    return null;
+}
+
+function beginRayStroke(pointer, isLeftButton) {
+    lastStrokePointer = pointer && Number.isFinite(pointer.clientX) && Number.isFinite(pointer.clientY)
+        ? { x: pointer.clientX, y: pointer.clientY }
+        : null;
+    const selected = getDefinitions()[getParticleTypeIdSelected()];
+    strokeRayDirection = isLeftButton && !getEraserOn()
+        ? rayDirectionForDefinition(selected)
+        : null;
+}
+
+function updateRayStrokeDirection(pointer) {
+    if (strokeRayDirection === null || !lastStrokePointer || !pointer) return;
+    const dx = pointer.clientX - lastStrokePointer.x;
+    const dy = pointer.clientY - lastStrokePointer.y;
+    if (dx !== 0 || dy !== 0) strokeRayDirection = rayDirection(dx, dy);
+    if (Number.isFinite(pointer.clientX) && Number.isFinite(pointer.clientY)) {
+        lastStrokePointer = { x: pointer.clientX, y: pointer.clientY };
+    }
+}
+
+function clearRayStrokeState() {
+    strokeRayDirection = null;
+    lastStrokePointer = null;
+}
+
 function fanDirection(dx, dy) {
     if (dx === 0 && dy === 0) return 0; // right
     const horizontal = Math.abs(dx);
@@ -1817,6 +1862,11 @@ function fanDirection(dx, dy) {
     if (dx < 0 && dy < 0) return 5; // up-left
     if (dx < 0 && dy >= 0) return 6; // down-left
     return 7; // down-right
+}
+
+function rayDirection(dx, dy) {
+    if (Math.abs(dx) >= Math.abs(dy)) return dx >= 0 ? 0 : 1; // right, left
+    return dy < 0 ? 2 : 3; // up, down
 }
 
 function setGrabberMode(on) {
@@ -1844,9 +1894,9 @@ function cellFromEvent(event) {
 
 function paintAtCurrentCell() {
     if (lastCell) {
-        paintLine(lastCell.x, lastCell.y, currentCell.x, currentCell.y);
+        paintLine(lastCell.x, lastCell.y, currentCell.x, currentCell.y, strokeRayDirection);
     } else {
-        paintCell(currentCell.x, currentCell.y);
+        paintCell(currentCell.x, currentCell.y, 0, 0, strokeRayDirection);
     }
     lastCell = { x: currentCell.x, y: currentCell.y };
 }
@@ -1856,7 +1906,7 @@ function paintAtCurrentCell() {
 function startPaintTimer() {
     if (paintTimer) return;
     paintTimer = setInterval(() => {
-        if (isPainting) paintCell(currentCell.x, currentCell.y);
+        if (isPainting) paintCell(currentCell.x, currentCell.y, 0, 0, strokeRayDirection);
     }, 30);
 }
 

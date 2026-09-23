@@ -76,7 +76,7 @@ simulation description in [`PROGRAM_OVERVIEW.md`](PROGRAM_OVERVIEW.md).
 | Gases | Fire, Steam, Smoke, and Toxic Gas rise and spread. Gas storage accepts non-flaming gases, so Fire is not accepted by a Gas Storage Bin. |
 | Solids | Solids provide the fixed, structural, growing, or phase-change behavior declared by their definitions. Ice, Glass, Clay, Ceramic, and plant materials participate in the heat and reaction rules defined in `particles.json`. |
 | Metals | Spark, Copper, Battery, Iron, their molten forms, Molten Aluminum, and Tubing are listed here. Conductive metals carry electrical pulses and Battery stores charge; Tubing is non-conductive despite being in the Metals picker group. |
-| Tools | Heat Ray and Cold Ray are short-lived brushes. Wind moves light materials and stirs air; it stops at solid barriers but passes through plants. |
+| Tools | Heat Ray and Cold Ray are short-lived directional brushes. A left-button stroke starts Heat Ray upward or Cold Ray downward; its first non-zero drag selects the nearest cardinal direction, which persists while stationary and changes only when the drag heading changes. Painted ray cells travel as projectiles using that stored heading. Wind moves light materials and stirs air; it stops at solid barriers but passes through plants. |
 
 ### Heat, electrical, and reaction anchors
 
@@ -105,7 +105,13 @@ simulation description in [`PROGRAM_OVERVIEW.md`](PROGRAM_OVERVIEW.md).
 - Heat Ray and Cold Ray ramp their cells toward `2000 C`
   and `-120 C` over several frames rather than initializing an instant
   temperature source. Both burn out after a few frames instead of collecting as
-  material.
+  material. Hand-painted cells move as directional projectiles: Heat Ray starts
+  upward and Cold Ray downward for each left-button stroke, then the first
+  non-zero mouse/touch movement chooses the nearest cardinal direction; diagonal
+  movement is resolved to its dominant horizontal or vertical axis. That heading
+  persists during stationary painting and changes only with a new drag heading.
+  Heater/Cooler emissions retain their marked, one-way machine target temperature
+  behavior and are not affected by this brush direction rule.
 
 ## 3. Powered, storage, transfer, and connection machines
 

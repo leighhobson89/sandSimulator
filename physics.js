@@ -23,8 +23,10 @@
 //   surface for liquids, the top of the body of liquid this cell is joined to
 //   data    a spare number per cell that a few particles use for their own
 //           purposes: the fuse on a lit bomb, how much growing a plant has
-//           left in it, or a machine's facing direction. Emitted ray particles
-//           use bit 3 as a directional-projectile marker.
+//           left in it, or a machine's facing direction. Ray particles use the
+//           lower three bits for their projectile direction; hand-painted rays
+//           use cardinal values 0-3, while emitted machine rays may use all
+//           eight directions and additionally use bit 3 as a marker.
 //   power   frames of visible electrical power left in a conductive cell
 //   powerDelay  frames until an electrical pulse reaches a conductive cell
 //   charge  persistent stored charge for materials that can retain it; this is
@@ -1053,6 +1055,10 @@ export function clearWorld() {
 // floater is a floater for as long as it lasts.
 function startingData(def) {
     if (def?.machine === 'vent') return DEFAULT_VENT_RELEASE_RATE;
+    // Hand-painted rays start with the tool's direction before the UI sees its
+    // first drag. Machine emissions overwrite this with their marked direction.
+    if (def?.name === 'Heat Ray') return 2; // up
+    if (def?.name === 'Cold Ray') return 3; // down
     if (def.floatChance > 0) return random() < def.floatChance ? 1 : 0;
     if (def.growHeight <= 0) return 0;
     const spread = def.growHeight - def.growHeightMin;
@@ -1473,11 +1479,11 @@ export function stepSimulation() {
             if (def.hasStateChange && applyStateChange(x, y, i, def)) continue;
             if (def.hasReaction && applyReactions(x, y, i, def)) continue;
 
-            // Heat Ray and Cold Ray are directional projectiles when emitted by
-            // a powered machine. Their cell data stores the machine's eight-way
-            // direction, so they travel along the same centreline as its cone
-            // instead of falling or drifting like a hand-painted ray.
-            if (def.projectile && (world.data[i] & 8)) {
+            // Both hand-painted and machine-emitted Heat Ray/Cold Ray cells are
+            // projectiles. Their cell data stores the eight-way direction; only
+            // machine emissions carry bit 3, which is reserved for their
+            // separate one-way temperature behavior.
+            if (def.projectile) {
                 moveProjectile(x, y, i, def);
                 continue;
             }

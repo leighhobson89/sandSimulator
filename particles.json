@@ -593,7 +593,7 @@
     },
     "22": {
       "name": "Heat Ray",
-      "description": "Transient hot tool that ramps nearby cells toward 2000 C over several frames and radiates heat before fading.",
+      "description": "Transient hot tool that starts upward each stroke, follows the nearest cardinal drag direction, and ramps nearby cells toward 2000 C before fading.",
       "group": "Tools",
       "color": "rgb(255, 208, 150)",
       "color2": "rgb(255, 88, 24)",
@@ -694,7 +694,7 @@
     },
     "23": {
       "name": "Cold Ray",
-      "description": "Transient cold tool that ramps nearby cells toward -120 C over several frames before fading.",
+      "description": "Transient cold tool that starts downward each stroke, follows the nearest cardinal drag direction, and ramps nearby cells toward -120 C before fading.",
       "group": "Tools",
       "windLift": 0.9,
       "color": "rgb(206, 240, 255)",

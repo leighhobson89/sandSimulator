@@ -698,8 +698,9 @@ function updateChargeIndicator(elements) {
 // explicit exception and can clear any cell.
 //
 // dragX and dragY are which way the mouse was moving, which only the wind tool
-// cares about.
-export function paintCell(centreX, centreY, dragX, dragY) {
+// cares about. rayDirection is the hand-painted ray's stored cardinal heading;
+// machine-emitted ray markers are never created by this brush path.
+export function paintCell(centreX, centreY, dragX, dragY, rayDirection = null) {
     const id = getEraserOn() ? EMPTY : getParticleTypeIdSelected();
 
     // The wind is a tool rather than a material: it is not put into the world,
@@ -746,8 +747,17 @@ export function paintCell(centreX, centreY, dragX, dragY) {
             if (loose && size > 1 && Math.random() < 0.45) continue;
 
             setCell(x, y, id);
+            setPaintedRayDirection(i, id, rayDirection);
         }
     }
+}
+
+function setPaintedRayDirection(i, id, direction) {
+    if (direction === null || direction === undefined || !getDefinitions()[id]?.projectile) return;
+    const normalised = ((Math.round(direction) % 8) + 8) % 8;
+    // Keep the marker bit intact if a future caller paints through a marked ray;
+    // ordinary hand-painted cells have no marker and retain only these 3 bits.
+    getWorld().data[i] = (getWorld().data[i] & 8) | normalised;
 }
 
 function machineId(machine) {
@@ -808,23 +818,23 @@ export function faceFan(x, y, direction = 0) {
 // Draws along the line between two mouse positions so that a fast drag leaves a
 // continuous stroke instead of a dotted one. The direction of the drag is
 // handed on, since the wind tool blows whichever way the mouse is going.
-export function paintLine(x0, y0, x1, y1) {
+export function paintLine(x0, y0, x1, y1, rayDirection = null) {
     const dragX = x1 - x0;
     const dragY = y1 - y0;
     const steps = Math.max(Math.abs(dragX), Math.abs(dragY));
     if (steps === 0) {
-        paintCell(x1, y1, 0, 0);
+        paintCell(x1, y1, 0, 0, rayDirection);
         return;
     }
     for (let s = 0; s <= steps; s++) {
         const t = s / steps;
-        paintCell(Math.round(x0 + dragX * t), Math.round(y0 + dragY * t), dragX, dragY);
+        paintCell(Math.round(x0 + dragX * t), Math.round(y0 + dragY * t), dragX, dragY, rayDirection);
     }
 }
 
 // Filled shapes use one-cell placement so their footprint is exact and the
 // material's air-only rule is preserved for every cell inside the shape.
-export function paintShape(shape, x0, y0, x1, y1) {
+export function paintShape(shape, x0, y0, x1, y1, rayDirection = null) {
     if (shape !== 'rectangle' && shape !== 'ellipse') return;
 
     const id = getEraserOn() ? EMPTY : getParticleTypeIdSelected();
@@ -850,13 +860,13 @@ export function paintShape(shape, x0, y0, x1, y1) {
             if (isWind) {
                 applyWind(x, y, 0, 0, Math.max(3, getBrushSize()), getWindStrength());
             } else {
-                paintSingleCell(x, y, id, true);
+                paintSingleCell(x, y, id, true, rayDirection);
             }
         }
     }
 }
 
-function paintSingleCell(x, y, id, fillLooseMaterial = false) {
+function paintSingleCell(x, y, id, fillLooseMaterial = false, rayDirection = null) {
     if (!inBounds(x, y)) return;
     const world = getWorld();
     const i = index(x, y);
@@ -877,6 +887,7 @@ function paintSingleCell(x, y, id, fillLooseMaterial = false) {
     const loose = def.category === 'powder' || def.category === 'gas';
     if (!fillLooseMaterial && loose && getBrushSize() > 1 && Math.random() < 0.45) return;
     setCell(x, y, id);
+    setPaintedRayDirection(i, id, rayDirection);
 }
 
 // --------------------------------------------------------------- blueprints

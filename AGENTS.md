@@ -1,5 +1,31 @@
 # Project Instructions
 
+## Development Handoff Workflow
+
+Every development prompt must pass through this ordered agent handoff process:
+
+1. The `architect` agent plans the change and defines the implementation and
+   verification scope.
+2. The `test-engineer` agent writes focused failing regression tests from that
+   plan before implementation begins.
+3. The `frontend-specialist` agent implements the plan until the focused tests
+   pass, preserving existing behavior outside the requested scope.
+4. The `docs-specialist` agent updates the relevant project documentation after
+   implementation and verification are complete.
+
+Agents may use `write`, but should prefer `apply_patch` and other patch-based
+editing over `write` or `edit` because patch operations are more reliable for
+small, reviewable changes.
+
+### Quick Mode
+
+When a user includes the exact code word `QMODE` in a development prompt,
+the main agent may make the requested minor change directly without handing it
+through the specialist workflow and without running tests. The main agent must
+decide whether the change is minor enough for Quick Mode and whether any
+documentation needs updating; if it is not clearly minor, use the normal
+handoff workflow instead.
+
 ## Documentation Memory
 
 Maintain the relevant project documentation whenever code changes alter
