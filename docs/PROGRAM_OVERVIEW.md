@@ -101,22 +101,28 @@ rule based on the surface of connected liquid, not a Navier–Stokes solution.
   stop following global ambient until an air route opens. Steam can remain hot
   in a sealed chamber.
   Solid walls consider each adjacent air face independently, so a Wall touching
-  both chamber air and open air exchanges heat toward both; Insulation (material
-  54) has zero ordinary contact conductivity, very slow cooling, and a
-  `5000 C` melt into Lava. Its dedicated fast network transfers heat along
-  face-connected Insulation and between the network and adjacent enclosed air.
-  Open air and other materials are excluded, so a bridge can carry heat between
-  chamber interiors without leaking through its outside faces. Radiation can
-  still warm Insulation itself.
+  both chamber air and open air exchanges heat toward both. Ordinary pairwise
+  contact conductivity still runs each frame for pairs outside the fast
+  network, including slower Wood, Stone, and Wall exchange and other ineligible
+  contacts. Copper, Molten Copper, Battery, Molten Aluminum,
+  Iron, Molten Iron, Tubing, Fan, Heater, and Cooler opt into a fast thermal
+  network through `thermalNetworkRate`. Tubing's rate is `0.12`; it still has
+  zero ordinary and electrical conductivity. The network replaces ordinary
+  pair exchange for eligible conductor pairs and links with adjacent enclosed
+  air or gas, while excluding open air, other materials, and Insulation.
   Other non-air contents use cardinally adjacent air-space faces for direct
   cooling, choosing local enclosed-air or height-adjusted outdoor temperatures
-  per face; Insulation follows its dedicated network. With no cardinal air
+  per face; Insulation has ambient cooling disabled. With no cardinal air
   face, they get no direct ambient-cooling term or `coolsBy` clamp, but material
   conduction and source heating remain, so a shell can pass outside influence
   inward.
-  With no air face, there is no direct ambient-cooling term or `coolsBy` clamp,
-  though material contact conduction and source heating remain; a shell can
-  still conduct outside influence inward.
+  Insulation (material 54) remains a pink-red Solid with `conductivity: 0`,
+  `thermalNetworkRate: 0`, and `ambientCooling: false`. Its cooling rate is very
+  slow; it retains heat, can absorb radiant heat, and melts into Lava at
+  `5000 C`, but does not transfer heat by contact.
+  Solid Copper, Battery, Iron, Fan, Cooler, Tubing, and Heater also blend their
+  local pixel color toward a configured glow color as they approach melting.
+  This is a visual-only per-cell interpolation; molten gradients are unchanged.
 - The electrical system is more than a colour change. Sparks launch visible
   pulses through conductive networks; Battery stores shared charge; Copper,
   Iron and machines consume it; a Fan converts power into directional airflow,
@@ -124,15 +130,17 @@ rule based on the surface of connected liquid, not a Navier–Stokes solution.
   matching centreline Heat Ray/Cold Ray projectiles.
 - The simulator is testable outside the browser. The physics core has no DOM
   dependency, and deterministic simulation, startup smoke, scale-profile, and
-  browser-visible regressions use the documented npm harness. Before the
-  enclosed-content air-face follow-up, the full `npm test` suite passed
-  306/306. For that follow-up, `thermal-air-faces` passed 7/7,
-  `thermal-chamber` passed 16/16, and `thermal-contracts` passed 4/4; no full
-  suite was run for the follow-up.
+  browser-visible regressions use the documented npm harness. The preceding
+  full suite passed 306/306 before the fast-metal-network update. For the latest
+  focused network and glow update, `thermal-contracts` passed 9/9,
+  `thermal-chamber` passed 16/16, and `thermal-air-faces` passed 7/7. The
+  focused rendering wrapper did not reach assertions; cleanup stalled and was
+  interrupted. No full suite was run for this update.
 - `npm run profile:scale` is a fixed, no-CLI-option, headless physics-only
   synthetic profile of 260×150, 520×300, and 1040×600. The 1040×600 case is
   profiler-only; the two selectable worlds are 260×150 and 520×300. Profiling
-  excludes canvas rendering and SVG overlays. The current physics-only profile
+  excludes canvas rendering and SVG overlays. The last recorded physics-only
+  profile before the fast-network update
   averaged 7.174 ms at 260×150, 31.849 ms at 520×300, and 147.581 ms at
   1040×600 on the profiling machine. These machine-specific measurements are
   diagnostic and do not guarantee 60 fps; browser rendering and interaction add
@@ -183,16 +191,13 @@ community content, modding, advanced circuitry, or broader toybox variety.
 
 ## Verification basis
 
-The previous full validation of the Insulation network and enclosed-air
-implementation passed 306/306 assertions, with a 7.98 ms/frame timing
-diagnostic; smoke and scale-profile checks passed. Its physics profile averaged
-7.174 ms at 260x150, 31.849 ms at 520x300, and 147.581 ms at synthetic
-1040x600. For the later enclosed-content air-face fix,
-`npm test -- --focus=thermal-air-faces` passed 7/7,
+The preceding full validation passed 306/306 assertions before the fast-metal-
+network update. For the latest focused network and glow update,
+`npm test -- --focus=thermal-contracts` passed 9/9,
 `npm test -- --focus=thermal-chamber` passed 16/16, and
-`npm test -- --focus=thermal-contracts` passed 4/4. No full suite was run for
-that fix. The catalog browser wrapper discovered four tests, but its configured
-test context could not start, so no assertions ran.
+`npm test -- --focus=thermal-air-faces` passed 7/7. The focused rendering
+wrapper did not reach assertions; cleanup stalled and was interrupted. No full
+suite was run for this update.
 
 Use the npm harness commands in [`E2E_TEST_PLAN.md`](E2E_TEST_PLAN.md). Focused
 browser coverage is run by functional area or spec through

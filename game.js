@@ -519,6 +519,19 @@ function drawWorld() {
             b = def.rgb2[2] + (def.rgb[2] - def.rgb2[2]) * mix;
         }
 
+        // Solid metals glow locally as their temperature approaches melting.
+        // This changes only the rendered particle colour; it does not radiate
+        // extra heat or tint neighbouring cells.
+        if (def.glowRgb && Number.isFinite(def.glowStartTemp) &&
+            Number.isFinite(def.glowTemp) && def.glowTemp > def.glowStartTemp) {
+            let mix = (temp[i] - def.glowStartTemp) / (def.glowTemp - def.glowStartTemp);
+            if (mix < 0) mix = 0;
+            if (mix > 1) mix = 1;
+            r += (def.glowRgb[0] - r) * mix;
+            g += (def.glowRgb[1] - g) * mix;
+            b += (def.glowRgb[2] - b) * mix;
+        }
+
         // Stored charge gives Battery a persistent yellow tint. A live power
         // pulse is brighter, producing the moving yellow dots/line along any
         // connected conductor.

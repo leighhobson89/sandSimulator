@@ -38,13 +38,17 @@ integration suite.
   Horizontal and Shift + wheel remain browser-owned rather than entering the
   application zoom path.
 - `e2e/materials/` covers catalog metadata, rendering, and browser-observable
-  material reactions. The Insulation catalog spec checks its Solids grouping,
-  pink-red presentation, thermal-network glossary text, and Lava melt rule.
+  material reactions. The Insulation catalog spec checks its retained Solids
+  entry, heat-retention glossary text, and zero network rate; it also checks
+  `thermalNetworkRate` participation by metals including Tubing, molten forms,
+  and powered Fan/Heater/Cooler machines. `rendering.spec.mjs` checks local glow color
+  interpolation for solid Copper, Battery, Iron, Fan, Cooler, Tubing, and
+  Heater, while preserving existing molten gradients.
 - `e2e/physics/` covers deterministic, user-visible settling, thermal, and
   reaction behavior. Thermal coverage includes open versus enclosed air,
   chamber breach, local rays/fire/Lava effects, retained Steam, Insulation
-  properties, Wall mixed-face cooling, and heat transfer through an Insulation
-  bridge between enclosed chambers without open-air leakage.
+  isolation, Wall mixed-face cooling, and heat transfer through fast metal
+  bridges between enclosed chambers without open-air leakage.
 - `e2e/machines/` covers placement, powered machines, storage, tubing, Vents,
   Mixers, electrical behavior, and machine persistence.
 - `e2e/blueprints/` covers capture, stamping, history, lifecycle, and portable
@@ -64,12 +68,13 @@ integration suite.
   five-minute interval without an immediate write. `e2e/regressions/` is
   available for defects without a more specific functional-area owner.
 
-The preceding full Insulation-network validation passed 306/306; its smoke and
-scale-profile checks also passed. For the later enclosed-content air-face fix,
-focused simulation checks passed: `thermal-air-faces` 7/7,
-`thermal-chamber` 16/16, and `thermal-contracts` 4/4. No full suite was run for
-that fix. The focused catalog browser wrapper discovered four tests, but its
-configured test context could not start, so no assertions ran.
+The preceding full suite passed 306/306 before the fast-metal-network update.
+For the latest focused metal thermal-network and glow update,
+`thermal-contracts` passed 9/9,
+`thermal-chamber` passed 16/16, and `thermal-air-faces` passed 7/7. The focused
+rendering browser wrapper was attempted with one worker, but did not reach
+assertions; cleanup stalled and was interrupted. No full suite was run for this
+update.
 
 Each test uses a fresh browser context, opens a New Game, pauses before
 deterministic setup, and seeds randomness when the scenario needs it. The
@@ -110,6 +115,12 @@ The Insulation material catalog coverage is owned by
 
 ```text
 npm run test:browser -- e2e/materials/catalog.spec.mjs --workers=1 --trace=off
+```
+
+The focused thermal physics and material catalog specs can be run together:
+
+```text
+npm run test:browser -- e2e/physics/thermal.spec.mjs e2e/materials/catalog.spec.mjs --workers=1 --trace=off
 ```
 
 The scale profile's allocation and pure math/CLI checks are headless Node tests

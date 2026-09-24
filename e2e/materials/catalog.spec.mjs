@@ -39,7 +39,7 @@ test('catalog groups materials, selects them accessibly, and describes their beh
     expect(state.definitions.some(definition => definition?.name === 'Water')).toBe(true);
 });
 
-test('Insulation catalog explains its heat network and Lava melt', async ({ page }) => {
+test('Insulation catalog describes heat retention and exposes metal network rates', async ({ page }) => {
     const game = new GamePage(page);
     await game.openMenu();
     await game.newGame();
@@ -52,8 +52,29 @@ test('Insulation catalog explains its heat network and Lava melt', async ({ page
     const state = await game.state();
     const definition = state.definitions.find(item => item?.name === 'Insulation');
     expect(definition.id).toBe(54);
-    expect(definition.description).toMatch(/(?:fast|rapid(?:ly)?).*connected insulation.*enclosed air chambers/i);
-    expect(definition.description).toMatch(/no contact heat.*outside air.*other materials/i);
+    expect(definition.description).toMatch(/heat/i);
+    expect(definition.description).toMatch(/retain|hold|preserv|slow|insulat/i);
+    expect(definition.description).toMatch(/no contact|non-conductive|zero conductivity/i);
+    expect(definition.description).not.toMatch(/fast thermal network|connected insulation/i);
+    const byName = Object.fromEntries(state.definitions.filter(Boolean).map(item => [item.name, item]));
+    for (const name of [
+        'Copper', 'Molten Copper', 'Battery', 'Molten Aluminum', 'Iron', 'Molten Iron',
+        'Fan', 'Heater', 'Cooler', 'Tubing'
+    ]) {
+        expect(byName[name].thermalNetworkRate, `${name} network rate`).toBeGreaterThan(0);
+    }
+    expect(byName.Copper.thermalNetworkRate).toBeGreaterThan(byName.Battery.thermalNetworkRate);
+    expect(byName.Battery.thermalNetworkRate).toBeGreaterThan(byName.Iron.thermalNetworkRate);
+    for (const name of ['Insulation', 'Wood', 'Stone', 'Wall']) {
+        expect(byName[name].thermalNetworkRate ?? 0, `${name} should not join the fast network`).toBe(0);
+    }
+    for (const name of ['Wood', 'Stone', 'Wall']) {
+        expect(byName[name].conductivity, `${name} retains ordinary conductivity`).toBeGreaterThan(0);
+        expect(byName[name].conductivity).toBeLessThan(byName.Iron.conductivity);
+    }
+    expect(definition.conductivity).toBe(0);
+    expect(byName.Tubing.conductivity).toBe(0);
+    expect(byName.Tubing.conductive).not.toBe(true);
     const swatch = await insulation.evaluate(button => getComputedStyle(button).backgroundColor);
     expect(swatch).toBe(`rgb(${definition.rgb.join(', ')})`);
     expect(definition.rgb[0]).toBeGreaterThan(definition.rgb[1]);
@@ -66,7 +87,8 @@ test('Insulation catalog explains its heat network and Lava melt', async ({ page
     await expect(tooltip).toContainText('Insulation');
     await expect(tooltip).toContainText('Reactions');
     await expect(tooltip).toContainText('Lava');
-    await expect(tooltip).toContainText('enclosed air');
+    await expect(tooltip).toContainText(/heat/i);
+    await expect(tooltip).toContainText(/contact|conduct/i);
 });
 
 test('every prepared definition has a catalog button and generated glossary text', async ({ page }) => {

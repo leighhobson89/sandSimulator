@@ -160,66 +160,78 @@ test('Insulation has the specified definition and melts into Lava above 5000C', 
     });
 });
 
-test('connected Insulation carries heat between enclosed chambers without leaking into open air', async ({ page }) => {
+test('metal thermal bridges transfer at material rates while Insulation isolates chambers', async ({ page }) => {
     const game = new GamePage(page); await game.openMenu(); await game.newGame(); await game.seed(0);
-    const baseline = await page.evaluate(async () => {
+    const samples = await page.evaluate(async () => {
         const p = await import('/physics.js');
         const definitions = p.getDefinitions();
-        const insulation = definitions.findIndex(definition => definition?.name === 'Insulation');
-        const wall = definitions.findIndex(definition => definition?.name === 'Wall');
+        const ids = Object.fromEntries(definitions.map((definition, id) => [definition?.name, id]).filter(([name]) => name));
         const baseline = p.getAmbientTemp();
         p.setAmbientTarget(baseline);
         p.setLayerLapse(0);
         p.setAirLayersOn(false);
         p.setAmbientWindOn(false);
-        p.clearWorld();
-        const world = p.getWorld();
         const rooms = [
             { left: 10, right: 16, top: 16, bottom: 24 },
             { left: 22, right: 28, top: 16, bottom: 24 }
         ];
-        for (const room of rooms) {
-            for (let x = room.left; x <= room.right; x++) {
-                p.setCell(x, room.top, wall);
-                p.setCell(x, room.bottom, wall);
+
+        function sample(bridgeName, frames) {
+            p.setRandomSeed(0);
+            p.clearWorld();
+            const world = p.getWorld();
+            world.temp.fill(baseline);
+            world.tempNext.fill(baseline);
+            const bridge = ids[bridgeName];
+            for (const room of rooms) {
+                for (let x = room.left; x <= room.right; x++) {
+                    p.setCell(x, room.top, ids.Wall);
+                    p.setCell(x, room.bottom, ids.Wall);
+                }
+                for (let y = room.top + 1; y < room.bottom; y++) {
+                    p.setCell(room.left, y, ids.Wall);
+                    p.setCell(room.right, y, ids.Wall);
+                }
             }
-            for (let y = room.top + 1; y < room.bottom; y++) {
-                p.setCell(room.left, y, wall);
-                p.setCell(room.right, y, wall);
+            for (let x = rooms[0].right; x <= rooms[1].left; x++) p.setCell(x, 20, bridge);
+            p.setCell(19, 21, ids.Wall);
+            for (let y = 17; y < 24; y++) {
+                for (let x = 11; x < 16; x++) world.temp[p.index(x, y)] = 600;
+                for (let x = 23; x < 28; x++) world.temp[p.index(x, y)] = baseline;
             }
+            for (let x = 16; x <= 22; x++) world.temp[p.index(x, 20)] = baseline;
+            world.temp[p.index(19, 21)] = baseline;
+            for (let frame = 0; frame < frames; frame++) p.stepSimulation();
+            const path = Array.from({ length: 7 }, (_, n) => world.temp[p.index(16 + n, 20)]);
+            return {
+                pathMean: path.reduce((sum, value) => sum + value, 0) / path.length,
+                receiverAir: world.temp[p.index(23, 20)],
+                chamberInterior: world.temp[p.index(25, 20)],
+                exteriorAir: world.temp[p.index(19, 14)],
+                adjacentWall: world.temp[p.index(19, 21)]
+            };
         }
-        for (let x = rooms[0].right; x <= rooms[1].left; x++) p.setCell(x, 20, insulation);
-        p.setCell(19, 21, wall);
-        for (let y = 17; y < 24; y++) {
-            for (let x = 11; x < 16; x++) world.temp[p.index(x, y)] = 600;
-            for (let x = 23; x < 28; x++) world.temp[p.index(x, y)] = baseline;
-        }
-        for (let x = 16; x <= 22; x++) world.temp[p.index(x, 20)] = baseline;
-        world.temp[p.index(19, 21)] = baseline;
-        return baseline;
-    });
-    await game.step(12);
-    const early = await page.evaluate(async () => {
-        const p = await import('/physics.js');
-        const world = p.getWorld();
-        const path = Array.from({ length: 7 }, (_, n) => world.temp[p.index(16 + n, 20)]);
+
         return {
-            pathMean: path.reduce((sum, value) => sum + value, 0) / path.length,
-            receiverAir: world.temp[p.index(23, 20)],
-            exterior: world.temp[p.index(19, 18)],
-            wall: world.temp[p.index(19, 21)]
+            baseline,
+            copper: sample('Copper', 4),
+            battery: sample('Battery', 4),
+            iron: sample('Iron', 4),
+            tubing: sample('Tubing', 4),
+            insulation: sample('Insulation', 12)
         };
     });
-    expect(early.pathMean).toBeGreaterThan(baseline + 20);
-    expect(early.receiverAir).toBeGreaterThan(baseline + 100);
-    expect(Math.abs(early.exterior - baseline)).toBeLessThan(1);
-    expect(Math.abs(early.wall - baseline)).toBeLessThan(1);
-    await game.step(36);
-    const chamberInterior = await page.evaluate(async () => {
-        const p = await import('/physics.js');
-        return p.getWorld().temp[p.index(25, 20)];
-    });
-    expect(chamberInterior).toBeGreaterThan(baseline + 20);
+    expect(samples.copper.receiverAir).toBeGreaterThan(samples.battery.receiverAir);
+    expect(samples.battery.receiverAir).toBeGreaterThan(samples.iron.receiverAir);
+    expect(samples.iron.receiverAir).toBeGreaterThan(samples.baseline);
+    expect(samples.copper.receiverAir).toBeGreaterThan(samples.baseline + 10);
+    expect(Math.abs(samples.copper.exteriorAir - samples.baseline)).toBeLessThan(3);
+    expect(samples.copper.adjacentWall).toBeLessThan(samples.copper.receiverAir);
+    expect(samples.tubing.receiverAir).toBeGreaterThan(samples.baseline + 10);
+    expect(samples.tubing.pathMean).toBeGreaterThan(samples.baseline + 20);
+    expect(samples.insulation.pathMean).toBeLessThan(samples.baseline + 2);
+    expect(samples.insulation.receiverAir).toBeLessThan(samples.baseline + 2);
+    expect(samples.insulation.chamberInterior).toBeLessThan(samples.baseline + 2);
 });
 
 test('Steam in a sealed warm gas cell stays hot while exposed Steam cools', async ({ page }) => {

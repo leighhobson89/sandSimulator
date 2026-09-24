@@ -46,15 +46,12 @@ Descriptions remain beside each material's `name` in `particles.json`, rather
 than being duplicated here. This prevents the documentation from claiming a
 threshold or conversion that the simulator does not implement.
 
-Insulation is material `54`, a static pink-red Solid. Its ordinary thermal
-conductivity is `0`, so standard contact transfer does not pass heat from it to
-open air or other materials. A dedicated, fast thermal network transfers heat
-between face-connected Insulation cells and adjacent enclosed air cells. This
-lets an Insulation bridge transfer heat between enclosed chambers without
-leaking it into open air or other materials. Radiation can still warm
-Insulation itself. It has very slow cooling and melts at `5000 C` into Lava.
-Other solids such as Wall can also retain heat according to their own cooling
-and conductivity properties.
+Insulation is material `54`, a static pink-red Solid. It has `conductivity: 0`,
+`ambientCooling: false`, and no fast-network rate (`thermalNetworkRate: 0`). Its
+cooling rate is very slow. It absorbs radiant heat and retains its own heat, but
+does not transfer heat by contact. It melts at `5000 C` into Lava. Insulation
+remains a heat-retaining material; it is excluded from the fast metal thermal
+network described below.
 
 ### Adding or changing a material
 
@@ -85,7 +82,7 @@ simulation description in [`PROGRAM_OVERVIEW.md`](PROGRAM_OVERVIEW.md).
 | Liquids | Water, Oil, Lava, and Acid flow and seek a level. Liquid storage also accepts molten metals. Water changes phase at its configured thresholds; Lava and Acid have their own material-defined heat and reaction rules. |
 | Gases | Fire, Steam, Smoke, and Toxic Gas rise and spread. Gas storage accepts non-flaming gases, so Fire is not accepted by a Gas Storage Bin. |
 | Solids | Solids provide the fixed, structural, growing, or phase-change behavior declared by their definitions. Ice, Glass, Clay, Ceramic, and plant materials participate in the heat and reaction rules defined in `particles.json`. |
-| Metals | Spark, Copper, Battery, Iron, their molten forms, Molten Aluminum, and Tubing are listed here. Conductive metals carry electrical pulses and Battery stores charge; Tubing is non-conductive despite being in the Metals picker group. |
+| Metals | Spark, Copper, Battery, Iron, their molten forms, Molten Aluminum, and Tubing are listed here. Copper, Iron, and Battery carry electrical pulses and Battery stores charge; Tubing has no electrical conductivity despite being in the Metals picker group. |
 | Tools | Heat Ray and Cold Ray are short-lived directional brushes. A left-button stroke starts Heat Ray upward or Cold Ray downward; its first non-zero drag selects the nearest cardinal direction, which persists while stationary and changes only when the drag heading changes. Painted ray cells travel as projectiles using that stored heading. Wind moves light materials and stirs air; it stops at solid barriers but passes through plants. |
 
 ### Heat, electrical, and reaction anchors
@@ -102,11 +99,12 @@ simulation description in [`PROGRAM_OVERVIEW.md`](PROGRAM_OVERVIEW.md).
   than changing immediately at a threshold. Water extinguishes Fire on contact,
   Lava chills to Scoria when Water touches it, and water wetting is limited to
   the declared powder reactions.
-- Ordinary contact exchange is pairwise:
-  each neighbouring pair uses both materials' thermal conductivity. Bulk
-  insulation still slows exchange for buried cells. Temperature updates remain
-  bounded; ambient cooling, source radiation, and latent state changes remain
-  separate effects.
+- Ordinary pairwise contact exchange runs each frame for material pairs that
+  are not handled by the fast thermal network. Those pairs use their ordinary
+  thermal conductivity, and bulk insulation still slows exchange for buried
+  cells. This includes slower Wood, Stone, and Wall exchange, along with other
+  ineligible contacts. Temperature updates remain bounded; ambient cooling,
+  source radiation, and latent state changes remain separate effects.
 - Air spaces are classified by an eight-way perimeter flood fill each frame.
   Empty cells and gas cells reachable from the world edge are open air; diagonal
   routes count as routes. Open air continues to follow the shared ambient
@@ -126,27 +124,40 @@ simulation description in [`PROGRAM_OVERVIEW.md`](PROGRAM_OVERVIEW.md).
   barrier. Material-specific variance and bulk insulation continue to affect
   the rate.
 - Ordinary contact exchange remains face-based, and a material's direct air
-  cooling only uses cardinally adjacent air-space faces (Insulation uses its
-  dedicated network). Each face contributes its enclosed air cell's local
-  temperature or, for open air, the height-adjusted outdoor temperature; those
-  face temperatures are averaged. With no cardinal air-space face, a particle
-  receives no direct ambient-cooling term and no `coolsBy` clamp.
+  cooling only uses cardinally adjacent air-space faces (Insulation has
+  `ambientCooling: false` and is outside the fast network). Each face contributes
+  its enclosed air cell's local temperature or, for open air, the
+  height-adjusted outdoor temperature; those face temperatures are averaged.
+  With no cardinal air-space face, a particle receives no direct
+  ambient-cooling term and no `coolsBy` clamp.
   Material-to-material conduction and source heating remain active, so a shell
   can still conduct outside influence inward to enclosed contents. This blocks
   direct air cooling of shielded contents without making the shell perfectly
   thermally isolated.
-- Insulation has a separate, fast thermal network. Face-connected Insulation
-  cells exchange heat with one another and with adjacent enclosed air; open-air
-  cells and other materials are excluded. A bridge can therefore transfer heat
-  between chamber interiors while keeping ordinary contact exchange blocked at
-  its outside faces. The network is bidirectional and local: each frame
-  propagates heat through neighboring Insulation cells rather than teleporting
-  it between distant chambers.
+- A material can opt into the fast thermal network with `thermalNetworkRate`.
+  The current conductors are Copper, Molten Copper, Battery, Molten Aluminum,
+  Iron, Molten Iron, Tubing, Fan, Heater, and Cooler. Tubing uses
+  `thermalNetworkRate: 0.12`, despite having zero ordinary conductivity and no
+  electrical conductivity. The network transfers heat between two opted-in
+  conductors or between an opted-in conductor and adjacent enclosed empty/gas
+  cells. It uses 32 local substeps per frame and replaces ordinary pair
+  exchange for those eligible links. Open air, non-network materials, and
+  Insulation are not network endpoints. Ordinary per-frame conductivity still
+  handles every other contact pair, including slower Wood, Stone, and Wall
+  exchange; eligible conductors use ordinary conductivity for links to open air
+  or other non-network materials when their conductivity permits it.
+- Solid Copper, Battery, Iron, Fan, Cooler, Tubing, and Heater have a local
+  temperature glow. The material definitions provide `glowColor`, prepared as
+  `glowRgb`, and blend from the base pixel color starting at `glowStartTemp`;
+  `glowTemp` marks the fully blended point and equals each material's
+  `meltPoint`. This changes only that cell's rendered color: it adds no halo,
+  heat emission, or tint to neighboring pixels. Molten materials keep their
+  existing color/color2 gradients unchanged.
 - Ordinary materials are non-conductive by default. Copper, Iron, and Battery
   participate in the electrical network; Spark is absorbed by connected metal,
   Battery stores charge, and Copper or Iron can discharge a charged Battery
-  through their connected length. Tubing has no electrical or thermal
-  conductivity.
+  through their connected length. Tubing has no electrical conductivity and
+  opts into fast thermal links while keeping zero ordinary conductivity.
 - Heat Ray and Cold Ray ramp their cells toward `2000 C`
   and `-120 C` over several frames rather than initializing an instant
   temperature source. Both burn out after a few frames instead of collecting as
@@ -228,9 +239,12 @@ releases it below into the canvas.
 
 ### Connection material: Tubing
 
-Tubing is a dense, non-conductive, static material that carries stored contents
-between compatible bins, Vents, and Mixer inputs. Its edge-sharing connection,
-capacity, bottleneck, and persistence rules are in [Section 6](#6-tubing-and-vent-connections-bottlenecks-and-regression-maintenance).
+Tubing is a dense, electrically non-conductive, static material that carries
+stored contents between compatible bins, Vents, and Mixer inputs. It has zero
+ordinary thermal conductivity, but its `thermalNetworkRate: 0.12` lets it
+exchange heat with other fast-network conductors and enclosed air. Its
+edge-sharing connection, capacity, bottleneck, and persistence rules are in
+[Section 6](#6-tubing-and-vent-connections-bottlenecks-and-regression-maintenance).
 
 ## 4. Mixer recipes and lifecycle rules
 

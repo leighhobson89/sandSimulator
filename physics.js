@@ -55,7 +55,6 @@ const ELECTRICAL_NEIGHBOURS = [
 let COLS = 0;
 let ROWS = 0;
 let world = null;
-let INSULATION_ID = -1;
 // The flood mask borrows the movement flags before they are cleared for the
 // current tick. Queue views borrow the two temperature buffers, which are
 // overwritten by diffuseHeat immediately after the flood fill completes.
@@ -170,6 +169,7 @@ export function prepareDefinitions(json) {
         category: 'air',
         density: 0,
         conductivity: json.airConductivity !== undefined ? json.airConductivity : 0.06,
+        thermalNetworkRate: 0,
         cooling: json.airCooling !== undefined ? json.airCooling : 0.012,
         bulkInsulation: 0,
         defaultTemp: AMBIENT,
@@ -194,6 +194,8 @@ export function prepareDefinitions(json) {
         radiates: 0,
         clings: 0,
         glowTemp: 0,
+        glowStartTemp: null,
+        glowRgb: null,
         alpha: 1,
         projectile: false,
         projectileSpeed: 0,
@@ -231,6 +233,12 @@ export function prepareDefinitions(json) {
             displacesMaterials: p.displacesMaterials !== false,
 
             conductivity: p.conductivity === undefined ? 0.06 : p.conductivity,
+            // Direct per-substep exchange rate for the fast local conductor
+            // network. Materials outside that network leave this at zero.
+            thermalNetworkRate: p.thermalNetworkRate === undefined
+                ? 0
+                : Math.max(0, p.thermalNetworkRate),
+            ambientCooling: p.ambientCooling !== false,
             cooling: p.cooling === undefined ? 0.004 : p.cooling,
             // A stable per-particle +/- fraction of the normal cooling rate.
             // The shade value supplies the variation without making it flicker
@@ -303,6 +311,7 @@ export function prepareDefinitions(json) {
             // that only glows on its way down - cooling scoria - names the
             // temperature it was last properly hot at instead.
             glowTemp: p.glowTemp !== undefined ? p.glowTemp : (p.emit || 0),
+            glowStartTemp: p.glowStartTemp === undefined ? null : p.glowStartTemp,
             forceTemp: p.forceTemp,
             forceRate: p.forceRate || 0,
             projectile: !!p.projectile,
@@ -444,6 +453,7 @@ export function prepareDefinitions(json) {
             rgb: parseColor(p.color),
             rgb2: parseColor(p.color2 || p.color),
             gradient: !!p.color2,
+            glowRgb: p.glowColor ? parseColor(p.glowColor) : null,
             // Flowers come out a different colour each time. Each cell keeps a
             // fixed random number in its shade slot, which picks one of these.
             palette: p.rainbow ? rainbowPalette() : null
@@ -474,7 +484,6 @@ export function prepareDefinitions(json) {
     });
 
     DEFS = defs;
-    INSULATION_ID = defs.findIndex(def => def?.name === 'Insulation');
     AIR_SPACE_BY_TYPE.fill(0);
     AIR_SPACE_BY_TYPE[EMPTY] = 1;
     for (let id = 1; id < defs.length; id++) {
@@ -1656,19 +1665,28 @@ export function getFrameCount() { return frameCount; }
 const THERMAL_TRANSFER_SCALE = 1.35;
 const MAX_CONTACT_TRANSFER = 0.24;
 const OPEN_AIR_CONTACT_CONDUCTIVITY = 0.001;
-const INSULATION_NETWORK_SUBSTEPS = 32;
-const insulationNetworkCells = [];
+const THERMAL_NETWORK_SUBSTEPS = 32;
+const thermalNetworkCells = [];
 
-function isInsulationNetworkPair(first, second, firstOpenAir, secondOpenAir) {
-    const firstInsulation = first.id === INSULATION_ID;
-    const secondInsulation = second.id === INSULATION_ID;
-    if (firstInsulation && secondInsulation) return true;
-    if (firstInsulation && isAirSpace(second.id) && !(secondOpenAir & 1)) return true;
-    if (secondInsulation && isAirSpace(first.id) && !(firstOpenAir & 1)) return true;
-    return false;
+function thermalNetworkPairRate(first, second, firstOpenAir, secondOpenAir) {
+    const firstRate = first.thermalNetworkRate;
+    const secondRate = second.thermalNetworkRate;
+    if (firstRate > 0 && secondRate > 0) {
+        return Math.min(MAX_CONTACT_TRANSFER, Math.sqrt(firstRate * secondRate));
+    }
+    if (firstRate > 0 && isAirSpace(second.id) && !(secondOpenAir & 1)) {
+        return Math.min(MAX_CONTACT_TRANSFER, firstRate);
+    }
+    if (secondRate > 0 && isAirSpace(first.id) && !(firstOpenAir & 1)) {
+        return Math.min(MAX_CONTACT_TRANSFER, secondRate);
+    }
+    return 0;
 }
 
 function thermalContactRate(first, second, firstOpenAir, secondOpenAir) {
+    // Eligible conductor and enclosed-air pairs use the dedicated local
+    // network below so their configured rate is not double-counted here.
+    if (thermalNetworkPairRate(first, second, firstOpenAir, secondOpenAir) > 0) return 0;
     // Open air cells remain coupled to each other so the ambient dial and its
     // layers settle at the existing pace. A material exchanging heat with open
     // air uses the weaker air-to-material interface; enclosed air keeps the
@@ -1694,7 +1712,7 @@ function diffuseHeat() {
     const next = world.tempNext;
     const shade = world.shade;
     const openAir = world.moved;
-    insulationNetworkCells.length = 0;
+    thermalNetworkCells.length = 0;
 
     for (let y = 0; y < ROWS; y++) {
         const rowStart = y * COLS;
@@ -1706,14 +1724,14 @@ function diffuseHeat() {
             const id = type[i];
             const airCell = isAirSpace(type[i]);
             const enclosedAirCell = airCell && !openAir[i];
-            if (id === INSULATION_ID) {
-                insulationNetworkCells.push(i);
+            if (def.thermalNetworkRate > 0) {
+                thermalNetworkCells.push(i);
             } else if (airCell && !(openAir[i] & 1) && (
-                (y > 0 && type[i - COLS] === INSULATION_ID) ||
-                (y < ROWS - 1 && type[i + COLS] === INSULATION_ID) ||
-                (x > 0 && type[i - 1] === INSULATION_ID) ||
-                (x < COLS - 1 && type[i + 1] === INSULATION_ID))) {
-                insulationNetworkCells.push(i);
+                (y > 0 && DEFS[type[i - COLS]].thermalNetworkRate > 0) ||
+                (y < ROWS - 1 && DEFS[type[i + COLS]].thermalNetworkRate > 0) ||
+                (x > 0 && DEFS[type[i - 1]].thermalNetworkRate > 0) ||
+                (x < COLS - 1 && DEFS[type[i + 1]].thermalNetworkRate > 0))) {
+                thermalNetworkCells.push(i);
             }
 
             // A surface still responds almost normally, but heat has a harder
@@ -1802,7 +1820,7 @@ function diffuseHeat() {
                 }
                 if (adjacentAirCount > 0) {
                     coolingAir = adjacentAirTotal / adjacentAirCount;
-                    hasCoolingAir = id !== INSULATION_ID;
+                    hasCoolingAir = def.ambientCooling;
                 }
             }
 
@@ -1869,10 +1887,10 @@ function diffuseHeat() {
     tempFloodQueue = tempNextFloodQueue;
     tempNextFloodQueue = queueSwap;
 
-    diffuseInsulationNetwork();
+    diffuseThermalNetwork();
 }
 
-function diffuseInsulationNetwork() {
+function diffuseThermalNetwork() {
     const type = world.type;
     const openAir = world.moved;
     const current = world.temp;
@@ -1880,42 +1898,38 @@ function diffuseInsulationNetwork() {
     const width = COLS;
     const length = type.length;
 
-    // Several stable contact substeps make connected Insulation a fast thermal
-    // path while retaining strictly local, bidirectional exchange at each face.
-    for (let step = 0; step < INSULATION_NETWORK_SUBSTEPS; step++) {
-        for (let n = 0; n < insulationNetworkCells.length; n++) {
-            const i = insulationNetworkCells[n];
+    // Several stable contact substeps move heat through connected conductors
+    // and their enclosed air while keeping every exchange local and symmetric.
+    for (let step = 0; step < THERMAL_NETWORK_SUBSTEPS; step++) {
+        for (let n = 0; n < thermalNetworkCells.length; n++) {
+            const i = thermalNetworkCells[n];
             const id = type[i];
             const t = current[i];
             let transfer = 0;
             if (i >= width) {
                 const neighbour = i - width;
-                if (isInsulationNetworkPair(DEFS[id], DEFS[type[neighbour]], openAir[i], openAir[neighbour])) {
-                    transfer += (current[neighbour] - t) * MAX_CONTACT_TRANSFER;
-                }
+                transfer += (current[neighbour] - t) * thermalNetworkPairRate(
+                    DEFS[id], DEFS[type[neighbour]], openAir[i], openAir[neighbour]);
             }
             if (i < length - width) {
                 const neighbour = i + width;
-                if (isInsulationNetworkPair(DEFS[id], DEFS[type[neighbour]], openAir[i], openAir[neighbour])) {
-                    transfer += (current[neighbour] - t) * MAX_CONTACT_TRANSFER;
-                }
+                transfer += (current[neighbour] - t) * thermalNetworkPairRate(
+                    DEFS[id], DEFS[type[neighbour]], openAir[i], openAir[neighbour]);
             }
             if (i % width !== 0) {
                 const neighbour = i - 1;
-                if (isInsulationNetworkPair(DEFS[id], DEFS[type[neighbour]], openAir[i], openAir[neighbour])) {
-                    transfer += (current[neighbour] - t) * MAX_CONTACT_TRANSFER;
-                }
+                transfer += (current[neighbour] - t) * thermalNetworkPairRate(
+                    DEFS[id], DEFS[type[neighbour]], openAir[i], openAir[neighbour]);
             }
             if (i % width !== width - 1) {
                 const neighbour = i + 1;
-                if (isInsulationNetworkPair(DEFS[id], DEFS[type[neighbour]], openAir[i], openAir[neighbour])) {
-                    transfer += (current[neighbour] - t) * MAX_CONTACT_TRANSFER;
-                }
+                transfer += (current[neighbour] - t) * thermalNetworkPairRate(
+                    DEFS[id], DEFS[type[neighbour]], openAir[i], openAir[neighbour]);
             }
             next[i] = t + transfer;
         }
-        for (let n = 0; n < insulationNetworkCells.length; n++) {
-            const i = insulationNetworkCells[n];
+        for (let n = 0; n < thermalNetworkCells.length; n++) {
+            const i = thermalNetworkCells[n];
             current[i] = next[i];
         }
     }

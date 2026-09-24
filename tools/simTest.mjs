@@ -102,53 +102,113 @@ function resetThermalContractFixture(ambient = 20) {
     getWorld().tempNext.fill(ambient);
 }
 
-function runInsulationBridgeContract() {
-    console.log('\nInsulation network bridge and catalog contract');
-    resetThermalContractFixture();
-    const baseline = getAmbientTemp();
+function runThermalNetworkBridgeContract() {
+    console.log('\nMetal thermal network bridge and Insulation isolation contract');
+    const baseline = 20;
     const roomA = { left: 10, right: 16, top: 16, bottom: 24 };
     const roomB = { left: 22, right: 28, top: 16, bottom: 24 };
-    for (const room of [roomA, roomB]) {
-        for (let x = room.left; x <= room.right; x++) {
-            setCell(x, room.top, ID.Wall);
-            setCell(x, room.bottom, ID.Wall);
+
+    function buildBridgeFixture(bridgeId) {
+        resetThermalContractFixture(baseline);
+        for (const room of [roomA, roomB]) {
+            for (let x = room.left; x <= room.right; x++) {
+                setCell(x, room.top, ID.Wall);
+                setCell(x, room.bottom, ID.Wall);
+            }
+            for (let y = room.top + 1; y < room.bottom; y++) {
+                setCell(room.left, y, ID.Wall);
+                setCell(room.right, y, ID.Wall);
+            }
         }
-        for (let y = room.top + 1; y < room.bottom; y++) {
-            setCell(room.left, y, ID.Wall);
-            setCell(room.right, y, ID.Wall);
+        const path = [];
+        for (let x = roomA.right; x <= roomB.left; x++) {
+            setCell(x, 20, bridgeId);
+            path.push(index(x, 20));
         }
+        setCell(19, 21, ID.Wall); // Ordinary solid touches, but is not part of, the bridge.
+        const world = getWorld();
+        for (let y = roomA.top + 1; y < roomA.bottom; y++) {
+            for (let x = roomA.left + 1; x < roomA.right; x++) world.temp[index(x, y)] = 600;
+            for (let x = roomB.left + 1; x < roomB.right; x++) world.temp[index(x, y)] = baseline;
+        }
+        for (const i of path) world.temp[i] = baseline;
+        world.temp[index(19, 21)] = baseline;
+        return { path, world };
     }
 
-    const path = [];
-    for (let x = roomA.right; x <= roomB.left; x++) {
-        setCell(x, 20, ID.Insulation);
-        path.push(index(x, 20));
+    function bridgeSample(bridgeId, frames = 4) {
+        const { path, world } = buildBridgeFixture(bridgeId);
+        run(frames);
+        return {
+            pathMean: path.reduce((sum, i) => sum + world.temp[i], 0) / path.length,
+            receiverAir: tempAt(23, 20),
+            chamberInterior: tempAt(25, 20),
+            exteriorAir: tempAt(19, 14),
+            adjacentWall: tempAt(19, 21)
+        };
     }
-    setCell(19, 21, ID.Wall); // Ordinary solid touching the bridge.
-    const world = getWorld();
-    for (let y = roomA.top + 1; y < roomA.bottom; y++) {
-        for (let x = roomA.left + 1; x < roomA.right; x++) world.temp[index(x, y)] = 600;
-        for (let x = roomB.left + 1; x < roomB.right; x++) world.temp[index(x, y)] = baseline;
-    }
-    for (const i of path) world.temp[i] = baseline;
-    world.temp[index(19, 21)] = baseline;
-    run(12);
 
-    const pathMean = path.reduce((sum, i) => sum + world.temp[i], 0) / path.length;
-    check('Insulation glossary explains network and enclosed-air heat transfer',
-        /network/i.test(defs[ID.Insulation]?.description || '') &&
-        /enclosed air/i.test(defs[ID.Insulation]?.description || ''),
-        defs[ID.Insulation]?.description || 'missing Insulation definition');
-    check('heating one chamber warms its connected Insulation bridge and the second chamber',
-        pathMean > baseline + 20 && tempAt(23, 20) > baseline + 100,
-        `bridge ${pathMean.toFixed(1)}C, receiver air ${tempAt(23, 20).toFixed(1)}C, baseline ${baseline}C`);
-    check('the open exterior and adjacent ordinary solid stay near baseline',
-        Math.abs(tempAt(19, 18) - baseline) < 1 && Math.abs(tempAt(19, 21) - baseline) < 1,
-        `exterior ${tempAt(19, 18).toFixed(1)}C, Wall ${tempAt(19, 21).toFixed(1)}C, baseline ${baseline}C`);
-    run(36);
-    check('the receiving chamber interior begins warming through its enclosed air',
-        tempAt(25, 20) > baseline + 20,
-        `room B interior ${tempAt(25, 20).toFixed(1)}C after 48 frames, baseline ${baseline}C`);
+    const insulation = defs[ID.Insulation];
+    const copper = defs[ID.Copper];
+    const battery = defs[ID.Battery];
+    const iron = defs[ID.Iron];
+    const wood = defs[ID.Wood];
+    const stone = defs[ID.Stone];
+    const wall = defs[ID.Wall];
+    const tubing = defs[ID.Tubing];
+    const moltenCopper = defs[ID['Molten Copper']];
+    const moltenAluminum = defs[ID['Molten Aluminum']];
+    const moltenIron = defs[ID['Molten Iron']];
+    const fan = defs[ID.Fan];
+    const heater = defs[ID.Heater];
+    const cooler = defs[ID.Cooler];
+    const fastConductorMaterials = [copper, moltenCopper, battery, moltenAluminum, iron, moltenIron, tubing, fan, heater, cooler];
+    const excludedMaterials = [insulation, wood, stone, wall];
+    const rates = definition => Number(definition?.thermalNetworkRate) || 0;
+
+    check('metal conductor materials opt into the fast thermal network',
+        fastConductorMaterials.every(definition => rates(definition) > 0),
+        fastConductorMaterials.map(definition => `${definition?.name}: ${definition?.thermalNetworkRate ?? 'missing'}`).join(', '));
+    check('Copper carries heat faster than Battery, which carries heat faster than Iron',
+        rates(copper) > rates(battery) && rates(battery) > rates(iron),
+        `Copper ${rates(copper)}, Battery ${rates(battery)}, Iron ${rates(iron)}`);
+    check('Insulation, Wood, Stone, and Wall stay outside the fast network',
+        excludedMaterials.every(definition => rates(definition) === 0),
+        excludedMaterials.map(definition => `${definition?.name}: ${definition?.thermalNetworkRate ?? 'missing'}`).join(', '));
+    check('Wood, Stone, and Wall retain slow ordinary contact conductivity',
+        [wood, stone, wall].every(definition => definition?.conductivity > 0 && definition.conductivity < iron?.conductivity) &&
+        insulation?.conductivity === 0 && tubing?.conductivity === 0 && tubing?.conductive !== true,
+        `Wood ${wood?.conductivity}, Stone ${stone?.conductivity}, Wall ${wall?.conductivity}; Insulation ${insulation?.conductivity}, Tubing ${tubing?.conductivity}/${tubing?.conductive}`);
+    check('Insulation glossary describes heat retention without a fast bridge',
+        /heat/i.test(insulation?.description || '') &&
+        /retain|hold|preserv|slow|insulat/i.test(insulation?.description || '') &&
+        /no contact|non-conductive|zero conductivity/i.test(insulation?.description || '') &&
+        !/fast thermal network|connected insulation/i.test(insulation?.description || ''),
+        insulation?.description || 'missing Insulation definition');
+
+    const copperResult = bridgeSample(ID.Copper);
+    const batteryResult = bridgeSample(ID.Battery);
+    const ironResult = bridgeSample(ID.Iron);
+    const tubingResult = bridgeSample(ID.Tubing);
+    check('non-electrical Tubing transfers heat through the fast thermal network',
+        tubingResult.receiverAir > baseline + 10 && tubingResult.pathMean > baseline + 20 &&
+        tubing?.conductivity === 0 && tubing?.conductive !== true,
+        `Tubing bridge ${tubingResult.pathMean.toFixed(1)}C, receiver ${tubingResult.receiverAir.toFixed(1)}C, rate ${rates(tubing)}`);
+    check('fast bridge transfer follows the material rates at a fixed early frame',
+        copperResult.receiverAir > batteryResult.receiverAir &&
+        batteryResult.receiverAir > ironResult.receiverAir &&
+        ironResult.receiverAir > baseline,
+        `Copper ${copperResult.receiverAir.toFixed(1)}C, Battery ${batteryResult.receiverAir.toFixed(1)}C, Iron ${ironResult.receiverAir.toFixed(1)}C after 4 frames`);
+    check('metal bridge heat stays enclosed and does not quickly warm the exterior or ordinary Wall',
+        copperResult.receiverAir > baseline + 10 &&
+        Math.abs(copperResult.exteriorAir - baseline) < 3 &&
+        copperResult.adjacentWall < copperResult.receiverAir,
+        `receiver ${copperResult.receiverAir.toFixed(1)}C, exterior ${copperResult.exteriorAir.toFixed(1)}C, Wall ${copperResult.adjacentWall.toFixed(1)}C`);
+    const insulationResult = bridgeSample(ID.Insulation, 12);
+    check('Insulation does not bridge heat between the sealed chambers',
+        insulationResult.receiverAir < baseline + 2 && insulationResult.chamberInterior < baseline + 2 &&
+        insulationResult.pathMean < baseline + 2,
+        `bridge ${insulationResult.pathMean.toFixed(1)}C, receiver ${insulationResult.receiverAir.toFixed(1)}C, baseline ${baseline}C`);
 }
 
 function runThermalAirFaceFallbackRegression() {
@@ -507,7 +567,7 @@ if (process.argv.includes('--focus=thermal-contracts')) {
     const callerState = captureSimulationState();
     const callerSeed = getRandomSeed();
     try {
-        runInsulationBridgeContract();
+        runThermalNetworkBridgeContract();
     } finally {
         restoreSimulationState(callerState);
         if (callerSeed !== null) setRandomSeed(callerSeed);
