@@ -17,8 +17,8 @@ are preserved in the [archive](archive/) index.
   voltage/current simulation.
 - Tubing moves discrete stored particles between compatible bins, Vents, and
   Mixer inputs. Connections use touching edges; transfer is limited by the
-  narrowest section. Tubing is not conductive and does not yet model fluid
-  pressure.
+  narrowest section. Its iron body conducts heat through connected metal and
+  enclosed air, but does not conduct electricity or model fluid pressure.
 - The local resume game autosaves on a five-minute interval when autosave is
   enabled. Large saves can pause play while they are written, so additional
   world sizes and save-heavy features need measured browser performance.

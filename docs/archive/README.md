@@ -28,6 +28,9 @@ in [`../README.md`](../README.md); active findings remain in
 - [`plans/large-world-sizes-and-camera-2026-09-24.md`](plans/large-world-sizes-and-camera-2026-09-24.md)
   — the executed fixed world-size chooser, canvas gate, and large-world camera
   plan from 24 September 2026.
+- [`plans/fast-metal-thermal-network-2026-09-24.md`](plans/fast-metal-thermal-network-2026-09-24.md)
+  — the executed fast metal thermal network and solid-metal glow plan from
+  24 September 2026.
 - [`plans/scale-profile-infrastructure-2026-09-23.md`](plans/scale-profile-infrastructure-2026-09-23.md)
   — the executed headless scale-profile infrastructure plan from 23 September
   2026.
