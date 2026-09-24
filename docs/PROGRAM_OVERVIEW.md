@@ -94,30 +94,50 @@ rule based on the surface of connected liquid, not a Navier–Stokes solution.
   four-way contact transfer uses both materials' conductivity; ambient cooling,
   eight-way radiation, latent-heat accumulation, and bulk insulation remain
   distinct effects that make thick material and heat sources feel different.
+  Each frame, an eight-way perimeter flood fill separates open air from
+  enclosed air spaces. Open air still follows the shared ambient setting and
+  altitude lapse. Enclosed empty air and gases hold a local temperature, respond
+  to surrounding materials, Heat Ray, Cold Ray, and other direct sources, and
+  stop following global ambient until an air route opens. Steam can remain hot
+  in a sealed chamber.
+  Solid walls consider each adjacent air face independently, so a Wall touching
+  both chamber air and open air exchanges heat toward both; Insulation (material
+  54) has zero ordinary contact conductivity, very slow cooling, and a
+  `5000 C` melt into Lava. Its dedicated fast network transfers heat along
+  face-connected Insulation and between the network and adjacent enclosed air.
+  Open air and other materials are excluded, so a bridge can carry heat between
+  chamber interiors without leaking through its outside faces. Radiation can
+  still warm Insulation itself.
+  Other non-air contents use cardinally adjacent air-space faces for direct
+  cooling, choosing local enclosed-air or height-adjusted outdoor temperatures
+  per face; Insulation follows its dedicated network. With no cardinal air
+  face, they get no direct ambient-cooling term or `coolsBy` clamp, but material
+  conduction and source heating remain, so a shell can pass outside influence
+  inward.
+  With no air face, there is no direct ambient-cooling term or `coolsBy` clamp,
+  though material contact conduction and source heating remain; a shell can
+  still conduct outside influence inward.
 - The electrical system is more than a colour change. Sparks launch visible
   pulses through conductive networks; Battery stores shared charge; Copper,
   Iron and machines consume it; a Fan converts power into directional airflow,
   while Heater and Cooler convert it into directional temperature forces and
   matching centreline Heat Ray/Cold Ray projectiles.
 - The simulator is testable outside the browser. The physics core has no DOM
-  dependency, and the headless suite checks 284 assertions with default seed
-  `0`, plus a 260x150 performance budget. A second smoke suite covers startup,
-  input and autosave decisions. An earlier full Playwright execution covered
-  121 browser tests and passed headlessly. A prior test discovery
-  snapshot listed 137 tests in 34 spec files; that inventory count is not a
-  claim that a 137-test full run has passed. The focused middle-click picker
-  specs passed 21/21 headlessly. Headed runs are optional diagnostics and never
-  an acceptance or release prerequisite.
+  dependency, and deterministic simulation, startup smoke, scale-profile, and
+  browser-visible regressions use the documented npm harness. Before the
+  enclosed-content air-face follow-up, the full `npm test` suite passed
+  306/306. For that follow-up, `thermal-air-faces` passed 7/7,
+  `thermal-chamber` passed 16/16, and `thermal-contracts` passed 4/4; no full
+  suite was run for the follow-up.
 - `npm run profile:scale` is a fixed, no-CLI-option, headless physics-only
   synthetic profile of 260×150, 520×300, and 1040×600. The 1040×600 case is
   profiler-only; the two selectable worlds are 260×150 and 520×300. Profiling
-  excludes canvas rendering and SVG overlays. The recorded 520×300 physics-only
-  step averaged 27.535 ms with a 37.675 ms p95 on the profiling machine. These
-  machine-specific measurements are diagnostic and do not guarantee 60 fps;
-  browser rendering and interaction add work. A 780×450 option was tried and
-  removed after a focused browser Start Game action exceeded 10 seconds. World
-  creation is checked against a 2,000,000-cell limit before dimensions change
-  or arrays allocate; memory figures estimate 85 bytes of primary physics
+  excludes canvas rendering and SVG overlays. The current physics-only profile
+  averaged 7.174 ms at 260×150, 31.849 ms at 520×300, and 147.581 ms at
+  1040×600 on the profiling machine. These machine-specific measurements are
+  diagnostic and do not guarantee 60 fps; browser rendering and interaction add
+  work. Before dimensions change or arrays allocate, world creation checks a
+  2,000,000-cell limit. Memory figures estimate 85 bytes of primary physics
   arrays plus 8 bytes of render memory per cell, not process RSS. The
   `test:scale-profile` script runs profile math/CLI and world-allocation checks.
 - The interaction design is polished for a small sandbox: brush and line
@@ -138,7 +158,7 @@ rule based on the surface of connected liquid, not a Navier–Stokes solution.
 - It favours readable, game-like rules over physical accuracy. There is no
   continuous pressure field, momentum-conserving liquid solver, real chemical
   stoichiometry, voltage/current/resistance calculation, or rigid-body physics.
-- It is currently a focused 53-entry material set with three powered machines,
+- It is currently a focused 54-entry material set with three powered machines,
   three storage bins, an always-active Vent and a two-input Mixer.
   That makes it approachable, but limits complex construction compared with
   mature sandboxes.
@@ -163,36 +183,17 @@ community content, modding, advanced circuitry, or broader toybox variety.
 
 ## Verification basis
 
-The recorded verification includes the seeded headless suite at 284/284
-assertions with default seed `0`, the passing smoke suite, and an earlier full
-Playwright run of 121 tests that passed headlessly. Focused middle-click picker
-specs passed 21/21. For the fixed-world chooser and camera work, 38 unique cases
-were confirmed across multiple headless Chrome-channel runs using a temporary
-config because bundled Chromium was unavailable: the first run passed 35/38,
-then five focused gate/edge cases passed after the visibility and edge-pan
-fixes. This was not one 38-case run. Later focused results were 14/14 for the
-zoom spec, 9/9 across accessibility and contract files, and passing scale-profile
-and smoke checks (the smoke mock geometry was corrected first). One authorized
-full run recorded `npm test` at 268 passed and 21 failed; the browser run was
-144/151 before later focused fixes, with the remaining failures in physics.
-There is no full-suite rerun recorded, and the latest QMODE boundary-position
-edit was not intentionally retested. The autosave persistence
-Playwright area passed 13/13 headlessly. No full suite was run for the autosave
-and tooltip handoff;
-the newest tooltip-only QMODE adjustment, including the opaque Ember
-background, was not separately tested.
+The previous full validation of the Insulation network and enclosed-air
+implementation passed 306/306 assertions, with a 7.98 ms/frame timing
+diagnostic; smoke and scale-profile checks passed. Its physics profile averaged
+7.174 ms at 260x150, 31.849 ms at 520x300, and 147.581 ms at synthetic
+1040x600. For the later enclosed-content air-face fix,
+`npm test -- --focus=thermal-air-faces` passed 7/7,
+`npm test -- --focus=thermal-chamber` passed 16/16, and
+`npm test -- --focus=thermal-contracts` passed 4/4. No full suite was run for
+that fix. The catalog browser wrapper discovered four tests, but its configured
+test context could not start, so no assertions ran.
 
-```text
-npm run test:scale-profile
-npm run test:browser -- e2e/scaling/default-world.spec.mjs e2e/physics/determinism.spec.mjs --workers=1 --trace=off
-npm run profile:scale
-npm run test:browser -- --list
-```
-
-Headless Playwright is the required verification path. Headed runs may be used
-to diagnose visual or input issues, but are never required for acceptance or
-release.
-
-A failing headless assertion reports the seed needed to reproduce it. The
-project shortcut is `npm run test:browser`; dated superseded documentation is
-kept in [`archive/`](archive/) and does not describe current coverage.
+Use the npm harness commands in [`E2E_TEST_PLAN.md`](E2E_TEST_PLAN.md). Focused
+browser coverage is run by functional area or spec through
+`npm run test:browser -- <area-or-spec> --workers=1 --trace=off`.

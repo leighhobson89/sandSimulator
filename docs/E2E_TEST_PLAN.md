@@ -38,9 +38,13 @@ integration suite.
   Horizontal and Shift + wheel remain browser-owned rather than entering the
   application zoom path.
 - `e2e/materials/` covers catalog metadata, rendering, and browser-observable
-  material reactions.
+  material reactions. The Insulation catalog spec checks its Solids grouping,
+  pink-red presentation, thermal-network glossary text, and Lava melt rule.
 - `e2e/physics/` covers deterministic, user-visible settling, thermal, and
-  reaction behavior.
+  reaction behavior. Thermal coverage includes open versus enclosed air,
+  chamber breach, local rays/fire/Lava effects, retained Steam, Insulation
+  properties, Wall mixed-face cooling, and heat transfer through an Insulation
+  bridge between enclosed chambers without open-air leakage.
 - `e2e/machines/` covers placement, powered machines, storage, tubing, Vents,
   Mixers, electrical behavior, and machine persistence.
 - `e2e/blueprints/` covers capture, stamping, history, lifecycle, and portable
@@ -60,22 +64,12 @@ integration suite.
   five-minute interval without an immediate write. `e2e/regressions/` is
   available for defects without a more specific functional-area owner.
 
-The prior recorded Playwright discovery snapshot listed 137 tests in 34 spec
-files; an earlier full headless run passed 121 tests. For the fixed-world
-chooser and camera work, 38 unique focused cases were confirmed across multiple
-headless Chrome-channel runs using a temporary config because bundled Chromium
-was unavailable: 35/38 passed in the first run, then five focused gate/edge
-cases passed after fixes. This is not one 38-case run. Later focused runs passed
-the zoom spec 14/14 and accessibility/contract files 9/9; scale-profile passed,
-and smoke passed after its mock geometry was fixed. One authorized full run
-recorded `npm test` at 268 passed and 21 failed; its browser run was 144/151
-before later focused fixes, with the remaining failures in physics. No full
-suite rerun is recorded. The latest QMODE boundary-position edit was
-not intentionally retested.
-
-The autosave persistence area passed 13/13 headlessly. No full suite was run
-for the autosave/tooltip handoff, and the latest tooltip-only QMODE edit
-(including the opaque Ember background) was not separately tested.
+The preceding full Insulation-network validation passed 306/306; its smoke and
+scale-profile checks also passed. For the later enclosed-content air-face fix,
+focused simulation checks passed: `thermal-air-faces` 7/7,
+`thermal-chamber` 16/16, and `thermal-contracts` 4/4. No full suite was run for
+that fix. The focused catalog browser wrapper discovered four tests, but its
+configured test context could not start, so no assertions ran.
 
 Each test uses a fresh browser context, opens a New Game, pauses before
 deterministic setup, and seeds randomness when the scenario needs it. The
@@ -92,31 +86,30 @@ in `tools/smokeTest.mjs`.
 
 ## Commands
 
-Required Playwright verification is headless, using the default configuration.
-Headed runs are optional visual or input diagnostics only; they are never an
-acceptance or release prerequisite. Do not rerun a passing headless test in
-headed mode just to establish mode parity.
-
-Install the browser once when needed:
-
-```text
-npx playwright install chromium
-```
-
-Run the non-browser checks and the browser suite with one worker:
+Use the project's npm test commands as the only test entry points. Keep
+deterministic simulation regressions in the `tools/` harnesses and browser
+regressions as Playwright specs under `e2e/`. Run the full checks with one
+worker:
 
 ```text
 npm test
 npm run test:smoke
 npm run test:scale-profile
-npm run test:browser
+npm run test:browser -- --workers=1 --trace=off
 ```
 
-`npm run test:browser` is the headless full-browser-suite command. To run a
-focused area, replace the path with its owning folder or spec:
+`npm run test:browser -- --workers=1 --trace=off` runs the full browser suite.
+To run a focused functional area or spec, pass its path through the npm wrapper:
 
 ```text
-npx playwright test e2e/physics --workers=1 --trace=off
+npm run test:browser -- e2e/physics --workers=1 --trace=off
+```
+
+The Insulation material catalog coverage is owned by
+`e2e/materials/catalog.spec.mjs`; run it through the same wrapper:
+
+```text
+npm run test:browser -- e2e/materials/catalog.spec.mjs --workers=1 --trace=off
 ```
 
 The scale profile's allocation and pure math/CLI checks are headless Node tests
@@ -134,19 +127,18 @@ npm run test:browser -- e2e/scaling/default-world.spec.mjs e2e/physics/determini
 Run the middle-click picker regressions without running the full suite:
 
 ```text
-npm run test:browser -- e2e/tools/painting.spec.mjs e2e/tools/zoom.spec.mjs e2e/blueprints/lifecycle.spec.mjs
+npm run test:browser -- e2e/tools/painting.spec.mjs e2e/tools/zoom.spec.mjs e2e/blueprints/lifecycle.spec.mjs --workers=1 --trace=off
 ```
 
-For the canvas viewport feature, run the focused spec headlessly:
+For the canvas viewport feature, run the focused spec through the same wrapper:
 
 ```text
-npx playwright test e2e/tools/zoom.spec.mjs --workers=1 --trace=off
+npm run test:browser -- e2e/tools/zoom.spec.mjs --workers=1 --trace=off
 ```
 
-If a visual or input issue needs inspection, an optional headed diagnostic can
-use `npx playwright test <path> --headed --workers=1 --trace=off`. It is not
-required after a passing headless run and must never be treated as an
-acceptance/release gate.
+Browser coverage remains Playwright-based. Use the documented npm wrapper for
+all focused and full browser runs; do not invoke Playwright as a standalone
+command.
 
 ## Ongoing Maintenance Contract
 

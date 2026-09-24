@@ -53,7 +53,7 @@ test('material buttons expose their rendered colors and selected state', async (
     await game.openMenu();
     await game.newGame();
 
-    for (const name of ['Sand', 'Water', 'Glass', 'Fan', 'Wind']) {
+    for (const name of ['Sand', 'Water', 'Glass', 'Insulation', 'Fan', 'Wind']) {
         const button = page.getByRole('button', { name, exact: true });
         await expect(button).toHaveCSS('background-color', /rgb\(/);
         await button.click();

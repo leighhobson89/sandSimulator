@@ -29,14 +29,14 @@ actually run.
 
 ### Current catalogue
 
-The 53 entries are grouped in the same order as the picker:
+The 54 entries are grouped in the same order as the picker:
 
 | Group | Materials |
 | --- | --- |
 | Powders | Sand, Wet Mud, Ash, Wet Sand, Dry Mud, Seed, Gunpowder, Snow, Scoria, Wet Ash, Spark Dust |
 | Liquids | Water, Oil, Lava, Acid |
 | Gases | Fire, Steam, Smoke, Toxic Gas |
-| Solids | Ice, Stone, Wood, Glass, Plant, Wall, Flower, Grass, Lily Stem, Lily Pad, Lily Flower, Ash Grass, Clay, Ceramic, Spark Block |
+| Solids | Ice, Stone, Wood, Glass, Plant, Wall, Flower, Grass, Lily Stem, Lily Pad, Lily Flower, Ash Grass, Clay, Ceramic, Spark Block, Insulation |
 | Metals | Spark, Copper, Molten Copper, Battery, Molten Aluminum, Iron, Molten Iron, Tubing |
 | Machines | Fan, Heater, Cooler, Vent, Mixer |
 | Storage | Powder Storage Bin, Liquid Storage Bin, Gas Storage Bin |
@@ -45,6 +45,16 @@ The 53 entries are grouped in the same order as the picker:
 Descriptions remain beside each material's `name` in `particles.json`, rather
 than being duplicated here. This prevents the documentation from claiming a
 threshold or conversion that the simulator does not implement.
+
+Insulation is material `54`, a static pink-red Solid. Its ordinary thermal
+conductivity is `0`, so standard contact transfer does not pass heat from it to
+open air or other materials. A dedicated, fast thermal network transfers heat
+between face-connected Insulation cells and adjacent enclosed air cells. This
+lets an Insulation bridge transfer heat between enclosed chambers without
+leaking it into open air or other materials. Radiation can still warm
+Insulation itself. It has very slow cooling and melts at `5000 C` into Lava.
+Other solids such as Wall can also retain heat according to their own cooling
+and conductivity properties.
 
 ### Adding or changing a material
 
@@ -97,6 +107,41 @@ simulation description in [`PROGRAM_OVERVIEW.md`](PROGRAM_OVERVIEW.md).
   insulation still slows exchange for buried cells. Temperature updates remain
   bounded; ambient cooling, source radiation, and latent state changes remain
   separate effects.
+- Air spaces are classified by an eight-way perimeter flood fill each frame.
+  Empty cells and gas cells reachable from the world edge are open air; diagonal
+  routes count as routes. Open air continues to follow the shared ambient
+  temperature and its height-dependent lapse as before. Air spaces with no
+  route to the perimeter are enclosed and keep a local temperature instead of
+  being pulled toward global ambient. Enclosed empty air and gases still receive
+  heat or cold from nearby matter, Heat Ray, Cold Ray, fire, Lava, and other
+  normal local sources. Steam in a sealed chamber can therefore remain hot
+  while outside air cools; when the chamber is opened, its air returns to the
+  open-air ambient behavior gradually.
+- Solid chamber walls are not automatically perfect insulators. Their contact
+  cooling target averages all adjacent air-space faces: enclosed faces use
+  their live local air temperatures, while open faces use height-adjusted
+  outside ambient. A Wall cell touching both sides can therefore leak heat
+  through its open-facing surface while still interacting with chamber air;
+  Insulation's zero conductivity and very slow cooling make it the better
+  barrier. Material-specific variance and bulk insulation continue to affect
+  the rate.
+- Ordinary contact exchange remains face-based, and a material's direct air
+  cooling only uses cardinally adjacent air-space faces (Insulation uses its
+  dedicated network). Each face contributes its enclosed air cell's local
+  temperature or, for open air, the height-adjusted outdoor temperature; those
+  face temperatures are averaged. With no cardinal air-space face, a particle
+  receives no direct ambient-cooling term and no `coolsBy` clamp.
+  Material-to-material conduction and source heating remain active, so a shell
+  can still conduct outside influence inward to enclosed contents. This blocks
+  direct air cooling of shielded contents without making the shell perfectly
+  thermally isolated.
+- Insulation has a separate, fast thermal network. Face-connected Insulation
+  cells exchange heat with one another and with adjacent enclosed air; open-air
+  cells and other materials are excluded. A bridge can therefore transfer heat
+  between chamber interiors while keeping ordinary contact exchange blocked at
+  its outside faces. The network is bidirectional and local: each frame
+  propagates heat through neighboring Insulation cells rather than teleporting
+  it between distant chambers.
 - Ordinary materials are non-conductive by default. Copper, Iron, and Battery
   participate in the electrical network; Spark is absorbed by connected metal,
   Battery stores charge, and Copper or Iron can discharge a charged Battery
@@ -354,7 +399,7 @@ full-Vent flow cutoff. For browser-visible changes, run the owning machine area
 headlessly:
 
 ```text
-npx playwright test e2e/machines --workers=1 --trace=off
+npm run test:browser -- e2e/machines --workers=1 --trace=off
 ```
 
 Headed runs are optional visual or input diagnostics only and are never an

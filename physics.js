@@ -55,9 +55,16 @@ const ELECTRICAL_NEIGHBOURS = [
 let COLS = 0;
 let ROWS = 0;
 let world = null;
+let INSULATION_ID = -1;
+// The flood mask borrows the movement flags before they are cleared for the
+// current tick. Queue views borrow the two temperature buffers, which are
+// overwritten by diffuseHeat immediately after the flood fill completes.
+let tempFloodQueue = null;
+let tempNextFloodQueue = null;
 
 // DEFS[id] is the definition for that particle. DEFS[0] is air.
 let DEFS = [];
+const AIR_SPACE_BY_TYPE = new Uint8Array(256);
 let AMBIENT = 8;
 let ambientTarget = 8;
 let frameCount = 0;
@@ -467,6 +474,12 @@ export function prepareDefinitions(json) {
     });
 
     DEFS = defs;
+    INSULATION_ID = defs.findIndex(def => def?.name === 'Insulation');
+    AIR_SPACE_BY_TYPE.fill(0);
+    AIR_SPACE_BY_TYPE[EMPTY] = 1;
+    for (let id = 1; id < defs.length; id++) {
+        if (defs[id]?.category === 'gas') AIR_SPACE_BY_TYPE[id] = 1;
+    }
     for (const name in nameCache) delete nameCache[name];
 
     // Which plant counts as the wet mud one. Worked out from the sprout rules
@@ -691,6 +704,8 @@ export function createWorld(cols, rows) {
         airflowNextX: new Float32Array(n),
         airflowNextY: new Float32Array(n)
     };
+    tempFloodQueue = new Int32Array(world.temp.buffer);
+    tempNextFloodQueue = new Int32Array(world.tempNext.buffer);
     world.temp.fill(AMBIENT);
     for (let i = 0; i < n; i++) world.shade[i] = random() * 255;
     storageFunnelMachines = [];
@@ -1432,6 +1447,117 @@ function updateElectricalPower() {
 
 // ------------------------------------------------------------------ main step
 
+function isAirSpace(id) {
+    return AIR_SPACE_BY_TYPE[id] === 1;
+}
+
+// Mark every airspace cell that can reach the canvas edge. The eight-way
+// flood matches gas movement: diagonal openings connect rooms too.
+function markOpenAirCells() {
+    const type = world.type;
+    const open = world.moved;
+    const queue = tempNextFloodQueue;
+    open.fill(0);
+    let head = 0;
+    let tail = 0;
+    const cellCount = type.length;
+    const lastRowStart = (ROWS - 1) * COLS;
+
+    // Keep horizontal edge flags in the already-reused mask so neighbour
+    // expansion never needs to divide or modulo an index by the world width.
+    for (let y = 0; y < ROWS; y++) {
+        const rowStart = y * COLS;
+        open[rowStart] = 2;
+        open[rowStart + COLS - 1] |= 4;
+    }
+
+    for (let x = 0; x < COLS; x++) {
+        let i = x;
+        if (AIR_SPACE_BY_TYPE[type[i]] && !(open[i] & 1)) {
+            open[i] |= 1;
+            queue[tail++] = i;
+        }
+        i = lastRowStart + x;
+        if (AIR_SPACE_BY_TYPE[type[i]] && !(open[i] & 1)) {
+            open[i] |= 1;
+            queue[tail++] = i;
+        }
+    }
+    for (let y = 1; y < ROWS - 1; y++) {
+        let i = y * COLS;
+        if (AIR_SPACE_BY_TYPE[type[i]] && !(open[i] & 1)) {
+            open[i] |= 1;
+            queue[tail++] = i;
+        }
+        i += COLS - 1;
+        if (AIR_SPACE_BY_TYPE[type[i]] && !(open[i] & 1)) {
+            open[i] |= 1;
+            queue[tail++] = i;
+        }
+    }
+
+    while (head < tail) {
+        const i = queue[head++];
+        const edgeFlags = open[i];
+        if (i >= COLS) {
+            const neighbour = i - COLS;
+            if (!(open[neighbour] & 1) && AIR_SPACE_BY_TYPE[type[neighbour]]) {
+                open[neighbour] |= 1;
+                queue[tail++] = neighbour;
+            }
+        }
+        if (i < cellCount - COLS) {
+            const neighbour = i + COLS;
+            if (!(open[neighbour] & 1) && AIR_SPACE_BY_TYPE[type[neighbour]]) {
+                open[neighbour] |= 1;
+                queue[tail++] = neighbour;
+            }
+        }
+        if (!(edgeFlags & 2)) {
+            const neighbour = i - 1;
+            if (!(open[neighbour] & 1) && AIR_SPACE_BY_TYPE[type[neighbour]]) {
+                open[neighbour] |= 1;
+                queue[tail++] = neighbour;
+            }
+            if (i >= COLS) {
+                const diagonal = i - COLS - 1;
+                if (!(open[diagonal] & 1) && AIR_SPACE_BY_TYPE[type[diagonal]]) {
+                    open[diagonal] |= 1;
+                    queue[tail++] = diagonal;
+                }
+            }
+            if (i < cellCount - COLS) {
+                const diagonal = i + COLS - 1;
+                if (!(open[diagonal] & 1) && AIR_SPACE_BY_TYPE[type[diagonal]]) {
+                    open[diagonal] |= 1;
+                    queue[tail++] = diagonal;
+                }
+            }
+        }
+        if (!(edgeFlags & 4)) {
+            const neighbour = i + 1;
+            if (!(open[neighbour] & 1) && AIR_SPACE_BY_TYPE[type[neighbour]]) {
+                open[neighbour] |= 1;
+                queue[tail++] = neighbour;
+            }
+            if (i >= COLS) {
+                const diagonal = i - COLS + 1;
+                if (!(open[diagonal] & 1) && AIR_SPACE_BY_TYPE[type[diagonal]]) {
+                    open[diagonal] |= 1;
+                    queue[tail++] = diagonal;
+                }
+            }
+            if (i < cellCount - COLS) {
+                const diagonal = i + COLS + 1;
+                if (!(open[diagonal] & 1) && AIR_SPACE_BY_TYPE[type[diagonal]]) {
+                    open[diagonal] |= 1;
+                    queue[tail++] = diagonal;
+                }
+            }
+        }
+    }
+}
+
 export function stepSimulation() {
     frameCount++;
     // Ease the air temperature towards whatever the slider is set to. This is
@@ -1442,6 +1568,7 @@ export function stepSimulation() {
         AMBIENT += (ambientTarget - AMBIENT) * 0.004;
         if (Math.abs(ambientTarget - AMBIENT) < 0.05) AMBIENT = ambientTarget;
     }
+    markOpenAirCells();
     diffuseHeat();
     radiateHeat();
     computeLiquidSurfaces();
@@ -1528,10 +1655,34 @@ export function getFrameCount() { return frameCount; }
 // very insulating material still limits the shared interface.
 const THERMAL_TRANSFER_SCALE = 1.35;
 const MAX_CONTACT_TRANSFER = 0.24;
+const OPEN_AIR_CONTACT_CONDUCTIVITY = 0.001;
+const INSULATION_NETWORK_SUBSTEPS = 32;
+const insulationNetworkCells = [];
 
-function thermalContactRate(first, second) {
-    const firstConductivity = Math.max(0, first.conductivity);
-    const secondConductivity = Math.max(0, second.conductivity);
+function isInsulationNetworkPair(first, second, firstOpenAir, secondOpenAir) {
+    const firstInsulation = first.id === INSULATION_ID;
+    const secondInsulation = second.id === INSULATION_ID;
+    if (firstInsulation && secondInsulation) return true;
+    if (firstInsulation && isAirSpace(second.id) && !(secondOpenAir & 1)) return true;
+    if (secondInsulation && isAirSpace(first.id) && !(firstOpenAir & 1)) return true;
+    return false;
+}
+
+function thermalContactRate(first, second, firstOpenAir, secondOpenAir) {
+    // Open air cells remain coupled to each other so the ambient dial and its
+    // layers settle at the existing pace. A material exchanging heat with open
+    // air uses the weaker air-to-material interface; enclosed air keeps the
+    // full contact rate and can hold or receive chamber heat.
+    let firstConductivity = first.conductivity;
+    let secondConductivity = second.conductivity;
+    if (first.id === EMPTY && firstOpenAir && second.id !== EMPTY) {
+        firstConductivity = OPEN_AIR_CONTACT_CONDUCTIVITY;
+    }
+    if (second.id === EMPTY && secondOpenAir && first.id !== EMPTY) {
+        secondConductivity = OPEN_AIR_CONTACT_CONDUCTIVITY;
+    }
+    firstConductivity = Math.max(0, firstConductivity);
+    secondConductivity = Math.max(0, secondConductivity);
     if (firstConductivity === 0 || secondConductivity === 0) return 0;
     return Math.min(MAX_CONTACT_TRANSFER,
         Math.sqrt(firstConductivity * secondConductivity) * THERMAL_TRANSFER_SCALE);
@@ -1542,6 +1693,8 @@ function diffuseHeat() {
     const temp = world.temp;
     const next = world.tempNext;
     const shade = world.shade;
+    const openAir = world.moved;
+    insulationNetworkCells.length = 0;
 
     for (let y = 0; y < ROWS; y++) {
         const rowStart = y * COLS;
@@ -1550,13 +1703,24 @@ function diffuseHeat() {
             const i = rowStart + x;
             const def = DEFS[type[i]];
             const t = temp[i];
+            const id = type[i];
+            const airCell = isAirSpace(type[i]);
+            const enclosedAirCell = airCell && !openAir[i];
+            if (id === INSULATION_ID) {
+                insulationNetworkCells.push(i);
+            } else if (airCell && !(openAir[i] & 1) && (
+                (y > 0 && type[i - COLS] === INSULATION_ID) ||
+                (y < ROWS - 1 && type[i + COLS] === INSULATION_ID) ||
+                (x > 0 && type[i - 1] === INSULATION_ID) ||
+                (x < COLS - 1 && type[i + 1] === INSULATION_ID))) {
+                insulationNetworkCells.push(i);
+            }
 
             // A surface still responds almost normally, but heat has a harder
             // time reaching a cell buried behind several layers of the same
             // material. Four matching neighbours is a true interior cell;
             // three is a shallow subsurface cell and receives half the effect.
             let sameNeighbours = 0;
-            const id = type[i];
             if (y > 0 && type[i - COLS] === id) sameNeighbours++;
             if (y < ROWS - 1 && type[i + COLS] === id) sameNeighbours++;
             if (x > 0 && type[i - 1] === id) sameNeighbours++;
@@ -1568,27 +1732,88 @@ function diffuseHeat() {
             let result = t;
             if (y > 0) {
                 const neighbour = i - COLS;
-                result += (temp[neighbour] - t) * thermalContactRate(def, DEFS[type[neighbour]]);
+                result += (temp[neighbour] - t) * thermalContactRate(
+                    def, DEFS[type[neighbour]], openAir[i], openAir[neighbour]);
             }
             if (y < ROWS - 1) {
                 const neighbour = i + COLS;
-                result += (temp[neighbour] - t) * thermalContactRate(def, DEFS[type[neighbour]]);
+                result += (temp[neighbour] - t) * thermalContactRate(
+                    def, DEFS[type[neighbour]], openAir[i], openAir[neighbour]);
             }
             if (x > 0) {
                 const neighbour = i - 1;
-                result += (temp[neighbour] - t) * thermalContactRate(def, DEFS[type[neighbour]]);
+                result += (temp[neighbour] - t) * thermalContactRate(
+                    def, DEFS[type[neighbour]], openAir[i], openAir[neighbour]);
             }
             if (x < COLS - 1) {
                 const neighbour = i + 1;
-                result += (temp[neighbour] - t) * thermalContactRate(def, DEFS[type[neighbour]]);
+                result += (temp[neighbour] - t) * thermalContactRate(
+                    def, DEFS[type[neighbour]], openAir[i], openAir[neighbour]);
             }
             result = t + (result - t) * conductionScale;
+
+            // Open air keeps following the ambient dial and its height layers.
+            // Enclosed airspace has its own temperature and changes only via
+            // contact conduction, radiant heat, or explicit source forces.
+            // Other contents exchange their slow ambient response with the
+            // air at every adjacent face. Open faces use the outside air's
+            // height-dependent temperature; enclosed faces use that cell's
+            // current temperature.
+            let coolingAir = rowAir;
+            let hasCoolingAir = airCell && !enclosedAirCell;
+            if (!airCell) {
+                let adjacentAirTotal = 0;
+                let adjacentAirCount = 0;
+                if (y > 0) {
+                    const neighbour = i - COLS;
+                    if (isAirSpace(type[neighbour])) {
+                        adjacentAirTotal += openAir[neighbour]
+                            ? getAirTempAt(y - 1)
+                            : temp[neighbour];
+                        adjacentAirCount++;
+                    }
+                }
+                if (y < ROWS - 1) {
+                    const neighbour = i + COLS;
+                    if (isAirSpace(type[neighbour])) {
+                        adjacentAirTotal += openAir[neighbour]
+                            ? getAirTempAt(y + 1)
+                            : temp[neighbour];
+                        adjacentAirCount++;
+                    }
+                }
+                if (x > 0) {
+                    const neighbour = i - 1;
+                    if (isAirSpace(type[neighbour])) {
+                        adjacentAirTotal += openAir[neighbour]
+                            ? rowAir
+                            : temp[neighbour];
+                        adjacentAirCount++;
+                    }
+                }
+                if (x < COLS - 1) {
+                    const neighbour = i + 1;
+                    if (isAirSpace(type[neighbour])) {
+                        adjacentAirTotal += openAir[neighbour]
+                            ? rowAir
+                            : temp[neighbour];
+                        adjacentAirCount++;
+                    }
+                }
+                if (adjacentAirCount > 0) {
+                    coolingAir = adjacentAirTotal / adjacentAirCount;
+                    hasCoolingAir = id !== INSULATION_ID;
+                }
+            }
+
             let coolingRate = def.cooling;
             if (def.coolingVariance > 0) {
                 const variation = (shade[i] / 255 - 0.5) * 2;
                 coolingRate *= 1 + variation * def.coolingVariance;
             }
-            result += (rowAir + airOffset[shade[i]] - result) * coolingRate * coolingScale;
+            if (hasCoolingAir) {
+                result += (coolingAir + airOffset[shade[i]] - result) * coolingRate * coolingScale;
+            }
 
             // Heat sources (fire, lava) push themselves back up towards their
             // own temperature. emitRate decides how hard that is to fight:
@@ -1623,7 +1848,7 @@ function diffuseHeat() {
             // together instead of setting from the outside in. It stops at the
             // temperature of the air, never running colder than its
             // surroundings.
-            if (def.coolsBy > 0 && result > rowAir) {
+            if (hasCoolingAir && def.coolsBy > 0 && result > coolingAir) {
                 let rate = def.coolsBy;
                 // Something lying on top of it holds the heat in. Only the cell
                 // directly above is looked at, which is all a crust is.
@@ -1631,7 +1856,7 @@ function diffuseHeat() {
                     def.insulatedBy.includes(type[i - COLS])) {
                     rate *= def.insulatedCooling;
                 }
-                result = Math.max(rowAir, result - rate);
+                result = Math.max(coolingAir, result - rate);
             }
 
             next[i] = result;
@@ -1640,6 +1865,60 @@ function diffuseHeat() {
 
     world.temp = next;
     world.tempNext = temp;
+    const queueSwap = tempFloodQueue;
+    tempFloodQueue = tempNextFloodQueue;
+    tempNextFloodQueue = queueSwap;
+
+    diffuseInsulationNetwork();
+}
+
+function diffuseInsulationNetwork() {
+    const type = world.type;
+    const openAir = world.moved;
+    const current = world.temp;
+    const next = world.tempNext;
+    const width = COLS;
+    const length = type.length;
+
+    // Several stable contact substeps make connected Insulation a fast thermal
+    // path while retaining strictly local, bidirectional exchange at each face.
+    for (let step = 0; step < INSULATION_NETWORK_SUBSTEPS; step++) {
+        for (let n = 0; n < insulationNetworkCells.length; n++) {
+            const i = insulationNetworkCells[n];
+            const id = type[i];
+            const t = current[i];
+            let transfer = 0;
+            if (i >= width) {
+                const neighbour = i - width;
+                if (isInsulationNetworkPair(DEFS[id], DEFS[type[neighbour]], openAir[i], openAir[neighbour])) {
+                    transfer += (current[neighbour] - t) * MAX_CONTACT_TRANSFER;
+                }
+            }
+            if (i < length - width) {
+                const neighbour = i + width;
+                if (isInsulationNetworkPair(DEFS[id], DEFS[type[neighbour]], openAir[i], openAir[neighbour])) {
+                    transfer += (current[neighbour] - t) * MAX_CONTACT_TRANSFER;
+                }
+            }
+            if (i % width !== 0) {
+                const neighbour = i - 1;
+                if (isInsulationNetworkPair(DEFS[id], DEFS[type[neighbour]], openAir[i], openAir[neighbour])) {
+                    transfer += (current[neighbour] - t) * MAX_CONTACT_TRANSFER;
+                }
+            }
+            if (i % width !== width - 1) {
+                const neighbour = i + 1;
+                if (isInsulationNetworkPair(DEFS[id], DEFS[type[neighbour]], openAir[i], openAir[neighbour])) {
+                    transfer += (current[neighbour] - t) * MAX_CONTACT_TRANSFER;
+                }
+            }
+            next[i] = t + transfer;
+        }
+        for (let n = 0; n < insulationNetworkCells.length; n++) {
+            const i = insulationNetworkCells[n];
+            current[i] = next[i];
+        }
+    }
 }
 
 // A diagonal neighbour is further away than a square one, so it catches less.

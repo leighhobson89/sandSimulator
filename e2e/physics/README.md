@@ -1,36 +1,58 @@
 # Physics E2E Coverage
 
 Focused browser contracts for deterministic, user-visible physics outcomes.
-The folder contains 24 Playwright tests within the current 137-test browser
-inventory. The last full browser run covered 121 tests and passed headlessly; an
-additional headed diagnostic run also passed. The current 137-test inventory
-has not been run as a full suite.
 
 - `determinism.spec.mjs`: four tests for seeded snapshots, restore/replay,
   controlled stepping, and an electrical boundary.
 - `settling.spec.mjs`: six tests for brush settling, liquid flow and level,
   reset, density ordering, sealed boundaries, and gas movement.
-- `thermal.spec.mjs`: six tests for gradual temperature integration, phase
-  changes, fire, lava, insulation, ambient easing, and altitude layers.
+- `thermal.spec.mjs`: gradual temperature integration, phase changes, fire,
+  lava, material insulation, ambient easing, altitude layers, sealed and open
+  air, chamber breach, local rays/fire/Lava effects, Steam retention, mixed
+  Wall/open-air cooling, and connected Insulation bridges that transfer heat
+  between enclosed chambers without leaking to open air.
 - `reactions.spec.mjs`: eight tests for quenching, growth, residue, drying,
   corrosion, snow, gunpowder, cold decay, and wind behavior.
 
 ## Run
 
-Run the focused area headlessly with one worker. Headed runs are optional visual
-or input diagnostics only and are never an acceptance or release prerequisite.
+Run the focused area through the documented npm wrapper with one worker.
 
 ```text
-npx playwright test e2e/physics --workers=1 --trace=off
+npm run test:browser -- e2e/physics --workers=1 --trace=off
 ```
 
-The full headless integration suite remains `npm test`; its current accepted run
-passes 284/284 assertions with default seed `0`. `npm run test:smoke` remains the
-stand-in browser wiring and persistence check. The headless full-browser-suite
-command is:
+The material catalog's Insulation group, color, and glossary behavior are
+covered in [`../materials/catalog.spec.mjs`](../materials/catalog.spec.mjs).
+Run that focused browser spec with:
 
 ```text
-npx playwright test --workers=1 --trace=off
+npm run test:browser -- e2e/materials/catalog.spec.mjs --workers=1 --trace=off
+```
+
+## Thermal Simulation Results
+
+The previous full Insulation-network validation passed 306/306, and its smoke
+and scale-profile checks passed. For the later enclosed-content air-face fix,
+`thermal-air-faces` passed 7/7, `thermal-chamber` passed 16/16, and
+`thermal-contracts` passed 4/4. No full suite was run for that fix.
+
+Focused simulation selectors:
+
+```text
+npm test -- --focus=thermal-air-faces
+npm test -- --focus=thermal-chamber
+npm test -- --focus=thermal-contracts
+```
+
+The focused catalog browser wrapper discovered four tests, but its configured
+test context could not start, so no assertions ran. The catalog specs remain
+the browser-visible coverage for the Insulation picker and glossary.
+
+Run the full browser suite through the npm wrapper:
+
+```text
+npm run test:browser -- --workers=1 --trace=off
 ```
 
 ## Fixture Boundary

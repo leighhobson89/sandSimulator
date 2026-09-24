@@ -80,6 +80,201 @@ test('heat conducts and radiates locally while thick glass insulates its interio
     expect((await cell(page, 84, 24)).temp).toBeGreaterThan(50);
 });
 
+test('sealed air retains heat until a breach reconnects it to ambient', async ({ page }) => {
+    const game = new GamePage(page); await game.openMenu(); await game.newGame();
+    const samples = await page.evaluate(async () => {
+        const p = await import('/physics.js');
+        const insulation = p.getDefinitions().findIndex(definition => definition?.name === 'Insulation');
+        if (insulation < 1) return null;
+        p.setLayerLapse(0);
+        p.setAmbientTarget(-40);
+        for (let frame = 0; frame < 1300; frame++) p.stepSimulation();
+        p.clearWorld();
+        const world = p.getWorld();
+        for (let x = 24; x <= 36; x++) {
+            p.setCell(x, 15, insulation);
+            p.setCell(x, 27, insulation);
+        }
+        for (let y = 16; y < 27; y++) {
+            p.setCell(24, y, insulation);
+            p.setCell(36, y, insulation);
+        }
+        for (let y = 16; y < 27; y++) {
+            for (let x = 25; x < 36; x++) world.temp[p.index(x, y)] = 200;
+        }
+        world.temp[p.index(45, 21)] = 200;
+        for (let frame = 0; frame < 100; frame++) p.stepSimulation();
+        const sealed = world.temp[p.index(30, 21)];
+        const open = world.temp[p.index(45, 21)];
+        p.setCell(24, 21, 0);
+        p.stepSimulation();
+        const oneFrameAfterBreach = world.temp[p.index(30, 21)];
+        for (let frame = 0; frame < 120; frame++) p.stepSimulation();
+        return {
+            ambient: p.getAmbientTemp(), sealed, open, oneFrameAfterBreach,
+            afterBreach: world.temp[p.index(30, 21)]
+        };
+    });
+    expect(samples).not.toBeNull();
+    expect(samples.sealed).toBeGreaterThan(samples.open + 100);
+    expect(samples.sealed).toBeGreaterThan(samples.ambient + 100);
+    expect(samples.oneFrameAfterBreach).toBeGreaterThan(samples.sealed - 25);
+    expect(samples.afterBreach).toBeLessThan(samples.sealed - 40);
+});
+
+test('Insulation has the specified definition and melts into Lava above 5000C', async ({ page }) => {
+    const game = new GamePage(page); await game.openMenu(); await game.newGame();
+    const result = await page.evaluate(async () => {
+        const p = await import('/physics.js');
+        const definitions = p.getDefinitions();
+        const insulation = definitions.findIndex(definition => definition?.name === 'Insulation');
+        if (insulation < 1) return null;
+        const definition = definitions[insulation];
+        p.clearWorld();
+        const world = p.getWorld();
+        p.setCell(30, 21, definitions.findIndex(item => item?.name === 'Wall'));
+        p.setCell(30, 20, insulation);
+        const cellIndex = p.index(30, 20);
+        world.temp[cellIndex] = 4999;
+        world.heat[cellIndex] = 0;
+        p.stepSimulation();
+        const remainsSolid = world.type[cellIndex] === insulation;
+        world.temp[cellIndex] = 6000;
+        world.heat[cellIndex] = definition.latent + 1;
+        p.stepSimulation();
+        return {
+            id: definition.id,
+            category: definition.category,
+            group: definition.group,
+            conductivity: definition.conductivity,
+            meltPoint: definition.meltPoint,
+            meltsInto: definitions[definition.meltsInto]?.name,
+            remainsSolid,
+            meltedIntoLava: world.type[cellIndex] === definitions.findIndex(item => item?.name === 'Lava')
+        };
+    });
+    expect(result).not.toBeNull();
+    expect(result).toMatchObject({
+        id: 54, category: 'static', group: 'Solids', conductivity: 0,
+        meltPoint: 5000, meltsInto: 'Lava', remainsSolid: true, meltedIntoLava: true
+    });
+});
+
+test('connected Insulation carries heat between enclosed chambers without leaking into open air', async ({ page }) => {
+    const game = new GamePage(page); await game.openMenu(); await game.newGame(); await game.seed(0);
+    const baseline = await page.evaluate(async () => {
+        const p = await import('/physics.js');
+        const definitions = p.getDefinitions();
+        const insulation = definitions.findIndex(definition => definition?.name === 'Insulation');
+        const wall = definitions.findIndex(definition => definition?.name === 'Wall');
+        const baseline = p.getAmbientTemp();
+        p.setAmbientTarget(baseline);
+        p.setLayerLapse(0);
+        p.setAirLayersOn(false);
+        p.setAmbientWindOn(false);
+        p.clearWorld();
+        const world = p.getWorld();
+        const rooms = [
+            { left: 10, right: 16, top: 16, bottom: 24 },
+            { left: 22, right: 28, top: 16, bottom: 24 }
+        ];
+        for (const room of rooms) {
+            for (let x = room.left; x <= room.right; x++) {
+                p.setCell(x, room.top, wall);
+                p.setCell(x, room.bottom, wall);
+            }
+            for (let y = room.top + 1; y < room.bottom; y++) {
+                p.setCell(room.left, y, wall);
+                p.setCell(room.right, y, wall);
+            }
+        }
+        for (let x = rooms[0].right; x <= rooms[1].left; x++) p.setCell(x, 20, insulation);
+        p.setCell(19, 21, wall);
+        for (let y = 17; y < 24; y++) {
+            for (let x = 11; x < 16; x++) world.temp[p.index(x, y)] = 600;
+            for (let x = 23; x < 28; x++) world.temp[p.index(x, y)] = baseline;
+        }
+        for (let x = 16; x <= 22; x++) world.temp[p.index(x, 20)] = baseline;
+        world.temp[p.index(19, 21)] = baseline;
+        return baseline;
+    });
+    await game.step(12);
+    const early = await page.evaluate(async () => {
+        const p = await import('/physics.js');
+        const world = p.getWorld();
+        const path = Array.from({ length: 7 }, (_, n) => world.temp[p.index(16 + n, 20)]);
+        return {
+            pathMean: path.reduce((sum, value) => sum + value, 0) / path.length,
+            receiverAir: world.temp[p.index(23, 20)],
+            exterior: world.temp[p.index(19, 18)],
+            wall: world.temp[p.index(19, 21)]
+        };
+    });
+    expect(early.pathMean).toBeGreaterThan(baseline + 20);
+    expect(early.receiverAir).toBeGreaterThan(baseline + 100);
+    expect(Math.abs(early.exterior - baseline)).toBeLessThan(1);
+    expect(Math.abs(early.wall - baseline)).toBeLessThan(1);
+    await game.step(36);
+    const chamberInterior = await page.evaluate(async () => {
+        const p = await import('/physics.js');
+        return p.getWorld().temp[p.index(25, 20)];
+    });
+    expect(chamberInterior).toBeGreaterThan(baseline + 20);
+});
+
+test('Steam in a sealed warm gas cell stays hot while exposed Steam cools', async ({ page }) => {
+    const game = new GamePage(page); await game.openMenu(); await game.newGame();
+    const result = await page.evaluate(async () => {
+        const p = await import('/physics.js');
+        const definitions = p.getDefinitions();
+        const insulation = definitions.findIndex(definition => definition?.name === 'Insulation');
+        if (insulation < 1) return null;
+        const steam = definitions.findIndex(definition => definition?.name === 'Steam');
+        p.setLayerLapse(0);
+        p.setAmbientTarget(-40);
+        for (let frame = 0; frame < 1300; frame++) p.stepSimulation();
+        p.clearWorld();
+        const world = p.getWorld();
+        const steamX = 30;
+        const steamY = 21;
+        // Solid cells on all eight sides seal this gas cell from perimeter air.
+        for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+                if (dx === 0 && dy === 0) continue;
+                p.setCell(steamX + dx, steamY + dy, insulation);
+                world.temp[p.index(steamX + dx, steamY + dy)] = 200;
+            }
+        }
+        p.setCell(steamX, steamY, steam);
+        world.temp[p.index(steamX, steamY)] = 200;
+        const exposedSteamStart = 30;
+        for (let y = 20; y < 25; y++) {
+            for (let x = 5; x < 11; x++) {
+                p.setCell(x, y, steam);
+                world.temp[p.index(x, y)] = 200;
+            }
+        }
+        for (let frame = 0; frame < 100; frame++) p.stepSimulation();
+        let exposedSteam = 0;
+        for (let y = 0; y < world.rows; y++) {
+            for (let x = 0; x <= 15; x++) {
+                if (world.type[p.index(x, y)] === steam) exposedSteam++;
+            }
+        }
+        return {
+            sealedType: world.type[p.index(steamX, steamY)],
+            sealedTemp: world.temp[p.index(steamX, steamY)],
+            steamId: steam,
+            exposedSteam,
+            exposedSteamStart
+        };
+    });
+    expect(result).not.toBeNull();
+    expect(result.sealedType).toBe(result.steamId);
+    expect(result.sealedTemp).toBeGreaterThan(190);
+    expect(result.exposedSteam).toBeLessThan(result.exposedSteamStart);
+});
+
 async function countType(page, material) {
     return page.evaluate(async material => { const p = await import('/physics.js'); const id = p.getDefinitions().findIndex(d => d?.name === material); return [...p.getWorld().type].filter(value => value === id).length; }, material);
 }

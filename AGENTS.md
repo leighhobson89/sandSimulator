@@ -42,10 +42,12 @@ Always ask the user for approval before running a full test suite. Focused test
 runs for specific functional areas may be run without prior approval, up to
 three areas per request.
 
-## Playwright Verification Policy
+## Project Test Harness Preference
 
-The required Playwright verification path is headless, using the default
-configuration. Headed runs are optional diagnostics for investigating visual or
-input issues; they are never required for acceptance, release, or routine
-verification. Do not rerun a passing headless test in headed mode solely for
-mode parity. This does not change the approval requirement for full suites.
+Use the project's documented npm test commands as the only test entry points.
+Keep deterministic simulation regressions in the existing `tools/` harnesses
+(`simTest.mjs`, `smokeTest.mjs`, `scaleProfileTest.mjs`, and
+`worldAllocationTest.mjs`). Keep browser-visible regression coverage as
+Playwright specs under the owning `e2e/` functional area. Run focused browser
+coverage only through the npm wrapper with an area or spec path, for example:
+`npm run test:browser -- e2e/physics --workers=1 --trace=off`.

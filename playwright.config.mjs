@@ -1,5 +1,8 @@
 import { defineConfig } from '@playwright/test';
 
+const port = process.env.PLAYWRIGHT_PORT || '4173';
+const localBaseURL = `http://127.0.0.1:${port}`;
+
 export default defineConfig({
     testDir: '.',
     testMatch: ['e2e/**/*.spec.mjs'],
@@ -13,7 +16,7 @@ export default defineConfig({
     reporter: process.env.CI ? [['line'], ['html', { outputFolder: 'playwright-report', open: 'never' }]] : 'list',
     outputDir: 'test-results/playwright',
     use: {
-        baseURL: 'http://127.0.0.1:4173',
+        baseURL: localBaseURL,
         browserName: 'chromium',
         headless: true,
         viewport: { width: 1440, height: 900 },
@@ -25,8 +28,8 @@ export default defineConfig({
     },
     webServer: {
         command: 'node tools/serve.mjs',
-        url: 'http://127.0.0.1:4173',
-        env: { PORT: '4173' },
+        url: localBaseURL,
+        env: { PORT: port },
         reuseExistingServer: false,
         timeout: 15_000
     }
