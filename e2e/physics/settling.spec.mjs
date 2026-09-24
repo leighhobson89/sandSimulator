@@ -62,13 +62,30 @@ test('density orders ice and oil above water while sand sinks below it', async (
     const game = new GamePage(page); await game.openMenu(); await game.newGame();
     await setupPhysics(page, {
         seed: 505,
-        fills: [{ material: 'Wall', x: 25, y: 145, width: 40, height: 1 }, { material: 'Water', x: 30, y: 100, width: 30, height: 20 }],
+        fills: [
+            { material: 'Wall', x: 25, y: 145, width: 40, height: 1 },
+            { material: 'Wall', x: 29, y: 120, width: 18, height: 1 },
+            { material: 'Wall', x: 29, y: 100, width: 1, height: 21 },
+            { material: 'Wall', x: 46, y: 100, width: 1, height: 21 },
+            { material: 'Water', x: 30, y: 100, width: 16, height: 20 }
+        ],
         cells: [
-            { x: 36, y: 110, material: 'Ice' }, { x: 44, y: 110, material: 'Oil' },
+            { x: 36, y: 99, material: 'Ice' }, { x: 44, y: 110, material: 'Oil' },
             { x: 52, y: 10, material: 'Sand' }
         ]
     });
-    await game.step(180);
+    // Hold the water just above freezing so this measures buoyancy without
+    // asking Ice to survive an unrelated warm-bath phase change.
+    await page.evaluate(async () => {
+        const p = await import('/physics.js');
+        const world = p.getWorld();
+        const water = p.getDefinitions().findIndex(definition => definition?.name === 'Water');
+        p.setAmbientTarget(0);
+        for (let i = 0; i < world.type.length; i++) {
+            if (world.type[i] === water) world.temp[i] = 1;
+        }
+    });
+    await game.step(60);
     const ice = await cellsOf(page, 'Ice'); const oil = await cellsOf(page, 'Oil');
     const sand = [...await cellsOf(page, 'Sand'), ...await cellsOf(page, 'Wet Sand'), ...await cellsOf(page, 'Wet Mud')];
     expect(ice.length).toBeGreaterThan(0); expect(oil.length).toBeGreaterThan(0); expect(sand.length).toBeGreaterThan(0);
@@ -79,8 +96,8 @@ test('density orders ice and oil above water while sand sinks below it', async (
     expect(density.Ice).toBeLessThan(density.Water);
     expect(density.Oil).toBeLessThan(density.Water);
     expect(density.Sand).toBeGreaterThan(density.Water);
-    expect(Math.min(...ice.map(cell => cell.y))).toBeGreaterThanOrEqual(0);
-    expect(Math.min(...oil.map(cell => cell.y))).toBeGreaterThanOrEqual(0);
+    expect(Math.min(...ice.map(cell => cell.y))).toBeLessThan(100);
+    expect(Math.min(...oil.map(cell => cell.y))).toBeLessThanOrEqual(100);
     expect(Math.min(...sand.map(cell => cell.y))).toBeGreaterThan(120);
 });
 

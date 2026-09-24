@@ -49,14 +49,25 @@ test('Insulation catalog describes heat retention and exposes metal network rate
     await expect(insulation).toHaveAttribute('data-particle-id', '54');
     await expect(insulation).toHaveAttribute('aria-describedby', 'toolTooltip');
     await expect(page.locator('#particleButtons')).toContainText('Solids');
-    const state = await game.state();
-    const definition = state.definitions.find(item => item?.name === 'Insulation');
+    const definitions = await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        return physics.getDefinitions().map(item => item ? {
+            id: item.id,
+            name: item.name,
+            description: item.description,
+            conductivity: item.conductivity,
+            thermalNetworkRate: item.thermalNetworkRate,
+            conductive: item.conductive,
+            rgb: item.rgb
+        } : null);
+    });
+    const definition = definitions.find(item => item?.name === 'Insulation');
     expect(definition.id).toBe(54);
     expect(definition.description).toMatch(/heat/i);
     expect(definition.description).toMatch(/retain|hold|preserv|slow|insulat/i);
     expect(definition.description).toMatch(/no contact|non-conductive|zero conductivity/i);
     expect(definition.description).not.toMatch(/fast thermal network|connected insulation/i);
-    const byName = Object.fromEntries(state.definitions.filter(Boolean).map(item => [item.name, item]));
+    const byName = Object.fromEntries(definitions.filter(Boolean).map(item => [item.name, item]));
     for (const name of [
         'Copper', 'Molten Copper', 'Battery', 'Molten Aluminum', 'Iron', 'Molten Iron',
         'Fan', 'Heater', 'Cooler', 'Tubing'
@@ -109,6 +120,30 @@ test('every prepared definition has a catalog button and generated glossary text
         await button.focus();
         await expect(page.locator('#toolTooltip')).toContainText(definition.name);
     }
+});
+
+test('seed species and Cloud appear under dedicated catalog headings', async ({ page }) => {
+    const game = new GamePage(page);
+    await game.openMenu();
+    await game.newGame();
+
+    const seedNames = [
+        'Grass Seeds', 'Moss Spores', 'Daffodil Seeds', 'Red Tulip Seeds',
+        'Geranium Seeds', 'Blue Flower Seeds', 'Banana Seeds', 'Water Grass / Lily Seeds'
+    ];
+    const seedsHeading = page.locator('#particleButtons .panel-heading').filter({ hasText: 'Seeds' });
+    const seedGrid = seedsHeading.locator('xpath=following-sibling::div[1]');
+    await expect(seedsHeading).toBeVisible();
+    for (const name of seedNames) {
+        await expect(page.getByRole('button', { name, exact: true })).toBeVisible();
+        await expect(seedGrid.getByRole('button', { name, exact: true })).toBeVisible();
+    }
+    await expect(page.getByRole('button', { name: 'Seed', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Cloud', exact: true })).toBeVisible();
+    const gasesHeading = page.locator('#particleButtons .panel-heading').filter({ hasText: 'Gases' });
+    await expect(gasesHeading).toBeVisible();
+    await expect(gasesHeading.locator('xpath=following-sibling::div[1]')
+        .getByRole('button', { name: 'Cloud', exact: true })).toBeVisible();
 });
 
 test('catalog definitions render representative powder and gas cells', async ({ page }) => {

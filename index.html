@@ -202,6 +202,36 @@
                         </div>
                     </div>
 
+                    <div class="tool-slider-row">
+                        <label id="baseHumidityLabel" class="tool-slider-icon tooltip-control" for="baseHumidity"
+                               data-tooltip="Set the outside air's baseline relative humidity. Water and plants add local moisture; dry ground removes it.">
+                            <span aria-hidden="true">RH</span>
+                            <span class="sr-only">Base Humidity</span>
+                        </label>
+                        <div class="tool-slider-block">
+                            <div class="tool-slider-heading">
+                                <label for="baseHumidity">Base Humidity</label>
+                                <output id="baseHumidityValue" for="baseHumidity">50%</output>
+                            </div>
+                            <input id="baseHumidity" type="range" min="0" max="100" step="1" value="50" aria-label="Base Humidity">
+                        </div>
+                    </div>
+
+                    <div class="tool-slider-row">
+                        <label id="dewpointLabel" class="tool-slider-icon tooltip-control" for="dewpoint"
+                               data-tooltip="Air at or below this temperature can condense moisture into clouds, rain or snow.">
+                            <span aria-hidden="true">DP</span>
+                            <span class="sr-only">Dewpoint</span>
+                        </label>
+                        <div class="tool-slider-block">
+                            <div class="tool-slider-heading">
+                                <label for="dewpoint">Dewpoint</label>
+                                <output id="dewpointValue" for="dewpoint">10 &deg;C</output>
+                            </div>
+                            <input id="dewpoint" type="range" min="0" max="100" step="1" value="10" aria-label="Dewpoint">
+                        </div>
+                    </div>
+
                     <div class="tool-icon-grid tool-icon-grid-three">
                         <button id="heatViewButton" class="btn tool-icon-button tooltip-control"
                                 type="button" aria-label="Heat view" aria-pressed="false"

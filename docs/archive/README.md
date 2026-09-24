@@ -19,6 +19,9 @@ in [`../README.md`](../README.md); active findings remain in
 
 ## Executed Plans
 
+- [`plans/seeds-plants-humidity-dewpoint-clouds-corrosion-2026-09-24.md`](plans/seeds-plants-humidity-dewpoint-clouds-corrosion-2026-09-24.md)
+  — the seed, plant, humidity, dewpoint, cloud, precipitation, and corrosion
+  implementation plan from 24 September 2026.
 - [`plans/live-autosave-and-toolbar-tooltips-2026-09-24.md`](plans/live-autosave-and-toolbar-tooltips-2026-09-24.md)
   — the live Autosave control and shared toolbar-tooltip implementation from
   24 September 2026.

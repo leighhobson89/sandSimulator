@@ -55,12 +55,35 @@ test('lava cools through scoria into stone and reheating reverses both transitio
     await setupPhysics(page, { fills: [{ material: 'Wall', x: 70, y: 42, width: 21, height: 1 }, { material: 'Lava', x: 78, y: 40, width: 5, height: 2 }] });
     await game.step(2600);
     expect(await page.evaluate(async () => { const p = await import('/physics.js'); const w = p.getWorld(); const stone = p.getDefinitions().findIndex(d => d?.name === 'Stone'); return [...w.type].filter(value => value === stone).length; })).toBeGreaterThan(0);
-    await page.evaluate(async () => {
-        const p = await import('/physics.js'); const lava = p.getDefinitions().findIndex(d => d?.name === 'Lava');
-        const i = [...p.getWorld().type].findIndex(value => value === p.getDefinitions().findIndex(d => d?.name === 'Stone'));
-        p.getWorld().type[i] = lava; p.getWorld().temp[i] = 1200; p.getWorld().heat[i] = 1000;
+    const reheatCell = await page.evaluate(async () => {
+        const p = await import('/physics.js'); const world = p.getWorld();
+        const definitions = p.getDefinitions(); const stone = definitions.findIndex(d => d?.name === 'Stone');
+        const i = [...world.type].findIndex(value => value === stone);
+        if (i < 0) throw new Error('No Stone available to reheat');
+        // Stone first needs enough stored heat to cross its own melt threshold.
+        // The very high temperature keeps the cell above that threshold during
+        // the thermal pass; heat is the latent-change accumulator, not stored
+        // sensible heat.
+        world.temp[i] = 5000; world.heat[i] = definitions[stone].latent + 1;
+        return { x: i % world.cols, y: Math.floor(i / world.cols) };
     });
-    await game.step(80);
+    await game.step(1);
+    const materialAtReheatCell = () => page.evaluate(async ({ x, y }) => {
+        const p = await import('/physics.js'); const world = p.getWorld();
+        return p.getDefinitions()[world.type[p.index(x, y)]]?.name;
+    }, reheatCell);
+    expect(await materialAtReheatCell()).toBe('Scoria');
+    await page.evaluate(async ({ x, y }) => {
+        const p = await import('/physics.js'); const world = p.getWorld();
+        const definitions = p.getDefinitions(); const scoria = definitions.findIndex(d => d?.name === 'Scoria');
+        const i = p.index(x, y);
+        if (world.type[i] !== scoria) throw new Error('The reheated Stone cell did not become Scoria');
+        // Supply the Scoria latent threshold too, while leaving ample sensible
+        // heat for the thermal pass to stay above its 900 C Lava boundary.
+        world.temp[i] = 5000; world.heat[i] = definitions[scoria].latent + 1;
+    }, reheatCell);
+    await game.step(1);
+    expect(await materialAtReheatCell()).toBe('Lava');
     expect(await countType(page, 'Lava')).toBeGreaterThan(0);
 });
 

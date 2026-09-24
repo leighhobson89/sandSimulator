@@ -32,14 +32,18 @@ async function setupWorld(page, scenario) {
             physics.setCell(25, 34, id('Water'));
             physics.setCell(25, 36, id('Wall'));
         } else if (scenario.kind === 'growth') {
+            physics.setAmbientTarget(22);
+            physics.setAmbientHumidityTarget(65);
+            physics.getWorld().temp.fill(22);
+            physics.getWorld().humidity.fill(65);
             for (let x = 10; x <= 30; x++) {
                 physics.setCell(x, 35, id('Wet Mud'));
                 physics.setCell(x, 36, id('Wall'));
             }
-            physics.setCell(18, 34, id('Seed'));
+            physics.setCell(18, 34, id('Grass Seeds'));
             physics.setCell(40, 35, id('Dry Mud'));
             physics.setCell(40, 36, id('Wall'));
-            physics.setCell(40, 34, id('Seed'));
+            physics.setCell(40, 34, id('Grass Seeds'));
         }
         return { cols: physics.getWorld().cols, rows: physics.getWorld().rows };
     }, scenario);
@@ -92,23 +96,23 @@ test('Water wets Sand and extinguishes Fire through real simulation ticks', asyn
     expect(state.arrays.type).not.toContain(state.definitions.find(definition => definition?.name === 'Fire').id);
 });
 
-test('Seeds sprout on Wet Mud while dry seeds remain unchanged', async ({ page }) => {
+test('Grass Seeds germinate on Wet Mud and remain dormant on Dry Mud', async ({ page }) => {
     const game = new GamePage(page);
     await game.openMenu();
     await game.newGame();
     await setupWorld(page, { kind: 'growth' });
-    await game.step(600);
+    await game.step(2600);
     const state = await game.state();
-    const plant = state.definitions.find(definition => definition?.name === 'Plant').id;
-    const seed = state.definitions.find(definition => definition?.name === 'Seed').id;
-    expect(state.arrays.type).toContain(plant);
-    const plantTypes = new Set([
-        state.definitions.find(definition => definition?.name === 'Plant').id,
-        state.definitions.find(definition => definition?.name === 'Grass').id,
-        state.definitions.find(definition => definition?.name === 'Ash Grass').id
-    ]);
+    const grass = state.definitions.find(definition => definition?.name === 'Grass').id;
+    const drySeed = state.definitions.find(definition => definition?.name === 'Grass Seeds').id;
+    expect(state.arrays.type).toContain(grass);
+    const plantTypes = new Set(['Grass', 'Moss', 'Daffodil', 'Red Tulip', 'Geranium', 'Blue Flower', 'Banana Plant', 'Water Grass']
+        .map(name => state.definitions.find(definition => definition?.name === name)?.id).filter(id => id > 0));
     const drySideGrowth = state.arrays.type.some((type, index) =>
         index % state.cols >= 35 && plantTypes.has(type));
     expect(drySideGrowth).toBe(false);
-    expect(state.arrays.type).toContain(seed);
+    const drySideSeeds = Array.from(state.arrays.type, (type, index) =>
+        index % state.cols >= 35 && type === drySeed ? index : -1).filter(index => index >= 0);
+    expect(drySideSeeds.length).toBeGreaterThan(0);
+    expect(drySideSeeds.some(index => Math.floor(index / state.cols) > 34)).toBe(true);
 });

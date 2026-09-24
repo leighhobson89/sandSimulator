@@ -448,6 +448,7 @@ function drawWorld() {
     const life = world.life;
     const shade = world.shade;
     const data = world.data;
+    const plantHealth = world.plantHealth;
     const power = world.power;
     const charge = world.charge;
     const wind = world.wind;
@@ -517,6 +518,16 @@ function drawWorld() {
             r = def.rgb2[0] + (def.rgb[0] - def.rgb2[0]) * mix;
             g = def.rgb2[1] + (def.rgb[1] - def.rgb2[1]) * mix;
             b = def.rgb2[2] + (def.rgb[2] - def.rgb2[2]) * mix;
+        }
+
+        // Plant colour tracks condition: thriving plants keep their full colour,
+        // while stressed plants fade toward a muted, dry green-brown.
+        if (def.isPlant && plantHealth) {
+            const health = Math.max(0, Math.min(1, plantHealth[i]));
+            const wilt = (1 - health) * 0.5;
+            r += (146 - r) * wilt;
+            g += (126 - g) * wilt;
+            b += (78 - b) * wilt;
         }
 
         // Solid metals glow locally as their temperature approaches melting.

@@ -69,6 +69,31 @@ test('temperature, lapse, wind, breeze, and heat controls cover bounds and reset
     await expect(game.state()).resolves.toMatchObject({ cols: expect.any(Number), rows: expect.any(Number) });
 });
 
+test('Base Humidity and Dewpoint sliders expose their ranges and update the environment', async ({ page }) => {
+    const game = new GamePage(page); await game.openMenu(); await game.newGame();
+    const humidity = page.getByRole('slider', { name: /base humidity/i });
+    const dewpoint = page.getByRole('slider', { name: /dewpoint/i });
+    await expect(humidity).toBeVisible();
+    await expect(humidity).toHaveAttribute('min', '0');
+    await expect(humidity).toHaveAttribute('max', '100');
+    await expect(humidity).toHaveValue('50');
+    await expect(dewpoint).toBeVisible();
+    await expect(dewpoint).toHaveAttribute('min', '0');
+    await expect(dewpoint).toHaveAttribute('max', '100');
+    await expect(dewpoint).toHaveValue('10');
+
+    await humidity.evaluate(input => { input.value = '73'; input.dispatchEvent(new Event('input', { bubbles: true })); });
+    await dewpoint.evaluate(input => { input.value = '14'; input.dispatchEvent(new Event('input', { bubbles: true })); });
+    const targets = await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        return {
+            humidity: physics.getAmbientHumidityTarget(),
+            dewpoint: physics.getDewpointTarget()
+        };
+    });
+    expect(targets).toEqual({ humidity: 73, dewpoint: 14 });
+});
+
 test('wind gestures, heat rendering, and readouts expose deterministic environment state', async ({ page }) => {
     const game = new GamePage(page); await game.openMenu(); await game.newGame();
     await game.setFixture([{ x: 50, y: 50, type: 'Stone' }]);

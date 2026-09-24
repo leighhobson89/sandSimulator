@@ -6,12 +6,14 @@ Every development prompt must pass through this ordered agent handoff process:
 
 1. The `architect` agent plans the change and defines the implementation and
    verification scope.
-2. The `test-engineer` agent writes focused failing regression tests from that
-   plan before implementation begins.
-3. The `frontend-specialist` agent implements the plan, preserving existing behavior outside the requested scope.
-4. The focussed tests are run and we iterate until they all pass.
-5. The `docs-specialist` agent updates the relevant project documentation after
-   implementation, review, and verification are complete.
+2. The `docs-specialist` agent writes up the plan in the docs/plans folder from the architect.
+3. The `test-engineer` agent writes focused failing regression tests from that
+   plan before implementation begins. This runs in parallel with #2.
+4. The `docs-specialist` agent updates the plan with the created test plan.
+5. The `frontend-specialist` agent implements the plan, preserving existing behavior outside the requested scope. This runs in parallel with #4.
+6. The focussed tests are run and we iterate until they all pass.
+7. The `docs-specialist` agent updates the relevant project documentation after
+   implementation, review, and verification are complete, and makes sure the docs/plans folder is empty and plans are moved to the archived plans folder.
 
 Agents may use `write`, but should prefer `apply_patch` and other patch-based
 editing over `write` or `edit` because patch operations are more reliable for

@@ -82,6 +82,7 @@ test('solid metals blend from their cold color toward glow color without a halo'
             for (const { x, y: row, temperature } of positions) {
                 physics.setCell(x, row, id);
                 world.temp[physics.index(x, row)] = temperature;
+                world.shade[physics.index(x, row)] = 128;
             }
             materials.push({
                 name, id, hasGlowContract,
@@ -103,6 +104,7 @@ test('solid metals blend from their cold color toward glow color without a halo'
         for (const { x, y, temperature } of moltenPositions) {
             physics.setCell(x, y, moltenId);
             world.temp[physics.index(x, y)] = temperature;
+            world.shade[physics.index(x, y)] = 128;
         }
         return {
             materials,

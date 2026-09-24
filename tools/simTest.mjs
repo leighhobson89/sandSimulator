@@ -23,12 +23,14 @@ import {
     getMixerInventory, setMixerReleaseEnabled, purgeMixerBin,
     getRandomSeed, EMPTY
 } from '../physics.js';
+import * as physics from '../physics.js';
 
 const json = JSON.parse(readFileSync(new URL('../particles.json', import.meta.url), 'utf8'));
 const defs = prepareDefinitions(json);
 
 const ID = {};
 defs.forEach((d, i) => { if (d && i > 0) ID[d.name] = i; });
+// ID 19 remains stable so old saves containing generic Seeds load as Grass Seeds.
 
 const COLS = 60;
 const ROWS = 45;
@@ -88,6 +90,7 @@ function section(name) {
 }
 
 function resetThermalContractFixture(ambient = 20) {
+    physics.resetRandomSource();
     setRandomSeed(0);
     createWorld(COLS, ROWS);
     const state = captureSimulationState();
@@ -96,10 +99,91 @@ function resetThermalContractFixture(ambient = 20) {
     state.layerLapse = 0;
     state.airLayersOn = false;
     state.ambientWindOn = false;
+    state.ambientHumidity = 50;
+    state.dewpointTarget = 10;
     state.arrays.temp.fill(ambient);
+    state.arrays.humidity.fill(50);
     restoreSimulationState(state);
+    physics.setAmbientTarget(ambient);
+    physics.setAmbientHumidityTarget(50);
+    physics.setDewpointTarget(10);
     getWorld().temp.fill(ambient);
     getWorld().tempNext.fill(ambient);
+}
+
+function snapshotSimulationState() {
+    const state = captureSimulationState();
+    const arrays = {};
+    for (const [field, values] of Object.entries(state.arrays)) arrays[field] = values.slice();
+    return { ...state, arrays };
+}
+
+function restoreSimulationCheckpoint(state, seed) {
+    restoreSimulationState(state);
+    physics.resetRandomSource();
+    if (seed !== null) setRandomSeed(seed);
+}
+
+function setExactAirConditions(temperature) {
+    const state = captureSimulationState();
+    state.ambient = temperature;
+    state.ambientTarget = temperature;
+    state.layerLapse = 0;
+    state.airLayersOn = false;
+    state.ambientWindOn = false;
+    state.arrays.temp.fill(temperature);
+    restoreSimulationState(state);
+    getWorld().temp.fill(temperature);
+    getWorld().tempNext.fill(temperature);
+}
+
+function runCorrosionSourceConversionRegression() {
+    console.log('\nSaturated exposure converts its source metal into falling Corrosion');
+    const corrosionId = ID.Corrosion;
+    const sourceX = 4;
+    const sourceY = 5;
+
+    createWorld(9, 8);
+    physics.setAmbientTarget(25);
+    physics.setAmbientHumidityTarget(100);
+    physics.setDewpointTarget(10);
+    for (let x = 3; x <= 5; x++) setCell(x, 6, ID.Wall);
+    setCell(sourceX, sourceY, ID.Iron);
+    getWorld().temp.fill(25);
+    getWorld().tempNext.fill(25);
+    getWorld().humidity.fill(100);
+    physics.setRandomSource(() => 0);
+
+    let sourceConverted = false;
+    for (let frame = 0; frame < 1600; frame++) {
+        run(1);
+        if (typeAt(sourceX, sourceY) === corrosionId) {
+            sourceConverted = true;
+            break;
+        }
+    }
+    check('saturated exposure converts the source metal pixel into Corrosion', sourceConverted,
+        `${defs[typeAt(sourceX, sourceY)]?.name || 'air'} remains at source after saturated exposure`);
+
+    if (sourceConverted) {
+        setCell(sourceX, sourceY + 1, EMPTY);
+        run(4);
+        let fallenRow = -1;
+        for (let y = sourceY + 1; y < 8; y++) {
+            if (typeAt(sourceX, y) === corrosionId) fallenRow = y;
+        }
+        check('newly converted unsupported Corrosion falls from the source', fallenRow > sourceY,
+            `Corrosion row=${fallenRow}`);
+    } else {
+        check('newly converted unsupported Corrosion falls from the source', false,
+            'the source metal never converted into Corrosion');
+    }
+
+    physics.resetRandomSource();
+    setRandomSeed(TEST_SEED);
+    physics.setAmbientTarget(20);
+    physics.setAmbientHumidityTarget(50);
+    physics.setDewpointTarget(10);
 }
 
 function runThermalNetworkBridgeContract() {
@@ -1088,37 +1172,58 @@ check('water starts at 30C', Math.abs(tempAt(25, ROWS - 4) - 30) < 0.001,
 run(200);
 check('the water boiled into steam', countOf(ID.Steam) > 0, `${countOf(ID.Steam)} steam`);
 
-section('Steam hangs about for a good while before it condenses');
-fillRect(20, 20, 14, 6, ID.Steam);           // steam on its own, no heat source
-const steamStart = countOf(ID.Steam);
-run(400);
-check('some Steam remains after four hundred frames while it cools', countOf(ID.Steam) > 0,
-    `${steamStart} -> ${countOf(ID.Steam)}`);
-let coolestSteam = Infinity;
-let warmestSteam = -Infinity;
-for (let y = 0; y < ROWS; y++) {
-    for (let x = 0; x < COLS; x++) {
-        if (typeAt(x, y) !== ID.Steam) continue;
-        const temperature = tempAt(x, y);
-        coolestSteam = Math.min(coolestSteam, temperature);
-        warmestSteam = Math.max(warmestSteam, temperature);
+section('Steam condenses only when humidity and dewpoint conditions are met');
+const steamWeatherState = snapshotSimulationState();
+const steamWeatherSeed = getRandomSeed();
+try {
+    function steamWeatherFixture({ airTemp, humidity, dewpoint }) {
+        resetThermalContractFixture(airTemp);
+        physics.setAmbientHumidityTarget(humidity);
+        physics.setDewpointTarget(dewpoint);
+        getWorld().humidity.fill(humidity);
+        setRandomSeed(904);
+        setCell(28, 20, ID.Steam);
+        getWorld().temp[index(28, 20)] = airTemp;
     }
+
+    steamWeatherFixture({ airTemp: 25, humidity: 10, dewpoint: 10 });
+    const drySteamStart = countOf(ID.Steam);
+    run(1800);
+    check('warm dry Steam remains suspended without an age timer',
+        countOf(ID.Steam) === drySteamStart && countOf(ID.Water) === 0 && countOf(ID.Snow) === 0,
+        `${drySteamStart} -> ${countOf(ID.Steam)} Steam`);
+
+    steamWeatherFixture({ airTemp: 12, humidity: 95, dewpoint: 10 });
+    run(120);
+    check('humid Steam above dewpoint remains uncondensed',
+        countOf(ID.Steam) > 0 && countOf(ID.Water) === 0 && countOf(ID.Snow) === 0,
+        `${countOf(ID.Steam)} Steam remains`);
+
+    steamWeatherFixture({ airTemp: 5, humidity: 95, dewpoint: 10 });
+    run(120);
+    check('humid Steam below dewpoint condenses as rain above freezing',
+        countOf(ID.Water) > 0 && countOf(ID.Snow) === 0,
+        `${countOf(ID.Water)} Water, ${countOf(ID.Snow)} Snow`);
+
+    steamWeatherFixture({ airTemp: 0, humidity: 95, dewpoint: 10 });
+    run(120);
+    check('humid Steam at zero degrees condenses as Snow',
+        countOf(ID.Snow) > 0 && countOf(ID.Water) === 0,
+        `${countOf(ID.Snow)} Snow, ${countOf(ID.Water)} Water`);
+} finally {
+    restoreSimulationCheckpoint(steamWeatherState, steamWeatherSeed);
 }
-check('steam cools at different rates', warmestSteam - coolestSteam > 4,
-    `${(warmestSteam - coolestSteam).toFixed(1)}C spread`);
-run(2500);
-check('but it does condense in the end', countOf(ID.Steam) < steamStart / 2,
-    `${steamStart} -> ${countOf(ID.Steam)}`);
-check('some steam came back as water', countOf(ID.Water) > 0, `${countOf(ID.Water)} water`);
-run(1800); // let the remaining steam reach its condensation point too
-const steamWater = countOf(ID.Water);
-check('some steam escaped instead of returning as water',
-    steamWater < steamStart * 0.9,
-    `${steamWater} water from ${steamStart} steam`);
 
 section('Steam cools at the same rate at the edges as in the middle');
+const steamEdgeState = snapshotSimulationState();
+const steamEdgeSeed = getRandomSeed();
+try {
+resetThermalContractFixture(20);
 setLayerLapse(0);
+setRandomSeed(0);
 fillRect(0, 0, COLS, ROWS, ID.Steam);
+getWorld().temp.fill(300);
+getWorld().tempNext.fill(300);
 run(400);
 let edgeHeat = 0;
 let middleHeat = 0;
@@ -1134,7 +1239,9 @@ edgeHeat /= heatSamples;
 middleHeat /= heatSamples;
 check('the boundary does not act like an extra cold wall', Math.abs(edgeHeat - middleHeat) < 2,
     `edge ${edgeHeat.toFixed(1)}C, middle ${middleHeat.toFixed(1)}C`);
-setLayerLapse(2);
+} finally {
+    restoreSimulationCheckpoint(steamEdgeState, steamEdgeSeed);
+}
 
 section('Steam spreads out sideways and fills the room it is in');
 // Characterize spreading before condensation in a seeded, sealed room, then
@@ -1398,10 +1505,13 @@ check('the air worked its way down to the new temperature', getAmbientTemp() < -
 check('the pond froze over', countOf(ID.Ice) > 0, `${countOf(ID.Ice)} ice`);
 
 section('The air is not perfectly even from particle to particle');
-setAmbientTarget(20);
+resetThermalContractFixture(20);
 setLayerLapse(0);       // layers off, so this measures the variance on its own
-fillRect(10, 20, 40, 10, ID.Sand);
-run(1500);                                  // long enough to settle at air temperature
+setRandomSeed(0);
+for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
+for (let x = 2; x < COLS - 2; x += 2) setCell(x, ROWS - 2, ID.Sand);
+getWorld().temp.fill(20);
+run(1500);                                  // exposed grains settle independently toward ambient air
 let coldest = 1000;
 let warmest = -1000;
 for (let y = 0; y < ROWS; y++) {
@@ -1419,6 +1529,8 @@ check('but the spread stays small', warmest - coldest <= 4.01,
 check('and it stays centred on the air temperature',
     Math.abs((warmest + coldest) / 2 - 20) < 1.5,
     `middle of the spread is ${((warmest + coldest) / 2).toFixed(2)}C`);
+setAirLayersOn(true);
+setRandomSeed(TEST_SEED);
 
 section('The air is colder the higher up you go');
 setLayerLapse(2);
@@ -1915,139 +2027,13 @@ check('water remains above a full storage bin', countOf(ID.Water) > 0,
 
 // ---------------------------------------------------------------------------
 
-section('Plants grow, set seed, and the seed sprouts on wet mud');
-for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
-fillRect(5, ROWS - 3, 50, 2, ID['Wet Mud']);
-// A pool sunk into the mud beside it, held in by the mud on either side, so the
-// plant has water at its roots and can set seed.
-fillRect(26, ROWS - 3, 4, 2, ID.Water);
-setCell(31, ROWS - 4, ID.Plant);
-run(700);
-check('the plant grew upwards', countOf(ID.Plant) + countOf(ID.Flower) > 3,
-    `${countOf(ID.Plant)} stem cells, ${countOf(ID.Flower)} flowers`);
-
-let tallest = ROWS;
-for (let y = 0; y < ROWS; y++) {
-    for (let x = 0; x < COLS; x++) if (typeAt(x, y) === ID.Plant && y < tallest) tallest = y;
-}
-check('it stopped growing at a sensible height', tallest > ROWS - 25,
-    `top of the plant is ${ROWS - 1 - tallest} cells above the ground`);
-
-check('it flowered when it topped out', countOf(ID.Flower) > 0,
-    `${countOf(ID.Flower)} flowers`);
-
-run(2500);
-check('a fully grown plant dropped seed that took root',
-    countOf(ID.Plant) > 10, `${countOf(ID.Plant)} plant cells, ${countOf(ID.Seed)} loose seeds`);
-
-section('Plants come up at different heights and flower in different colours');
-for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
-fillRect(5, ROWS - 3, 50, 2, ID['Wet Mud']);
-for (let x = 8; x < 52; x += 4) setCell(x, ROWS - 4, ID.Plant);
-run(1200);
-
-// Measured at the flowers, since a flower is what a finished plant ends in.
-// Anything still growing, or a seedling that has just come up, is not done yet.
-const heights = [];
-for (let y = 0; y < ROWS; y++) {
-    for (let x = 0; x < COLS; x++) {
-        if (typeAt(x, y) === ID.Flower) heights.push(ROWS - 3 - y);
-    }
-}
-const tallestPlant = Math.max(...heights);
-const shortestPlant = Math.min(...heights);
-check('they grew to a range of heights', tallestPlant - shortestPlant >= 3,
-    `${heights.length} finished plants, shortest ${shortestPlant}, tallest ${tallestPlant} cells`);
-check('every height is in a sensible range', shortestPlant >= 4 && tallestPlant <= 20,
-    `shortest ${shortestPlant}, tallest ${tallestPlant}`);
-
-const flowerShades = new Set();
-for (let y = 0; y < ROWS; y++) {
-    for (let x = 0; x < COLS; x++) {
-        if (typeAt(x, y) === ID.Flower) {
-            flowerShades.add(getWorld().shade[index(x, y)] % 12);
-        }
-    }
-}
-check('the flowers came out in a mix of colours', flowerShades.size >= 3,
-    `${flowerShades.size} different colours across ${countOf(ID.Flower)} flowers`);
-
-section('Seed on wet sand gives short grass with no flower');
-for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
-fillRect(5, ROWS - 3, 50, 2, ID['Wet Sand']);
-for (let x = 10; x < 46; x += 5) setCell(x, ROWS - 4, ID.Seed);
-run(1200);
-check('the seed came up as grass', countOf(ID.Grass) > 0,
-    `${countOf(ID.Grass)} grass cells`);
-check('grass does not flower', countOf(ID.Flower) === 0,
-    `${countOf(ID.Flower)} flowers on sand`);
-
-let tallestGrass = 0;
-for (let x = 0; x < COLS; x++) {
-    const top = surfaceOf(x, ID.Grass);
-    if (top >= 0 && ROWS - 3 - top > tallestGrass) tallestGrass = ROWS - 3 - top;
-}
-check('grass tops out at about half the height of a plant', tallestGrass <= 10,
-    `tallest grass ${tallestGrass} cells, a plant can reach 18`);
-
-section('Grass never sets seed - only a proper plant does');
-for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
-fillRect(5, ROWS - 3, 50, 2, ID['Wet Sand']);
-fillRect(20, ROWS - 4, 6, 1, ID.Water);      // water right there, so it is not the reason
-for (let x = 12; x < 40; x += 4) setCell(x, ROWS - 4, ID.Grass);
-run(1500);
-check('grass beside water still sets no seed', countOf(ID.Seed) === 0,
-    `${countOf(ID.Seed)} seeds from ${countOf(ID.Grass)} grass cells`);
-
-section('Ash wets into soil for short yellow grass');
+section('Water still wets ash into wet ash');
 for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
 fillRect(8, ROWS - 5, 44, 4, ID.Ash);
 fillRect(14, ROWS - 8, 32, 2, ID.Water);
 run(80);
 check('water turns dry ash into wet ash', countOf(ID['Wet Ash']) > 0,
     `${countOf(ID['Wet Ash'])} wet ash`);
-
-clearWorld();
-for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
-fillRect(5, ROWS - 3, 50, 2, ID['Wet Ash']);
-for (let x = 10; x < 50; x += 3) setCell(x, ROWS - 4, ID.Seed);
-run(1200);
-check('seed on wet ash comes up as ash grass', countOf(ID['Ash Grass']) > 0,
-    `${countOf(ID['Ash Grass'])} ash-grass cells`);
-check('ash grass is yellower and at most half as tall as sand grass',
-    defs[ID['Ash Grass']].rgb[0] > defs[ID.Grass].rgb[0] &&
-    defs[ID['Ash Grass']].growHeight <= Math.ceil(defs[ID.Grass].growHeight / 2),
-    `heights ${defs[ID['Ash Grass']].growHeight} and ${defs[ID.Grass].growHeight}`);
-
-section('Plants and flowers die below zero; grass lasts to minus five');
-setLayerLapse(0);
-setAmbientTarget(-2);
-run(1600);
-clearWorld();
-for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
-fillRect(10, ROWS - 5, 5, 4, ID.Plant);
-fillRect(20, ROWS - 5, 5, 4, ID.Flower);
-fillRect(30, ROWS - 5, 5, 4, ID.Grass);
-getWorld().temp.fill(-2);
-run(180);
-check('plants died into dry sand below zero', countOf(ID.Plant) === 0,
-    `${countOf(ID.Plant)} plant cells left`);
-check('flowers died into dry sand below zero', countOf(ID.Flower) === 0,
-    `${countOf(ID.Flower)} flower cells left`);
-check('grass survived at minus two', countOf(ID.Grass) > 0,
-    `${countOf(ID.Grass)} grass cells left`);
-
-setAmbientTarget(-10);
-run(1600);
-getWorld().temp.fill(-10);
-run(180);
-check('grass died into dry sand below minus five', countOf(ID.Grass) === 0,
-    `${countOf(ID.Grass)} grass cells left`);
-check('cold-killed growth became dry sand', countOf(ID.Sand) > 0,
-    `${countOf(ID.Sand)} sand cells`);
-setAmbientTarget(20);
-setLayerLapse(2);
-run(1);
 
 // ---------------------------------------------------------------------------
 
@@ -2066,6 +2052,9 @@ function ventSteam(frames) {
 }
 
 section('Steam falls as snow when the air is below freezing');
+physics.setAmbientHumidityTarget(95);
+physics.setDewpointTarget(10);
+getWorld().humidity?.fill(95);
 setAmbientTarget(-15);
 run(600);                                    // let the cold set in
 clearWorld();
@@ -2075,6 +2064,7 @@ check('it came down as snow', cold.snow > 20, `${cold.snow} snow at its heaviest
 
 section('And as rain when the air is warm');
 setAmbientTarget(25);
+physics.setDewpointTarget(30);
 run(900);
 clearWorld();
 for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
@@ -2082,6 +2072,9 @@ const warm = ventSteam(1800);
 check('no snow in warm air', warm.snow === 0, `${warm.snow} snow`);
 check('it condensed as water instead', warm.water > 0, `${warm.water} water`);
 setAmbientTarget(20);
+physics.setDewpointTarget(10);
+physics.setAmbientHumidityTarget(50);
+getWorld().humidity?.fill(50);
 run(1);
 
 section('Snow lies where it falls while the air stays below freezing');
@@ -2137,41 +2130,6 @@ setAmbientTarget(20);
 run(1);
 
 // ---------------------------------------------------------------------------
-
-section('Seed only sprouts on wet ground, not dry');
-for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
-fillRect(5, ROWS - 3, 45, 2, ID['Dry Mud']);
-for (let x = 10; x < 40; x += 3) setCell(x, ROWS - 4, ID.Seed);
-run(600);
-check('seed on dry mud stayed a seed', countOf(ID.Plant) + countOf(ID.Grass) === 0,
-    `${countOf(ID.Plant) + countOf(ID.Grass)} sprouted on dry ground`);
-
-section('Seed will not germinate in the cold');
-// Turn the weather down and give the air a moment to follow, then start the
-// whole scene off frozen. Sowing into ground that is still warm would prove
-// nothing, since it would be fair enough for those seeds to come up.
-setAmbientTarget(-20);
-run(400);
-clearWorld();
-for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
-fillRect(5, ROWS - 3, 50, 2, ID['Wet Mud']);
-for (let x = 10; x < 46; x += 5) setCell(x, ROWS - 4, ID.Seed);
-getWorld().temp.fill(-20);
-const sown = countOf(ID.Seed);
-// Well short of the 30 seconds a seed keeps for, so anything that fails to
-// come up here failed because of the cold and not because it had rotted.
-run(700);
-check('nothing came up in frozen ground', countOf(ID.Plant) === 0,
-    `${countOf(ID.Plant)} plants at ${getAmbientTemp().toFixed(0)}C`);
-check('the seed is still sitting there waiting', countOf(ID.Seed) === sown,
-    `${countOf(ID.Seed)} of ${sown} seeds`);
-
-// Warm it back up and the same seed should get going.
-setAmbientTarget(25);
-run(800);
-check('the same seed germinated once the ground warmed up', countOf(ID.Plant) > 0,
-    `${countOf(ID.Plant)} plants at ${getAmbientTemp().toFixed(0)}C`);
-setAmbientTarget(20);
 
 // ---------------------------------------------------------------------------
 
@@ -2316,45 +2274,6 @@ check('dry mud does', countOf(ID['Wet Mud']) > 0, `${countOf(ID['Wet Mud'])} wet
 
 // ---------------------------------------------------------------------------
 
-section('A seed that never germinates rots down into dry mud');
-for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
-fillRect(10, ROWS - 3, 30, 2, ID.Stone);      // bare stone: nothing can sprout here
-for (let x = 12; x < 38; x += 3) setCell(x, ROWS - 4, ID.Seed);
-const sownOnStone = countOf(ID.Seed);
-run(1500);                                     // 25 seconds
-check('the seed is still there before its time is up', countOf(ID.Seed) > 0,
-    `${countOf(ID.Seed)} of ${sownOnStone} seeds after 25s`);
-run(900);                                      // now past 30 seconds
-check('it rotted away by 30 seconds', countOf(ID.Seed) === 0,
-    `${countOf(ID.Seed)} seeds left after 40s`);
-check('and left dry mud behind', countOf(ID['Dry Mud']) >= sownOnStone - 2,
-    `${countOf(ID['Dry Mud'])} dry mud from ${sownOnStone} seeds`);
-
-section('A seed on good ground germinates before it can rot');
-for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
-fillRect(10, ROWS - 3, 30, 2, ID['Wet Mud']);
-for (let x = 12; x < 38; x += 3) setCell(x, ROWS - 4, ID.Seed);
-run(600);
-check('it came up well inside its 30 seconds', countOf(ID.Plant) > 0,
-    `${countOf(ID.Plant)} plant cells after 10s`);
-
-// ---------------------------------------------------------------------------
-
-section('Plants only set seed within reach of water');
-for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
-fillRect(10, ROWS - 2, 6, 1, ID.Water);        // a puddle right beside it
-setCell(13, ROWS - 4, ID.Flower);
-run(1200);
-check('a flower near water sets seed', countOf(ID.Seed) > 0,
-    `${countOf(ID.Seed)} seeds`);
-
-clearWorld();
-for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
-setCell(30, ROWS - 4, ID.Flower);              // the same flower, nowhere near water
-run(1200);
-check('a flower with no water nearby sets none', countOf(ID.Seed) === 0,
-    `${countOf(ID.Seed)} seeds on dry ground`);
-
 section('Wet ground sits on dry ground without soaking into it');
 for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
 fillRect(10, ROWS - 4, 30, 3, ID.Sand);          // dry sand underneath
@@ -2363,35 +2282,6 @@ const dryUnderneath = countOf(ID.Sand);
 run(400);
 check('the dry sand underneath stayed dry', countOf(ID.Sand) >= dryUnderneath - 2,
     `${dryUnderneath} -> ${countOf(ID.Sand)} dry sand`);
-
-section('Plants burn and can be dissolved by acid');
-// Plants keep growing, so both of these count the growth first and then check
-// that it drops away once the fire or the acid gets to it.
-for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
-fillRect(20, ROWS - 10, 8, 9, ID.Plant);
-run(200);
-const grownPlant = countOf(ID.Plant);
-fillRect(22, ROWS - 4, 2, 1, ID.Fire);
-run(300);
-check('fire burned the plant back', countOf(ID.Plant) < grownPlant / 2,
-    `${grownPlant} -> ${countOf(ID.Plant)}`);
-
-// Plants keep putting on growth, so acid is measured against the same plant
-// left alone for the same length of time.
-clearWorld();
-for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
-fillRect(22, ROWS - 4, 4, 3, ID.Plant);
-run(800);
-const leftAlone = countOf(ID.Plant);
-
-clearWorld();
-for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
-fillRect(22, ROWS - 4, 4, 3, ID.Plant);
-run(400);
-fillRect(16, 2, 16, 6, ID.Acid);           // a slab of acid poured over the top
-run(400);
-check('acid held the plant back', countOf(ID.Plant) < leftAlone * 0.7,
-    `${countOf(ID.Plant)} with acid, ${leftAlone} left alone`);
 
 // ---------------------------------------------------------------------------
 
@@ -2480,14 +2370,14 @@ setLayerLapse(2);
 section('The wind tool blows seeds about and shows where it has been');
 setLayerLapse(0);
 for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
-for (let n = 0; n < 12; n++) setCell(18 + n, ROWS - 2, ID.Seed);
-const seedStart = centreOf(ID.Seed);
+for (let n = 0; n < 12; n++) setCell(18 + n, ROWS - 2, ID['Grass Seeds']);
+const seedStart = centreOf(ID['Grass Seeds']);
 for (let gust = 0; gust < 60; gust++) {
     applyWind(24, ROWS - 2, 1, 0, 8, 4);
     stepSimulation();
 }
-check('seeds were blown downwind', centreOf(ID.Seed) > seedStart + 1,
-    `seeds moved from ${seedStart.toFixed(1)} to ${centreOf(ID.Seed).toFixed(1)}`);
+check('grass seeds were blown downwind', centreOf(ID['Grass Seeds']) > seedStart + 1,
+    `seeds moved from ${seedStart.toFixed(1)} to ${centreOf(ID['Grass Seeds']).toFixed(1)}`);
 
 const trails = getWindTrails();
 let litCells = 0;
@@ -2524,7 +2414,7 @@ const behindGlass = blownSandMoves(() => {
 
 section('Solid things stop the wind (behind a plant)');
 const behindPlant = blownSandMoves(() => {
-    for (let y = ROWS - 6; y < ROWS - 1; y++) setCell(20, y, ID.Plant);
+    for (let y = ROWS - 6; y < ROWS - 1; y++) setCell(20, y, ID['Banana Plant']);
 });
 
 check('sand out in the open was blown along', inTheOpen > 1,
@@ -2609,155 +2499,75 @@ check('the breeze left the wet mud where it was',
     `wet mud moved from ${breezeMudStart.toFixed(1)} to ${centreOf(ID['Wet Mud']).toFixed(1)}`);
 check('and switching it off stops it', !isBreezeBlowing());
 
-section('Roughly one seed in ten is born buoyant');
-// Counted at the moment each one is placed, in open air, so nothing has had a
-// chance to move: this is the toss of the coin itself rather than where the
-// seeds ended up. A big sample, because the whole point is the proportion, and
-// generous bounds, because it is a random draw and this is not a test of luck.
+section('Seeds use powder gravity without a generic buoyancy timer');
 clearWorld();
-let bornBuoyant = 0;
-for (let n = 0; n < 400; n++) {
-    const x = 5 + (n % 50);
-    setCell(x, 5, ID.Seed);
-    if (getWorld().data[index(x, 5)] === 1) bornBuoyant++;
-}
-check('about a tenth of them came up buoyant', bornBuoyant > 15 && bornBuoyant < 70,
-    `${bornBuoyant} of 400 were born buoyant`);
-
-section('Seeds settle it at birth: some float, the rest sink');
-clearWorld();
-fillRect(0, ROWS - 2, COLS, 2, ID.Wall);
-fillRect(6, ROWS - 18, COLS - 12, 16, ID.Water);
-run(200);
-for (let n = 0; n < 40; n++) setCell(10 + (n % 40), 3, ID.Seed);
-let floaters = 0;
-let sinkers = 0;
-for (let y = 0; y < ROWS; y++) {
-    for (let x = 0; x < COLS; x++) {
-        if (typeAt(x, y) !== ID.Seed) continue;
-        if (getWorld().data[index(x, y)] === 1) floaters++; else sinkers++;
+fillRect(0, ROWS - 1, COLS, 1, ID.Wall);
+if (ID['Grass Seeds'] !== undefined) {
+    for (let y = 3; y < 7; y++) {
+        for (let x = 24; x < 33; x++) setCell(x, y, ID['Grass Seeds']);
     }
+    run(250);
 }
-// Buoyancy is a one in ten chance, so a batch this size is mostly sinkers and
-// may happen to hold no floaters at all. That the two kinds exist is settled by
-// the proportion check above; what matters here is that each kind ends up where
-// it belongs, which the two checks below measure.
-check('nearly all of them came up as sinkers', sinkers > 20,
-    `${floaters} floaters, ${sinkers} sinkers`);
-
-run(500);
-let riding = 0;
-let onTheBed = 0;
-for (let y = 0; y < ROWS; y++) {
-    for (let x = 0; x < COLS; x++) {
-        if (typeAt(x, y) !== ID.Seed) continue;
-        if (typeAt(x, y + 1) === ID.Water && typeAt(x, y - 1) === EMPTY) riding++;
-        else if (typeAt(x, y + 1) === ID.Wall) onTheBed++;
-    }
-}
-// Not every last one, since a seed can fetch up in a corner or on a ledge, but
-// the great majority should have found where they belong.
-check('the floaters ended up riding on the surface', riding >= floaters * 0.7,
-    `${riding} of ${floaters} floaters are on the surface`);
-check('and the sinkers ended up on the bottom', onTheBed >= sinkers * 0.7,
-    `${onTheBed} of ${sinkers} sinkers are on the bed`);
-
-section('No seed is ever left hanging in the air');
-// A blob of them dropped into open space, buoyant and not, the way a brushful
-// lands. Buoyancy is about water: away from it every one of them falls, and two
-// buoyant seeds resting on each other must not take turns swapping upwards
-// instead of coming down.
-for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
-for (let dy = 0; dy < 5; dy++) {
-    for (let dx = 0; dx < 9; dx++) setCell(24 + dx, 4 + dy, ID.Seed);
-}
-run(250);
-let hanging = 0;
+let hangingSeeds = 0;
 for (let y = 0; y < ROWS - 1; y++) {
     for (let x = 0; x < COLS; x++) {
-        if (typeAt(x, y) === ID.Seed && typeAt(x, y + 1) === EMPTY) hanging++;
+        if (typeAt(x, y) === ID['Grass Seeds'] && typeAt(x, y + 1) === EMPTY) hangingSeeds++;
     }
 }
-check('every one of them came to rest on something', hanging === 0,
-    `${hanging} seeds are still in mid air`);
+check('grass seeds settle instead of remaining suspended', ID['Grass Seeds'] !== undefined && hangingSeeds === 0,
+    `${hangingSeeds} seed cells remain unsupported`);
 
-section('A seed on the bed of a pond comes up as a lily');
+section('Water Grass / Lily requires water and grows its own species');
+clearWorld();
 fillRect(0, ROWS - 4, COLS, 4, ID['Wet Mud']);
 fillRect(4, ROWS - 22, COLS - 8, 18, ID.Water);
-run(60);
-// Keep trying until one of them comes up a sinker, since which it is, is the
-// seed's own business.
-// A handful of sinkers spread along the bed. One seed on its own is a coin
-// toss - it may come up buoyant and float off, or simply never germinate in the
-// time given - and none of that is what this section is about.
-for (let spot = 0; spot < 5; spot++) {
-    const x = 12 + spot * 8;
-    for (let attempt = 0; attempt < 200; attempt++) {
-        setCell(x, ROWS - 5, ID.Seed);
-        if (getWorld().data[index(x, ROWS - 5)] === 0) break;
+if (typeof physics.setAmbientHumidityTarget === 'function' && getWorld().humidity &&
+    ID['Water Grass / Lily Seeds'] !== undefined && ID['Water Grass'] !== undefined) {
+    physics.setAmbientTarget(22);
+    physics.setAmbientHumidityTarget(95);
+    getWorld().temp.fill(22);
+    getWorld().humidity.fill(95);
+    setRandomSeed(6401);
+    physics.setRandomSource(() => 0);
+    for (const x of [12, 20, 28, 36, 44]) {
+        const y = ROWS - 5;
+        setCell(x, y, ID['Water Grass / Lily Seeds']);
+        // Override placement's default temperature so the first staggered
+        // germination check sees the pond's intended warm conditions.
+        getWorld().temp[index(x, y)] = 22;
+        getWorld().humidity[index(x, y)] = 95;
+        // Start the basin regression with sinkers so it exercises submerged
+        // germination rather than the independent seed-buoyancy variation.
+        getWorld().data[index(x, y)] = 0;
     }
-}
-run(2200);
-check('it climbed as a netted stem rather than as an ordinary plant',
-    countOf(ID['Lily Stem']) > 8,
-    `${countOf(ID['Lily Stem'])} stem cells, ${countOf(ID.Plant)} plant cells`);
-check('the stem weaves rather than going straight up like a stalk', (() => {
-    let left = COLS;
-    let right = -1;
-    for (let y = 0; y < ROWS; y++) {
-        for (let x = 0; x < COLS; x++) {
-            if (typeAt(x, y) !== ID['Lily Stem']) continue;
-            left = Math.min(left, x);
-            right = Math.max(right, x);
+    const aquaticSeedDef = defs[ID['Water Grass / Lily Seeds']];
+    check('aquatic sinker seeds are denser than the pond water',
+        aquaticSeedDef.density > defs[ID.Water].density,
+        `seed density=${aquaticSeedDef.density}, water density=${defs[ID.Water].density}`);
+    let peakPadCount = 0;
+    let widestPadSpan = 0;
+    for (let frame = 0; frame < 2500; frame++) {
+        stepSimulation();
+        const pads = [];
+        for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) {
+            if (typeAt(x, y) === ID['Water Grass Pad']) pads.push(x);
         }
+        peakPadCount = Math.max(peakPadCount, pads.length);
+        if (pads.length > 1) widestPadSpan = Math.max(widestPadSpan, Math.max(...pads) - Math.min(...pads));
     }
-    return right - left >= 1;
-})());
-check('it reached the surface and opened out',
-    countOf(ID['Lily Pad']) + countOf(ID['Lily Flower']) > 0,
-    `${countOf(ID['Lily Pad'])} pads, ${countOf(ID['Lily Flower'])} flower cells`);
-check('and finished with a bloom broader than one cell',
-    countOf(ID['Lily Flower']) === 0 || countOf(ID['Lily Flower']) >= 3,
-    `${countOf(ID['Lily Flower'])} flower cells`);
-
-section('A brushful of seeds in a pond all come up as lilies, not pondweed');
-// The scene as it actually gets built: a bed of wet mud, water over it, and a
-// brushful of seeds dropped in together. Each seed lands with others packed
-// around it, and used to mistake its own neighbours overhead for a lid and come
-// up as an ordinary plant.
-fillRect(0, ROWS - 6, COLS, 6, ID['Wet Mud']);
-fillRect(3, ROWS - 26, COLS - 6, 20, ID.Water);
-run(300);
-// A generous scattering: around one in ten seeds come up buoyant and never
-// reach the bed at all, and the ones that do sink want elbow room from each
-// other, so a thin sprinkling makes for a flaky count.
-for (let dy = 0; dy < 4; dy++) {
-    for (let dx = 0; dx < 30; dx++) setCell(12 + dx, 2 + dy, ID.Seed);
+    check('aquatic seeds germinate into Water Grass over the wet-mud bed', countOf(ID['Water Grass']) > 0,
+        `${countOf(ID['Water Grass'])} Water Grass cells from ${countOf(ID['Water Grass / Lily Seeds'])} seeds`);
+    check('Water Grass reaches the surface and spreads into floating pads',
+        peakPadCount >= 3 && widestPadSpan >= 2,
+        `peak pads=${peakPadCount}, span=${widestPadSpan}`);
+    check('mature Water Grass pads open into a surface bloom', countOf(ID['Water Grass Bloom']) > 0,
+        `${countOf(ID['Water Grass Bloom'])} Water Grass Bloom cells`);
+    physics.resetRandomSource();
+    setRandomSeed(TEST_SEED);
+} else {
+    check('aquatic seeds germinate into Water Grass over the wet-mud bed', false,
+        'Water Grass seed, plant, or humidity support is missing');
 }
-run(3500);
-check('lilies came up out of the bed', countOf(ID['Lily Stem']) > 8,
-    `${countOf(ID['Lily Stem'])} lily stem cells against ${countOf(ID.Plant)} plant cells`);
-check('the lilies reached the top of the water',
-    countOf(ID['Lily Pad']) + countOf(ID['Lily Flower']) > 0,
-    `${countOf(ID['Lily Pad'])} pads and ${countOf(ID['Lily Flower'])} flower cells`);
-// A net is mostly holes. Measuring how much of the width it spans is actually
-// filled in is the difference between a mesh and a solid green wall.
-check('the netting is open enough to see the water through it', (() => {
-    let cells = 0;
-    let span = 0;
-    for (let y = 0; y < ROWS; y++) {
-        let first = -1;
-        let last = -1;
-        for (let x = 0; x < COLS; x++) {
-            if (typeAt(x, y) !== ID['Lily Stem']) continue;
-            if (first < 0) first = x;
-            last = x;
-            cells++;
-        }
-        if (first >= 0) span += last - first + 1;
-    }
-    return span === 0 || cells / span < 0.65;
-})());
 
 section('Acid gives off toxic fumes as it eats');
 for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
@@ -2786,17 +2596,14 @@ check('it rose', fumeTop < ROWS - 10, `the top of it reached row ${fumeTop}`);
 check('and it spread out sideways as it went', fumeRight - fumeLeft > 8,
     `it spans ${fumeRight - fumeLeft + 1} cells`);
 
-section('Toxic fumes wither anything growing into bare sand');
+section('Toxic fumes wither plant growth into bare sand');
 for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
 fillRect(0, ROWS - 3, COLS, 2, ID['Wet Mud']);
-// One of each green thing, standing in a row with room for the gas between.
-for (let x = 10; x < 46; x += 3) {
-    for (let y = ROWS - 8; y < ROWS - 3; y++) setCell(x, y, ID.Plant);
-    setCell(x, ROWS - 9, ID.Flower);
-    setCell(x + 1, ROWS - 4, ID.Grass);
-    setCell(x + 1, ROWS - 5, ID['Lily Pad']);
+for (const [x, material] of [[14, 'Grass'], [22, 'Moss'], [30, 'Daffodil'], [38, 'Banana Plant']]) {
+    if (ID[material] !== undefined) setCell(x, ROWS - 4, ID[material]);
 }
-const greenBefore = countOf(ID.Plant) + countOf(ID.Flower) + countOf(ID.Grass) + countOf(ID['Lily Pad']);
+const greenBefore = ['Grass', 'Moss', 'Daffodil', 'Banana Plant']
+    .reduce((sum, material) => sum + countOf(ID[material]), 0);
 const sandBefore = countOf(ID.Sand);
 let fumesReleased = 0;
 for (let x = 10; x < 46; x++) {
@@ -2808,17 +2615,57 @@ for (let x = 10; x < 46; x++) {
 }
 run(250);
 const withered = countOf(ID.Sand) - sandBefore;
-check('the fumes killed green things off', withered > 10,
+check('the fumes killed species plant pixels off', withered > 0 && greenBefore > 0,
     `${withered} cells of green turned to sand, out of ${greenBefore}`);
-check('and they took plants, grass, flowers and lily alike', (() => {
-    // Whatever is left of each kind, something of each must have gone.
-    return countOf(ID.Flower) < greenBefore && countOf(ID['Lily Pad']) < 12;
-})(), `${countOf(ID.Flower)} flowers and ${countOf(ID['Lily Pad'])} pads left`);
+const greenAfter = ['Grass', 'Moss', 'Daffodil', 'Banana Plant']
+    .reduce((sum, material) => sum + countOf(ID[material]), 0);
+check('the plant materials are eligible for withering', greenAfter < greenBefore,
+    `${greenBefore} -> ${greenAfter} plant pixels`);
+
+section('Named plant material still burns and dissolves in acid');
+const plantDamageState = snapshotSimulationState();
+const plantDamageSeed = getRandomSeed();
+try {
+    function plantDamageFixture() {
+        createWorld(16, 12);
+        setExactAirConditions(22);
+        physics.setAmbientHumidityTarget(75);
+        physics.setDewpointTarget(10);
+        getWorld().humidity.fill(75);
+        for (let x = 0; x < 16; x++) setCell(x, 11, ID.Wall);
+        fillRect(3, 10, 10, 1, ID['Wet Mud']);
+        fillRect(6, 6, 5, 4, ID.Daffodil);
+        getWorld().temp.fill(22);
+        for (let y = 6; y < 10; y++) for (let x = 6; x < 11; x++) {
+            getWorld().data[index(x, y)] = 0;
+            getWorld().plantHealth[index(x, y)] = 0.8;
+        }
+    }
+
+    physics.setRandomSource(() => 0);
+    plantDamageFixture();
+    const plantBeforeFire = countOf(ID.Daffodil);
+    setCell(8, 8, ID.Fire);
+    run(120);
+    check('fire burns back Daffodil pixels', plantBeforeFire > countOf(ID.Daffodil),
+        `${plantBeforeFire} -> ${countOf(ID.Daffodil)} Daffodil cells`);
+
+    plantDamageFixture();
+    const plantBeforeAcid = countOf(ID.Daffodil);
+    fillRect(6, 4, 5, 2, ID.Acid);
+    run(100);
+    check('acid dissolves Daffodil pixels', countOf(ID.Daffodil) < plantBeforeAcid,
+        `${plantBeforeAcid} -> ${countOf(ID.Daffodil)} Daffodil cells`);
+} finally {
+    restoreSimulationCheckpoint(plantDamageState, plantDamageSeed);
+}
 
 section('Toxic fumes are not used up by what they kill');
 for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
 fillRect(0, ROWS - 3, COLS, 2, ID['Wet Mud']);
-for (let x = 12; x < 44; x += 2) for (let y = ROWS - 7; y < ROWS - 3; y++) setCell(x, y, ID.Plant);
+for (let x = 12; x < 44; x += 2) {
+    if (ID['Banana Plant'] !== undefined) setCell(x, ROWS - 4, ID['Banana Plant']);
+}
 let released = 0;
 for (let x = 12; x < 20; x++) {
     for (let y = ROWS - 5; y < ROWS - 3; y++) {
@@ -2895,50 +2742,671 @@ check('sand poured into water settled underneath it',
     `sand ${settledSand === null ? 'gone' : settledSand.toFixed(1)}, ` +
     `water ${meanHeightOf(ID.Water).toFixed(1)}`);
 
-section('The same seed on the same mud out of the water is an ordinary plant');
-fillRect(0, ROWS - 4, COLS, 4, ID['Wet Mud']);
-run(20);
-for (let attempt = 0; attempt < 400; attempt++) {
-    setCell(30, ROWS - 5, ID.Seed);
-    if (getWorld().data[index(30, ROWS - 5)] === 0) break;
+const ecologyCheckpoint = snapshotSimulationState();
+const ecologySeed = getRandomSeed();
+try {
+section('Eight seed species have distinct picker identities and plant outputs');
+const seedNames = [
+    'Grass Seeds', 'Moss Spores', 'Daffodil Seeds', 'Red Tulip Seeds',
+    'Geranium Seeds', 'Blue Flower Seeds', 'Banana Seeds', 'Water Grass / Lily Seeds'
+];
+const plantNames = ['Grass', 'Moss', 'Daffodil', 'Red Tulip', 'Geranium', 'Blue Flower', 'Banana Plant', 'Water Grass'];
+check('all eight named seeds are registered', seedNames.every(name => ID[name] > 0),
+    seedNames.filter(name => !(ID[name] > 0)).join(', ') || '');
+check('all seed buttons use the Seeds group and retain powder physics', seedNames.every(name => {
+    const definition = defs[ID[name]];
+    return definition?.group === 'Seeds' && definition.category === 'powder';
+}), seedNames.filter(name => {
+    const definition = defs[ID[name]];
+    return definition?.group !== 'Seeds' || definition.category !== 'powder';
+}).join(', ') || '');
+check('the obsolete generic Seed material is absent', !defs.some(definition => definition?.name === 'Seed'));
+check('legacy material ID 19 is Grass Seeds', defs[19]?.name === 'Grass Seeds', defs[19]?.name || 'missing ID 19');
+check('every requested species has its own plant material', plantNames.every(name => ID[name] > 0),
+    plantNames.filter(name => !(ID[name] > 0)).join(', ') || '');
+const expectedSeedOutputs = [
+    ['Grass Seeds', 'Grass'], ['Moss Spores', 'Moss'], ['Daffodil Seeds', 'Daffodil'],
+    ['Red Tulip Seeds', 'Red Tulip'], ['Geranium Seeds', 'Geranium'],
+    ['Blue Flower Seeds', 'Blue Flower'], ['Banana Seeds', 'Banana Plant'],
+    ['Water Grass / Lily Seeds', 'Water Grass']
+];
+check('each seed definition targets its matching species plant', expectedSeedOutputs.every(([seed, plant]) => {
+    const definition = defs[ID[seed]];
+    return definition?.plantSpecies === defs[ID[plant]]?.plantSpecies &&
+        definition.sprouts.some(rule => rule.into === ID[plant] || rule.submergedInto === ID[plant]);
+}), expectedSeedOutputs.filter(([seed, plant]) => {
+    const definition = defs[ID[seed]];
+    return !definition?.sprouts.some(rule => rule.into === ID[plant] || rule.submergedInto === ID[plant]);
+}).map(([seed]) => seed).join(', ') || '');
+check('species definitions retain distinct growth strategies',
+    defs[ID.Moss]?.growStyle === 'moss' && defs[ID['Red Tulip']]?.growStyle === 'upright' &&
+    defs[ID['Blue Flower']]?.growStyle === 'spindly' && defs[ID['Water Grass']]?.growStyle === 'netting',
+    ['Moss', 'Red Tulip', 'Blue Flower', 'Water Grass']
+        .map(name => `${name}=${defs[ID[name]]?.growStyle}`).join(', '));
+
+section('Seeds wait for appropriate substrate, temperature and humidity');
+const hasHumidityApi = typeof physics.setAmbientHumidityTarget === 'function' &&
+    typeof physics.getAmbientHumidityTarget === 'function' && typeof physics.getHumidityAt === 'function';
+const hasPlantApi = typeof physics.getPlantHealth === 'function';
+check('humidity and plant health query APIs are exposed', hasHumidityApi && hasPlantApi);
+check('plant health returns null for a non-plant cell', hasPlantApi && physics.getPlantHealth(0, 0) === null);
+if (hasHumidityApi) {
+    physics.setAmbientHumidityTarget(-1);
+    const lowHumidityClamp = physics.getAmbientHumidityTarget();
+    physics.setAmbientHumidityTarget(101);
+    const highHumidityClamp = physics.getAmbientHumidityTarget();
+    check('base humidity is clamped to the 0–100 percent range', lowHumidityClamp === 0 && highHumidityClamp === 100,
+        `${lowHumidityClamp}, ${highHumidityClamp}`);
+    physics.setAmbientHumidityTarget(50);
 }
-run(900);
-check('a dry bank grows a plant, not a lily',
-    countOf(ID.Plant) > 0 && countOf(ID['Lily Stem']) === 0,
-    `${countOf(ID.Plant)} plant cells, ${countOf(ID['Lily Stem'])} stem cells`);
+if (hasHumidityApi && seedNames.every(name => ID[name] > 0) && plantNames.every(name => ID[name] > 0) &&
+    ID['Wet Mud'] && ID['Dry Mud'] && ID['Wet Sand'] && ID['Wet Ash']) {
+    function ecologyFixture({ substrate = 'Wet Mud', temp = 22, humidity = 50, seed = 'Grass Seeds' } = {}) {
+        createWorld(12, 10);
+        physics.setAmbientTarget(temp);
+        physics.setAmbientHumidityTarget(humidity);
+        const w = getWorld();
+        w.temp.fill(temp);
+        w.humidity?.fill(humidity);
+        for (let x = 0; x < w.cols; x++) setCell(x, w.rows - 1, ID.Wall);
+        setCell(5, w.rows - 2, ID[substrate]);
+        setCell(5, w.rows - 3, ID[seed]);
+        w.temp[index(5, w.rows - 3)] = temp;
+        w.humidity[index(5, w.rows - 3)] = humidity;
+        return w;
+    }
+    function placeEcologySeed(x, y, name, temp, humidity) {
+        setCell(x, y, ID[name]);
+        getWorld().temp[index(x, y)] = temp;
+        getWorld().humidity[index(x, y)] = humidity;
+    }
+    ecologyFixture({ substrate: 'Dry Mud' });
+    run(800);
+    check('grass seed stays dormant on dry mud', countOf(ID['Grass Seeds']) > 0 && countOf(ID.Grass) === 0,
+        `${countOf(ID['Grass Seeds'])} seeds, ${countOf(ID.Grass)} Grass cells`);
 
-section('A plant only grows while some part of it is in wet ground');
-for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
-setCell(12, ROWS - 2, ID['Dry Mud']);
-setCell(12, ROWS - 3, ID.Plant);
-getWorld().data[index(12, ROWS - 3)] = 14;
-setCell(34, ROWS - 2, ID['Wet Mud']);
-setCell(34, ROWS - 3, ID.Plant);
-getWorld().data[index(34, ROWS - 3)] = 14;
-run(1200);
+    ecologyFixture({ substrate: 'Wet Mud', temp: -20, humidity: 65 });
+    for (const x of [4, 5, 6]) placeEcologySeed(x, 7, 'Grass Seeds', -20, 65);
+    run(800);
+    const dormantColdSeeds = countOf(ID['Grass Seeds']);
+    check('cold grass seeds stay viable and dormant', dormantColdSeeds > 0 && countOf(ID.Grass) === 0,
+        `${dormantColdSeeds} seeds, ${countOf(ID.Grass)} Grass cells`);
+    physics.setAmbientTarget(22);
+    physics.setAmbientHumidityTarget(65);
+    getWorld().temp.fill(22);
+    getWorld().humidity?.fill(65);
+    setRandomSeed(7123);
+    run(2600);
+    check('the same dormant seeds germinate after conditions improve', countOf(ID.Grass) > 0,
+        `${countOf(ID.Grass)} Grass cells from ${dormantColdSeeds} dormant seeds`);
 
-function highestPlantIn(fromX, toX) {
-    for (let y = 0; y < ROWS; y++) {
-        for (let x = fromX; x <= toX; x++) {
-            if (typeAt(x, y) === ID.Plant || typeAt(x, y) === ID.Flower) return y;
+    ecologyFixture({ substrate: 'Wet Mud', temp: 30, humidity: 0, seed: 'Banana Seeds' });
+    run(1200);
+    check('low humidity prevents banana germination', countOf(ID['Banana Plant']) === 0,
+        `${countOf(ID['Banana Plant'])} Banana Plant cells`);
+
+    ecologyFixture({ substrate: 'Wet Mud', temp: 22, humidity: 65 });
+    for (const x of [4, 5, 6]) placeEcologySeed(x, 7, 'Grass Seeds', 22, 65);
+    run(2600);
+    check('grass germinates on wet mud in a suitable climate', countOf(ID.Grass) > 0,
+        `${countOf(ID.Grass)} Grass cells`);
+
+    const speciesGerminationCases = [
+        { seed: 'Daffodil Seeds', plant: 'Daffodil', substrate: 'Wet Mud', temp: 14, humidity: 75 },
+        { seed: 'Red Tulip Seeds', plant: 'Red Tulip', substrate: 'Wet Mud', temp: 15, humidity: 78 },
+        { seed: 'Geranium Seeds', plant: 'Geranium', substrate: 'Wet Mud', temp: 23, humidity: 60 },
+        { seed: 'Blue Flower Seeds', plant: 'Blue Flower', substrate: 'Wet Sand', temp: 16, humidity: 78 },
+        { seed: 'Banana Seeds', plant: 'Banana Plant', substrate: 'Wet Mud', temp: 30, humidity: 95 }
+    ];
+    for (const fixture of speciesGerminationCases) {
+        createWorld(16, 12);
+        setExactAirConditions(fixture.temp);
+        physics.setAmbientHumidityTarget(fixture.humidity);
+        physics.setDewpointTarget(10);
+        getWorld().humidity.fill(fixture.humidity);
+        for (let x = 0; x < 16; x++) setCell(x, 11, ID.Wall);
+        setCell(8, 10, ID[fixture.substrate]);
+        setCell(8, 9, ID[fixture.seed]);
+        getWorld().temp[index(8, 9)] = fixture.temp;
+        getWorld().humidity[index(8, 9)] = fixture.humidity;
+        setRandomSeed(7100 + ID[fixture.seed]);
+        physics.setRandomSource(() => 0);
+        let speciesAppeared = false;
+        for (let frame = 0; frame < 20; frame++) {
+            stepSimulation();
+            speciesAppeared ||= countOf(ID[fixture.plant]) > 0;
+        }
+        check(`${fixture.seed} germinates into ${fixture.plant} in its suitable niche`,
+            speciesAppeared,
+            `${speciesAppeared ? 'appeared during fixture' : 'not observed'}; final ${countOf(ID[fixture.plant])} ${fixture.plant} cells`);
+        setRandomSeed(TEST_SEED);
+    }
+
+    createWorld(12, 10);
+    setExactAirConditions(16);
+    physics.setAmbientTarget(16);
+    physics.setAmbientHumidityTarget(20);
+    getWorld().humidity.fill(20);
+    for (let x = 0; x < 12; x++) setCell(x, 9, ID.Wall);
+    setCell(5, 8, ID.Wood);
+    placeEcologySeed(4, 8, 'Moss Spores', 16, 20);
+    setRandomSeed(7017);
+    physics.setRandomSource(() => 0);
+    run(40);
+    check('Moss Spores wait on wood while local air is too dry',
+        countOf(ID['Moss Spores']) > 0 && countOf(ID.Moss) === 0,
+        `${countOf(ID['Moss Spores'])} spores, ${countOf(ID.Moss)} Moss`);
+    physics.setAmbientHumidityTarget(95);
+    getWorld().humidity.fill(95);
+    run(40);
+    check('damp humid wood lets the same Moss Spores colonize', countOf(ID.Moss) > 0,
+        `${countOf(ID.Moss)} Moss cells`);
+    setRandomSeed(TEST_SEED);
+
+    createWorld(18, 14);
+    setExactAirConditions(30);
+    physics.setAmbientTarget(30);
+    physics.setAmbientHumidityTarget(95);
+    getWorld().humidity.fill(95);
+    for (let x = 0; x < 18; x++) setCell(x, 13, ID.Wall);
+    fillRect(4, 12, 10, 1, ID['Wet Mud']);
+    setCell(9, 11, ID['Banana Plant']);
+    getWorld().temp.fill(30);
+    setRandomSeed(7022);
+    physics.setRandomSource(() => 0);
+    run(900);
+    let frondLeft = getWorld().cols;
+    let frondRight = -1;
+    for (let y = 0; y < getWorld().rows; y++) for (let x = 0; x < getWorld().cols; x++) {
+        if (typeAt(x, y) !== ID['Banana Plant']) continue;
+        frondLeft = Math.min(frondLeft, x);
+        frondRight = Math.max(frondRight, x);
+    }
+    check('thriving Banana Plants grow lateral fronds in warm humid soil',
+        countOf(ID['Banana Plant']) > 1 && frondRight > frondLeft,
+        `${countOf(ID['Banana Plant'])} cells across ${frondRight - frondLeft + 1} columns`);
+    setRandomSeed(TEST_SEED);
+
+    createWorld(42, 16);
+    physics.setAmbientTarget(22);
+    physics.setAmbientHumidityTarget(80);
+    getWorld().temp.fill(22);
+    getWorld().humidity?.fill(80);
+    for (let x = 0; x < 42; x++) setCell(x, 15, ID.Wall);
+    for (const [left, substrate] of [[2, 'Wet Sand'], [15, 'Wet Mud'], [28, 'Wet Ash']]) {
+        fillRect(left, 13, 11, 2, ID[substrate]);
+        for (const x of [left + 2, left + 5, left + 8]) placeEcologySeed(x, 12, 'Grass Seeds', 22, 80);
+    }
+    setRandomSeed(6532);
+    physics.setRandomSource(() => 0);
+    run(3200);
+    const grassIn = (left, right) => {
+        let total = 0;
+        for (let y = 0; y < getWorld().rows; y++) for (let x = left; x < right; x++) {
+            if (typeAt(x, y) === ID.Grass) total++;
+        }
+        return total;
+    };
+    const sandGrass = grassIn(0, 13);
+    const mudGrass = grassIn(13, 27);
+    const ashGrass = grassIn(27, 42);
+    check('grass grows on wet sand, wet mud and wet ash', sandGrass > 0 && mudGrass > 0 && ashGrass > 0,
+        `wet sand=${sandGrass}, wet mud=${mudGrass}, wet ash=${ashGrass}`);
+    check('wet mud supports denser grass growth than wet sand', mudGrass > sandGrass,
+        `wet mud=${mudGrass}, wet sand=${sandGrass}`);
+
+    createWorld(22, 12);
+    physics.setAmbientTarget(15);
+    physics.setAmbientHumidityTarget(95);
+    getWorld().temp.fill(15);
+    getWorld().humidity?.fill(95);
+    for (let x = 0; x < 22; x++) setCell(x, 11, ID.Wall);
+    for (let y = 5; y <= 9; y++) {
+        setCell(5, y, ID.Wood);
+        setCell(16, y, ID.Stone);
+    }
+    for (let y = 5; y <= 8; y += 2) {
+        placeEcologySeed(4, y, 'Moss Spores', 15, 95);
+        placeEcologySeed(15, y, 'Moss Spores', 15, 95);
+    }
+    setRandomSeed(8877);
+    physics.setRandomSource(() => 0);
+    run(3000);
+    let woodMoss = 0;
+    let stoneMoss = 0;
+    for (let y = 0; y < 11; y++) for (let x = 0; x < 22; x++) {
+        if (typeAt(x, y) !== ID.Moss) continue;
+        if (x <= 10) woodMoss++;
+        if (x >= 11) stoneMoss++;
+    }
+    check('moss colonizes both wood and stone in a cool humid habitat', woodMoss > 0 && stoneMoss > 0,
+        `wood=${woodMoss}, stone=${stoneMoss}`);
+    setRandomSeed(TEST_SEED);
+} else {
+    check('grass seed remains viable on dry mud until suitable conditions arrive', false, 'biology API/material definitions are missing');
+    check('temperature and humidity gate germination', false, 'biology API/material definitions are missing');
+    check('suitable grass conditions allow germination', false, 'biology API/material definitions are missing');
+}
+
+section('Plant health responds to species-specific environmental ranges');
+if (hasHumidityApi && hasPlantApi && ID.Grass && ID['Banana Plant'] && ID['Wet Mud']) {
+    function plantHealthFixture(material, temp, humidity) {
+        createWorld(10, 8);
+        setExactAirConditions(temp);
+        physics.setAmbientTarget(temp);
+        physics.setAmbientHumidityTarget(humidity);
+        const w = getWorld();
+        w.humidity.fill(humidity);
+        setCell(4, 7, ID.Wall);
+        setCell(4, 6, ID['Wet Mud']);
+        setCell(4, 5, ID[material]);
+        w.temp.fill(temp);
+        return physics.getPlantHealth(4, 5);
+    }
+    const grassAtTemperate = plantHealthFixture('Grass', 22, 55);
+    const bananaAtTemperate = plantHealthFixture('Banana Plant', 22, 55);
+    const bananaAtTropical = plantHealthFixture('Banana Plant', 30, 95);
+    check('ideal hardy grass reports thriving', grassAtTemperate === 'thriving', grassAtTemperate);
+    check('banana is more demanding than grass in temperate ambient air',
+        bananaAtTemperate !== 'thriving' && grassAtTemperate !== 'dying',
+        `grass=${grassAtTemperate}, banana=${bananaAtTemperate}`);
+    check('warm humid conditions improve banana health',
+        bananaAtTropical === 'thriving' && bananaAtTropical !== bananaAtTemperate,
+        `temperate=${bananaAtTemperate}, tropical=${bananaAtTropical}`);
+
+    const bananaAtNicheBoundary = plantHealthFixture('Banana Plant', 18, 76);
+    const bananaAtMargin = plantHealthFixture('Banana Plant', 17.9, 76);
+    const bananaAtHostileBoundary = plantHealthFixture('Banana Plant', 5.9, 95);
+    check('Banana Plant is thriving at its stated minimum temperature and humidity',
+        bananaAtNicheBoundary === 'thriving', bananaAtNicheBoundary);
+    check('a small temperature drop moves a Banana Plant into surviving health',
+        bananaAtMargin === 'surviving', bananaAtMargin);
+    check('temperature below the survival range makes a Banana Plant dying',
+        bananaAtHostileBoundary === 'dying', bananaAtHostileBoundary);
+    check('plant health queries expose thriving, surviving and dying states',
+        new Set([grassAtTemperate, bananaAtMargin, bananaAtHostileBoundary, bananaAtTropical]).size === 3,
+        [grassAtTemperate, bananaAtMargin, bananaAtHostileBoundary, bananaAtTropical].join(', '));
+
+    createWorld(12, 10);
+    setExactAirConditions(22);
+    physics.setAmbientTarget(22);
+    physics.setAmbientHumidityTarget(65);
+    for (let x = 0; x < 12; x++) setCell(x, 9, ID.Wall);
+    setCell(5, 8, ID['Dry Mud']);
+    setCell(5, 7, ID.Grass);
+    getWorld().temp.fill(22);
+    getWorld().humidity.fill(65);
+    const grassIndex = index(5, 7);
+    getWorld().data[grassIndex] = 1; // Isolate the seed-setting gate from vertical growth.
+    getWorld().plantHealth[grassIndex] = 1;
+    physics.setRandomSource(() => 0);
+    const drySoilHealth = physics.getPlantHealth(5, 7);
+    run(40);
+    const drySoilSeeds = countOf(ID['Grass Seeds']);
+    const drySoilStoredHealth = getWorld().plantHealth[grassIndex];
+    check('a Grass Plant below its moistureNeed is unhealthy and cannot reproduce on dry soil',
+        defs[ID.Grass]?.moistureNeed > 0 && drySoilHealth === 'dying' &&
+        typeAt(5, 7) === ID.Grass && drySoilSeeds === 0,
+        `moistureNeed=${defs[ID.Grass]?.moistureNeed}, health=${drySoilHealth}, seeds=${drySoilSeeds}`);
+
+    setCell(5, 8, ID['Wet Mud']);
+    getWorld().temp.fill(22);
+    getWorld().humidity.fill(65);
+    const wetSoilHealth = physics.getPlantHealth(5, 7);
+    run(80);
+    const wetSoilSeeds = countOf(ID['Grass Seeds']);
+    check('wet soil and ideal climate restore Grass health and seed reproduction',
+        wetSoilHealth === 'thriving' && getWorld().plantHealth[grassIndex] > drySoilStoredHealth &&
+        wetSoilSeeds > drySoilSeeds,
+        `health=${drySoilHealth} -> ${wetSoilHealth}, stored=${drySoilStoredHealth.toFixed(2)} -> ${getWorld().plantHealth[grassIndex].toFixed(2)}, seeds=${drySoilSeeds} -> ${wetSoilSeeds}`);
+    setRandomSeed(TEST_SEED);
+
+    plantHealthFixture('Banana Plant', 20, 60);
+    const initialSeedCount = seedNames.reduce((sum, name) => sum + countOf(ID[name]), 0);
+    setRandomSeed(781);
+    physics.setRandomSource(() => 0);
+    run(2400);
+    const afterSeedCount = seedNames.reduce((sum, name) => sum + countOf(ID[name]), 0);
+    check('surviving Banana Plants do not reproduce',
+        physics.getPlantHealth(4, 5) === 'surviving' && afterSeedCount === initialSeedCount,
+        `health=${physics.getPlantHealth(4, 5)}, seeds=${initialSeedCount} -> ${afterSeedCount}`);
+    setRandomSeed(TEST_SEED);
+
+    createWorld(10, 8);
+    setExactAirConditions(14);
+    physics.setAmbientTarget(14);
+    physics.setAmbientHumidityTarget(0);
+    getWorld().humidity.fill(0);
+    setCell(4, 7, ID.Wall);
+    setCell(4, 6, ID['Wet Mud']);
+    setCell(4, 5, ID.Daffodil);
+    getWorld().temp.fill(14);
+    getWorld().humidity.fill(0);
+    getWorld().plantHealth[index(4, 5)] = 0.5;
+    check('an established Daffodil reports dying in dry air',
+        physics.getPlantHealth(4, 5) === 'dying', physics.getPlantHealth(4, 5));
+    run(260);
+    check('sustained dying health removes the plant into dry soil',
+        countOf(ID['Dry Mud']) > 0 && countOf(ID.Daffodil) === 0,
+        `${countOf(ID['Dry Mud'])} Dry Mud, ${countOf(ID.Daffodil)} Daffodil cells`);
+
+    createWorld(14, 10);
+    setExactAirConditions(22);
+    physics.setAmbientTarget(22);
+    physics.setAmbientHumidityTarget(75);
+    getWorld().humidity.fill(75);
+    for (let x = 0; x < 14; x++) setCell(x, 9, ID.Wall);
+    fillRect(2, 8, 10, 1, ID['Wet Mud']);
+    setCell(7, 7, ID.Grass);
+    getWorld().temp[index(7, 7)] = 22;
+    getWorld().humidity[index(7, 7)] = 75;
+    getWorld().plantHealth[index(7, 7)] = 1;
+    getWorld().data[index(7, 7)] = 1;
+    physics.setRandomSource(() => 0);
+    const thrivingGrassExists = physics.getPlantHealth(7, 7) === 'thriving';
+    const seedsAtStart = countOf(ID['Grass Seeds']);
+    run(100);
+    const seedsAfterReproduction = countOf(ID['Grass Seeds']);
+    check('thriving grass can reproduce in its preferred habitat',
+        thrivingGrassExists && seedsAfterReproduction > seedsAtStart,
+        `thriving=${thrivingGrassExists}, seeds=${seedsAtStart} -> ${seedsAfterReproduction}`);
+    setRandomSeed(TEST_SEED);
+} else {
+    check('species health differentiates hardy and tropical niches', false, 'biology API/material definitions are missing');
+    check('surviving plants do not reproduce', false, 'biology API/material definitions are missing');
+    check('thriving plants can reproduce', false, 'biology API/material definitions are missing');
+}
+
+section('Humidity diffuses in open air and remains localized in enclosed chambers');
+if (hasHumidityApi && getWorld().humidity) {
+    createWorld(28, 14);
+    physics.setAmbientHumidityTarget(50);
+    getWorld().humidity.fill(50);
+    // The left patch is open. The equal-sized right patch is enclosed by Wall.
+    for (let y = 2; y <= 8; y++) {
+        setCell(16, y, ID.Wall);
+        setCell(22, y, ID.Wall);
+    }
+    for (let x = 16; x <= 22; x++) {
+        setCell(x, 2, ID.Wall);
+        setCell(x, 8, ID.Wall);
+    }
+    for (let y = 3; y <= 7; y++) for (let x = 17; x <= 21; x++) getWorld().humidity[index(x, y)] = 90;
+    for (let y = 3; y <= 7; y++) for (let x = 3; x <= 7; x++) getWorld().humidity[index(x, y)] = 90;
+    const openStart = physics.getHumidityAt(5, 5);
+    const closedStart = physics.getHumidityAt(19, 5);
+    run(500);
+    const openEnd = physics.getHumidityAt(5, 5);
+    const closedEnd = physics.getHumidityAt(19, 5);
+    check('open humidity drifts back toward the 50 percent baseline', openEnd < openStart && openEnd >= 50,
+        `${openStart} -> ${openEnd}`);
+    check('closed chamber retains a stronger humidity difference', closedEnd > openEnd,
+        `open=${openEnd}, enclosed=${closedEnd}`);
+
+    function humiditySourceSample(material, x) {
+        createWorld(18, 12);
+        physics.setAmbientHumidityTarget(50);
+        getWorld().humidity.fill(50);
+        for (let groundX = 0; groundX < 18; groundX++) setCell(groundX, 11, ID.Wall);
+        setCell(x, 10, ID[material]);
+        run(450);
+        return physics.getHumidityAt(x + 1, 10);
+    }
+    const nearWater = humiditySourceSample('Water', 3);
+    const nearSteam = humiditySourceSample('Steam', 3);
+    const nearSand = humiditySourceSample('Sand', 3);
+    const nearDryMud = humiditySourceSample('Dry Mud', 3);
+    check('water and steam add local humidity', nearWater > 50 && nearSteam > 50,
+        `water=${nearWater}, steam=${nearSteam}`);
+    check('dry sand and dry mud remove local humidity', nearSand < 50 && nearDryMud < 50,
+        `sand=${nearSand}, dry mud=${nearDryMud}`);
+} else {
+    check('humidity diffusion and source/sink behavior are available', false, 'humidity field/API is missing');
+}
+
+section('Dewpoint forms sparse upper-air clouds and selects rain or snow');
+const hasDewpointApi = typeof physics.setDewpointTarget === 'function' && typeof physics.getDewpointTarget === 'function';
+check('dewpoint control exposes a readable target', hasDewpointApi);
+if (hasHumidityApi && hasDewpointApi && ID.Cloud !== undefined) {
+    physics.setDewpointTarget(-1);
+    const lowDewpointClamp = physics.getDewpointTarget();
+    physics.setDewpointTarget(101);
+    const highDewpointClamp = physics.getDewpointTarget();
+    check('dewpoint is clamped to the 0–100 degree range', lowDewpointClamp === 0 && highDewpointClamp === 100,
+        `${lowDewpointClamp}, ${highDewpointClamp}`);
+    function weatherRun({ airTemp, dewpoint, humidity = 95 }) {
+        createWorld(28, 18);
+        setExactAirConditions(airTemp);
+        physics.setAmbientTarget(airTemp);
+        physics.setAmbientHumidityTarget(humidity);
+        physics.setDewpointTarget(dewpoint);
+        const w = getWorld();
+        w.temp.fill(airTemp);
+        w.humidity.fill(humidity);
+        setRandomSeed(4401);
+        let cloudPeak = 0;
+        for (let frame = 0; frame < 2400; frame++) {
+            stepSimulation();
+            cloudPeak = Math.max(cloudPeak, countOf(ID.Cloud));
+        }
+        return { cloudPeak, rain: countOf(ID.Water), snow: countOf(ID.Snow) };
+    }
+    const aboveDewpoint = weatherRun({ airTemp: 12, dewpoint: 10 });
+    const atDewpoint = weatherRun({ airTemp: 10, dewpoint: 10 });
+    const dryAtDewpoint = weatherRun({ airTemp: 8, dewpoint: 10, humidity: 60 });
+    const rainy = weatherRun({ airTemp: 8, dewpoint: 10 });
+    const freezingBoundary = weatherRun({ airTemp: 0, dewpoint: 10 });
+    const snowy = weatherRun({ airTemp: -4, dewpoint: 10 });
+    check('air warmer than dewpoint does not form clouds', aboveDewpoint.cloudPeak === 0,
+        `${aboveDewpoint.cloudPeak} clouds`);
+    check('air exactly at dewpoint forms clouds', atDewpoint.cloudPeak > 0,
+        `${atDewpoint.cloudPeak} clouds`);
+    check('humid open upper air below dewpoint forms clouds', rainy.cloudPeak > 0 && snowy.cloudPeak > 0,
+        `rain climate=${rainy.cloudPeak}, snow climate=${snowy.cloudPeak}`);
+    check('dry air below dewpoint does not form clouds', dryAtDewpoint.cloudPeak === 0,
+        `${dryAtDewpoint.cloudPeak} clouds`);
+    check('cloud precipitation is rain above freezing', rainy.rain > 0,
+        `${rainy.rain} Water cells`);
+    check('cloud precipitation is snow at/below freezing', snowy.snow > 0,
+        `${snowy.snow} Snow cells`);
+    check('cloud precipitation at exactly zero degrees is Snow',
+        freezingBoundary.snow > 0 && freezingBoundary.rain === 0,
+        `${freezingBoundary.snow} Snow, ${freezingBoundary.rain} Water`);
+
+    createWorld(28, 18);
+    setExactAirConditions(8);
+    physics.setAmbientTarget(8);
+    physics.setAmbientHumidityTarget(95);
+    physics.setDewpointTarget(10);
+    getWorld().temp.fill(8);
+    getWorld().humidity.fill(95);
+    // Make one enclosed upper-air pocket saturated while leaving the upper sky
+    // outside it open and at baseline humidity.
+    for (let x = 4; x <= 12; x++) { setCell(x, 1, ID.Wall); setCell(x, 8, ID.Wall); }
+    for (let y = 1; y <= 8; y++) { setCell(4, y, ID.Wall); setCell(12, y, ID.Wall); }
+    for (let y = 2; y <= 7; y++) for (let x = 5; x <= 11; x++) getWorld().humidity[index(x, y)] = 100;
+    setRandomSeed(4401);
+    let openClouds = 0;
+    let closedClouds = 0;
+    for (let frame = 0; frame < 2400; frame++) {
+        stepSimulation();
+        for (let y = 0; y < 9; y++) for (let x = 0; x < 28; x++) {
+            if (typeAt(x, y) !== ID.Cloud) continue;
+            if (x >= 5 && x <= 11 && y >= 2 && y <= 7) closedClouds++;
+            else openClouds++;
         }
     }
-    return ROWS;
+    check('clouds form in open upper air but not enclosed chambers', openClouds > 0 && closedClouds === 0,
+        `open=${openClouds}, enclosed=${closedClouds}`);
+    setRandomSeed(TEST_SEED);
+} else {
+    check('dewpoint weather forms clouds and precipitation', false, 'dewpoint API or Cloud material is missing');
 }
-check('the one in dry ground never put on a cell',
-    highestPlantIn(6, 20) === ROWS - 3, `it reached row ${highestPlantIn(6, 20)}`);
-check('the one in wet ground climbed',
-    highestPlantIn(28, 42) < ROWS - 6, `it reached row ${highestPlantIn(28, 42)}`);
 
-section('Grass that reaches wet mud grows on as a wet mud plant');
-for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
-setCell(20, ROWS - 2, ID['Wet Sand']);
-setCell(21, ROWS - 2, ID['Wet Mud']);
-setCell(20, ROWS - 3, ID.Grass);
-getWorld().data[index(20, ROWS - 3)] = 8;
-run(1200);
-check('the growth above it came up as the richer plant', countOf(ID.Plant) > 2,
-    `${countOf(ID.Grass)} grass cells, ${countOf(ID.Plant)} plant cells`);
+section('Steam boils from Water, humidifies air, and condenses by weather rather than age');
+if (hasHumidityApi && hasDewpointApi && ID.Steam !== undefined && ID.Water !== undefined) {
+    createWorld(12, 10);
+    physics.setAmbientTarget(120);
+    physics.setAmbientHumidityTarget(50);
+    physics.setDewpointTarget(10);
+    getWorld().temp.fill(120);
+    getWorld().humidity.fill(50);
+    setCell(5, 5, ID.Water);
+    const waterDef = defs[ID.Water];
+    getWorld().temp[index(5, 5)] = Math.max(120, waterDef.boilPoint ?? 120);
+    getWorld().heat[index(5, 5)] = (waterDef.latent || 0) + 1;
+    run(12);
+    check('boiling Water still emits Steam', countOf(ID.Steam) > 0, `${countOf(ID.Steam)} Steam cells`);
+
+    createWorld(12, 10);
+    physics.setAmbientTarget(20);
+    physics.setAmbientHumidityTarget(95);
+    physics.setDewpointTarget(20);
+    getWorld().temp.fill(20);
+    getWorld().humidity.fill(95);
+    setCell(5, 5, ID.Steam);
+    run(500);
+    check('Steam condenses at humid air reaching dewpoint', countOf(ID.Steam) === 0 && countOf(ID.Water) + countOf(ID.Cloud) > 0,
+        `steam=${countOf(ID.Steam)}, water=${countOf(ID.Water)}, clouds=${countOf(ID.Cloud)}`);
+
+    createWorld(10, 8);
+    physics.setAmbientTarget(25);
+    physics.setAmbientHumidityTarget(5);
+    physics.setDewpointTarget(0);
+    getWorld().temp.fill(25);
+    getWorld().humidity.fill(5);
+    for (let x = 3; x <= 7; x++) { setCell(x, 2, ID.Wall); setCell(x, 6, ID.Wall); }
+    for (let y = 2; y <= 6; y++) { setCell(3, y, ID.Wall); setCell(7, y, ID.Wall); }
+    setCell(5, 4, ID.Steam);
+    const isolatedSteamCount = countOf(ID.Steam);
+    run(1600);
+    check('warm dry trapped Steam does not disappear on an age timer', countOf(ID.Steam) === isolatedSteamCount,
+        `${isolatedSteamCount} -> ${countOf(ID.Steam)} Steam cells`);
+    setRandomSeed(TEST_SEED);
+} else {
+    check('steam and dewpoint humidity interactions are implemented', false, 'humidity/dewpoint/steam material is missing');
+}
+
+section('Corrosion is falling powder, resists ordinary humidity, and melts to Lava');
+const corrosionId = ID.Corrosion;
+const corrosionDef = defs[corrosionId];
+check('Corrosion is registered as powder and melts to Lava',
+    corrosionDef?.category === 'powder' && corrosionDef.meltsInto === ID.Lava,
+    `category=${corrosionDef?.category}, endpoint=${defs[corrosionDef?.meltsInto]?.name}`);
+const taggedCorrodibleMetals = ['Copper', 'Iron', 'Battery', 'Fan', 'Heater', 'Cooler', 'Tubing'];
+const untaggedMoltenMetalOutputs = ['Molten Copper', 'Molten Aluminum', 'Molten Iron'];
+check('solid corrodible metals are tagged while molten outputs are not',
+    taggedCorrodibleMetals.every(name => defs[ID[name]]?.metal === true) &&
+    untaggedMoltenMetalOutputs.every(name => defs[ID[name]]?.metal !== true),
+    `tagged=${taggedCorrodibleMetals.filter(name => defs[ID[name]]?.metal === true).join(',')}; molten=${untaggedMoltenMetalOutputs.filter(name => defs[ID[name]]?.metal === true).join(',')}`);
+if (corrosionId > 0 && hasHumidityApi) {
+    createWorld(9, 8);
+    setCell(4, 1, corrosionId);
+    run(3);
+    const fellFrom = (() => { for (let y = 0; y < 8; y++) if (typeAt(4, y) === corrosionId) return y; return -1; })();
+    check('unsupported Corrosion falls under powder gravity', fellFrom > 1, `row=${fellFrom}`);
+
+    createWorld(9, 8);
+    for (let x = 3; x <= 5; x++) setCell(x, 6, ID.Wall);
+    setCell(4, 5, corrosionId);
+    run(20);
+    check('supported Corrosion stays in place', typeAt(4, 5) === corrosionId,
+        defs[typeAt(4, 5)]?.name || 'air');
+
+    function corrosionFixture(humidity) {
+        createWorld(9, 8);
+        physics.setAmbientHumidityTarget(humidity);
+        getWorld().humidity?.fill(humidity);
+        getWorld().temp.fill(25);
+        setCell(4, 5, ID.Iron);
+    }
+    physics.setRandomSource(() => 0);
+    corrosionFixture(50);
+    run(800);
+    const ordinaryHumidityCorrosion = countOf(corrosionId);
+    corrosionFixture(100);
+    run(1600);
+    check('ordinary humidity does not rapidly corrode metal', ordinaryHumidityCorrosion === 0,
+        `${ordinaryHumidityCorrosion} Corrosion cells`);
+    check('persistent saturation can corrode exposed metal', countOf(corrosionId) > 0,
+        `${countOf(corrosionId)} Corrosion cells`);
+    physics.setRandomSeed(TEST_SEED);
+    runCorrosionSourceConversionRegression();
+
+    createWorld(9, 8);
+    for (let x = 3; x <= 5; x++) setCell(x, 6, ID.Wall);
+    setCell(4, 5, corrosionId);
+    const corrosionIndex = index(4, 5);
+    if (corrosionDef?.meltPoint !== undefined) {
+        getWorld().temp[corrosionIndex] = corrosionDef.meltPoint + 200;
+        getWorld().heat[corrosionIndex] = (corrosionDef.latent || 0) + 200;
+        run(1);
+    }
+    check('high-temperature Corrosion becomes Lava', typeAt(4, 5) === ID.Lava || countOf(ID.Lava) > 0,
+        `${defs[typeAt(4, 5)]?.name || 'air'} at source cell`);
+} else {
+    check('corrosion gravity, humidity response and heat conversion are available', false, 'Corrosion or humidity API is missing');
+}
+
+section('Humidity, Dewpoint and plant state survive capture and restore');
+if (hasHumidityApi && hasDewpointApi && getWorld().humidity) {
+    createWorld(10, 8);
+    physics.setAmbientHumidityTarget(72);
+    physics.setDewpointTarget(14);
+    getWorld().humidity.fill(50);
+    getWorld().humidity[index(3, 3)] = 87;
+    if (ID['Banana Seeds'] !== undefined) setCell(3, 4, ID['Banana Seeds']);
+    const saved = snapshotSimulationState();
+    check('captured state contains base settings and a typed local humidity field',
+        saved.ambientHumidity === 72 && saved.dewpointTarget === 14 &&
+        saved.arrays.humidity instanceof Float32Array && saved.arrays.humidity[index(3, 3)] === 87,
+        `humidity=${saved.ambientHumidity}, dewpoint=${saved.dewpointTarget}, local=${saved.arrays.humidity?.[index(3, 3)]}`);
+    physics.setAmbientHumidityTarget(5);
+    physics.setDewpointTarget(0);
+    getWorld().humidity[index(3, 3)] = 5;
+    restoreSimulationState(saved);
+    check('restore preserves humidity targets and cell values',
+        physics.getAmbientHumidityTarget() === 72 && physics.getDewpointTarget() === 14 && getWorld().humidity[index(3, 3)] === 87);
+
+    const legacyState = captureSimulationState();
+    legacyState.arrays.type[index(3, 4)] = 19;
+    delete legacyState.ambientHumidity;
+    delete legacyState.dewpointTarget;
+    delete legacyState.arrays.humidity;
+    restoreSimulationState(legacyState);
+    check('legacy saves default missing humidity and dewpoint fields',
+        physics.getAmbientHumidityTarget() === 50 && physics.getDewpointTarget() === 10 &&
+        getWorld().humidity.every(value => value === 50),
+        `base=${physics.getAmbientHumidityTarget()}, dewpoint=${physics.getDewpointTarget()}`);
+    check('legacy generic seed ID 19 restores as Grass Seeds',
+        ID['Grass Seeds'] === 19 && defs[getWorld().type[index(3, 4)]]?.name === 'Grass Seeds',
+        `material at migration fixture is ${defs[getWorld().type[index(3, 4)]]?.name}`);
+} else {
+    check('environment capture/restore includes local and base humidity', false, 'humidity/dewpoint persistence API is missing');
+    check('legacy save fields use documented defaults and seed migration', false, 'humidity/dewpoint persistence API is missing');
+}
+} finally {
+    restoreSimulationCheckpoint(ecologyCheckpoint, ecologySeed);
+    setExactAirConditions(20);
+    physics.setAmbientTarget(20);
+    physics.setAmbientHumidityTarget(50);
+    physics.setDewpointTarget(10);
+    setLayerLapse(2);
+    setAirLayersOn(true);
+    setAmbientWindOn(false);
+    setRandomSeed(TEST_SEED);
+}
+
+// The feature fixtures above create small worlds and tune both climate dials.
+// Return the caller to the ordinary simulation baseline before legacy checks.
+setExactAirConditions(20);
+physics.setAmbientTarget(20);
+physics.setAmbientHumidityTarget(50);
+physics.setDewpointTarget(10);
+setLayerLapse(2);
+setAirLayersOn(true);
+setAmbientWindOn(false);
+setRandomSeed(TEST_SEED);
 
 section('Lava has to land before it can set');
 setAmbientTarget(-60);
@@ -2983,15 +3451,16 @@ check('and switching it back on leaves the slider setting where it was',
     getLayerLapse() === 6 && getAirTempAt(ROWS - 1) - getAirTempAt(0) === layeredGap);
 setLayerLapse(2);
 
-section('Grass with only wet sand under it stays grass');
+section('Grass remains a distinct species on its wet sand substrate');
 for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
 setCell(20, ROWS - 2, ID['Wet Sand']);
-setCell(20, ROWS - 3, ID.Grass);
-getWorld().data[index(20, ROWS - 3)] = 8;
-run(1200);
-check('no wet mud nearby means no promotion',
-    countOf(ID.Grass) > 2 && countOf(ID.Plant) === 0,
-    `${countOf(ID.Grass)} grass cells, ${countOf(ID.Plant)} plant cells`);
+if (ID.Grass !== undefined) setCell(20, ROWS - 3, ID.Grass);
+run(600);
+check('grass can remain established on wet sand', ID.Grass !== undefined && countOf(ID.Grass) > 0,
+    `${countOf(ID.Grass)} grass cells`);
+check('grass does not transform into a different generic Plant material',
+    ID['Banana Plant'] === undefined || countOf(ID['Banana Plant']) === 0,
+    `${countOf(ID['Banana Plant'])} Banana Plant cells`);
 
 // ---------------------------------------------------------------------------
 

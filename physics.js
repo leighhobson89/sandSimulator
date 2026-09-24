@@ -66,7 +66,11 @@ let DEFS = [];
 const AIR_SPACE_BY_TYPE = new Uint8Array(256);
 let AMBIENT = 8;
 let ambientTarget = 8;
+let ambientHumidityTarget = 50;
+let dewpointTarget = 10;
 let frameCount = 0;
+let humidityCursor = 0;
+let cloudCursor = 0;
 
 // Randomness is deliberately kept behind one tiny boundary. The browser uses
 // its usual source, while tests (and future replays) can supply a seed or a
@@ -329,6 +333,27 @@ export function prepareDefinitions(json) {
             // "netting" weaves its way up through water as a mesh, "surface"
             // creeps sideways along the top of the water as a lily pad.
             growStyle: p.growStyle || null,
+            isSeed: !!p.isSeed,
+            plantSpecies: p.plantSpecies || null,
+            plantMinTemp: p.plantMinTemp === undefined ? -273 : p.plantMinTemp,
+            plantMaxTemp: p.plantMaxTemp === undefined ? 1000 : p.plantMaxTemp,
+            plantIdealTemp: p.plantIdealTemp === undefined ? 20 : p.plantIdealTemp,
+            plantMinHumidity: p.plantMinHumidity === undefined ? 0 : p.plantMinHumidity,
+            plantMaxHumidity: p.plantMaxHumidity === undefined ? 100 : p.plantMaxHumidity,
+            plantIdealHumidity: p.plantIdealHumidity === undefined ? 50 : p.plantIdealHumidity,
+            germinationMinHumidity: p.germinationMinHumidity === undefined ? 0 : p.germinationMinHumidity,
+            germinationMinTemp: p.germinationMinTemp === undefined ? -273 : p.germinationMinTemp,
+            moistureNeed: p.moistureNeed || 0,
+            humidityContribution: p.humidityContribution || 0,
+            richSoilGrowthBonus: p.richSoilGrowthBonus || 0,
+            richSoilGrowthMultiplier: p.richSoilGrowthMultiplier || 1,
+            poorSoilHealthCap: p.poorSoilHealthCap === undefined ? 1 : p.poorSoilHealthCap,
+            surfacePad: toId(p.surfacePad),
+            surfacePadGrowth: p.surfacePadGrowth || 6,
+            seedLimit: p.seedLimit || 0,
+            dewpointCondensation: !!p.dewpointCondensation,
+            precipitationChance: p.precipitationChance || 0,
+            metal: !!p.metal,
             seedChance: p.seedChance || 0,
             seedWaterRange: p.seedWaterRange || 0,
             seedInto: toId(p.seedInto),
@@ -464,9 +489,10 @@ export function prepareDefinitions(json) {
         def.hasStateChange = def.meltPoint !== undefined || def.freezePoint !== undefined ||
             def.boilPoint !== undefined || def.ignitePoint !== undefined ||
             def.evaporatesAbove !== undefined;
-        def.hasReaction = def.life > 0 || def.soaks || def.corrosion > 0 ||
+        def.hasReaction = def.life > 0 || def.soaks || def.corrosion > 0 || def.metal ||
             def.growChance > 0 || def.emit > 0 || def.quenchedInto !== EMPTY ||
             def.blastRadius > 0 || def.sprouts.length > 0 || def.seedChance > 0 ||
+            def.dewpointCondensation || def.precipitationChance > 0 || def.isSeed ||
             def.douses || def.contacts.length > 0 || def.withersPlants !== EMPTY ||
             def.compactsInto !== EMPTY || def.convertsBelow.length > 0 ||
             def.energizesConductors || def.chargeCapacity > 0 ||
@@ -523,7 +549,7 @@ export function prepareDefinitions(json) {
     WET_MUD_PLANT = EMPTY;
     const wetMud = nameToId['wet mud'];
     for (const def of defs) {
-        if (!def || !def.sprouts) continue;
+        if (!def || !def.sprouts || def.plantSpecies) continue;
         for (const rule of def.sprouts) {
             if (rule.on !== wetMud) continue;
             if (DEFS[rule.into] && DEFS[rule.into].growHeight > 0) WET_MUD_PLANT = rule.into;
@@ -580,12 +606,212 @@ export function getAmbientTemp() { return AMBIENT; }
 // front rolling in rather than a switch being thrown.
 export function setAmbientTarget(value) { ambientTarget = value; }
 export function getAmbientTarget() { return ambientTarget; }
+export function setAmbientHumidityTarget(value) {
+    if (!Number.isFinite(Number(value))) return;
+    ambientHumidityTarget = Math.max(0, Math.min(100, Number(value)));
+}
+export function getAmbientHumidityTarget() { return ambientHumidityTarget; }
+export function getHumidityAt(x, y) {
+    if (!world || !inBounds(x, y)) return ambientHumidityTarget;
+    return humidityNearCell(x, y);
+}
+export function setDewpointTarget(value) {
+    if (!Number.isFinite(Number(value))) return;
+    dewpointTarget = Math.max(0, Math.min(100, Number(value)));
+}
+export function getDewpointTarget() { return dewpointTarget; }
+
+export function getPlantHealth(x, y) {
+    if (!world || !inBounds(x, y)) return null;
+    const i = index(x, y);
+    const def = DEFS[world.type[i]];
+    if (!def?.isPlant || !def.plantSpecies) return null;
+    return plantHealthStateAt(x, y, def);
+}
+
+function plantHealthStateAt(x, y, def) {
+    const i = index(x, y);
+    const temperature = world.temp[i];
+    const humidity = humidityNearCell(x, y);
+    const moisture = plantMoistureAt(x, y, def);
+    const substrate = plantSubstrateNearby(x, y, def, moisture);
+    const thrives = temperature >= def.plantMinTemp && temperature <= def.plantMaxTemp &&
+        humidity >= def.plantMinHumidity && humidity <= def.plantMaxHumidity && substrate;
+    if (thrives) return 'thriving';
+    const survives = temperature >= def.plantMinTemp - 12 && temperature <= def.plantMaxTemp + 12 &&
+        humidity >= Math.max(0, def.plantMinHumidity - 28) &&
+        humidity <= Math.min(100, def.plantMaxHumidity + 18) &&
+        substrate;
+    return survives ? 'surviving' : 'dying';
+}
+
+function plantSubstrateNearby(x, y, def, moisture = plantSubstrateMoisture(x, y, def)) {
+    return moisture > 0 && moisture >= (def.moistureNeed || 0);
+}
+
+function plantMoistureAt(x, y, def) {
+    return plantSubstrateMoisture(x, y, def);
+}
+
+function plantSubstrateMoisture(x, y, def) {
+    if (def.growStyle === 'moss' || def.plantSpecies === 'moss') {
+        let moisture = 0;
+        for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) {
+            const name = DEFS[typeAt(x + dx, y + dy)]?.name;
+            if (name === 'Wet Mud') moisture = Math.max(moisture, 100);
+            else if (name === 'Wet Sand' || name === 'Wet Ash') moisture = Math.max(moisture, 70);
+            else if (name === 'Wood' || name === 'Stone') moisture = Math.max(moisture, 60);
+        }
+        return moisture;
+    }
+    if (def.plantSpecies === 'water grass') return waterWithin(x, y, 6) ? 100 : 0;
+    const root = rootedIn(x, y);
+    if (root === ROOT_RICH) return 100;
+    if (root === ROOT_POOR) return 70;
+    if (def.plantSpecies === 'banana' && waterWithin(x, y, 6)) return 100;
+    return 0;
+}
+
+function germinationMoistureAt(x, y, def, substrateId) {
+    if (def.plantSpecies === 'moss') {
+        const name = DEFS[substrateId]?.name;
+        if (name === 'Wet Mud') return 100;
+        if (name === 'Wet Sand' || name === 'Wet Ash') return 70;
+        if (name === 'Wood' || name === 'Stone') return 60;
+        return 0;
+    }
+    if (def.plantSpecies === 'water grass') return waterWithin(x, y, 6) ? 100 : 0;
+    if (substrateId === idOf('Wet Mud')) return 100;
+    if (substrateId === idOf('Wet Sand') || substrateId === idOf('Wet Ash')) return 70;
+    if (def.plantSpecies === 'banana' && substrateId === idOf('Water')) return 100;
+    return 0;
+}
+
+function plantIdealFitness(value, ideal, min, max) {
+    const span = value < ideal ? ideal - min : max - ideal;
+    if (span <= 0) return value === ideal ? 1 : 0;
+    return Math.max(0, Math.min(1, 1 - Math.abs(value - ideal) / span));
+}
+
+function plantVigorAt(x, y, def) {
+    const i = index(x, y);
+    const temperatureFitness = plantIdealFitness(
+        world.temp[i], def.plantIdealTemp, def.plantMinTemp, def.plantMaxTemp);
+    const humidityFitness = plantIdealFitness(
+        humidityNearCell(x, y), def.plantIdealHumidity, def.plantMinHumidity, def.plantMaxHumidity);
+    const moisture = plantMoistureAt(x, y, def);
+    const moistureFitness = def.moistureNeed > 0
+        ? Math.max(0, Math.min(1, moisture / (def.moistureNeed * 1.25)))
+        : 1;
+    return Math.min(temperatureFitness, humidityFitness, moistureFitness);
+}
+
+function mossSubstrateWithin(x, y, radius) {
+    for (let dy = -radius; dy <= radius; dy++) for (let dx = -radius; dx <= radius; dx++) {
+        const id = typeAt(x + dx, y + dy);
+        if (id <= 0) continue;
+        const name = DEFS[id].name;
+        if (name === 'Wood' || name === 'Stone' || name === 'Wet Sand' ||
+            name === 'Wet Mud' || name === 'Wet Ash') return true;
+    }
+    return false;
+}
+
+function updatePlantHealth(x, y, i, def) {
+    const state = plantHealthStateAt(x, y, def);
+    const grassOnPoorSoil = def.plantSpecies === 'grass' && rootedIn(x, y) === ROOT_POOR;
+    const target = state === 'thriving'
+        ? Math.min(0.55 + 0.45 * plantVigorAt(x, y, def),
+            grassOnPoorSoil ? def.poorSoilHealthCap : 1)
+        : state === 'surviving' ? 0.55 : 0;
+    const value = world.plantHealth[i];
+    world.plantHealth[i] = target > value
+        ? Math.min(target, value + 0.012)
+        : Math.max(target, value - 0.01);
+    if (world.plantCooldown[i] > 0) world.plantCooldown[i]--;
+    if (world.plantHealth[i] <= 0 && state === 'dying') {
+        transform(i, idOf('Dry Mud'));
+        return true;
+    }
+    return false;
+}
+
+function spreadMoss(x, y, i, def) {
+    const budget = world.data[i];
+    if (budget <= 1 || random() >= def.growChance) return false;
+    const direction = random() < 0.5 ? -1 : 1;
+    for (const dx of [direction, -direction]) {
+        const nx = x + dx;
+        if (typeAt(nx, y) !== EMPTY || !mossSubstrateWithin(nx, y, 3)) continue;
+        const ni = index(nx, y);
+        transform(ni, def.id);
+        world.data[ni] = budget - 1;
+        world.plantHealth[ni] = world.plantHealth[i];
+        world.data[i] = 1;
+        return false;
+    }
+    return false;
+}
+
+// Banana plants keep a narrow upright trunk. Every few levels it sends out
+// paired, gently raised fronds so the crown reads as a broad tropical plant.
+function growBananaFronds(x, y, health) {
+    const leaf = idOf('Banana Leaf');
+    if (leaf === EMPTY) return;
+    for (const direction of [-1, 1]) {
+        for (let step = 1; step <= 4; step++) {
+            const nx = x + direction * step;
+            const ny = y - (step >= 3 ? 1 : 0);
+            if (!inBounds(nx, ny) || typeAt(nx, ny) !== EMPTY) continue;
+            const ni = index(nx, ny);
+            transform(ni, leaf);
+            world.data[ni] = 1;
+            world.plantHealth[ni] = health;
+        }
+    }
+}
+
+function countNearbySeedType(x, y, seedId) {
+    if (seedId === EMPTY) return 0;
+    let total = 0;
+    for (let dy = -7; dy <= 4; dy++) for (let dx = -7; dx <= 7; dx++) {
+        if (typeAt(x + dx, y + dy) === seedId) total++;
+    }
+    return total;
+}
+
+function hasAirNeighbour(x, y) {
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        const id = typeAt(x + dx, y + dy);
+        if (id >= 0 && AIR_SPACE_BY_TYPE[id]) return true;
+    }
+    return false;
+}
+
+function humidityNearCell(x, y) {
+    const i = index(x, y);
+    if (AIR_SPACE_BY_TYPE[world.type[i]]) return world.humidity[i];
+    let total = 0;
+    let count = 0;
+    for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]]) {
+        const nx = x + dx;
+        const ny = y + dy;
+        if (!inBounds(nx, ny)) continue;
+        const ni = index(nx, ny);
+        if (!AIR_SPACE_BY_TYPE[world.type[ni]]) continue;
+        total += world.humidity[ni];
+        count++;
+    }
+    return count > 0 ? total / count : world.humidity[i];
+}
 
 // The persistence layer owns the wire format, while physics owns which parts
 // of a world are durable. Keeping this boundary here means a restored world is
 // always built with the same typed arrays as a newly-created one.
 const PERSISTED_WORLD_FIELDS = [
     'type', 'temp', 'life', 'lifeMax', 'residue', 'shade', 'heat', 'data',
+    'humidity', 'plantHealth', 'corrosionExposure', 'plantCooldown',
     'machineSetting', 'storageType', 'storageCount', 'storageFlowRemainder',
     'mixerInputTypeA', 'mixerInputCountA', 'mixerInputFlowA',
     'mixerInputTypeB', 'mixerInputCountB', 'mixerInputFlowB',
@@ -607,6 +833,8 @@ export function captureSimulationState() {
         rows: ROWS,
         ambient: AMBIENT,
         ambientTarget,
+        ambientHumidity: ambientHumidityTarget,
+        dewpointTarget,
         layerLapse,
         airLayersOn,
         ambientWindOn,
@@ -626,6 +854,17 @@ export function restoreSimulationState(state) {
     createWorld(state.cols, state.rows);
     for (const field of PERSISTED_WORLD_FIELDS) {
         const source = state.arrays[field];
+        // Environment and plant fields were added after the first save format.
+        // Older version-1 saves restore with current defaults and empty biology.
+        if (['humidity', 'plantHealth', 'corrosionExposure', 'plantCooldown'].includes(field) && !source) {
+            if (field === 'humidity') world.humidity.fill(50);
+            if (field === 'plantHealth') {
+                for (let i = 0; i < cells; i++) {
+                    if (DEFS[world.type[i]]?.isPlant) world.plantHealth[i] = 0.5;
+                }
+            }
+            continue;
+        }
         // machineSetting was added after the first version of the save format.
         // Older saves use each machine's definition default.
         if (field === 'machineSetting' && !source) {
@@ -658,6 +897,11 @@ export function restoreSimulationState(state) {
 
     AMBIENT = Number.isFinite(state.ambient) ? state.ambient : AMBIENT;
     ambientTarget = Number.isFinite(state.ambientTarget) ? state.ambientTarget : AMBIENT;
+    ambientHumidityTarget = Number.isFinite(state.ambientHumidity)
+        ? Math.max(0, Math.min(100, state.ambientHumidity)) : 50;
+    dewpointTarget = Number.isFinite(state.dewpointTarget)
+        ? Math.max(0, Math.min(100, state.dewpointTarget)) : 10;
+    if (!state.arrays.humidity) world.humidity.fill(ambientHumidityTarget);
     layerLapse = Number.isFinite(state.layerLapse) ? state.layerLapse : layerLapse;
     airLayersOn = state.airLayersOn !== false;
     windDial = Number.isFinite(state.windDial) ? state.windDial : windDial;
@@ -684,6 +928,10 @@ export function createWorld(cols, rows) {
         moved: new Uint8Array(n),
         shade: new Uint8Array(n),
         heat: new Float32Array(n),
+        humidity: new Float32Array(n),
+        plantHealth: new Float32Array(n),
+        corrosionExposure: new Uint16Array(n),
+        plantCooldown: new Uint16Array(n),
         surface: new Int16Array(n),
         data: new Uint8Array(n),
         machineSetting: new Float32Array(n),
@@ -716,6 +964,7 @@ export function createWorld(cols, rows) {
     tempFloodQueue = new Int32Array(world.temp.buffer);
     tempNextFloodQueue = new Int32Array(world.tempNext.buffer);
     world.temp.fill(AMBIENT);
+    world.humidity.fill(ambientHumidityTarget);
     for (let i = 0; i < n; i++) world.shade[i] = random() * 255;
     storageFunnelMachines = [];
     storageBarrierMask = null;
@@ -1044,6 +1293,10 @@ export function clearWorld() {
     world.residue.fill(0);
     world.temp.fill(AMBIENT);
     world.heat.fill(0);
+    world.humidity.fill(ambientHumidityTarget);
+    world.plantHealth.fill(0);
+    world.corrosionExposure.fill(0);
+    world.plantCooldown.fill(0);
     world.data.fill(0);
     world.machineSetting.fill(0);
     world.storageType.fill(0);
@@ -1135,6 +1388,9 @@ export function setCell(x, y, id, keepTemp) {
             : (def.forceRate > 0 ? getAirTempAt(y) : def.defaultTemp);
     }
     world.heat[i] = 0;
+    world.plantHealth[i] = def?.isPlant ? 0.5 : 0;
+    world.corrosionExposure[i] = 0;
+    world.plantCooldown[i] = 0;
     world.data[i] = startingData(def);
     world.machineSetting[i] = def.machine ? defaultMachineSetting(def) : 0;
     world.storageType[i] = 0;
@@ -1160,6 +1416,9 @@ function transform(i, id, life, residue) {
     world.lifeMax[i] = lifetime;
     world.residue[i] = residue || EMPTY;
     world.heat[i] = 0;
+    world.plantHealth[i] = def?.isPlant ? 0.5 : 0;
+    world.corrosionExposure[i] = 0;
+    world.plantCooldown[i] = 0;
     world.data[i] = startingData(def);
     world.machineSetting[i] = def.machine ? defaultMachineSetting(def) : 0;
     world.storageType[i] = 0;
@@ -1186,6 +1445,9 @@ function removeParticle(i) {
     world.lifeMax[i] = 0;
     world.residue[i] = EMPTY;
     world.heat[i] = 0;
+    world.plantHealth[i] = 0;
+    world.corrosionExposure[i] = 0;
+    world.plantCooldown[i] = 0;
     world.data[i] = 0;
     world.machineSetting[i] = 0;
     world.storageType[i] = 0;
@@ -1206,6 +1468,9 @@ function swapCells(i1, i2) {
     let r = world.residue[i1]; world.residue[i1] = world.residue[i2]; world.residue[i2] = r;
     let s = world.shade[i1]; world.shade[i1] = world.shade[i2]; world.shade[i2] = s;
     let q = world.heat[i1]; world.heat[i1] = world.heat[i2]; world.heat[i2] = q;
+    let plantHealth = world.plantHealth[i1]; world.plantHealth[i1] = world.plantHealth[i2]; world.plantHealth[i2] = plantHealth;
+    let corrosion = world.corrosionExposure[i1]; world.corrosionExposure[i1] = world.corrosionExposure[i2]; world.corrosionExposure[i2] = corrosion;
+    let plantCooldown = world.plantCooldown[i1]; world.plantCooldown[i1] = world.plantCooldown[i2]; world.plantCooldown[i2] = plantCooldown;
     let f = world.surface[i1]; world.surface[i1] = world.surface[i2]; world.surface[i2] = f;
     let d = world.data[i1]; world.data[i1] = world.data[i2]; world.data[i2] = d;
     let ms = world.machineSetting[i1]; world.machineSetting[i1] = world.machineSetting[i2]; world.machineSetting[i2] = ms;
@@ -1567,6 +1832,82 @@ function markOpenAirCells() {
     }
 }
 
+// Humidity belongs to the location in the room, not to a particle. Updating
+// one quarter of the field each frame keeps the extra air simulation bounded
+// while every cell still gets fresh diffusion and source/sink input every four
+// ticks. The existing open-air flood mask distinguishes outside air from rooms.
+function updateHumidityField() {
+    const count = world.type.length;
+    const phase = humidityCursor & 3;
+    humidityCursor = (humidityCursor + 1) & 3;
+    const water = idOf('Water');
+    const steam = idOf('Steam');
+    const cloud = idOf('Cloud');
+    for (let i = phase; i < count; i += 4) {
+        if (!AIR_SPACE_BY_TYPE[world.type[i]]) continue;
+        const x = i % COLS;
+        const y = Math.floor(i / COLS);
+        const current = world.humidity[i];
+        const localAirTemp = getAirTempAt(y);
+        let neighbourTotal = 0;
+        let neighbourCount = 0;
+        let source = 0;
+        let sink = 0;
+        for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]]) {
+            const nx = x + dx;
+            const ny = y + dy;
+            if (!inBounds(nx, ny)) continue;
+            const ni = index(nx, ny);
+            const id = world.type[ni];
+            if (AIR_SPACE_BY_TYPE[id]) {
+                neighbourTotal += world.humidity[ni];
+                neighbourCount++;
+                if (id === steam) source += 0.8;
+                if (id === cloud) source += 0.04;
+                continue;
+            }
+            const def = DEFS[id];
+            if (id === water && world.temp[ni] > 0) source += 0.42;
+            if (def?.isPlant) source += Math.max(0.12, def.humidityContribution * 0.8);
+            if (def?.name === 'Sand' || def?.name === 'Dry Mud') sink += 0.26;
+        }
+
+        let humidity = current;
+        if (neighbourCount > 0) {
+            const exchange = world.moved[i] & 1 ? 0.055 : 0.025;
+            humidity += (neighbourTotal / neighbourCount - humidity) * exchange;
+        }
+        if (world.moved[i] & 1) humidity += (ambientHumidityTarget - humidity) * 0.006;
+        humidity += source * 0.6 - sink * 0.04;
+        world.humidity[i] = Math.max(0, Math.min(100, humidity));
+
+        // Clouds nucleate sparsely in exposed high air at saturation when that
+        // air reaches the configured dewpoint. Enclosed chambers cannot spawn
+        // weather, though their local humidity is still retained and shared.
+        if (cloud > 0 && world.type[i] === EMPTY && (world.moved[i] & 1) &&
+            y < ROWS * 0.42 && world.humidity[i] >= 88 &&
+            localAirTemp <= dewpointTarget && random() < 0.00012 && !nearbyClouds(x, y, 3)) {
+            transform(i, cloud);
+            world.temp[i] = localAirTemp;
+            world.humidity[i] = Math.max(0, world.humidity[i] - 12);
+        }
+    }
+}
+
+function nearbyClouds(x, y, radius) {
+    const cloud = idOf('Cloud');
+    if (cloud === EMPTY) return false;
+    for (let dy = -radius; dy <= radius; dy++) {
+        for (let dx = -radius; dx <= radius; dx++) {
+            if (dx === 0 && dy === 0) continue;
+            const nx = x + dx;
+            const ny = y + dy;
+            if (inBounds(nx, ny) && world.type[index(nx, ny)] === cloud) return true;
+        }
+    }
+    return false;
+}
+
 export function stepSimulation() {
     frameCount++;
     // Ease the air temperature towards whatever the slider is set to. This is
@@ -1578,6 +1919,7 @@ export function stepSimulation() {
         if (Math.abs(ambientTarget - AMBIENT) < 0.05) AMBIENT = ambientTarget;
     }
     markOpenAirCells();
+    updateHumidityField();
     diffuseHeat();
     radiateHeat();
     computeLiquidSurfaces();
@@ -2152,6 +2494,84 @@ function hasLiquidNeighbour(x, y) {
 // stopped being what it was.
 
 function applyReactions(x, y, i, def) {
+    if (def.plantSpecies && def.isPlant && ((frameCount + i) & 3) === 0 &&
+        updatePlantHealth(x, y, i, def)) return true;
+
+    // Steam and Cloud share one dewpoint rule. Local humidity determines
+    // saturation; the air temperature determines whether condensation occurs
+    // and whether it settles as liquid rain or solid snow.
+    if (def.dewpointCondensation) {
+        const localAirTemp = getAirTempAt(y);
+        const humidity = humidityNearCell(x, y);
+        const requiredHumidity = def.precipitationChance > 0 ? 88 : 82;
+        const reachesDewpoint = localAirTemp <= dewpointTarget;
+        const precipitates = def.precipitationChance > 0 && reachesDewpoint &&
+            humidity >= requiredHumidity && random() < def.precipitationChance;
+        const steamCondenses = def.precipitationChance === 0 && reachesDewpoint && humidity >= requiredHumidity;
+        if (precipitates || steamCondenses) {
+            const precipitationTemp = def.precipitationChance > 0
+                ? Math.min(localAirTemp, ambientTarget) : localAirTemp;
+            const precipitation = precipitationTemp <= 0 ? idOf('Snow') : idOf('Water');
+            if (precipitation !== EMPTY) {
+                transform(i, precipitation);
+                world.temp[i] = precipitationTemp <= 0 ? Math.min(world.temp[i], precipitationTemp) : precipitationTemp;
+                world.humidity[i] = Math.max(0, world.humidity[i] - 18);
+                return true;
+            }
+        }
+    }
+
+    // Metal needs sustained saturation before the exposed source cell rusts.
+    // Replacing that pixel lets the new powder fall and leaves gaps in a
+    // structure instead of coating intact metal with cosmetic rust.
+    if (def.metal && ((frameCount + i) & 3) === 0) {
+        const humidity = humidityNearCell(x, y);
+        const exposedToAir = hasAirNeighbour(x, y);
+        if (exposedToAir && humidity >= 98) {
+            world.corrosionExposure[i] = Math.min(65535, world.corrosionExposure[i] + 1);
+        } else {
+            world.corrosionExposure[i] = Math.max(0, world.corrosionExposure[i] - 2);
+        }
+        if (world.corrosionExposure[i] >= 120) {
+            transform(i, idOf('Corrosion'));
+            return true;
+        }
+    }
+
+    if (def.plantSpecies && def.isSeed && ((frameCount + i) & 3) === 0 &&
+        world.temp[i] >= def.germinationMinTemp &&
+        humidityNearCell(x, y) >= def.germinationMinHumidity) {
+        if (def.plantSpecies === 'moss') {
+            const rule = def.sprouts[0];
+            const grownDef = rule ? DEFS[rule.into] : null;
+            const substrateMoisture = grownDef
+                ? plantSubstrateMoisture(x, y, grownDef) : 0;
+            if (!rule || !mossSubstrateWithin(x, y, 1) ||
+                substrateMoisture < (grownDef?.moistureNeed || 0) || random() >= rule.chance) return false;
+            transform(i, rule.into);
+            world.data[i] = startingData(DEFS[rule.into]);
+            return true;
+        }
+        const under = typeAt(x, y + 1);
+        for (const rule of def.sprouts) {
+            if (under !== rule.on) continue;
+            const depth = rule.submergedInto !== EMPTY ? openWaterDepth(x, y) : 0;
+            const grown = depth >= def.submergedDepth && rule.submergedInto !== EMPTY
+                ? rule.submergedInto : rule.into;
+            const grownDef = DEFS[grown];
+            const substrateMoisture = grownDef
+                ? germinationMoistureAt(x, y, grownDef, under) : 0;
+            if (substrateMoisture < (grownDef?.moistureNeed || 0) || random() >= rule.chance) continue;
+            if (depth >= def.submergedDepth && crowdedBy(x, y, rule.submergedInto)) return false;
+            transform(i, grown);
+            world.data[i] = depth >= def.submergedDepth ? Math.min(255, depth + 10) : startingData(DEFS[grown]);
+            if (grown === idOf('Grass') && under === idOf('Wet Mud')) {
+                world.data[i] = Math.min(255, world.data[i] + DEFS[grown].richSoilGrowthBonus);
+            }
+            return true;
+        }
+    }
+
     // An ordinary Spark touching any conductor becomes a travelling power
     // pulse. Sparks emitted by stored charge carry data=1 and are visual only,
     // which prevents charged Battery from feeding itself forever.
@@ -2411,7 +2831,7 @@ function applyReactions(x, y, i, def) {
     // lily on the surface. That is settled here, on the one frame the seed
     // germinates, from the water standing over it at that moment. Nothing
     // afterwards re-checks it, so draining the pond leaves the lily growing.
-    if (def.sprouts.length > 0 && world.temp[i] > def.sproutMinTemp) {
+    if (!def.isSeed && def.sprouts.length > 0 && world.temp[i] > def.sproutMinTemp) {
         const under = typeAt(x, y + 1);
         for (const rule of def.sprouts) {
             if (under !== rule.on) continue;
@@ -2445,16 +2865,35 @@ function applyReactions(x, y, i, def) {
     // sensible height - and because a spent cell never grows again, a plant
     // that is burnt or dissolved stays gone instead of creeping back.
     if (def.growHeight > 0) {
+        if (((frameCount + i) & 3) !== 0 ||
+            (def.plantSpecies && plantHealthStateAt(x, y, def) !== 'thriving')) return false;
+        let soil = ROOT_NONE;
+        if (def.plantSpecies === 'moss') {
+            if (!mossSubstrateWithin(x, y, 3)) return false;
+        } else if (def.plantSpecies === 'water grass') {
+            if (!waterWithin(x, y, 6)) return false;
+            soil = ROOT_POOR;
+        } else {
+            soil = rootedIn(x, y);
+            if (def.plantSpecies === 'banana' && soil === ROOT_NONE && waterWithin(x, y, 6)) {
+                soil = ROOT_POOR;
+            }
+            if (def.plantSpecies && soil === ROOT_NONE) return false;
+        }
+        if (def.growStyle === 'moss') return spreadMoss(x, y, i, def);
         if (def.growStyle === 'surface') return creepAcrossSurface(x, y, i, def);
 
         const budget = world.data[i];
-        if (budget > 1 && random() < def.growChance) {
+        const growthChance = def.plantSpecies === 'grass' && soil === ROOT_RICH
+            ? def.growChance * def.richSoilGrowthMultiplier
+            : def.growChance;
+        if (budget > 1 && random() < growthChance) {
             // Nothing grows out of dry ground. A plant only puts on another
             // cell while some part of it - anywhere in the plant, not just the
             // cell doing the growing - is still touching wet mud or wet sand,
             // so a patch that dries out stops where it is instead of carrying
             // on regardless.
-            const soil = rootedIn(x, y);
+            if (!def.plantSpecies) soil = rootedIn(x, y);
             if (soil === ROOT_NONE) return false;
 
             if (def.growStyle === 'netting') return weaveThroughWater(x, y, i, def, budget);
@@ -2469,7 +2908,11 @@ function applyReactions(x, y, i, def) {
 
             // Straight up most of the time, off to one side now and then, which
             // is enough to make it look like a plant rather than a pole.
-            const sideways = random() < 0.25 ? randomSign() : 0;
+            const sidewaysChance = def.growStyle === 'upright' ? 0.06
+                : def.growStyle === 'banana' ? 0.025
+                : def.growStyle === 'spindly' ? 0.72
+                    : def.growStyle === 'branching' ? 0.34 : 0.25;
+            const sideways = random() < sidewaysChance ? randomSign() : 0;
             for (const dx of [sideways, 0]) {
                 const above = typeAt(x + dx, y - 1);
                 if (above !== EMPTY && above !== idOf('Water')) continue;
@@ -2478,6 +2921,18 @@ function applyReactions(x, y, i, def) {
                 world.data[ni] = grows === def.id
                     ? budget - 1
                     : Math.max(budget - 1, world.data[ni]);
+                if (def.growStyle === 'branching' && budget > 4 && random() < 0.28) {
+                    const branchX = x - dx;
+                    if (typeAt(branchX, y - 1) === EMPTY) {
+                        const branch = (y - 1) * COLS + branchX;
+                        transform(branch, grows);
+                        world.data[branch] = Math.max(2, (budget - 1) >> 1);
+                        world.plantHealth[branch] = world.plantHealth[ni];
+                    }
+                }
+                if (def.growStyle === 'banana' && budget > 3 && budget % 4 === 0) {
+                    growBananaFronds(x, y, world.plantHealth[i]);
+                }
                 world.data[i] = 1;
                 return false;
             }
@@ -2500,6 +2955,11 @@ function applyReactions(x, y, i, def) {
     // out its life but never reproduces. The seed is dropped to one side so it
     // falls clear of the plant below rather than landing back on top of it.
     if (def.seedChance > 0 && random() < def.seedChance) {
+        if (def.plantSpecies) {
+            if (plantHealthStateAt(x, y, def) !== 'thriving' || world.plantHealth[i] < 0.65 ||
+                world.plantCooldown[i] > 0 || (def.seedLimit > 0 && countNearbySeedType(x, y, def.seedInto) >= def.seedLimit)) return false;
+            world.plantCooldown[i] = 300;
+        }
         if (def.seedWaterRange > 0 && !waterWithin(x, y, def.seedWaterRange)) return false;
         const side = randomSign();
         for (const dx of [side, -side]) {
@@ -2700,6 +3160,13 @@ function weaveThroughWater(x, y, i, def, budget) {
     const above = typeAt(x, y - 1);
 
     if (above === EMPTY) {
+        if (def.surfacePad !== EMPTY) {
+            const health = world.plantHealth[i];
+            transform(i, def.surfacePad);
+            world.data[i] = def.surfacePadGrowth;
+            world.plantHealth[i] = health;
+            return true;
+        }
         if (def.flowerInto === EMPTY) return false;
         transform(i, def.flowerInto);
         return true;

@@ -29,14 +29,15 @@ actually run.
 
 ### Current catalogue
 
-The 54 entries are grouped in the same order as the picker:
+The 78 entries are grouped in the same order as the picker:
 
 | Group | Materials |
 | --- | --- |
-| Powders | Sand, Wet Mud, Ash, Wet Sand, Dry Mud, Seed, Gunpowder, Snow, Scoria, Wet Ash, Spark Dust |
+| Powders | Sand, Wet Mud, Ash, Wet Sand, Dry Mud, Gunpowder, Snow, Scoria, Wet Ash, Spark Dust, Corrosion |
+| Seeds | Grass Seeds, Moss Spores, Daffodil Seeds, Red Tulip Seeds, Geranium Seeds, Blue Flower Seeds, Banana Seeds, Water Grass / Lily Seeds |
 | Liquids | Water, Oil, Lava, Acid |
-| Gases | Fire, Steam, Smoke, Toxic Gas |
-| Solids | Ice, Stone, Wood, Glass, Plant, Wall, Flower, Grass, Lily Stem, Lily Pad, Lily Flower, Ash Grass, Clay, Ceramic, Spark Block, Insulation |
+| Gases | Fire, Steam, Smoke, Toxic Gas, Cloud |
+| Solids | Ice, Stone, Wood, Glass, Plant, Wall, Flower, Grass, Lily Stem, Lily Pad, Lily Flower, Ash Grass, Clay, Ceramic, Spark Block, Insulation, Moss, Daffodil, Red Tulip, Geranium, Blue Flower, Banana Plant, Water Grass, Daffodil Bloom, Tulip Bloom, Geranium Bloom, Blue Flower Bloom, Banana Bunch, Water Grass Bloom, Water Grass Pad, Banana Leaf |
 | Metals | Spark, Copper, Molten Copper, Battery, Molten Aluminum, Iron, Molten Iron, Tubing |
 | Machines | Fan, Heater, Cooler, Vent, Mixer |
 | Storage | Powder Storage Bin, Liquid Storage Bin, Gas Storage Bin |
@@ -78,17 +79,21 @@ simulation description in [`PROGRAM_OVERVIEW.md`](PROGRAM_OVERVIEW.md).
 
 | Category | Quick reference |
 | --- | --- |
-| Powders | Loose materials fall and slide diagonally. Water wets Sand, Dry Mud, and Ash into Wet Sand, Wet Mud, and Wet Ash. Powders do not sort themselves by density against other powders. |
+| Powders | Loose materials fall and slide diagonally. Water wets Sand, Dry Mud, and Ash into Wet Sand, Wet Mud, and Wet Ash. Corrosion falls as a powder and melts into Lava at high heat. Powders do not sort themselves by density against other powders. |
+| Seeds | Eight viable powder seed types wait for suitable local temperature, humidity, and substrate moisture before germinating. Species rules in `particles.json` set their substrate, aquatic depth, and germination requirements. |
 | Liquids | Water, Oil, Lava, and Acid flow and seek a level. Liquid storage also accepts molten metals. Water changes phase at its configured thresholds; Lava and Acid have their own material-defined heat and reaction rules. |
-| Gases | Fire, Steam, Smoke, and Toxic Gas rise and spread. Gas storage accepts non-flaming gases, so Fire is not accepted by a Gas Storage Bin. |
-| Solids | Solids provide the fixed, structural, growing, or phase-change behavior declared by their definitions. Ice, Glass, Clay, Ceramic, and plant materials participate in the heat and reaction rules defined in `particles.json`. |
+| Gases | Fire, Steam, Smoke, Toxic Gas, and Cloud rise and spread. Steam and Cloud use humidity and dewpoint condensation. Gas storage accepts non-flaming gases, so Fire is not accepted by a Gas Storage Bin. |
+| Solids | Solids provide the fixed, structural, growing, or phase-change behavior declared by their definitions. Plants use species-specific environmental viability and growth; Ice, Glass, Clay, Ceramic, and plant materials also follow the heat and reaction rules defined in `particles.json`. |
 | Metals | Spark, Copper, Battery, Iron, their molten forms, Molten Aluminum, and Tubing are listed here. Copper, Iron, and Battery carry electrical pulses and Battery stores charge; Tubing has no electrical conductivity despite being in the Metals picker group. |
 | Tools | Heat Ray and Cold Ray are short-lived directional brushes. A left-button stroke starts Heat Ray upward or Cold Ray downward; its first non-zero drag selects the nearest cardinal direction, which persists while stationary and changes only when the drag heading changes. Painted ray cells travel as projectiles using that stored heading. Wind moves light materials and stirs air; it stops at solid barriers but passes through plants. |
 
 ### Heat, electrical, and reaction anchors
 
 - Ice above `0 C` becomes Water and Water below `0 C` becomes Ice. Water above
-  `100 C` becomes Steam; Steam below `95 C` condenses to Water.
+  `100 C` becomes Steam; Wet Mud above its definition threshold becomes Dry Mud
+  and emits Steam. Steam condenses by the humidity and dewpoint rules in
+  [Section 7](#7-seeds-plants-humidity-dewpoint-weather-and-corrosion), rather
+  than by a lifetime countdown.
 - Wood, Oil, and Plants ignite at their definition thresholds. Sand next to Lava
   becomes Glass; Lava below `700 C` becomes Scoria, and Scoria below `100 C`
   becomes Stone. Heating Stone above `100 C` returns it to Scoria, and heating
@@ -179,6 +184,13 @@ cell, regardless of brush size or drawing mode. Clicking a machine opens its
 settings or inventory dialog. Machine state persists in local Resume Game saves
 and portable LZString saves. The shared air temperature control ranges from
 `-60 C` to `4000 C`.
+
+The environmental controls also include **Base Humidity**, a `0-100%` slider
+that starts at `50%`, and **Dewpoint**, a `0-100 C` slider that starts at
+`10 C`. Base Humidity is the open-air field's slow return target; nearby Water,
+Steam, Cloud, and plants add moisture, while Sand and Dry Mud absorb it. The
+Dewpoint setting is the temperature threshold used by cloud precipitation and
+Steam condensation. Both settings are saved with the world.
 
 ### Powered machines
 
@@ -422,3 +434,77 @@ acceptance or release prerequisite.
 Keep focused machine regressions beside their owning specs, and use the
 regression policy in [`E2E_TEST_PLAN.md`](E2E_TEST_PLAN.md) when no functional
 area owns a repaired defect.
+
+## 7. Seeds, plants, humidity, dewpoint, weather, and corrosion
+
+### Seed and plant lifecycle
+
+The picker has a dedicated **Seeds** group with Grass Seeds, Moss Spores,
+Daffodil Seeds, Red Tulip Seeds, Geranium Seeds, Blue Flower Seeds, Banana
+Seeds, and Water Grass / Lily Seeds. They remain movable powder particles while
+dormant. A seed germinates only when its per-species minimum temperature and
+humidity are met and its configured substrate has enough moisture. Tooltips
+summarize each species, while `particles.json` contains the exact numeric
+thresholds and viable substrate rules. Dry ground or unsuitable air leaves the
+seed dormant. ID `19`, previously the generic Seed, is retained as Grass Seeds
+so existing worlds and saves preserve that particle as the grass species.
+
+The species cover different habitats. Grass germinates on Wet Mud, Wet Sand, or
+Wet Ash; Wet Mud is richer, giving grass faster/taller growth and a higher health
+cap than poorer soil. Moss Spores colonize damp Wood, Stone, Wet Sand, Wet Mud,
+or Wet Ash, and Moss spreads sideways. Daffodil, Red Tulip, Geranium, and Blue
+Flower use their own climate ranges and grow into matching blooms. Banana Seeds
+need a warm humid environment and wet substrate; the Banana Plant grows an
+upright trunk with broad leaves and a fruit bunch. Water Grass / Lily Seeds need
+wet ground and nearby open water; under enough water they grow a mesh stem to
+the surface, spread Water Grass Pads, and can bloom there.
+
+Growing cells track health against their species' minimum/maximum and ideal
+temperature and humidity, plus the required root-zone moisture. In-range plants
+thrive and grow; plants within a wider survival band pause growth while health
+recovers or declines; plants outside that band wither into Dry Mud when health
+reaches zero. Plant color reflects its health. Only thriving, sufficiently
+healthy plants reproduce; a cooldown and nearby-seed limit prevent a mature
+patch from producing seeds every frame. Existing burn, freeze, and acid
+reactions still apply.
+
+### Humidity and condensation
+
+Relative humidity is a local `0-100%` field attached to air locations, not a
+visible particle. It diffuses between neighboring air cells and is updated in
+staggered portions of the world each frame. Exposed open air slowly returns
+toward the Base Humidity slider. Water above freezing, Steam, Cloud, and growing
+plants raise nearby humidity; exposed Sand and Dry Mud lower it. Plants
+therefore both depend on moisture and contribute humidity as they grow.
+
+The Dewpoint slider sets a configurable `0-100 C` threshold, defaulting to
+`10 C`. When exposed upper air is at or below the dewpoint and local humidity
+reaches `88%`, sparse Cloud gas particles can nucleate without an existing
+cloud. Enclosed chambers retain and diffuse humidity but do not spontaneously
+spawn weather. Cloud gas rises/drifts and, at or below the dewpoint in air at
+`88%` or higher humidity, can condense into individual precipitation particles:
+Water when the precipitation temperature is above `0 C`, Snow at or below
+`0 C`. Clouds are a gas material and can be placed with the material picker.
+
+Steam remains produced by boiling Water and Wet Mud, evaporates above `3000 C`,
+and has no lifetime timer. It adds moisture to nearby air and condenses to Water
+or Snow when the air reaches the configured Dewpoint and local humidity is at
+least `82%`. Boiling, Steam condensation, cloud formation, and rain/snow all
+participate in the same humidity and temperature cycle; changing the dewpoint
+affects both Steam and Cloud.
+
+### Corrosion and persistence
+
+Metal-flagged definitions corrode only while exposed to adjacent air at
+persistently saturated local humidity (`98%` or more). Exposure builds over
+time and recedes faster when the metal is no longer in saturated air. Once the
+exposure threshold is reached, the metal cell itself becomes a Corrosion powder
+particle, so the powder can fall away and leave a gap in the structure. The
+Corrosion powder is not itself corrodible and melts into Lava at `1000 C`.
+
+Local humidity, plant health, corrosion exposure, and plant reproduction
+cooldown are stored in per-cell arrays. Base Humidity and Dewpoint are saved as
+world settings. Local Resume Game and portable Save/Load preserve these fields;
+older version-1 saves without the added arrays or settings initialize them from
+the current defaults (`50%` Base Humidity and `10 C` Dewpoint), and their ID 19
+particles load as Grass Seeds.

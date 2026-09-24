@@ -110,7 +110,7 @@ async function expectWorldFit(page, { cols, rows }) {
         expect(edge.top).toBeGreaterThanOrEqual(fit.contentRect.top - 1);
         expect(edge.bottom).toBeLessThanOrEqual(fit.contentRect.bottom + 1);
     }
-    expect(fit.edgeRects[2].bottom).toBeGreaterThanOrEqual(fit.canvasRect.bottom);
+    expect(fit.edgeRects[2].bottom).toBeGreaterThanOrEqual(fit.canvasRect.bottom - 0.01);
     return fit;
 }
 
@@ -254,7 +254,9 @@ test('expanded-world edges and camera clamps remain correct after zooming in fro
         Math.min(...[...group.querySelectorAll('path')].map(path => path.getBBox().y))
     );
     const canvasHeight = await page.locator('#canvas').evaluate(canvas => canvas.height);
-    expect(bottomEdge).toBe(canvasHeight);
+    // getBBox can expose a fractional SVG edge after CSS scaling; keep the
+    // boundary aligned to the canvas within subpixel rounding.
+    expect(Math.abs(bottomEdge - canvasHeight)).toBeLessThanOrEqual(0.01);
 
     await area.evaluate((element, extents) => element.scrollTo(extents.maxLeft / 2, extents.maxTop / 2), {
         maxLeft,

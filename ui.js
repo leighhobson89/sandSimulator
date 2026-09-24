@@ -26,6 +26,7 @@ import {
 } from './game.js';
 import {
     getDefinitions, setAmbientTarget, getAmbientTarget, setLayerLapse, getLayerLapse,
+    setAmbientHumidityTarget, getAmbientHumidityTarget, setDewpointTarget, getDewpointTarget,
     setAmbientWindOn, getAmbientWindOn, setAirLayersOn, getAirLayersOn,
     setWindDial, getWorld, index, getMachineSetting, setMachineSetting,
     getStorageInventory, purgeStorageBin, getVentInventory, getVentReleaseRate,
@@ -210,6 +211,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     setGameState(getMenuState());
     setUpAirTemperature();
+    setUpBaseHumidity();
+    setUpDewpoint();
     setUpAirLayers();
     setUpWindStrength();
     setUpAmbientWind();
@@ -365,6 +368,10 @@ function synchroniseRestoredControls() {
     elements.grabberSizeValue.textContent = String(getGrabberSize());
     elements.airTempInput.value = String(Math.round(getAmbientTarget()));
     elements.airTempValue.value = String(Math.round(getAmbientTarget()));
+    elements.baseHumidityInput.value = String(Math.round(getAmbientHumidityTarget()));
+    elements.baseHumidityValue.textContent = `${Math.round(getAmbientHumidityTarget())}%`;
+    elements.dewpointInput.value = String(Math.round(getDewpointTarget()));
+    elements.dewpointValue.textContent = `${Math.round(getDewpointTarget())} °C`;
     elements.layerLapseInput.value = String(getLayerLapse());
     elements.layerLapseValue.textContent = getLayerLapse().toFixed(1);
     elements.airLayersCheckbox.checked = getAirLayersOn();
@@ -882,7 +889,7 @@ function buildParticleButtons() {
     const defs = getDefinitions();
     container.innerHTML = '';
 
-    const order = ['Powders', 'Liquids', 'Gases', 'Solids', 'Metals', 'Machines', 'Storage', 'Tools', 'Other'];
+    const order = ['Powders', 'Seeds', 'Liquids', 'Gases', 'Solids', 'Metals', 'Machines', 'Storage', 'Tools', 'Other'];
     const groups = {};
     for (let id = 1; id < defs.length; id++) {
         if (!defs[id]) continue;
@@ -1002,6 +1009,14 @@ function formatMaterialTooltip(def) {
     if (def.seedWaterRange > 0) properties.push(`needs water within ${formatNumber(def.seedWaterRange)} cells`);
     if (def.sproutMinTemp > -273) properties.push(`sprouts above ${formatTemperature(def.sproutMinTemp)}`);
     if (def.submergedDepth !== 4 && def.submergedDepth > 0) properties.push(`submerged at ${formatNumber(def.submergedDepth)} water cells`);
+    if (def.plantSpecies) properties.push(`species ${def.plantSpecies}`);
+    if (def.plantMinTemp > -273 || def.plantMaxTemp < 1000) {
+        properties.push(`temperature range ${formatTemperature(def.plantMinTemp)} to ${formatTemperature(def.plantMaxTemp)}`);
+    }
+    if (def.plantMinHumidity > 0 || def.plantMaxHumidity < 100) {
+        properties.push(`humidity range ${formatNumber(def.plantMinHumidity)}-${formatNumber(def.plantMaxHumidity)}%`);
+    }
+    if (def.humidityContribution > 0) properties.push(`adds local humidity ${formatNumber(def.humidityContribution)} per update`);
     if (def.latent > 0) properties.push(`latent heat ${formatNumber(def.latent)}`);
     if (def.burnLife > 0) properties.push(`burns for ${formatNumber(def.burnLife)} frames`);
     if (def.wetChance > 0) properties.push(`wetting chance ${formatPercent(def.wetChance)}`);
@@ -1031,6 +1046,8 @@ function formatMaterialTooltip(def) {
         reactions.push(`above ${formatTemperature(def.boilPoint)} -> ${target(def.boilsInto)}${emits}`);
     }
     if (def.depositPoint !== undefined && def.depositsInto !== 0) reactions.push(`when air is below ${formatTemperature(def.depositPoint)} -> ${target(def.depositsInto)}`);
+    if (def.dewpointCondensation) reactions.push(`condenses at or below the ${formatTemperature(getDewpointTarget())} dewpoint in humid air`);
+    if (def.precipitationChance > 0) reactions.push('saturated cloud -> Water above 0 C or Snow at/below 0 C');
     if (def.ignitePoint !== undefined && def.burnsInto !== 0) reactions.push(`above ${formatTemperature(def.ignitePoint)} -> ${target(def.burnsInto)}${def.emberInto !== 0 ? `, leaves ${target(def.emberInto)}` : ''}`);
     if (def.wetsInto !== 0) reactions.push(`water contact -> ${target(def.wetsInto)}`);
     if (def.quenchedInto !== 0) reactions.push(`touching Water -> ${target(def.quenchedInto)}`);
@@ -1132,6 +1149,32 @@ function setUpAirTemperature() {
         typing = false;
         commitAirTemperature(apply, box);
     });
+}
+
+function setUpBaseHumidity() {
+    const slider = getElements().baseHumidityInput;
+    const output = getElements().baseHumidityValue;
+    const apply = next => {
+        const value = Math.max(0, Math.min(100, Math.round(Number(next))));
+        setAmbientHumidityTarget(value);
+        slider.value = String(value);
+        output.textContent = `${value}%`;
+    };
+    apply(getAmbientHumidityTarget());
+    slider.addEventListener('input', event => apply(event.target.value));
+}
+
+function setUpDewpoint() {
+    const slider = getElements().dewpointInput;
+    const output = getElements().dewpointValue;
+    const apply = next => {
+        const value = Math.max(0, Math.min(100, Math.round(Number(next))));
+        setDewpointTarget(value);
+        slider.value = String(value);
+        output.textContent = `${value} °C`;
+    };
+    apply(getDewpointTarget());
+    slider.addEventListener('input', event => apply(event.target.value));
 }
 
 // How pronounced the layering of the air is: the number of degrees colder each

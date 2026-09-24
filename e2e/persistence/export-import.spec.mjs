@@ -33,6 +33,61 @@ test('Save and Load round-trip restores world and tool settings', async ({ page 
     await expect(page.locator('#brushSize')).toHaveValue('9');
 });
 
+test('portable simulation state restores Base Humidity, Dewpoint and local humidity', async ({ page }) => {
+    const game = new GamePage(page); await game.openMenu(); await game.newGame();
+    await page.getByRole('slider', { name: /base humidity/i }).evaluate(input => { input.value = '73'; input.dispatchEvent(new Event('input', { bubbles: true })); });
+    await page.getByRole('slider', { name: /dewpoint/i }).evaluate(input => { input.value = '14'; input.dispatchEvent(new Event('input', { bubbles: true })); });
+    const saved = await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        const definitions = physics.getDefinitions();
+        const world = physics.getWorld();
+        const humidityIndex = physics.index(30, 30);
+        world.humidity[humidityIndex] = 87;
+        physics.setCell(20, 20, definitions.findIndex(definition => definition?.name === 'Banana Seeds'));
+        physics.setCell(22, 20, definitions.findIndex(definition => definition?.name === 'Daffodil'));
+        const save = await import('/saveLoadGame.js');
+        return { encoded: save.createSaveString(), humidityIndex };
+    });
+    const wire = await page.evaluate(async ({ encoded, humidityIndex }) => {
+        const save = await import('/saveLoadGame.js');
+        const payload = save.parseSaveString(encoded);
+        const encodedHumidity = payload.simulation.arrays.humidity;
+        const binary = atob(encodedHumidity.data);
+        const bytes = new Uint8Array(binary.length);
+        for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+        const humidity = new Float32Array(bytes.buffer);
+        return {
+            ambientHumidity: payload.simulation.ambientHumidity,
+            dewpointTarget: payload.simulation.dewpointTarget,
+            humidityType: encodedHumidity.type,
+            localHumidity: humidity[humidityIndex]
+        };
+    }, saved);
+    expect(wire).toEqual({ ambientHumidity: 73, dewpointTarget: 14, humidityType: 'Float32Array', localHumidity: 87 });
+
+    await page.evaluate(async encoded => {
+        const physics = await import('/physics.js');
+        physics.clearWorld();
+        (await import('/saveLoadGame.js')).loadSaveString(encoded);
+    }, saved.encoded);
+    const restored = await page.evaluate(async ({ humidityIndex }) => {
+        const physics = await import('/physics.js');
+        const world = physics.getWorld();
+        const definitions = physics.getDefinitions();
+        return {
+            ambientHumidity: physics.getAmbientHumidityTarget(),
+            dewpointTarget: physics.getDewpointTarget(),
+            localHumidity: world.humidity[humidityIndex],
+            seed: definitions[world.type[physics.index(20, 20)]]?.name,
+            plant: definitions[world.type[physics.index(22, 20)]]?.name
+        };
+    }, saved);
+    expect(restored).toEqual({
+        ambientHumidity: 73, dewpointTarget: 14, localHumidity: 87,
+        seed: 'Banana Seeds', plant: 'Daffodil'
+    });
+});
+
 test('a selected 520 × 300 world keeps its dimensions in version 1 Save/Load', async ({ page }) => {
     const game = new GamePage(page);
     await game.openMenu();

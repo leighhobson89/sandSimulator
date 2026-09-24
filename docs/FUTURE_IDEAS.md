@@ -72,10 +72,6 @@ model without requiring a continuous fluid solver.
 - **Plant nutrients and compost:** let Ash, Wet Ash, or a new Compost material
   improve growth or seed production. A soil-quality readout could make the
   effect observable without adding a hidden global fertility map.
-- **Humidity and condensation:** let evaporated Water raise local humidity and
-  let sufficiently cool regions form droplets or rain. This would connect
-  Steam, temperature, weather, and plants; it should be tested at both current
-  world sizes because a field-wide humidity calculation could be expensive.
 - **Light as a local field:** a simple directional Lamp could illuminate a
   small area, enable light-responsive plants, and provide a prerequisite for a
   Solar Panel. This is a larger system: decide how light travels through
@@ -143,7 +139,7 @@ cross-system coupling would make layouts harder to reason about.
 | **Irrigation** | A Pump feeds a Valve and Sprinkler; a sensor or timer controls watering for plants. | Choose world intake geometry, route rules, and whether a timer is a new component. |
 | **Wind-powered workshop** | Ambient airflow charges a Battery through a Wind Turbine, then runs a Fan or Heater. | Prevent self-power loops; show generation and consumption clearly. |
 | **Material line** | A bin supplies a Manifold or Sorter, then two destinations or a Mixer. | Define branch fairness, buffering, and what happens to rejected material. |
-| **Rain garden** | Humidity condenses into Water, which sustains plants and changes nearby soil. | Add local humidity/light only if its simulation and rendering cost remains acceptable. |
+| **Rain garden scenario** | A not-yet-implemented optional challenge asks players to use the existing humidity, rain, and plant systems to grow a thriving patch. | Define the scenario, target, and success conditions; it can build on current weather without adding another humidity or rain mechanic. |
 
 ## Suggested exploration order and guardrails
 
@@ -153,8 +149,8 @@ cross-system coupling would make layouts harder to reason about.
    pulse or persistent-power semantics.
 3. Prototype a Pump or Valve and extend Tubing only as far as that use case
    needs; add a small scenario to explain the resulting loop.
-4. Explore environmental fields such as humidity or light only after profiling
-   them at both supported world sizes.
+4. Explore a local light field only after profiling its simulation and rendering
+   cost at both supported world sizes.
 
 Keep simulations deterministic under the seeded test harness. New machine,
 route, or environmental state must be included in both local resume and

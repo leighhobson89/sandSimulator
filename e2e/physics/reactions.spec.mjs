@@ -17,21 +17,39 @@ test('lava and water follow the quench path and leave steam and scoria residue',
     expect(await count(page, 'Steam')).toBeGreaterThan(0);
 });
 
-test('growth succeeds on wet ground but dry and invalid paths are rejected', async ({ page }) => {
+test('Grass Seeds germinate on Wet Mud while Dry Mud keeps them dormant', async ({ page }) => {
     const game = new GamePage(page); await game.openMenu(); await game.newGame(); await game.seed(404);
     await setupPhysics(page, {
         fills: [{ material: 'Wet Mud', x: 15, y: 36, width: 12, height: 2 }, { material: 'Dry Mud', x: 45, y: 36, width: 12, height: 2 }],
-        cells: [{ x: 20, y: 35, material: 'Seed' }, { x: 50, y: 35, material: 'Seed' }, { x: -1, y: 0, material: 'Seed' }]
+        cells: [{ x: 20, y: 35, material: 'Grass Seeds' }, { x: 50, y: 35, material: 'Grass Seeds' }]
     });
-    await game.step(700);
-    expect(await count(page, 'Plant')).toBeGreaterThan(0);
-    const dryPlantCount = await page.evaluate(async () => {
+    await page.evaluate(async () => {
         const physics = await import('/physics.js');
-        const ids = new Set(['Plant', 'Grass', 'Ash Grass'].map(name => physics.getDefinitions().findIndex(definition => definition?.name === name)));
-        const world = physics.getWorld();
-        return [...world.type].filter((type, index) => index % world.cols >= 40 && ids.has(type)).length;
+        physics.setAmbientTarget(22);
+        physics.setAmbientHumidityTarget(65);
+        physics.getWorld().temp.fill(22);
+        physics.getWorld().humidity.fill(65);
     });
-    expect(dryPlantCount).toBe(0);
+    await game.step(2600);
+    expect(await count(page, 'Grass')).toBeGreaterThan(0);
+    const drySide = await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        const definitions = physics.getDefinitions();
+        const plantIds = new Set(['Grass', 'Moss', 'Daffodil', 'Red Tulip', 'Geranium', 'Blue Flower', 'Banana Plant', 'Water Grass']
+            .map(name => definitions.findIndex(definition => definition?.name === name)).filter(id => id > 0));
+        const seedId = definitions.findIndex(definition => definition?.name === 'Grass Seeds');
+        const world = physics.getWorld();
+        const seeds = [];
+        let plants = 0;
+        for (let index = 0; index < world.type.length; index++) {
+            if (index % world.cols < 40) continue;
+            if (world.type[index] === seedId) seeds.push(index);
+            if (plantIds.has(world.type[index])) plants++;
+        }
+        return { seeds, plants, cols: world.cols };
+    });
+    expect(drySide.plants).toBe(0);
+    expect(drySide.seeds.length).toBeGreaterThan(0);
 });
 
 test('burning wood decays to residue and a reset cancels all reactions', async ({ page }) => {
@@ -105,18 +123,6 @@ test('snow follows cold condensation and warm melting paths, while gunpowder bla
     await game.step(160);
     expect(await count(page, 'Stone')).toBeLessThan(32);
     for (const name of ['Glass', 'Ceramic', 'Wall']) expect(await count(page, name)).toBe(protectedBefore[name]);
-});
-
-test('seed rejection, plant growth and cold decay follow distinct material rules', async ({ page }) => {
-    const game = new GamePage(page); await game.openMenu(); await game.newGame(); await game.seed(808);
-    await setupPhysics(page, { fills: [{ material: 'Wet Mud', x: 10, y: 38, width: 12, height: 2 }, { material: 'Dry Mud', x: 35, y: 38, width: 12, height: 2 }], cells: [{ x: 15, y: 37, material: 'Seed' }, { x: 40, y: 37, material: 'Seed' }, { x: -1, y: 37, material: 'Seed' }] });
-    expect(await count(page, 'Seed')).toBe(2);
-    await game.step(750);
-    expect(await count(page, 'Plant')).toBeGreaterThan(0);
-    const dryPlant = await page.evaluate(async () => { const p = await import('/physics.js'); const w = p.getWorld(); const ids = new Set(['Plant', 'Grass', 'Ash Grass'].map(n => p.getDefinitions().findIndex(d => d?.name === n))); return [...w.type].filter((id, i) => i % w.cols >= 30 && ids.has(id)).length; });
-    expect(dryPlant).toBe(0);
-    await setupPhysics(page, { cells: [{ x: 70, y: 20, material: 'Plant' }, { x: 70, y: 21, material: 'Wall' }], temperatures: [{ x: 70, y: 20, value: -20 }] }); await game.step(10);
-    expect(await count(page, 'Sand')).toBeGreaterThan(0);
 });
 
 test('wind moves light ash, leaves trails, and a wall shelters downwind cells', async ({ page }) => {
