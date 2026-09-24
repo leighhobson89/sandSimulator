@@ -91,7 +91,7 @@ particles. It does not change the saved Resume Game until a later autosave.
 The top toolbar carries the play controls, readout and theme. Materials sit to
 the left of the canvas; the Tools panel to its right contains Brush/Line mode
 and size, Grabber, Visualizations, and Environment controls. Open Options for
-Heat, Humidity, and Wind views; Normal View restores ordinary rendering. The
+Heat, Humidity, and Wind views; Normal restores ordinary rendering. The
 Environment section keeps Layers and Breeze separate from the Wind
 visualization, followed by Layer Strength, Wind Strength, Air Temperature,
 Humidity, and Dew Point. Hover an icon for a short explanation;

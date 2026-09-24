@@ -33,6 +33,47 @@ test('Save and Load round-trip restores world and tool settings', async ({ page 
     await expect(page.locator('#brushSize')).toHaveValue('9');
 });
 
+test('wind strengths round-trip and legacy saves migrate to an ordered calibrated pair', async ({ page }) => {
+    const game = new GamePage(page); await game.openMenu(); await game.newGame();
+    await page.locator('#windStrength').evaluate(input => { input.value = '37'; input.dispatchEvent(new Event('input', { bubbles: true })); });
+    await page.locator('#generalWindStrength').evaluate(input => { input.value = '12'; input.dispatchEvent(new Event('input', { bubbles: true })); });
+
+    const windSave = await page.evaluate(async () => {
+        const save = await import('/saveLoadGame.js');
+        const encoded = save.createSaveString();
+        const payload = save.parseSaveString(encoded);
+        const savedPair = {
+            general: payload.tools.generalWindStrength,
+            gust: payload.tools.gustWindStrength
+        };
+        const physics = await import('/physics.js');
+        save.restoreSavePayload(payload);
+        const restoredPair = {
+            general: physics.getGeneralWindStrength(),
+            gust: physics.getGustWindStrength()
+        };
+
+        payload.tools.windStrength = 15;
+        delete payload.tools.generalWindStrength;
+        delete payload.tools.gustWindStrength;
+        save.restoreSavePayload(payload);
+        const migratedPair = {
+            general: physics.getGeneralWindStrength(),
+            gust: physics.getGustWindStrength()
+        };
+        return { savedPair, restoredPair, migratedPair };
+    });
+
+    expect(windSave).toEqual({
+        savedPair: { general: 12, gust: 37 },
+        restoredPair: { general: 12, gust: 37 },
+        migratedPair: { general: 50, gust: 50 }
+    });
+    await expect(page.locator('#generalWindStrength')).toHaveValue('50');
+    await expect(page.locator('#windStrength')).toHaveValue('50');
+    await expect(game.state()).resolves.toMatchObject({ cols: expect.any(Number), rows: expect.any(Number) });
+});
+
 test('portable simulation state restores Base Humidity, Dewpoint and local humidity', async ({ page }) => {
     const game = new GamePage(page); await game.openMenu(); await game.newGame();
     await page.getByRole('slider', { name: /base humidity/i }).evaluate(input => { input.value = '73'; input.dispatchEvent(new Event('input', { bubbles: true })); });

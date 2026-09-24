@@ -23,7 +23,10 @@ let particleTypeIdSelected = 1; //starting particle sand
 let brushSize = 3;
 let drawMode = 'brush';
 let grabberSize = 15;
-let windStrength = 2;
+// The wind controls use the current 0–50 scale. The initial 7 is about the
+// same strength as the former single dial's default value of 2.
+let generalWindStrength = 7;
+let gustWindStrength = 7;
 let eraserOn = false;
 let grabberOn = false;
 let visualizationMode = 'normal';
@@ -91,6 +94,9 @@ export function setElements() {
         layerLapseLabel: document.getElementById('layerLapseLabel'),
         layerLapseValue: document.getElementById('layerLapseValue'),
         airLayersCheckbox: document.getElementById('airLayers'),
+        generalWindStrengthInput: document.getElementById('generalWindStrength'),
+        generalWindStrengthValue: document.getElementById('generalWindStrengthValue'),
+        windStrengthControls: document.getElementById('windStrengthControls'),
         windStrengthInput: document.getElementById('windStrength'),
         windStrengthLabel: document.getElementById('windStrengthLabel'),
         windStrengthValue: document.getElementById('windStrengthValue'),
@@ -283,11 +289,34 @@ export function setGrabberOn(value) {
 }
 
 export function getWindStrength() {
-    return windStrength;
+    return gustWindStrength;
 }
 
 export function setWindStrength(value) {
-    windStrength = value;
+    setGustWindStrength(value);
+}
+
+function clampWindStrength(value) {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? Math.max(0, Math.min(50, Math.round(numeric))) : 0;
+}
+
+export function getGeneralWindStrength() {
+    return generalWindStrength;
+}
+
+export function setGeneralWindStrength(value) {
+    generalWindStrength = clampWindStrength(value);
+    if (gustWindStrength < generalWindStrength) gustWindStrength = generalWindStrength;
+}
+
+export function getGustWindStrength() {
+    return gustWindStrength;
+}
+
+export function setGustWindStrength(value) {
+    gustWindStrength = clampWindStrength(value);
+    if (gustWindStrength < generalWindStrength) gustWindStrength = generalWindStrength;
 }
 
 export function getEraserOn() {

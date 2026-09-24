@@ -2,12 +2,19 @@
 // encoded inside JSON, then compressed with LZString's URI-safe codec.
 import {
     getParticleTypeIdSelected, setParticleTypeIdSelected, getBrushSize, setBrushSize,
-    getDrawMode, setDrawMode, getGrabberSize, setGrabberSize, getWindStrength,
-    setWindStrength, getEraserOn, setEraserOn, getGrabberOn, setGrabberOn,
+    getDrawMode, setDrawMode, getGrabberSize, setGrabberSize,
+    setGeneralWindStrength, setGustWindStrength,
+    getEraserOn, setEraserOn, getGrabberOn, setGrabberOn,
     getVisualizationMode, setVisualizationMode, VISUALIZATION_MODES,
     getHeatViewOn, getSimulationPaused, setSimulationPaused
 } from './constantsAndGlobalVars.js';
-import { captureSimulationState, restoreSimulationState } from './physics.js';
+import {
+    captureSimulationState, restoreSimulationState,
+    getGeneralWindStrength as getPhysicsGeneralWindStrength,
+    getGustWindStrength as getPhysicsGustWindStrength,
+    setGeneralWindStrength as setPhysicsGeneralWindStrength,
+    setGustWindStrength as setPhysicsGustWindStrength
+} from './physics.js';
 import { BLUEPRINT_FIELDS, BLUEPRINT_SLOT_COUNT } from './game.js';
 import { compressToEncodedURIComponent, decompressFromEncodedURIComponent } from './lzString.js';
 
@@ -66,7 +73,10 @@ export function createSaveString() {
         simulation: encodeSimulation(captureSimulationState()),
         tools: {
             particleId: getParticleTypeIdSelected(), brushSize: getBrushSize(), drawMode: getDrawMode(),
-            grabberSize: getGrabberSize(), windStrength: getWindStrength(), eraserOn: getEraserOn(),
+            grabberSize: getGrabberSize(),
+            generalWindStrength: getPhysicsGeneralWindStrength(),
+            gustWindStrength: getPhysicsGustWindStrength(),
+            eraserOn: getEraserOn(),
             grabberOn: getGrabberOn(), visualizationMode: getVisualizationMode(),
             heatViewOn: getHeatViewOn(), paused: getSimulationPaused()
         }
@@ -307,11 +317,31 @@ function restoreTools(tools = {}) {
     if (Number.isFinite(tools.brushSize)) setBrushSize(tools.brushSize);
     setDrawMode(tools.drawMode);
     if (Number.isFinite(tools.grabberSize)) setGrabberSize(tools.grabberSize);
-    if (Number.isFinite(tools.windStrength)) setWindStrength(tools.windStrength);
+    let generalWindStrength = null;
+    let gustWindStrength = null;
+    if (Number.isFinite(tools.generalWindStrength) && Number.isFinite(tools.gustWindStrength)) {
+        generalWindStrength = clampWindStrength(tools.generalWindStrength);
+        gustWindStrength = clampWindStrength(tools.gustWindStrength);
+        gustWindStrength = Math.max(generalWindStrength, gustWindStrength);
+    } else if (Number.isFinite(tools.windStrength)) {
+        const migrated = Math.round(Math.max(0, Math.min(15, tools.windStrength)) * 50 / 15);
+        generalWindStrength = migrated;
+        gustWindStrength = migrated;
+    }
+    if (generalWindStrength !== null) {
+        setGeneralWindStrength(generalWindStrength);
+        setGustWindStrength(gustWindStrength);
+        setPhysicsGeneralWindStrength(generalWindStrength);
+        setPhysicsGustWindStrength(gustWindStrength);
+    }
     setEraserOn(!!tools.eraserOn); setGrabberOn(!!tools.grabberOn);
     const savedVisualizationMode = VISUALIZATION_MODES.includes(tools.visualizationMode)
         ? tools.visualizationMode
         : tools.heatViewOn ? 'heat' : 'normal';
     setVisualizationMode(savedVisualizationMode);
     setSimulationPaused(!!tools.paused);
+}
+
+function clampWindStrength(value) {
+    return Math.max(0, Math.min(50, Math.round(value)));
 }

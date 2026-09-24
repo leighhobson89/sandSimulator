@@ -13,7 +13,8 @@ import {
     getBrushSize, setBrushSize, getDrawMode, setDrawMode, getEraserOn, setEraserOn,
     getVisualizationMode, setVisualizationMode, getHeatViewOn, setHeatViewOn,
     getSimulationPaused, setSimulationPaused,
-    getWindStrength, setWindStrength, getGrabberSize, setGrabberSize,
+    getWindStrength, setWindStrength, getGeneralWindStrength, setGeneralWindStrength,
+    getGrabberSize, setGrabberSize,
     getGrabberOn, setGrabberOn
 } from './constantsAndGlobalVars.js';
 import {
@@ -29,7 +30,9 @@ import {
     getDefinitions, setAmbientTarget, getAmbientTarget, setLayerLapse, getLayerLapse,
     setAmbientHumidityTarget, getAmbientHumidityTarget, setDewpointTarget, getDewpointTarget,
     setAmbientWindOn, getAmbientWindOn, setAirLayersOn, getAirLayersOn,
-    setWindDial, getWorld, index, getMachineSetting, setMachineSetting,
+    setGeneralWindStrength as setPhysicsGeneralWindStrength,
+    setGustWindStrength as setPhysicsGustWindStrength,
+    getWorld, index, getMachineSetting, setMachineSetting,
     getStorageInventory, purgeStorageBin, getVentInventory, getVentReleaseRate,
     setVentReleaseRate, isVentReleaseEnabled, setVentReleaseEnabled,
     getTubingFlows, getVentTubingRate, getMixerInventory, purgeMixerBin,
@@ -374,10 +377,13 @@ function synchroniseRestoredControls() {
     elements.layerLapseInput.disabled = !getAirLayersOn();
     elements.layerLapseInput.classList.toggle('disabled-control', !getAirLayersOn());
     elements.layerLapseLabel.classList.toggle('disabled-control', !getAirLayersOn());
+    elements.generalWindStrengthInput.value = String(getGeneralWindStrength());
+    elements.generalWindStrengthValue.textContent = String(getGeneralWindStrength());
     elements.windStrengthInput.value = String(getWindStrength());
     elements.windStrengthValue.textContent = String(getWindStrength());
+    getElements().windStrengthControls.style.setProperty('--general-wind-position', `${getGeneralWindStrength() * 2}%`);
+    getElements().windStrengthControls.style.setProperty('--gust-wind-position', `${getWindStrength() * 2}%`);
     elements.ambientWindCheckbox.checked = getAmbientWindOn();
-    setWindDial(getWindStrength());
     syncDrawingModeButtons(getDrawMode());
     highlightSelectedParticle();
 }
@@ -1285,23 +1291,71 @@ function setUpAirLayers() {
     });
 }
 
-// How hard the wind blows: how many cells the tool shoves things along, how
-// vigorously it stirs the air, and how hard the natural breeze gusts. The
-// breeze blows at double this, being weather rather than a nudge from the
-// mouse, so the one dial covers both.
+// Two native range inputs share one track. General Wind is the lower handle;
+// pushing it through Gust Strength moves both values, while Gust Strength
+// cannot be moved below the background setting.
 function setUpWindStrength() {
-    const slider = getElements().windStrengthInput;
-    const valueReadout = getElements().windStrengthValue;
+    const elements = getElements();
+    const general = elements.generalWindStrengthInput;
+    const gust = elements.windStrengthInput;
+    const controls = elements.windStrengthControls;
 
-    const apply = value => {
-        setWindStrength(value);
-        setWindDial(value);
-        valueReadout.textContent = String(value);
+    const apply = source => {
+        let generalValue = Math.max(0, Math.min(50, Math.round(Number(general.value))));
+        let gustValue = Math.max(0, Math.min(50, Math.round(Number(gust.value))));
+        if (source === 'general' && generalValue > gustValue) gustValue = generalValue;
+        if (source === 'gust' && gustValue < generalValue) gustValue = generalValue;
+
+        setGeneralWindStrength(generalValue);
+        setWindStrength(gustValue);
+        setPhysicsGeneralWindStrength(generalValue);
+        setPhysicsGustWindStrength(gustValue);
+        general.value = String(generalValue);
+        gust.value = String(gustValue);
+        elements.generalWindStrengthValue.textContent = String(generalValue);
+        elements.windStrengthValue.textContent = String(gustValue);
+        controls.style.setProperty('--general-wind-position', `${generalValue * 2}%`);
+        controls.style.setProperty('--gust-wind-position', `${gustValue * 2}%`);
     };
 
-    slider.value = String(getWindStrength());
-    apply(getWindStrength());
-    slider.addEventListener('input', event => apply(parseInt(event.target.value)));
+    general.value = String(getGeneralWindStrength());
+    gust.value = String(getWindStrength());
+    apply('');
+    general.addEventListener('input', () => apply('general'));
+    gust.addEventListener('input', () => apply('gust'));
+
+    // The transparent portions of the overlapping native inputs leave one
+    // clean track. Clicking or dragging that track selects the nearest thumb,
+    // while keyboard input and assistive technology continue to operate each
+    // independent range control directly.
+    let activeSlider = null;
+    const setFromPointer = event => {
+        if (!activeSlider) return;
+        const rect = controls.getBoundingClientRect();
+        const fraction = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+        activeSlider.value = String(Math.round(fraction * 50));
+        activeSlider.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+    controls.addEventListener('pointerdown', event => {
+        const rect = controls.getBoundingClientRect();
+        const fraction = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+        const position = fraction * 50;
+        // General wins an exact overlap; it can then push both handles apart.
+        // Once they separate, the nearest-handle rule makes either one directly
+        // selectable by pointer even though their native tracks share a row.
+        activeSlider = Math.abs(position - Number(general.value)) <= Math.abs(position - Number(gust.value))
+            ? general : gust;
+        event.preventDefault();
+        activeSlider.focus({ preventScroll: true });
+        controls.setPointerCapture(event.pointerId);
+        setFromPointer(event);
+    });
+    controls.addEventListener('pointermove', event => {
+        if (activeSlider && event.buttons) setFromPointer(event);
+    });
+    const releasePointer = () => { activeSlider = null; };
+    controls.addEventListener('pointerup', releasePointer);
+    controls.addEventListener('pointercancel', releasePointer);
 }
 
 // The natural breeze. Left to itself it sends a soft gust across the whole

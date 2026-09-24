@@ -71,6 +71,12 @@ let dewpointTarget = 10;
 let frameCount = 0;
 let humidityCursor = 0;
 let cloudCursor = 0;
+const PREVAILING_WIND_CYCLE_TICKS = 108_000;
+let prevailingWindDirection = 1;
+let prevailingWindTicksRemaining = PREVAILING_WIND_CYCLE_TICKS;
+let prevailingWindHasStarted = false;
+let generalWindStrength = 7;
+let gustWindStrength = 7;
 
 // Randomness is deliberately kept behind one tiny boundary. The browser uses
 // its usual source, while tests (and future replays) can supply a seed or a
@@ -840,7 +846,11 @@ export function captureSimulationState() {
         layerLapse,
         airLayersOn,
         ambientWindOn,
-        windDial,
+        windDial: windStrengthToLegacyScale(gustWindStrength),
+        generalWindStrength,
+        gustWindStrength,
+        prevailingWindDirection,
+        prevailingWindTicksRemaining,
         frameCount,
         arrays
     };
@@ -906,8 +916,28 @@ export function restoreSimulationState(state) {
     if (!state.arrays.humidity) world.humidity.fill(ambientHumidityTarget);
     layerLapse = Number.isFinite(state.layerLapse) ? state.layerLapse : layerLapse;
     airLayersOn = state.airLayersOn !== false;
-    windDial = Number.isFinite(state.windDial) ? state.windDial : windDial;
     frameCount = Number.isSafeInteger(state.frameCount) ? state.frameCount : 0;
+    const legacyWind = Number.isFinite(state.windDial)
+        ? Math.round(Math.max(0, Math.min(15, state.windDial)) * (50 / 15)) : null;
+    const restoredGeneralWind = Number.isFinite(state.generalWindStrength)
+        ? clampWindSetting(state.generalWindStrength) : legacyWind;
+    const restoredGustWind = Number.isFinite(state.gustWindStrength)
+        ? clampWindSetting(state.gustWindStrength) : legacyWind;
+    if (restoredGeneralWind !== null) generalWindStrength = restoredGeneralWind;
+    if (restoredGustWind !== null) gustWindStrength = restoredGustWind;
+    if (restoredGeneralWind !== null && restoredGustWind === null) gustWindStrength = generalWindStrength;
+    gustWindStrength = Math.max(generalWindStrength, gustWindStrength);
+    prevailingWindDirection = state.prevailingWindDirection === -1 || state.prevailingWindDirection === 1
+        ? state.prevailingWindDirection : 1;
+    prevailingWindHasStarted = state.prevailingWindDirection === -1 || state.prevailingWindDirection === 1;
+    prevailingWindTicksRemaining = Number.isSafeInteger(state.prevailingWindTicksRemaining) &&
+        state.prevailingWindTicksRemaining >= 0 &&
+        state.prevailingWindTicksRemaining <= PREVAILING_WIND_CYCLE_TICKS
+        ? state.prevailingWindTicksRemaining : PREVAILING_WIND_CYCLE_TICKS;
+    activeGust = null;
+    gustWait = 0;
+    generalWindCacheFrame = -1;
+    windShelterFrame = -1;
     setAmbientWindOn(!!state.ambientWindOn);
 }
 
@@ -962,9 +992,14 @@ export function createWorld(cols, rows) {
         airflowY: new Float32Array(n),
         airflowNextX: new Float32Array(n),
         airflowNextY: new Float32Array(n),
-        // Display-only vectors for the wind tool and ambient Breeze. Fan air
-        // is rendered from its physical airflow arrays above; these samples
-        // deliberately stay transient and out of saves and blueprints.
+        // Natural-flow layers are rebuilt from current weather settings and
+        // obstacles. They stay transient; Fan momentum above remains durable.
+        generalWindX: new Float32Array(n),
+        generalWindY: new Float32Array(n),
+        gustWindX: new Float32Array(n),
+        gustWindY: new Float32Array(n),
+        // Display-only vectors for wind-tool trails. Natural generated flow is
+        // rendered from the layers above and Fan air from airflowX/Y.
         displayWindX: new Float32Array(n),
         displayWindY: new Float32Array(n)
     };
@@ -978,6 +1013,15 @@ export function createWorld(cols, rows) {
     tubingFlows = [];
     hasMixerMachine = false;
     windTrailsAlive = 0;
+    generalWindCacheFrame = -1;
+    windShelterFrame = -1;
+    activeGust = null;
+    gustWait = ambientWindOn ? 60 : 0;
+    prevailingWindDirection = 1;
+    prevailingWindTicksRemaining = PREVAILING_WIND_CYCLE_TICKS;
+    prevailingWindHasStarted = false;
+    if (ambientWindOn) initializePrevailingWind();
+    gustFieldCells.length = 0;
     return world;
 }
 
@@ -1329,6 +1373,10 @@ export function clearWorld() {
     world.airflowY.fill(0);
     world.airflowNextX.fill(0);
     world.airflowNextY.fill(0);
+    world.generalWindX.fill(0);
+    world.generalWindY.fill(0);
+    world.gustWindX.fill(0);
+    world.gustWindY.fill(0);
     world.displayWindX.fill(0);
     world.displayWindY.fill(0);
     storageFunnelMachines = [];
@@ -1336,6 +1384,11 @@ export function clearWorld() {
     tubingFlows = [];
     hasMixerMachine = false;
     windTrailsAlive = 0;
+    activeGust = null;
+    gustWait = ambientWindOn ? 60 : 0;
+    generalWindCacheFrame = -1;
+    windShelterFrame = -1;
+    gustFieldCells.length = 0;
 }
 
 // What a freshly placed particle starts with in its data slot. A plant gets a
@@ -1921,6 +1974,7 @@ function nearbyClouds(x, y, radius) {
 
 export function stepSimulation() {
     frameCount++;
+    advancePrevailingWindCycle();
     // Ease the air temperature towards whatever the slider is set to. This is
     // deliberately slow, and each material's own "cooling" figure is small, so
     // a flame or a block of ice next to a cell always has far more say over its
@@ -1948,9 +2002,8 @@ export function stepSimulation() {
     // this frame, but the rate is accrued only once per frame.
     updateVents(false);
 
-    // The breeze blows first, on the freshly cleared moved flags, so that
-    // anything it shifts counts as having had its move for the frame and is
-    // not then blown and dropped in the same tick.
+    // Natural wind applies on freshly cleared moved flags, before gravity and
+    // particle motion, so a carried item still moves at most once this tick.
     updateAmbientWind();
 
     // Bottom row upwards, so a falling particle is not processed again after it
@@ -3799,12 +3852,8 @@ const WIND_PENETRATION = 3;
 // curl over a drift rather than tunnel along it.
 const WIND_DEFLECT_RUN = 10;
 
-// Scratch space for working out where the wind reaches, reused between gusts so
-// that nothing is allocated per frame. The breeze shelters a row at a time; the
-// tool shelters the square its gust covers. The lift maps run alongside them,
-// marking where the flow has been deflected upwards.
-let rowShelter = null;
-let rowLift = null;
+// Scratch space for the wind tool's local obstruction and lift maps. The
+// ambient system uses its world-sized cached shelter mask below.
 let gustShelter = null;
 let gustLift = null;
 
@@ -4929,6 +4978,7 @@ function shelterGust(centreX, centreY, dirX, dirY, radius) {
 // bottom, exactly as a real draught would.
 export function applyWind(centreX, centreY, dirX, dirY, radius, strength) {
     if (!world) return;
+    if (strength <= 0) return;
 
     const reach = radius * radius;
     const span = radius * 2 + 1;
@@ -5033,192 +5083,351 @@ export function applyWind(centreX, centreY, dirX, dirY, radius, strength) {
     }
 }
 
-// ------------------------------------------------------------ ambient breeze
-//
-// A gust is a soft band that crosses the world from one side to the other over
-// a few seconds and then dies away, leaving a quiet gap of several seconds
-// before the next one. It fades in and out over its crossing, and is strongest
-// down its middle, so there is no moment where the air snaps on or off.
+// -------------------------------------------------------- ambient wind system
 
+const GENERAL_WIND_FIELD_INTERVAL = 8;
 let ambientWindOn = false;
-let breeze = null;
-let breezeWait = 0;
+let activeGust = null;
+let gustWait = 0;
+let windShelter = null;
+let windShelterFrame = -1;
+let windShelterDirection = 0;
+let generalWindCacheFrame = -1;
+let gustFieldCells = [];
 
-// Whatever the Wind dial on the toolbar is set to. The tool is handed its
-// strength per gust, but the breeze blows on its own and has to look it up.
-let windDial = 2;
+function clampWindSetting(value) {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? Math.max(0, Math.min(50, Math.round(numeric))) : 0;
+}
 
-export function setWindDial(value) { windDial = value; }
-export function getWindDial() { return windDial; }
+// The 0–50 controls are calibrated so 50 has the old scale's effect at 15.
+// Combined General+Gust airflow can reach 100 before calibration, while each
+// UI/tool strength still tops out at 50. Convert only where a physical formula
+// still uses the legacy reference scale.
+export function windStrengthToLegacyScale(value) {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? Math.max(0, Math.min(100, numeric)) * (15 / 50) : 0;
+}
+
+export function setGeneralWindStrength(value) {
+    generalWindStrength = clampWindSetting(value);
+    if (gustWindStrength < generalWindStrength) gustWindStrength = generalWindStrength;
+    generalWindCacheFrame = -1;
+}
+
+export function getGeneralWindStrength() { return generalWindStrength; }
+
+export function setGustWindStrength(value) {
+    gustWindStrength = clampWindSetting(value);
+    if (gustWindStrength < generalWindStrength) gustWindStrength = generalWindStrength;
+    if (activeGust) activeGust.strength = gustWindStrength;
+    if (gustWindStrength === 0) {
+        activeGust = null;
+        gustWait = 0;
+        if (world) {
+            clearGustWindField();
+        }
+    }
+}
+
+export function getGustWindStrength() { return gustWindStrength; }
+
+// Compatibility for integrations that still use the old single dial API.
+export function setWindDial(value) {
+    const legacyValue = Number(value);
+    setGustWindStrength(Number.isFinite(legacyValue)
+        ? Math.round(Math.max(0, Math.min(15, legacyValue)) * (50 / 15)) : 0);
+}
+export function getWindDial() { return windStrengthToLegacyScale(gustWindStrength); }
+
+function clearNaturalWindFields() {
+    if (!world) return;
+    world.generalWindX.fill(0);
+    world.generalWindY.fill(0);
+    world.gustWindX.fill(0);
+    world.gustWindY.fill(0);
+    gustFieldCells.length = 0;
+    generalWindCacheFrame = -1;
+}
+
+function clearGustWindField() {
+    if (world) {
+        for (const i of gustFieldCells) {
+            world.gustWindX[i] = 0;
+            world.gustWindY[i] = 0;
+        }
+    }
+    gustFieldCells.length = 0;
+}
+
+function initializePrevailingWind() {
+    if (prevailingWindHasStarted) return;
+    prevailingWindDirection = random() < 0.5 ? -1 : 1;
+    prevailingWindTicksRemaining = PREVAILING_WIND_CYCLE_TICKS;
+    prevailingWindHasStarted = true;
+    windShelterFrame = -1;
+    generalWindCacheFrame = -1;
+}
 
 export function setAmbientWindOn(value) {
     ambientWindOn = !!value;
+    activeGust = null;
     if (!ambientWindOn) {
-        breeze = null;
+        gustWait = 0;
+        clearNaturalWindFields();
         return;
     }
-    // A short wait first, so switching it on does not immediately blow
-    // everything the person has just finished arranging across the screen.
-    if (!breeze) breezeWait = 60 + Math.floor(random() * 180);
+    initializePrevailingWind();
+    // Delay the first event so enabling Breeze does not immediately disturb a scene.
+    gustWait = 30 + Math.floor(random() * 90);
+    generalWindCacheFrame = -1;
 }
 
 export function getAmbientWindOn() { return ambientWindOn; }
+export function isBreezeBlowing() { return activeGust !== null; }
+export function getPrevailingWindDirection() { return prevailingWindDirection; }
+export function getPrevailingWindTicksRemaining() { return prevailingWindTicksRemaining; }
 
-// True while a gust is actually crossing, which the readout uses to say so.
-export function isBreezeBlowing() { return breeze !== null; }
-
-function updateAmbientWind() {
-    if (!ambientWindOn || !world) return;
-    if (!breeze) {
-        if (breezeWait > 0) { breezeWait--; return; }
-        startBreeze();
-    }
-    blowBreeze();
-
-    breeze.age++;
-    breeze.x += breeze.dir * breeze.speed;
-    if (breeze.age >= breeze.span) {
-        breeze = null;
-        breezeWait = 240 + Math.floor(random() * 700);
-    }
-}
-
-function startBreeze() {
-    const dir = random() < 0.5 ? -1 : 1;
-    const reach = Math.max(8, Math.round(COLS * (0.16 + random() * 0.2)));
-    const speed = 0.7 + random() * 1.1;
-    breeze = {
-        dir: dir,
-        reach: reach,
-        speed: speed,
-        // Where the middle of the band is. It starts wholly off one edge so the
-        // gust arrives rather than appearing.
-        x: dir > 0 ? -reach : COLS - 1 + reach,
-        // How hard it blows at its very strongest. It takes this from the Wind
-        // dial, at double what the tool blows with, so that turning the dial up
-        // gives weather to match - and no gust is quite as hard as the one
-        // before it.
-        peak: Math.min(0.9, (0.025 + random() * 0.07) * windDial * 2),
-        span: (COLS + reach * 2) / speed,
-        age: 0,
-        seed: (random() * 4096) | 0
+export function getActiveGustState() {
+    if (!activeGust) return null;
+    return {
+        direction: activeGust.direction,
+        x: activeGust.x,
+        age: activeGust.age,
+        duration: activeGust.duration
     };
 }
 
-function blowBreeze() {
-    const b = breeze;
-    // Fades in over the first half of the crossing and out over the second.
-    const life = Math.sin(Math.PI * Math.min(1, b.age / b.span));
-    const centre = Math.round(b.x);
-    const from = Math.max(0, centre - b.reach);
-    const to = Math.min(COLS - 1, centre + b.reach);
-    if (from > to) return;
+function advancePrevailingWindCycle() {
+    if (!prevailingWindHasStarted) return;
+    prevailingWindTicksRemaining--;
+    if (prevailingWindTicksRemaining > 0) return;
+    prevailingWindDirection = random() < 0.5 ? -1 : 1;
+    prevailingWindTicksRemaining = PREVAILING_WIND_CYCLE_TICKS;
+    prevailingWindHasStarted = true;
+    windShelterFrame = -1;
+    generalWindCacheFrame = -1;
+}
 
-    if (!rowShelter || rowShelter.length !== COLS) {
-        rowShelter = new Uint8Array(COLS);
-        rowLift = new Uint8Array(COLS);
+function refreshWindShelter() {
+    if (!world) return;
+    if (!windShelter || windShelter.length !== world.type.length) {
+        windShelter = new Uint8Array(world.type.length);
+        windShelterFrame = -1;
     }
+    if (windShelterFrame >= 0 && windShelterDirection === prevailingWindDirection &&
+        frameCount - windShelterFrame < GENERAL_WIND_FIELD_INTERVAL) return;
 
-    // The rows the haze picks out are shuffled every so often, so the streaks
-    // drift through the gust instead of standing as fixed bands.
-    const streakSeed = b.seed + ((b.age / 15) | 0);
-    const upwind = b.dir > 0 ? from : to;
-    const downwind = b.dir > 0 ? to : from;
-
+    const direction = prevailingWindDirection;
     for (let y = 0; y < ROWS; y++) {
-        const rowStart = y * COLS;
-
-        // First pass, walking with the wind: work out how far along the row the
-        // air actually reaches. The first solid thing in the way stops it, and
-        // everything behind that is still air for as long as the obstacle is
-        // there - the gust gets past only along the rows above and below it.
-        // A pile of powder or a body of water stops it in the same way, only
-        // WIND_PENETRATION cells later, so the wind works the surface of a
-        // drift and is turned aside by the depth of it.
-        //
-        // The walk starts at the edge of the world rather than at the edge of
-        // the band, because a wall shelters what is behind it whether or not
-        // the gust has reached the wall yet.
-        const start = b.dir > 0 ? 0 : COLS - 1;
         let blocked = false;
-        // How deep into the current run of loose material the wind has got, and
-        // how much upward kick is left from the last thing it went through.
         let depth = 0;
-        let liftLeft = 0;
-        for (let x = start; x >= 0 && x < COLS; x += b.dir) {
-            rowShelter[x] = blocked ? 1 : 0;
-            rowLift[x] = !blocked && liftLeft > 0 ? 1 : 0;
-
-            const id = world.type[rowStart + x];
-            if (stopsWind(id)) { blocked = true; continue; }
+        const rowStart = y * COLS;
+        for (let x = direction > 0 ? 0 : COLS - 1;
+            x >= 0 && x < COLS; x += direction) {
+            const i = rowStart + x;
+            const id = world.type[i];
+            const storageWall = storageIntakeIsWall(x, y);
+            windShelter[i] = blocked || storageWall ? 1 : 0;
+            if (stopsWind(id) || storageWall) {
+                windShelter[i] = 1;
+                blocked = true;
+                continue;
+            }
             if (slowsWind(id)) {
-                liftLeft = WIND_DEFLECT_RUN;
-                if (isBuried(rowStart + x, y) && ++depth >= WIND_PENETRATION) blocked = true;
+                if (isBuried(i, y) && ++depth >= WIND_PENETRATION) blocked = true;
             } else if (id === EMPTY) {
-                // Clear air: the run of material is over, and the kick the wind
-                // took from it levels out over the next few cells.
                 depth = 0;
-                if (liftLeft > 0) liftLeft--;
             }
         }
+    }
+    windShelterFrame = frameCount;
+    windShelterDirection = direction;
+}
 
-        // Second pass, walking against it: downwind cells are dealt with first,
-        // so a grain is shoved one cell and left there rather than being
-        // carried the whole width of the gust in a single frame.
-        for (let x = downwind; b.dir > 0 ? x >= upwind : x <= upwind; x -= b.dir) {
-            if (rowShelter[x]) continue;
+function updateGeneralWindField() {
+    if (!world) return;
+    const xField = world.generalWindX;
+    const yField = world.generalWindY;
+    if (!ambientWindOn || generalWindStrength <= 0) {
+        if (generalWindCacheFrame < 0) {
+            xField.fill(0);
+            yField.fill(0);
+        }
+        generalWindCacheFrame = frameCount;
+        return;
+    }
+    if (generalWindCacheFrame >= 0 &&
+        frameCount - generalWindCacheFrame < GENERAL_WIND_FIELD_INTERVAL) return;
 
-            const offset = (x - centre) / b.reach;
-            const force = (0.5 + 0.5 * Math.cos(Math.PI * offset)) * life * b.peak;
-            if (force <= 0.002) continue;
-
+    refreshWindShelter();
+    const phase = frameCount * 0.0032;
+    const strength = generalWindStrength;
+    const direction = prevailingWindDirection;
+    for (let y = 0; y < ROWS; y++) {
+        const rowStart = y * COLS;
+        for (let x = 0; x < COLS; x++) {
             const i = rowStart + x;
+            if (windShelter[i] || stopsWind(world.type[i])) {
+                xField[i] = 0;
+                yField[i] = 0;
+                continue;
+            }
 
-            // A few rows of faint haze, so the gust can be seen crossing even
-            // over a stretch where there is nothing loose for it to pick up.
-            // Kept dim and sparse: it is there to be noticed out of the corner
-            // of the eye rather than looked at. Where the flow has been turned
-            // up it is drawn a row higher, so the gust is seen riding over the
-            // drift that deflected it.
-            const rise = rowLift[x] && y > 0 ? 1 : 0;
-            if (windStreak(y, streakSeed) > 0.93) markWind(i - rise * COLS, force * 75, b.dir, 0);
+            // Coherent waves leave calmer pockets and stronger streams without
+            // per-cell randomness. This whole-world evaluation runs once per
+            // eight simulation ticks and the field is reused between updates.
+            const wave = 0.5 +
+                0.23 * Math.sin(y * 0.105 + phase) +
+                0.18 * Math.cos(x * 0.047 - phase * 0.7) +
+                0.09 * Math.sin((x + y) * 0.064 + phase * 0.37);
+            const intensity = Math.max(0, Math.min(1, (wave - 0.16) / 0.84));
+            let vx = direction * strength * intensity;
+            let vy = strength * intensity * 0.18 *
+                Math.sin(x * 0.031 + y * 0.083 - phase * 0.6);
+            const magnitude = Math.hypot(vx, vy);
+            if (magnitude > strength) {
+                const scale = strength / magnitude;
+                vx *= scale;
+                vy *= scale;
+            }
+            xField[i] = vx;
+            yField[i] = vy;
+        }
+    }
+    generalWindCacheFrame = frameCount;
+}
 
-            const id = world.type[i];
-            if (id === EMPTY) continue;
+function startTravellingGust() {
+    const reachX = Math.max(5, Math.round(COLS * 0.08));
+    const duration = Math.max(120, Math.min(240, Math.round(COLS * 0.9)));
+    const direction = prevailingWindDirection;
+    activeGust = {
+        direction,
+        x: direction > 0 ? -reachX : COLS - 1 + reachX,
+        age: 0,
+        duration,
+        speed: (COLS - 1 + reachX * 2) / duration,
+        reachX,
+        reachY: Math.max(5, Math.round(ROWS * (0.12 + random() * 0.08))),
+        centreY: Math.round(ROWS * (0.28 + random() * 0.44)),
+        curve: Math.max(2, ROWS * (0.025 + random() * 0.025)),
+        phase: random() * Math.PI * 2,
+        strength: gustWindStrength
+    };
+}
 
-            const def = DEFS[id];
+function updateTravellingGustField() {
+    if (!world) return;
+    const xField = world.gustWindX;
+    const yField = world.gustWindY;
+    clearGustWindField();
+    if (!ambientWindOn || gustWindStrength <= 0) {
+        activeGust = null;
+        return;
+    }
+
+    if (!activeGust) {
+        if (gustWait > 0) gustWait--;
+        else startTravellingGust();
+    }
+    const gust = activeGust;
+    if (!gust) return;
+    refreshWindShelter();
+
+    const life = Math.sin(Math.PI * (gust.age + 1) / (gust.duration + 1));
+    const xFrom = Math.max(0, Math.floor(gust.x - gust.reachX * 2.25));
+    const xTo = Math.min(COLS - 1, Math.ceil(gust.x + gust.reachX * 2.25));
+    for (let x = xFrom; x <= xTo; x++) {
+        const dx = (x - gust.x) / gust.reachX;
+        const xProfile = Math.exp(-2.2 * dx * dx);
+        const curvedCentre = gust.centreY + Math.sin(
+            (x / Math.max(1, COLS)) * Math.PI * 2 + gust.phase + gust.age * 0.018
+        ) * gust.curve;
+        const yFrom = Math.max(0, Math.floor(curvedCentre - gust.reachY * 2.1));
+        const yTo = Math.min(ROWS - 1, Math.ceil(curvedCentre + gust.reachY * 2.1));
+        for (let y = yFrom; y <= yTo; y++) {
+            const i = y * COLS + x;
+            if (windShelter[i] || stopsWind(world.type[i])) continue;
+            const dy = (y - curvedCentre) / gust.reachY;
+            const yProfile = Math.exp(-1.75 * dy * dy);
+            const local = life * xProfile * yProfile *
+                (0.88 + 0.12 * Math.sin(x * 0.12 + y * 0.19 + gust.phase + gust.age * 0.045));
+            if (local < 0.015) continue;
+            let vx = gust.direction * gust.strength * local;
+            const swirl = 0.34 * Math.sin(dy * Math.PI + gust.phase + gust.age * 0.035) +
+                0.12 * Math.sin((x + y * 0.8) * 0.09 + gust.phase + gust.age * 0.04);
+            let vy = gust.strength * local * swirl;
+            const magnitude = Math.hypot(vx, vy);
+            if (magnitude > gust.strength) {
+                const scale = gust.strength / magnitude;
+                vx *= scale;
+                vy *= scale;
+            }
+            xField[i] = vx;
+            yField[i] = vy;
+            gustFieldCells.push(i);
+            // Sparse directional trails also show a gust crossing in Normal.
+            if (((x + y * 31 + gust.age * 7) & 15) === 0) {
+                markWind(i, windStrengthToLegacyScale(Math.hypot(vx, vy)) * 7, vx, vy);
+            }
+        }
+    }
+
+    gust.age++;
+    gust.x += gust.direction * gust.speed;
+    if (gust.age >= gust.duration) {
+        activeGust = null;
+        gustWait = 80 + Math.floor(random() * 100);
+    }
+}
+
+function applyAmbientWindToParticles() {
+    if (!world || !ambientWindOn ||
+        (generalWindStrength <= 0 && gustFieldCells.length === 0)) return;
+    const direction = prevailingWindDirection;
+    const fromX = direction > 0 ? COLS - 1 : 0;
+    const toX = direction > 0 ? -1 : COLS;
+    const deltaX = -direction;
+    for (let y = ROWS - 1; y >= 0; y--) {
+        for (let x = fromX; x !== toX; x += deltaX) {
+            const i = y * COLS + x;
+            if (world.moved[i] || world.type[i] === EMPTY || windShelter?.[i]) continue;
+            const def = DEFS[world.type[i]];
             if (def.windLift < BREEZE_MIN_LIFT) continue;
-            if (random() > force * def.windLift) continue;
+            const vx = world.generalWindX[i] + world.gustWindX[i];
+            const vy = world.generalWindY[i] + world.gustWindY[i];
+            const magnitude = Math.hypot(vx, vy);
+            const legacyForce = windStrengthToLegacyScale(magnitude);
+            if (legacyForce < 0.08 ||
+                random() > Math.min(0.96, legacyForce * 0.06 * def.windLift)) continue;
 
-            // The very lightest things - smoke, snow, ash, seeds - get lifted a
-            // little as well as pushed along, which is what stops a gust
-            // looking like a conveyor belt.
-            let lift = def.windLift > 0.7 && random() < 0.25 ? -1 : 0;
-            // Air that has just come through something it could move is still
-            // rising, and takes a little of what it carries up with it.
-            if (lift === 0 && rowLift[x] && random() < 0.2) lift = -1;
-            const nx = x + b.dir;
+            let lift = 0;
+            if (Math.abs(vy) > magnitude * 0.42 && random() < 0.35 * def.windLift) lift = Math.sign(vy);
+            else if (def.windLift > 0.7 && random() < 0.09) lift = -1;
+            const nx = x + direction;
             let ny = y + lift;
-            if (nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS) continue;
-
-            let ni = ny * COLS + nx;
+            if (!inBounds(nx, ny)) continue;
+            let target = index(nx, ny);
             const ahead = typeAtForMovement(def, nx, ny);
             if (!windCanEnter(def, ahead)) {
-                // Blocked. If what is in the way is loose - the next grain
-                // along in the pile rather than a wall - the air is turned up
-                // and over it and the grain goes up with it. A wall just stops
-                // it dead, which is what keeps drawn boxes windproof.
                 if (!deflectsUpward(ahead) || ny < 1) continue;
-                ny -= 1;
-                ni = ny * COLS + nx;
+                ny--;
+                target = index(nx, ny);
                 if (!windCanEnter(def, typeAtForMovement(def, nx, ny))) continue;
             }
-            swapCells(i, ni);
-            markWind(ni, force * 75, b.dir, 0);
+            swapCells(i, target);
+            markWind(target, legacyForce * 6, vx, vy);
         }
     }
 }
 
+function updateAmbientWind() {
+    if (!world) return;
+    updateGeneralWindField();
+    updateTravellingGustField();
+    applyAmbientWindToParticles();
+}
 function isFlame(id) {
     return id > 0 && DEFS[id].emit > 0 && DEFS[id].category === 'gas';
 }

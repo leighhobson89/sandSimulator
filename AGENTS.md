@@ -53,3 +53,8 @@ Keep deterministic simulation regressions in the existing `tools/` harnesses
 Playwright specs under the owning `e2e/` functional area. Run focused browser
 coverage only through the npm wrapper with an area or spec path, for example:
 `npm run test:browser -- e2e/physics --workers=1 --trace=off`.
+Run browser tests with the repository's Playwright configuration through that
+npm wrapper. Do not add temporary configs, override browser launch settings,
+or switch to another browser to work around a missing local test runtime. If
+the documented command cannot start, report that the local test runner is
+blocked and stop there; do not suggest alternate browsers or launch configs.

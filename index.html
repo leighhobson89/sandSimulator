@@ -181,7 +181,7 @@
                     <h3>Visualizations</h3>
                     <div class="tool-control-row visualization-toolbar-row">
                         <button id="visualizationsNormalButton" class="btn visualization-toolbar-button active-toggle"
-                                type="button" aria-pressed="true">Normal View</button>
+                                type="button" aria-pressed="true">Normal</button>
                         <button id="visualizationsOptionsButton" class="btn visualization-toolbar-button"
                                 type="button" aria-haspopup="dialog" aria-controls="visualizationsDialog">Options</button>
                     </div>
@@ -231,19 +231,23 @@
                     </div>
 
                     <div class="tool-slider-row">
-                        <label id="windStrengthLabel" class="tool-slider-icon tooltip-control" for="windStrength"
-                               data-tooltip="Strength of wind tools and gusts">
+                        <label id="generalWindStrengthLabel" class="tool-slider-icon tooltip-control" for="generalWindStrength"
+                               data-tooltip="Set persistent background wind and the maximum gust strength">
                             <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true">
-                                <path d="M3 7h11c3 0 3-4 0-4-1.3 0-2.2.7-2.6 1.6M3 12h17M3 17h12c3 0 3 4 0 4-1.3 0-2.2-.7-2.6-1.6"/>
+                                <path d="M3 8h17M3 12h13M3 16h17"/>
                             </svg>
-                            <span class="sr-only">Wind strength</span>
+                            <span class="sr-only">General Wind</span>
                         </label>
                         <div class="tool-slider-block">
-                            <div class="tool-slider-heading">
-                                <span>Wind strength</span>
-                                <output id="windStrengthValue" for="windStrength">2</output>
+                            <div class="wind-dual-heading">
+                                <span>General Wind <output id="generalWindStrengthValue" for="generalWindStrength">7</output></span>
+                                <span>Gust Strength <output id="windStrengthValue" for="windStrength">7</output></span>
                             </div>
-                            <input id="windStrength" type="range" min="1" max="8" step="1" value="2">
+                            <div class="wind-dual-track" id="windStrengthControls">
+                                <input id="generalWindStrength" class="wind-dual-range" type="range" min="0" max="50" step="1" value="7">
+                                <input id="windStrength" class="wind-dual-range" type="range" min="0" max="50" step="1" value="7">
+                                <label id="windStrengthLabel" class="sr-only" for="windStrength">Gust Strength</label>
+                            </div>
                         </div>
                     </div>
 

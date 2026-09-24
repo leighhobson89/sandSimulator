@@ -14,13 +14,13 @@ Move visualization controls out of Environment, introduce a dedicated Visualizat
 ## Scope and implementation
 
 1. **Environment and Visualizations UI - `index.html`, `styles.css`, `constantsAndGlobalVars.js`, `ui.js`**
-   - Add the Visualizations section immediately before Environment with equal-width Normal View and Options buttons.
+   - Add the Visualizations section immediately before Environment with equal-width Normal and Options buttons.
    - Reorder Environment to Layers/Breeze, Layer Strength, Wind Strength, Air Temperature, Base Humidity, Dew Point. Use equal-width Layers and Breeze buttons. Remove the Heat button from this section without removing its behavior.
    - Add a responsive, two-column, three-row Visualizations dialog with Heat, Humidity, Wind and three inert placeholders, plus Close.
    - Reuse the existing dialog theme and conventions for modal semantics, Escape, initial focus, focus containment/restoration, close behavior, and z-index. Keep each real mode's selected state synchronized with `aria-pressed`.
 
 2. **Visualization state, compatibility, and rendering — `constantsAndGlobalVars.js`, `saveLoadGame.js`, `game.js`, `physics.js`**
-   - Introduce a single visualization mode as the source of truth; Normal View clears it. Selecting any visualization replaces the previous mode and cannot leave stale overlays.
+   - Introduce a single visualization mode as the source of truth; Normal clears it. Selecting any visualization replaces the previous mode and cannot leave stale overlays.
    - Keep Heat's current temperature coloring. Add a humidity palette that maps the per-cell humidity field from dry/warm to humid/cyan-blue and is recalculated during normal rendering, without writing simulation arrays.
    - Add a Wind renderer that communicates vector direction with readable arrows/stream marks and maps vector magnitude from blue (slow) to red (fast). Source vectors from Fan `airflowX/Y` and transient direction data associated with wind-tool and ambient Breeze trails; these data are display-only and must not alter particle motion or thermodynamics.
    - Save/load the selected mode while accepting legacy `heatViewOn` saves; normal mode is the default when neither field is present.
@@ -34,18 +34,18 @@ Move visualization controls out of Environment, introduce a dedicated Visualizat
 - Verify Options opens the named modal with six visualization buttons in a 3x2 layout and Close; placeholders are inert; modal semantics, keyboard activation, Escape, initial focus, focus restoration, responsive sizing, and close behavior match existing conventions.
 - Verify Heat activation from the dialog preserves existing temperature rendering. Verify humidity colors use distinct local field values, update live, and do not mutate humidity or other simulation arrays.
 - Verify Wind uses directional airflow and speed-dependent blue-to-red colors for Fan, wind-tool, and Breeze data as applicable; it updates live and does not change physical simulation outcomes.
-- Verify exclusive transitions Heat -> Humidity -> Wind -> Normal View clear previous overlays, Normal View does not open the dialog, and selected button ARIA states remain synchronized.
+- Verify exclusive transitions Heat -> Humidity -> Wind -> Normal clear previous overlays, Normal does not open the dialog, and selected button ARIA states remain synchronized.
 - Verify modern visualization modes round-trip through saves, legacy `heatViewOn` saves restore Heat, and existing Environment controls still work.
 
 ## Automated test plan added before implementation
 
 The focused regressions are in place before production code changes:
 
-- `e2e/tools/environment.spec.mjs` checks the Visualizations/Environment order, all Environment control order, equal-width button rows, narrow sidebar fit, retained controls, Heat pixels, local humidity colors without humidity-array mutation, Wind vector speed colors and directional marks, and exclusive mode switching plus Normal View pixel restoration.
+- `e2e/tools/environment.spec.mjs` checks the Visualizations/Environment order, all Environment control order, equal-width button rows, narrow sidebar fit, retained controls, Heat pixels, local humidity colors without humidity-array mutation, Wind vector speed colors and directional marks, and exclusive mode switching plus Normal pixel restoration.
 - `e2e/accessibility/dialogs.spec.mjs` checks the six mode buttons in a 3x2 grid at a narrow viewport, modal labeling and semantics, three safe placeholders, dialog bounds, no page errors, close and Escape behavior, and focus restoration. It also updates the keyboard Heat shortcut assertion to target the dialog control.
 - `e2e/tools/edge-cases.spec.mjs` keeps the Heat keyboard-toggle and layer dependency coverage against the relocated visualization button.
 - `e2e/persistence/export-import.spec.mjs` verifies modern Humidity visualization mode survives save/load and that a legacy payload without `visualizationMode` but with `tools.heatViewOn=true` restores Heat.
-- `tools/smokeTest.mjs` verifies opening Options, activating Heat, and clearing it through Normal View without errors.
+- `tools/smokeTest.mjs` verifies opening Options, activating Heat, and clearing it through Normal without errors.
 
 Focused entry points use the project npm wrappers:
 
@@ -60,7 +60,7 @@ The regressions were added before implementation and passed after the feature wa
 
 ## Completed implementation and verification
 
-- Added the Visualizations section above Environment and reordered the controls. Heat, Humidity, and Wind now share one visualization mode in the options dialog; Normal View clears the mode. The modal follows existing focus and accessibility patterns, and its three placeholders are disabled.
+- Added the Visualizations section above Environment and reordered the controls. Heat, Humidity, and Wind now share one visualization mode in the options dialog; Normal clears the mode. The modal follows existing focus and accessibility patterns, and its three placeholders are disabled.
 - Kept Heat's renderer, added a local humidity field palette, and added a Wind view with speed-colored air and sparse arrows. Fan arrows read physical airflow vectors; the wind tool and Breeze use separate transient direction samples which do not affect particle movement or temperature mixing.
 - Save/load stores the current visualization mode and restores legacy saves that have `tools.heatViewOn` without `tools.visualizationMode`.
 - Updated `README.md`, `docs/README.md`, `docs/GAME_MECHANICS.md`, `docs/E2E_TEST_PLAN.md`, `docs/archive/README.md`, and `e2e/tools/README.md` to describe the feature, verification, and regression coverage.

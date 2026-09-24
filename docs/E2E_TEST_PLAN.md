@@ -27,7 +27,10 @@ integration suite.
   equal-width rows, narrow sidebar fit, existing control behavior, Heat
   rendering, local Humidity colors without field mutation, Wind speed colors and
   direction marks (including localized wind-tool trails), exclusive mode
-  switching, and Normal View restoration.
+  switching, and Normal restoration. `e2e/tools/environment.spec.mjs`
+  also checks the accessible General Wind and Gust Strength range handles,
+  their `0-50` bounds, keyboard push-through and lower-bound clamping behavior,
+  and Breeze as their shared master toggle.
 - `e2e/tools/zoom.spec.mjs` covers the transient four-level standard-world zoom
   and five-level 520×300 zoom. Both sizes start fitted at level 1 with all edges
   visible and no scrolling; the level factors are `[1, 1.5, 2, 3]` and
@@ -72,7 +75,10 @@ integration suite.
   behavior, and the live Autosave checkbox. It also verifies modern
   visualization-mode save/load and restores Heat from a legacy payload with
   `tools.heatViewOn` but no `tools.visualizationMode`. Its cases verify state
-  across New Game, Resume, Load, and write failure; disabling stops future
+  across New Game, Resume, Load, and write failure. In
+  `e2e/persistence/export-import.spec.mjs`, wind strengths round-trip
+  independently and a legacy `tools.windStrength` value migrates to an ordered
+  pair on the new scale (`15` becomes `50/50`). Disabling Autosave stops future
   automatic writes but preserves the current resume save, while re-enabling
   starts a new five-minute interval without an immediate write.
   `e2e/regressions/` is available for defects without a more specific
@@ -88,10 +94,14 @@ Latest completed regression results for the visualization UI rework:
 - Focused browser regressions for tools, accessibility dialogs, and
   persistence passed, including the localized Wind trail direction case.
 
-The full browser run used installed Chrome with video capture off because this
-machine did not have Playwright's bundled Chromium and FFmpeg installed. It ran
-through the npm wrapper with a temporary config and an already-started local
-test server; no test configuration changes were retained in the project.
+Wind overhaul verification attempt:
+
+- `npm.cmd test -- --focus=wind-overhaul`: 17 passed, 0 failed.
+- The broader deterministic harness was stopped before suite completion after
+  the wind section passed; no result is claimed for the rest of that harness or
+  the full test suite.
+- The focused npm browser run could not launch tests in this environment, so
+  the slider and save/load browser assertions remain unverified here.
 
 Each test uses a fresh browser context, opens a New Game, pauses before
 deterministic setup, and seeds randomness when the scenario needs it. The
@@ -120,6 +130,13 @@ npm run test:scale-profile
 npm run test:browser -- --workers=1 --trace=off
 ```
 
+Run just the wind deterministic regression section with the existing npm test
+entry point:
+
+```text
+npm test -- --focus=wind-overhaul
+```
+
 `npm run test:browser -- --workers=1 --trace=off` runs the full browser suite.
 To run a focused functional area or spec, pass its path through the npm wrapper:
 
@@ -135,6 +152,11 @@ npm run test:browser -- e2e/tools/environment.spec.mjs e2e/tools/edge-cases.spec
 npm run test:browser -- e2e/accessibility/dialogs.spec.mjs --workers=1 --trace=off
 npm run test:browser -- e2e/persistence/export-import.spec.mjs --workers=1 --trace=off
 ```
+
+The wind slider behavior and independent save/load migration cases are owned by
+`e2e/tools/environment.spec.mjs` and
+`e2e/persistence/export-import.spec.mjs`, respectively. Run either spec alone
+through the same npm wrapper when iterating on its focused area.
 
 The Insulation material catalog coverage is owned by
 `e2e/materials/catalog.spec.mjs`; run it through the same wrapper:

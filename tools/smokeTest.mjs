@@ -830,8 +830,8 @@ if (heatVisualizationButton.getAttribute('aria-pressed') === 'true') pass('the H
 else fail('the Heat visualization did not activate from Options');
 byId('closeVisualizationsDialog').click();
 byId('visualizationsNormalButton').click();
-if (heatVisualizationButton.getAttribute('aria-pressed') === 'false') pass('Normal View clears the Heat visualization');
-else fail('Normal View left the Heat visualization active');
+if (heatVisualizationButton.getAttribute('aria-pressed') === 'false') pass('Normal clears the Heat visualization');
+else fail('Normal left the Heat visualization active');
 runFrames(5);
 pass('pause and eraser work');
 

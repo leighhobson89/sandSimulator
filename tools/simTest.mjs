@@ -687,6 +687,12 @@ if (process.argv.includes('--focus=thermal-chamber')) {
     process.exit(failed ? 1 : 0);
 }
 
+if (process.argv.includes('--focus=wind-overhaul')) {
+    runWindOverhaulRegressions();
+    console.log(`\n${passed} passed, ${failed} failed\n`);
+    process.exit(failed > 0 ? 1 : 0);
+}
+
 // ---------------------------------------------------------------------------
 
 section('Sand falls, piles up and is never lost or duplicated');
@@ -2498,6 +2504,149 @@ check('the breeze left the wet mud where it was',
     Math.abs(centreOf(ID['Wet Mud']) - breezeMudStart) < 0.5,
     `wet mud moved from ${breezeMudStart.toFixed(1)} to ${centreOf(ID['Wet Mud']).toFixed(1)}`);
 check('and switching it off stops it', !isBreezeBlowing());
+
+function runWindOverhaulRegressions() {
+    section('Persistent wind and travelling gusts share one prevailing direction');
+    const windOverhaulApi = typeof physics.setGeneralWindStrength === 'function' &&
+        typeof physics.getGeneralWindStrength === 'function' &&
+        typeof physics.setGustWindStrength === 'function' &&
+        typeof physics.getGustWindStrength === 'function' &&
+        typeof physics.getPrevailingWindDirection === 'function' &&
+        typeof physics.getPrevailingWindTicksRemaining === 'function' &&
+        typeof physics.getActiveGustState === 'function' &&
+        typeof physics.windStrengthToLegacyScale === 'function';
+    check('the wind overhaul exposes separate strengths, cycle state, gust state, and legacy calibration', windOverhaulApi);
+
+    if (windOverhaulApi) {
+        const previousWindState = captureSimulationState();
+        const previousWindSeed = getRandomSeed();
+        const setWindTestSettings = (general, gust, enabled, seed = 8402) => {
+            setAmbientWindOn(false);
+            physics.resetRandomSource();
+            setRandomSeed(seed);
+            physics.setGeneralWindStrength(general);
+            physics.setGustWindStrength(gust);
+            setAmbientWindOn(enabled);
+        };
+        const vectorStats = fieldName => {
+            const current = getWorld();
+            const xs = current?.[`${fieldName}X`];
+            const ys = current?.[`${fieldName}Y`];
+            if (!xs || !ys || xs.length !== ys.length) return null;
+            let total = 0;
+            let maximum = 0;
+            let active = 0;
+            const variations = new Set();
+            for (let i = 0; i < xs.length; i++) {
+                const magnitude = Math.hypot(xs[i], ys[i]);
+                total += magnitude;
+                maximum = Math.max(maximum, magnitude);
+                if (magnitude > 0.001) {
+                    active++;
+                    variations.add(magnitude.toFixed(2));
+                }
+            }
+            return { mean: total / xs.length, maximum, active, variations: variations.size };
+        };
+
+        try {
+            clearWorld();
+            setWindTestSettings(0, 0, true);
+            run(240);
+            const zeroWind = vectorStats('generalWind');
+            check('zero General Wind produces no persistent airflow', !!zeroWind && zeroWind.maximum === 0,
+                zeroWind ? `maximum ${zeroWind.maximum}` : 'general wind vectors are missing');
+            check('zero Gust Strength creates no gust event', physics.getActiveGustState() === null);
+
+            setWindTestSettings(5, 5, true);
+            run(120);
+            const gentleWind = vectorStats('generalWind');
+            const direction = physics.getPrevailingWindDirection();
+            const ticksRemaining = physics.getPrevailingWindTicksRemaining();
+            check('General Wind has a stable left or right direction', direction === -1 || direction === 1,
+                `direction ${direction}`);
+            check('the direction cycle lasts approximately thirty minutes', ticksRemaining >= 90000 && ticksRemaining <= 126000,
+                `${ticksRemaining} ticks remaining`);
+            check('General Wind varies spatially and stays below its configured maximum',
+                !!gentleWind && gentleWind.active > 0 && gentleWind.variations > 1 && gentleWind.maximum <= 5.01,
+                gentleWind ? `active ${gentleWind.active}, variation buckets ${gentleWind.variations}, maximum ${gentleWind.maximum.toFixed(2)}` : 'general wind vectors are missing');
+            run(120);
+            check('the prevailing direction stays stable while its timer counts down',
+                physics.getPrevailingWindDirection() === direction &&
+                physics.getPrevailingWindTicksRemaining() < ticksRemaining);
+
+            setWindTestSettings(20, 20, true);
+            run(120);
+            const strongerWind = vectorStats('generalWind');
+            check('higher General Wind increases average airflow', !!gentleWind && !!strongerWind && strongerWind.mean > gentleWind.mean,
+                `mean magnitude ${gentleWind?.mean.toFixed(3)} at 5, ${strongerWind?.mean.toFixed(3)} at 20`);
+            check('new strength 50 maps to legacy strength 15', physics.windStrengthToLegacyScale(50) === 15,
+                `mapped value ${physics.windStrengthToLegacyScale(50)}`);
+            check('combined wind strength above 50 stays linear on the legacy scale',
+                physics.windStrengthToLegacyScale(80) === 24,
+                `mapped value ${physics.windStrengthToLegacyScale(80)}`);
+
+            clearWorld();
+            setWindTestSettings(0, 30, true, 9091);
+            let firstGust = null;
+            let gustStarts = 0;
+            let wasActive = false;
+            let travelsWithDirection = false;
+            let swirls = false;
+            let traverses = false;
+            for (let frame = 0; frame < 5000; frame++) {
+                stepSimulation();
+                const gust = physics.getActiveGustState();
+                if (gust && !wasActive) {
+                    gustStarts++;
+                    if (!firstGust) firstGust = { ...gust };
+                }
+                if (firstGust && gust) {
+                    travelsWithDirection ||= gust.direction === physics.getPrevailingWindDirection();
+                    traverses ||= (gust.x - firstGust.x) * gust.direction > 0;
+                    swirls ||= getWorld().displayWindY.some(value => Math.abs(value) > 0.01);
+                }
+                wasActive = !!gust;
+            }
+            check('gust events arrive more often than the old long-gap schedule', gustStarts >= 12,
+                `${gustStarts} gusts started in 5000 ticks`);
+            check('gusts travel with the prevailing direction', !!firstGust && travelsWithDirection);
+            check('gusts cross the world instead of appearing everywhere at once', !!firstGust && traverses);
+            check('gust turbulence produces visible vertical airflow marks', swirls);
+
+            clearWorld();
+            createWorld(200, 8);
+            setWindTestSettings(0, 30, true, 9091);
+            let normalWorldGust = null;
+            for (let frame = 0; frame < 1200 && !normalWorldGust; frame++) {
+                stepSimulation();
+                normalWorldGust = physics.getActiveGustState();
+            }
+            check('a typical full-width gust takes about three seconds to cross',
+                !!normalWorldGust && normalWorldGust.duration >= 120 && normalWorldGust.duration <= 240,
+                `${normalWorldGust?.duration ?? 'no gust'} ticks`);
+
+            const cycleEnd = captureSimulationState();
+            cycleEnd.prevailingWindTicksRemaining = 1;
+            restoreSimulationState(cycleEnd);
+            stepSimulation();
+            check('the prevailing direction timer is renewed at cycle end',
+                physics.getPrevailingWindTicksRemaining() > 1000,
+                `${physics.getPrevailingWindTicksRemaining()} ticks after expiry`);
+
+            setWindTestSettings(20, 20, false);
+            run(120);
+            check('the master Breeze toggle stops new General Wind and gust activity',
+                vectorStats('generalWind')?.maximum === 0 && physics.getActiveGustState() === null,
+                `general maximum ${vectorStats('generalWind')?.maximum}, active gust ${!!physics.getActiveGustState()}`);
+        } finally {
+            restoreSimulationState(previousWindState);
+            if (previousWindSeed !== null) setRandomSeed(previousWindSeed);
+        }
+    }
+}
+
+runWindOverhaulRegressions();
 
 section('Seeds use powder gravity without a generic buoyancy timer');
 clearWorld();

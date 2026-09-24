@@ -913,6 +913,100 @@ input[type="range"]::-moz-range-thumb {
     color: var(--text-dim);
 }
 
+.wind-dual-heading {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.5rem;
+    margin-bottom: 0.45rem;
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    color: var(--text-dim);
+}
+
+.wind-dual-heading output {
+    color: var(--text);
+}
+
+.wind-dual-track {
+    --general-wind-position: 14%;
+    --gust-wind-position: 14%;
+    position: relative;
+    height: 1.25rem;
+    touch-action: none;
+    background: linear-gradient(to right,
+        var(--line) 0 var(--general-wind-position),
+        var(--accent-soft) var(--general-wind-position) var(--gust-wind-position),
+        var(--line) var(--gust-wind-position) 100%) center / 100% 0.28rem no-repeat;
+}
+
+.wind-dual-range {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 1.25rem;
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    appearance: none;
+    pointer-events: none;
+}
+
+#generalWindStrength {
+    z-index: 2;
+}
+
+.wind-dual-range::-webkit-slider-runnable-track {
+    height: 0.28rem;
+    background: transparent;
+}
+
+.wind-dual-range::-moz-range-track {
+    height: 0.28rem;
+    background: transparent;
+}
+
+.wind-dual-range::-webkit-slider-thumb {
+    width: 0.85rem;
+    height: 0.85rem;
+    margin-top: -0.29rem;
+    border: 2px solid var(--bg-raised);
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent);
+    appearance: none;
+    pointer-events: auto;
+}
+
+.wind-dual-range::-moz-range-thumb {
+    width: 0.68rem;
+    height: 0.68rem;
+    border: 2px solid var(--bg-raised);
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent);
+    pointer-events: auto;
+}
+
+#generalWindStrength::-webkit-slider-thumb {
+    background: var(--bg-raised);
+}
+
+#generalWindStrength::-moz-range-thumb {
+    background: var(--bg-raised);
+}
+
+.wind-dual-range:focus-visible {
+    outline: none;
+}
+
+.wind-dual-range:focus-visible::-webkit-slider-thumb {
+    box-shadow: 0 0 0 3px var(--accent);
+}
+
+.wind-dual-range:focus-visible::-moz-range-thumb {
+    box-shadow: 0 0 0 3px var(--accent);
+}
+
 .tool-slider-heading output {
     color: var(--text);
 }

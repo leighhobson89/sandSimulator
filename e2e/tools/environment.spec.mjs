@@ -44,7 +44,7 @@ test('visualizations precede Environment and environment controls follow the req
     const environmentHeading = page.getByRole('heading', { name: 'Environment', exact: true });
     await expect(visualizationsHeading).toBeVisible();
     await expect(environmentHeading).toBeVisible();
-    await expect(page.locator('#visualizationsNormalButton')).toHaveText('Normal View');
+    await expect(page.locator('#visualizationsNormalButton')).toHaveText('Normal');
     await expect(page.locator('#visualizationsOptionsButton')).toHaveText('Options');
     const sectionOrder = await page.locator('h3').evaluateAll(headings =>
         headings.map(heading => heading.textContent.trim()));
@@ -159,6 +159,7 @@ test('temperature, lapse, wind, breeze, and heat controls cover bounds and reset
     await expect(page.locator('#layerLapse')).toBeEnabled();
     await expect(page.locator('#layerLapseValue')).toHaveText('10.0');
 
+    await page.locator('#generalWindStrength').fill('0');
     await page.locator('#windStrength').fill('1');
     await expect(page.locator('#windStrengthValue')).toHaveText('1');
     await page.locator('#windStrength').fill('8');
@@ -175,6 +176,57 @@ test('temperature, lapse, wind, breeze, and heat controls cover bounds and reset
     await page.keyboard.press('h');
     await expect(page.locator('#visualizationHeatButton')).toHaveAttribute('aria-pressed', 'true');
     await page.locator('#closeVisualizationsDialog').click();
+    await expect(game.state()).resolves.toMatchObject({ cols: expect.any(Number), rows: expect.any(Number) });
+});
+
+test('General Wind and Gust Strength sliders stay ordered and support keyboard adjustment', async ({ page }) => {
+    const game = new GamePage(page); await game.openMenu(); await game.newGame();
+    const general = page.locator('#generalWindStrength');
+    const gust = page.locator('#windStrength');
+    await expect(general).toHaveAttribute('type', 'range');
+    await expect(gust).toHaveAttribute('type', 'range');
+    await expect(general).toHaveAttribute('min', '0');
+    await expect(general).toHaveAttribute('max', '50');
+    await expect(gust).toHaveAttribute('min', '0');
+    await expect(gust).toHaveAttribute('max', '50');
+    await expect(page.getByRole('slider', { name: 'General Wind' })).toBeVisible();
+    await expect(page.getByRole('slider', { name: 'Gust Strength' })).toBeVisible();
+
+    await gust.evaluate(input => { input.value = '10'; input.dispatchEvent(new Event('input', { bubbles: true })); });
+    await general.evaluate(input => { input.value = '10'; input.dispatchEvent(new Event('input', { bubbles: true })); });
+    await general.focus();
+    await page.keyboard.press('ArrowRight');
+    await expect(general).toHaveValue('11');
+    await expect(gust).toHaveValue('11');
+
+    await general.evaluate(input => { input.value = '8'; input.dispatchEvent(new Event('input', { bubbles: true })); });
+    await gust.evaluate(input => { input.value = '20'; input.dispatchEvent(new Event('input', { bubbles: true })); });
+    await gust.focus();
+    await page.keyboard.press('ArrowLeft');
+    await expect(general).toHaveValue('8');
+    await expect(gust).toHaveValue('19');
+    await gust.evaluate(input => { input.value = '0'; input.dispatchEvent(new Event('input', { bubbles: true })); });
+    await expect(general).toHaveValue('8');
+    await expect(gust).toHaveValue('8');
+
+    const track = page.locator('#windStrengthControls');
+    const dragTo = async (from, to) => {
+        const box = await track.boundingBox();
+        const y = box.y + box.height / 2;
+        await page.mouse.move(box.x + box.width * from / 50, y);
+        await page.mouse.down();
+        await page.mouse.move(box.x + box.width * to / 50, y, { steps: 5 });
+        await page.mouse.up();
+    };
+    await dragTo(8, 16);
+    await expect(general).toHaveValue('16');
+    await expect(gust).toHaveValue('16');
+    await dragTo(16, 11);
+    await expect(general).toHaveValue('11');
+    await expect(gust).toHaveValue('16');
+    await dragTo(16, 4);
+    await expect(general).toHaveValue('11');
+    await expect(gust).toHaveValue('11');
     await expect(game.state()).resolves.toMatchObject({ cols: expect.any(Number), rows: expect.any(Number) });
 });
 
@@ -353,7 +405,7 @@ test('wind visualization shows directions for localized wind trails', async ({ p
     expect(southArrows).not.toEqual(eastArrows);
 });
 
-test('switching visualization modes leaves one overlay active and Normal View restores the base render', async ({ page }) => {
+test('switching visualization modes leaves one overlay active and Normal restores the base render', async ({ page }) => {
     const game = new GamePage(page); await game.openMenu(); await game.newGame();
     await game.setFixture([{ x: 50, y: 50, type: 'Stone' }]);
     await page.evaluate(async () => {

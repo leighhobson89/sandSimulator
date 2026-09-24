@@ -192,6 +192,18 @@ Steam, Cloud, and plants add moisture, while Sand and Dry Mud absorb it. The
 Dewpoint setting is the temperature threshold used by cloud precipitation and
 Steam condensation. Both settings are saved with the world.
 
+The **Wind Strength** control has two keyboard-accessible handles on one
+`0-50` scale: **General Wind** and **Gust Strength**. Both start at `7`, and
+General Wind is always less than or equal to Gust Strength. Dragging or moving
+General Wind through the Gust handle advances both together; Gust Strength can
+move independently but cannot fall below General Wind. The new scale is
+calibrated so `50` corresponds to legacy strength `15` wherever an existing
+physical formula uses that reference scale. General Wind and the temporary Gust
+contribution have separate bounds, then their vectors add before the combined
+magnitude is converted for legacy physical formulas. Combined airflow may
+approach the sum of both settings before calibration. Fans retain their
+separate `1-20` speed scale.
+
 ### Powered machines
 
 #### Fan
@@ -512,16 +524,44 @@ particles load as Grass Seeds.
 ## 8. Environment controls and visualization views
 
 The sidebar places **Visualizations** immediately above **Environment**. The
-Visualizations row has **Normal View** and **Options**. Environment controls are
-ordered as **Layers** and **Breeze**, Layer Strength, Wind Strength, Air
-Temperature, Humidity, and Dew Point. Layers and Breeze remain simulation
-controls: Layers enables the height-dependent air temperature lapse, while
-Breeze enables natural gusts. The Wind visualization is a separate display
-mode and does not enable or configure Breeze.
+Visualizations row has **Normal** and **Options**. Environment controls are
+ordered as **Layers** and **Breeze**, Layer Strength, the dual-handle Wind
+Strength control, Air Temperature, Humidity, and Dew Point. Layers and Breeze
+remain simulation controls: Layers enables the height-dependent air temperature
+lapse, while Breeze is the master switch for General Wind and Gusts. Turning
+Breeze off stops new generated airflow and gusts and clears their active fields;
+already drawn wind trails and other airflow momentum can decay naturally.
+Turning it on restores generation according to the two selected strengths. The
+Wind visualization is a separate display mode and does not enable or configure
+Breeze.
+
+General Wind is a persistent background field with smooth spatial variation;
+the selected value is a local maximum, not a uniform speed. The field has calmer
+and stronger regions, updates every eight simulation steps, and uses coherent
+variation instead of per-cell frame randomness. Walls and other wind-blocking
+solids shelter cells downwind; loose material can slow or deflect the flow. A
+strength of zero generates no General Wind.
+
+The prevailing horizontal direction is chosen when the wind system starts and
+held for `108,000` simulation steps, or about 30 minutes at the simulation's
+60 steps per second. At the end of a cycle it chooses left or right again; the
+new direction can match the old one. This clock uses simulation steps rather
+than rendering frames. Direction and remaining cycle steps are saved; gust
+activity itself is transient and is restarted cleanly after loading.
+
+Gusts are temporary travelling bands that use the prevailing direction, even
+when General Wind is zero. A gust contributes force on top of General Wind;
+its contribution is independently bounded by Gust Strength, so the combined
+field may approach the sum of the selected values before calibration. Gusts
+arrive after a short randomized wait and leave another randomized gap, cross the
+world in roughly 2–4 seconds (about 3 seconds at a 200-cell width), and stop
+contributing after they exit. Their curved fronts and coherent vertical swirl
+create local turbulence. Solids and existing shelter rules affect both wind
+fields.
 
 Options opens a modal with Heat, Humidity, and Wind plus three disabled
 placeholders. Only one visualization mode can be active. Selecting another
-mode replaces the previous one; Normal View clears the mode immediately and
+mode replaces the previous one; Normal clears the mode immediately and
 returns to ordinary material rendering without opening the modal. Closing the
 modal leaves the selected view active. The current mode is saved. Older saves
 that have `tools.heatViewOn` but no `tools.visualizationMode` restore Heat;
@@ -533,14 +573,20 @@ when both fields exist, the current mode is authoritative.
   and high values are cyan-blue. It reads the existing humidity field and
   changes pixels only; it does not change the humidity simulation.
 - **Wind** colors air and gas cells by relative speed from blue (slow) through
-  red (fast), then draws sparse directional arrows. Fan arrows use the actual
-  advected `airflowX/Y` field. Wind-tool and ambient Breeze trails use separate
-  transient `displayWindX/Y` direction samples, which fade after a gust and are
-  excluded from saves and blueprints. Those samples only supply the
-  visualization; they do not feed particle motion or temperature mixing.
+  red (fast), then draws sparse directional arrows. It combines the Fan's
+  advected `airflowX/Y` field, General Wind, the travelling Gust field, and
+  transient `displayWindX/Y` samples from the wind tool and gust trails. The
+  generated General Wind and Gust fields also affect particle motion; display
+  samples only provide visualization and fade away. Transient trails are
+  excluded from saves and blueprints.
 
-The Wind overlay samples a coarse grid for the Fan field and a denser grid for
-short-lived tool/Breeze trails so small gusts remain visible. Rendering is
-limited to visible canvas bounds. All three views are display-only: the
-visualization selection itself does not change the world arrays or physical
-rules.
+The Wind overlay samples airflow for sparse direction arrows and includes the
+generated background and gust fields so their speed, direction, moving front,
+and swirl are visible. Rendering is limited to visible canvas bounds. All three
+views are display-only: selecting a visualization does not change the world
+arrays or physical rules.
+
+Portable Save/Load and local Resume Game save both wind strengths under the
+environment settings. Older saves that contain only `tools.windStrength` map
+that legacy value to the new scale and restore both handles to the same value;
+legacy strength `15` therefore restores General Wind and Gust Strength at `50`.

@@ -21,6 +21,7 @@ import {
     prepareDefinitions, createWorld, getWorld, clearWorld, stepSimulation,
     setCell, inBounds, index, getDefinitions, getAmbientTemp, getAirTempAt,
     getAmbientTarget, getTemperature, getHumidityAt, getFrameCount, applyWind, decayWindTrails,
+    windStrengthToLegacyScale,
     getConnectedBatteryCharge, getTubingFlows, isMachinePoweredAt, EMPTY
 } from './physics.js';
 
@@ -473,8 +474,10 @@ function drawWorld() {
             continue;
         }
         if (visualizationMode === 'wind' && (id === EMPTY || defs[id]?.category === 'gas')) {
-            const vx = world.airflowX[i] + world.displayWindX[i];
-            const vy = world.airflowY[i] + world.displayWindY[i];
+            const vx = world.airflowX[i] + world.displayWindX[i] +
+                world.generalWindX[i] + world.gustWindX[i];
+            const vy = world.airflowY[i] + world.displayWindY[i] +
+                world.generalWindY[i] + world.gustWindY[i];
             writeWindColour(pixels, p, Math.hypot(vx, vy));
             continue;
         }
@@ -950,8 +953,9 @@ function drawWindVisualization(world, bounds, defs) {
             const i = y * world.cols + x;
             const id = world.type[i];
             if (id !== EMPTY && defs[id]?.category !== 'gas') continue;
-            drawArrow(x, y, world.airflowX[i] + world.displayWindX[i],
-                world.airflowY[i] + world.displayWindY[i]);
+            drawArrow(x, y,
+                world.airflowX[i] + world.displayWindX[i] + world.generalWindX[i] + world.gustWindX[i],
+                world.airflowY[i] + world.displayWindY[i] + world.generalWindY[i] + world.gustWindY[i]);
         }
     }
 
@@ -1142,7 +1146,7 @@ export function paintCell(centreX, centreY, dragX, dragY, rayDirection = null) {
     // size itself, the brush's own radius being half of that.
     if (id !== EMPTY && getDefinitions()[id].tool === 'wind') {
         applyWind(centreX, centreY, dragX || 0, dragY || 0,
-            Math.max(3, getBrushSize()), getWindStrength());
+            Math.max(3, getBrushSize()), windStrengthToLegacyScale(getWindStrength()));
         return;
     }
 
@@ -1290,7 +1294,8 @@ export function paintShape(shape, x0, y0, x1, y1, rayDirection = null) {
                 if (dx * dx + dy * dy > 1) continue;
             }
             if (isWind) {
-                applyWind(x, y, 0, 0, Math.max(3, getBrushSize()), getWindStrength());
+                applyWind(x, y, 0, 0, Math.max(3, getBrushSize()),
+                    windStrengthToLegacyScale(getWindStrength()));
             } else {
                 paintSingleCell(x, y, id, true, rayDirection);
             }
