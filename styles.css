@@ -852,6 +852,24 @@ input[type="range"]::-moz-range-thumb {
     gap: 0.65rem;
 }
 
+.visualization-toolbar-row > button {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 2.35rem;
+    padding-inline: 0.35rem;
+}
+
+.visualization-toolbar-button.active-toggle {
+    color: var(--on-accent);
+    background-color: var(--accent-soft);
+    border-color: var(--accent);
+}
+
+.environment-toggle-row .tool-icon-toggle,
+.environment-toggle-row .tool-icon-face {
+    width: 100%;
+}
+
 .tool-slider-row {
     margin-top: 0.85rem;
 }
@@ -1492,6 +1510,21 @@ canvas.tubing-hover { cursor: help; }
 }
 .save-string:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .save-dialog-actions { display: flex; flex-wrap: wrap; gap: 0.6rem; justify-content: flex-end; }
+.visualization-dialog-card { width: min(470px, 100%); }
+.visualization-options-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.65rem;
+}
+.visualization-mode-button { height: 4.4rem; }
+.visualization-placeholder { cursor: not-allowed; }
+.visualization-options-grid .tool-icon-button:disabled {
+    color: var(--text-dim);
+    background-color: var(--bg-sunken);
+    border-color: var(--line);
+    opacity: 0.72;
+}
+.visualization-dialog-card .save-dialog-actions { margin-top: 0.1rem; }
 .autosave-choice-card { width: min(680px, 100%); }
 .autosave-choice-actions {
     display: grid;
@@ -1513,6 +1546,8 @@ canvas.tubing-hover { cursor: help; }
 }
 
 @media (max-width: 420px) {
+    .visualization-dialog-card { padding: 1rem; gap: 0.75rem; }
+    .visualization-options-grid { gap: 0.45rem; }
     #autosaveChoiceDialog { padding: 0.35rem; }
     .autosave-choice-card { padding: 0.55rem; }
     .autosave-choice-actions { gap: 0.2rem; }
@@ -1837,6 +1872,7 @@ body[data-theme="terminal"] .menu-title {
         width: 160px;
         flex-basis: 160px;
     }
+    .tool-slider-heading { flex-wrap: wrap; }
     .particle-grid {
         grid-template-columns: 1fr;
     }

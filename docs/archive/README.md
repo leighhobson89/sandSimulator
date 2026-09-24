@@ -19,6 +19,7 @@ in [`../README.md`](../README.md); active findings remain in
 
 ## Executed Plans
 
+- [`plans/2026-09-24-visualization-ui-rework.md`](plans/2026-09-24-visualization-ui-rework.md) - the Visualizations sidebar, dialog, Heat/Humidity/Wind display, save migration, and completed regression record from 24 September 2026.
 - [`plans/seeds-plants-humidity-dewpoint-clouds-corrosion-2026-09-24.md`](plans/seeds-plants-humidity-dewpoint-clouds-corrosion-2026-09-24.md)
   — the seed, plant, humidity, dewpoint, cloud, precipitation, and corrosion
   implementation plan from 24 September 2026.

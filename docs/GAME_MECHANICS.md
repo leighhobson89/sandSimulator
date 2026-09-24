@@ -508,3 +508,39 @@ world settings. Local Resume Game and portable Save/Load preserve these fields;
 older version-1 saves without the added arrays or settings initialize them from
 the current defaults (`50%` Base Humidity and `10 C` Dewpoint), and their ID 19
 particles load as Grass Seeds.
+
+## 8. Environment controls and visualization views
+
+The sidebar places **Visualizations** immediately above **Environment**. The
+Visualizations row has **Normal View** and **Options**. Environment controls are
+ordered as **Layers** and **Breeze**, Layer Strength, Wind Strength, Air
+Temperature, Humidity, and Dew Point. Layers and Breeze remain simulation
+controls: Layers enables the height-dependent air temperature lapse, while
+Breeze enables natural gusts. The Wind visualization is a separate display
+mode and does not enable or configure Breeze.
+
+Options opens a modal with Heat, Humidity, and Wind plus three disabled
+placeholders. Only one visualization mode can be active. Selecting another
+mode replaces the previous one; Normal View clears the mode immediately and
+returns to ordinary material rendering without opening the modal. Closing the
+modal leaves the selected view active. The current mode is saved. Older saves
+that have `tools.heatViewOn` but no `tools.visualizationMode` restore Heat;
+when both fields exist, the current mode is authoritative.
+
+- **Heat** keeps the existing temperature coloring across the world.
+- **Humidity** colors each cell from its local humidity value, including
+  enclosed pockets. Dry values are warm orange, middle values are muted neutral,
+  and high values are cyan-blue. It reads the existing humidity field and
+  changes pixels only; it does not change the humidity simulation.
+- **Wind** colors air and gas cells by relative speed from blue (slow) through
+  red (fast), then draws sparse directional arrows. Fan arrows use the actual
+  advected `airflowX/Y` field. Wind-tool and ambient Breeze trails use separate
+  transient `displayWindX/Y` direction samples, which fade after a gust and are
+  excluded from saves and blueprints. Those samples only supply the
+  visualization; they do not feed particle motion or temperature mixing.
+
+The Wind overlay samples a coarse grid for the Fan field and a denser grid for
+short-lived tool/Breeze trails so small gusts remain visible. Rendering is
+limited to visible canvas bounds. All three views are display-only: the
+visualization selection itself does not change the world arrays or physical
+rules.

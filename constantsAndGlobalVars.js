@@ -10,6 +10,7 @@ export let gameState;
 export const MENU_STATE = 'menuState';
 export const GAME_VISIBLE_ACTIVE = 'gameVisibleActive';
 export const GAME_VISIBLE_PAUSED = 'gameVisiblePaused';
+export const VISUALIZATION_MODES = Object.freeze(['normal', 'heat', 'humidity', 'wind']);
 // The world starts at the original width, then game.js adds columns on first
 // launch to use the available workspace without changing the displayed cell
 // size. Rows stay fixed so the extra room is genuinely extra world.
@@ -25,7 +26,7 @@ let grabberSize = 15;
 let windStrength = 2;
 let eraserOn = false;
 let grabberOn = false;
-let heatViewOn = false;
+let visualizationMode = 'normal';
 let simulationPaused = false;
 
 //FLAGS
@@ -49,7 +50,14 @@ export function setElements() {
         overlay: document.getElementById('overlay'),
         pauseButton: document.getElementById('pauseButton'),
         clearButton: document.getElementById('clearButton'),
-        heatViewButton: document.getElementById('heatViewButton'),
+        visualizationsNormalButton: document.getElementById('visualizationsNormalButton'),
+        visualizationsOptionsButton: document.getElementById('visualizationsOptionsButton'),
+        visualizationsDialog: document.getElementById('visualizationsDialog'),
+        visualizationModeButtons: [...document.querySelectorAll('[data-visualization-mode]')],
+        visualizationHeatButton: document.getElementById('visualizationHeatButton'),
+        visualizationHumidityButton: document.getElementById('visualizationHumidityButton'),
+        visualizationWindButton: document.getElementById('visualizationWindButton'),
+        closeVisualizationsDialog: document.getElementById('closeVisualizationsDialog'),
         eraserButton: document.getElementById('eraserButton'),
         exportGameButton: document.getElementById('exportGame'),
         importGameButton: document.getElementById('importGame'),
@@ -291,11 +299,20 @@ export function setEraserOn(value) {
 }
 
 export function getHeatViewOn() {
-    return heatViewOn;
+    return visualizationMode === 'heat';
 }
 
 export function setHeatViewOn(value) {
-    heatViewOn = value;
+    if (value) visualizationMode = 'heat';
+    else if (visualizationMode === 'heat') visualizationMode = 'normal';
+}
+
+export function getVisualizationMode() {
+    return visualizationMode;
+}
+
+export function setVisualizationMode(value) {
+    visualizationMode = VISUALIZATION_MODES.includes(value) ? value : 'normal';
 }
 
 export function getSimulationPaused() {

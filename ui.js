@@ -11,7 +11,8 @@ import {
     getGridCols, setGridCols, getGridRows, setGridRows, setElements, getElements,
     setBeginGameStatus, getGameInProgress, setGameInProgress, getMenuState,
     getBrushSize, setBrushSize, getDrawMode, setDrawMode, getEraserOn, setEraserOn,
-    getHeatViewOn, setHeatViewOn, getSimulationPaused, setSimulationPaused,
+    getVisualizationMode, setVisualizationMode, getHeatViewOn, setHeatViewOn,
+    getSimulationPaused, setSimulationPaused,
     getWindStrength, setWindStrength, getGrabberSize, setGrabberSize,
     getGrabberOn, setGrabberOn
 } from './constantsAndGlobalVars.js';
@@ -73,6 +74,7 @@ let machineTooltipTarget = null;
 let machineTooltipAnchor = null;
 let machineDialogTimer = null;
 let mixerPurgeSlot = null;
+let visualizationsDialogInvoker = null;
 let edgePanPointer = null;
 let edgePanFrame = null;
 let edgePanLastTime = 0;
@@ -116,6 +118,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     elements.exportGameButton.addEventListener('click', openExportDialog);
     elements.importGameButton.addEventListener('click', openImportDialog);
     setUpSaveDialogs();
+    setUpVisualizationsDialog();
     window.addEventListener('resize', refreshWorldSizeChoices);
     elements.clearDialogConfirm.addEventListener('click', confirmClearWorld);
     elements.clearDialogCancel.addEventListener('click', closeClearDialog);
@@ -172,12 +175,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     elements.clearButton.addEventListener('click', () => {
         openClearDialog();
-    });
-
-    elements.heatViewButton.addEventListener('click', () => {
-        setHeatViewOn(!getHeatViewOn());
-        elements.heatViewButton.classList.toggle('active-toggle', getHeatViewOn());
-        elements.heatViewButton.setAttribute('aria-pressed', String(getHeatViewOn()));
     });
 
     elements.eraserButton.addEventListener('click', () => {
@@ -360,8 +357,7 @@ function synchroniseRestoredControls() {
     elements.eraserButton.classList.toggle('active-toggle', getEraserOn());
     elements.grabberButton.classList.toggle('active-toggle', getGrabberOn());
     elements.grabberButton.setAttribute('aria-pressed', String(getGrabberOn()));
-    elements.heatViewButton.classList.toggle('active-toggle', getHeatViewOn());
-    elements.heatViewButton.setAttribute('aria-pressed', String(getHeatViewOn()));
+    synchroniseVisualizationButtons();
     elements.brushSizeInput.value = String(getBrushSize());
     elements.brushSizeValue.textContent = String(getBrushSize());
     elements.grabberSizeInput.value = String(getGrabberSize());
@@ -398,6 +394,82 @@ function setUpSaveDialogs() {
     elements.autosaveChoiceYes.addEventListener('click', () => settleAutosaveChoice(true));
     elements.autosaveChoiceNo.addEventListener('click', () => settleAutosaveChoice(false));
     elements.autosaveChoiceCancel.addEventListener('click', () => settleAutosaveChoice(null));
+}
+
+function setUpVisualizationsDialog() {
+    const elements = getElements();
+    elements.visualizationsNormalButton.addEventListener('click', () => {
+        setVisualizationModeAndSync('normal');
+    });
+    elements.visualizationsOptionsButton.addEventListener('click', openVisualizationsDialog);
+    elements.visualizationModeButtons.forEach(button => {
+        button.addEventListener('click', () => {
+            setVisualizationModeAndSync(button.dataset.visualizationMode);
+        });
+    });
+    elements.closeVisualizationsDialog.addEventListener('click', closeVisualizationsDialog);
+    elements.visualizationsDialog.addEventListener('click', event => {
+        if (event.target === elements.visualizationsDialog) closeVisualizationsDialog();
+    });
+    elements.visualizationsDialog.addEventListener('keydown', event => {
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            closeVisualizationsDialog();
+            return;
+        }
+        if (event.key !== 'Tab') return;
+
+        const focusable = [...elements.visualizationsDialog.querySelectorAll(
+            'button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])'
+        )].filter(item => !item.hidden && item.getClientRects().length > 0);
+        if (!focusable.length) {
+            event.preventDefault();
+            elements.visualizationsDialog.focus();
+            return;
+        }
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && (document.activeElement === first || !elements.visualizationsDialog.contains(document.activeElement))) {
+            event.preventDefault();
+            last.focus();
+        } else if (!event.shiftKey && (document.activeElement === last || !elements.visualizationsDialog.contains(document.activeElement))) {
+            event.preventDefault();
+            first.focus();
+        }
+    });
+    synchroniseVisualizationButtons();
+}
+
+function openVisualizationsDialog() {
+    const elements = getElements();
+    visualizationsDialogInvoker = document.activeElement;
+    elements.visualizationsDialog.hidden = false;
+    elements.visualizationHeatButton.focus();
+}
+
+function closeVisualizationsDialog() {
+    const elements = getElements();
+    if (elements.visualizationsDialog.hidden) return;
+    elements.visualizationsDialog.hidden = true;
+    if (visualizationsDialogInvoker?.isConnected) visualizationsDialogInvoker.focus();
+    visualizationsDialogInvoker = null;
+}
+
+function setVisualizationModeAndSync(mode) {
+    setVisualizationMode(mode);
+    synchroniseVisualizationButtons();
+}
+
+function synchroniseVisualizationButtons() {
+    const elements = getElements();
+    const mode = getVisualizationMode();
+    elements.visualizationsNormalButton.classList.toggle('active-toggle', mode === 'normal');
+    elements.visualizationsNormalButton.setAttribute('aria-pressed', String(mode === 'normal'));
+    elements.visualizationModeButtons.forEach(button => {
+        const active = button.dataset.visualizationMode === mode;
+        button.classList.toggle('active-toggle', active);
+        button.setAttribute('aria-pressed', String(active));
+    });
 }
 
 function openExportDialog() {
@@ -2268,7 +2340,8 @@ function setUpKeyboardShortcuts() {
         } else if (event.key === 'e' || event.key === 'E') {
             getElements().eraserButton.click();
         } else if (event.key === 'h' || event.key === 'H') {
-            getElements().heatViewButton.click();
+            setHeatViewOn(!getHeatViewOn());
+            synchroniseVisualizationButtons();
         } else if (event.key === '[') {
             adjustBrush(-2);
         } else if (event.key === ']') {

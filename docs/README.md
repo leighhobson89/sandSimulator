@@ -6,6 +6,9 @@ short [`Archive`](archive/README.md) index and are not current guidance.
 
 ## Active References
 
+The mechanics reference also covers Environment controls and display-only
+visualization modes.
+
 - [`PROGRAM_OVERVIEW.md`](PROGRAM_OVERVIEW.md) — architecture, behavior, scope,
   and comparison context.
 - [`GAME_MECHANICS.md`](GAME_MECHANICS.md) — material catalogue and glossary

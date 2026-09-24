@@ -4,7 +4,8 @@ import {
     getParticleTypeIdSelected, setParticleTypeIdSelected, getBrushSize, setBrushSize,
     getDrawMode, setDrawMode, getGrabberSize, setGrabberSize, getWindStrength,
     setWindStrength, getEraserOn, setEraserOn, getGrabberOn, setGrabberOn,
-    getHeatViewOn, setHeatViewOn, getSimulationPaused, setSimulationPaused
+    getVisualizationMode, setVisualizationMode, VISUALIZATION_MODES,
+    getHeatViewOn, getSimulationPaused, setSimulationPaused
 } from './constantsAndGlobalVars.js';
 import { captureSimulationState, restoreSimulationState } from './physics.js';
 import { BLUEPRINT_FIELDS, BLUEPRINT_SLOT_COUNT } from './game.js';
@@ -66,7 +67,8 @@ export function createSaveString() {
         tools: {
             particleId: getParticleTypeIdSelected(), brushSize: getBrushSize(), drawMode: getDrawMode(),
             grabberSize: getGrabberSize(), windStrength: getWindStrength(), eraserOn: getEraserOn(),
-            grabberOn: getGrabberOn(), heatViewOn: getHeatViewOn(), paused: getSimulationPaused()
+            grabberOn: getGrabberOn(), visualizationMode: getVisualizationMode(),
+            heatViewOn: getHeatViewOn(), paused: getSimulationPaused()
         }
     };
     if (blueprints) payload.blueprints = blueprints;
@@ -307,5 +309,9 @@ function restoreTools(tools = {}) {
     if (Number.isFinite(tools.grabberSize)) setGrabberSize(tools.grabberSize);
     if (Number.isFinite(tools.windStrength)) setWindStrength(tools.windStrength);
     setEraserOn(!!tools.eraserOn); setGrabberOn(!!tools.grabberOn);
-    setHeatViewOn(!!tools.heatViewOn); setSimulationPaused(!!tools.paused);
+    const savedVisualizationMode = VISUALIZATION_MODES.includes(tools.visualizationMode)
+        ? tools.visualizationMode
+        : tools.heatViewOn ? 'heat' : 'normal';
+    setVisualizationMode(savedVisualizationMode);
+    setSimulationPaused(!!tools.paused);
 }

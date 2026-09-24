@@ -123,7 +123,9 @@ test('Save dialog exposes a selected save and Load restores all visible tool sta
     await page.getByRole('button', { name: 'Water', exact: true }).click();
     await page.locator('#brushSize').fill('7');
     await page.getByRole('button', { name: 'Ellipse mode' }).click();
-    await page.getByRole('button', { name: 'Heat view' }).click();
+    await page.locator('#visualizationsOptionsButton').click();
+    await page.locator('#visualizationHeatButton').click();
+    await page.locator('#closeVisualizationsDialog').click();
     await page.getByRole('button', { name: 'Save' }).click();
     const save = await page.locator('#saveString').inputValue();
     await expect(page.locator('#saveDialog')).toHaveAttribute('aria-labelledby', 'saveDialogTitle');
@@ -137,9 +139,40 @@ test('Save dialog exposes a selected save and Load restores all visible tool sta
     if (await page.locator('#autosaveChoiceDialog').isVisible()) await page.getByRole('button', { name: 'Yes, replace it' }).click();
     await expect(page.locator('#brushSize')).toHaveValue('7');
     await expect(page.getByRole('button', { name: 'Ellipse mode' })).toHaveAttribute('aria-pressed', 'true');
-    await expect(page.locator('#heatViewButton')).toHaveAttribute('aria-pressed', 'true');
+    await page.locator('#visualizationsOptionsButton').click();
+    await expect(page.locator('#visualizationHeatButton')).toHaveAttribute('aria-pressed', 'true');
+    await page.locator('#closeVisualizationsDialog').click();
     await expect(page.locator('#saveDialog')).toBeHidden();
     await expect(game.state()).resolves.toMatchObject({ cols: expect.any(Number) });
+});
+
+test('visualization mode saves round-trip and legacy Heat saves still restore', async ({ page }) => {
+    const game = new GamePage(page); await game.openMenu(); await game.newGame();
+    await page.locator('#visualizationsOptionsButton').click();
+    await page.locator('#visualizationHumidityButton').click();
+    await page.locator('#closeVisualizationsDialog').click();
+
+    const modes = await page.evaluate(async () => {
+        const save = await import('/saveLoadGame.js');
+        const codec = await import('/lzString.js');
+        const state = await import('/constantsAndGlobalVars.js');
+        const encoded = save.createSaveString();
+        const payload = JSON.parse(codec.decompressFromEncodedURIComponent(encoded));
+        const savedMode = payload.tools.visualizationMode;
+
+        state.setVisualizationMode('wind');
+        save.restoreSavePayload(payload);
+        const restoredMode = state.getVisualizationMode();
+
+        delete payload.tools.visualizationMode;
+        payload.tools.heatViewOn = true;
+        state.setVisualizationMode('normal');
+        save.restoreSavePayload(payload);
+        return { savedMode, restoredMode, legacyMode: state.getVisualizationMode() };
+    });
+
+    expect(modes).toEqual({ savedMode: 'humidity', restoredMode: 'humidity', legacyMode: 'heat' });
+    await expect(game.state()).resolves.toMatchObject({ cols: expect.any(Number), rows: expect.any(Number) });
 });
 
 test('Load replacement choices support Cancel, No, and Yes without losing the live target', async ({ page }) => {

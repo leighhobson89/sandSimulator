@@ -14,13 +14,13 @@ import {
     setBeginGameStatus, setGameStateVariable, getBeginGameStatus,
     getMenuState, getGameVisiblePaused, getGameVisibleActive,
     getParticleTypeIdSelected, setParticleDefinitions,
-    getBrushSize, getDrawMode, getEraserOn, getHeatViewOn, getSimulationPaused, getWindStrength,
+    getBrushSize, getDrawMode, getEraserOn, getVisualizationMode, getSimulationPaused, getWindStrength,
     getGrabberOn, getGrabberSize
 } from './constantsAndGlobalVars.js';
 import {
     prepareDefinitions, createWorld, getWorld, clearWorld, stepSimulation,
     setCell, inBounds, index, getDefinitions, getAmbientTemp, getAirTempAt,
-    getAmbientTarget, getTemperature, getFrameCount, applyWind, decayWindTrails,
+    getAmbientTarget, getTemperature, getHumidityAt, getFrameCount, applyWind, decayWindTrails,
     getConnectedBatteryCharge, getTubingFlows, isMachinePoweredAt, EMPTY
 } from './physics.js';
 
@@ -452,8 +452,8 @@ function drawWorld() {
     const power = world.power;
     const charge = world.charge;
     const wind = world.wind;
+    const visualizationMode = getVisualizationMode();
     const bounds = visibleCellBounds();
-    const heatView = getHeatViewOn();
     const airTint = airTintForTemperature(getAmbientTarget());
     // Lit gunpowder flickers between its two colours while it catches.
     const flicker = (getFrameCount() & 2) === 0;
@@ -464,8 +464,18 @@ function drawWorld() {
         const p = i * 4;
         const id = type[i];
 
-        if (heatView) {
+        if (visualizationMode === 'heat') {
             writeHeatColour(pixels, p, temp[i], id, defs[id]?.alpha);
+            continue;
+        }
+        if (visualizationMode === 'humidity') {
+            writeHumidityColour(pixels, p, getHumidityAt(x, y), id, defs[id]?.alpha);
+            continue;
+        }
+        if (visualizationMode === 'wind' && (id === EMPTY || defs[id]?.category === 'gas')) {
+            const vx = world.airflowX[i] + world.displayWindX[i];
+            const vy = world.airflowY[i] + world.displayWindY[i];
+            writeWindColour(pixels, p, Math.hypot(vx, vy));
             continue;
         }
 
@@ -583,6 +593,7 @@ function drawWorld() {
         context.putImageData(imageData, 0, 0, bounds.left, bounds.top,
             bounds.right - bounds.left, bounds.bottom - bounds.top);
     }
+    if (visualizationMode === 'wind') drawWindVisualization(world, bounds, defs);
     drawMachineOverlays();
     drawGrabberOutline();
     drawLinePreview();
@@ -853,6 +864,113 @@ function writeHeatColour(out, p, t, id, alpha = 1) {
     out[p + 1] = clampByte(g);
     out[p + 2] = clampByte(b);
     out[p + 3] = Math.round(255 * (alpha === undefined ? 1 : alpha));
+}
+
+// Humidity is a location field, so the view colours each cell directly from
+// its local value. This path only writes pixels and never feeds back into the
+// humidity simulation array.
+const HUMIDITY_DRY_RGB = [218, 91, 42];
+const HUMIDITY_MIDDLE_RGB = [180, 170, 103];
+const HUMIDITY_HUMID_RGB = [37, 190, 225];
+
+function writeHumidityColour(out, p, humidity, id, alpha = 1) {
+    const value = Math.max(0, Math.min(100, Number(humidity) || 0));
+    const lower = value < 50 ? 0 : 1;
+    const mix = value < 50 ? value / 50 : (value - 50) / 50;
+    const from = lower === 0 ? HUMIDITY_DRY_RGB : HUMIDITY_MIDDLE_RGB;
+    const to = lower === 0 ? HUMIDITY_MIDDLE_RGB : HUMIDITY_HUMID_RGB;
+    const dim = id === EMPTY ? 0.72 : 1;
+    out[p] = clampByte((from[0] + (to[0] - from[0]) * mix) * dim);
+    out[p + 1] = clampByte((from[1] + (to[1] - from[1]) * mix) * dim);
+    out[p + 2] = clampByte((from[2] + (to[2] - from[2]) * mix) * dim);
+    out[p + 3] = Math.round(255 * (alpha === undefined ? 1 : alpha));
+}
+
+function writeWindColour(out, p, magnitude) {
+    const speed = Math.max(0, Math.min(1, magnitude / 8));
+    out[p] = clampByte(24 + (255 - 24) * speed);
+    out[p + 1] = clampByte(130 + (45 - 130) * speed);
+    out[p + 2] = clampByte(255 + (25 - 255) * speed);
+    out[p + 3] = 255;
+}
+
+const WIND_MARK_SPACING = 20;
+const WIND_TRAIL_MARK_SPACING = 4;
+
+// Airflow samples are display-only. Powered Fans supply their actual advected
+// vector field; wind-tool and Breeze trails provide short-lived directional
+// samples alongside it. Sparse arrows keep the overlay legible at any world
+// size and the work stays inside the visible part of the canvas.
+function drawWindVisualization(world, bounds, defs) {
+    if (!context || bounds.right <= bounds.left || bounds.bottom <= bounds.top) return;
+    context.save();
+    context.lineCap = 'round';
+    context.lineJoin = 'round';
+    context.lineWidth = 1.45;
+    context.beginPath();
+    context.rect(bounds.left, bounds.top, bounds.right - bounds.left, bounds.bottom - bounds.top);
+    context.clip();
+
+    const drawArrow = (x, y, vx, vy) => {
+        const magnitude = Math.hypot(vx, vy);
+        if (magnitude < 0.08) return;
+
+        const dirX = vx / magnitude;
+        const dirY = vy / magnitude;
+        const speed = Math.max(0, Math.min(1, magnitude / 8));
+        const red = 24 + (255 - 24) * speed;
+        const green = 130 + (45 - 130) * speed;
+        const blue = 255 + (25 - 255) * speed;
+        const length = 5.5 + speed * 4;
+        const fromX = x - dirX * length * 0.48;
+        const fromY = y - dirY * length * 0.48;
+        const toX = x + dirX * length * 0.48;
+        const toY = y + dirY * length * 0.48;
+        const angle = Math.atan2(dirY, dirX);
+        const headLength = Math.min(3, length * 0.34);
+        const leftAngle = angle + Math.PI * 0.78;
+        const rightAngle = angle - Math.PI * 0.78;
+
+        context.strokeStyle = `rgb(${Math.round(red)}, ${Math.round(green)}, ${Math.round(blue)})`;
+        context.beginPath();
+        context.moveTo(fromX, fromY);
+        context.lineTo(toX, toY);
+        context.lineTo(toX + Math.cos(leftAngle) * headLength, toY + Math.sin(leftAngle) * headLength);
+        context.moveTo(toX, toY);
+        context.lineTo(toX + Math.cos(rightAngle) * headLength, toY + Math.sin(rightAngle) * headLength);
+        context.stroke();
+    };
+
+    const startX = Math.floor((bounds.left - WIND_MARK_SPACING / 2) / WIND_MARK_SPACING) * WIND_MARK_SPACING + WIND_MARK_SPACING / 2;
+    const startY = Math.floor((bounds.top - WIND_MARK_SPACING / 2) / WIND_MARK_SPACING) * WIND_MARK_SPACING + WIND_MARK_SPACING / 2;
+    for (let y = startY; y < bounds.bottom; y += WIND_MARK_SPACING) {
+        if (y < bounds.top) continue;
+        for (let x = startX; x < bounds.right; x += WIND_MARK_SPACING) {
+            if (x < bounds.left) continue;
+            const i = y * world.cols + x;
+            const id = world.type[i];
+            if (id !== EMPTY && defs[id]?.category !== 'gas') continue;
+            drawArrow(x, y, world.airflowX[i] + world.displayWindX[i],
+                world.airflowY[i] + world.displayWindY[i]);
+        }
+    }
+
+    // Small wind-tool strokes can occupy fewer than twenty cells. Sample their
+    // transient directional marks more closely so every small gust can show
+    // its direction without increasing the density of persistent Fan arrows.
+    const trailStartX = Math.floor((bounds.left - WIND_TRAIL_MARK_SPACING / 2) / WIND_TRAIL_MARK_SPACING) * WIND_TRAIL_MARK_SPACING + WIND_TRAIL_MARK_SPACING / 2;
+    const trailStartY = Math.floor((bounds.top - WIND_TRAIL_MARK_SPACING / 2) / WIND_TRAIL_MARK_SPACING) * WIND_TRAIL_MARK_SPACING + WIND_TRAIL_MARK_SPACING / 2;
+    for (let y = trailStartY; y < bounds.bottom; y += WIND_TRAIL_MARK_SPACING) {
+        if (y < bounds.top) continue;
+        for (let x = trailStartX; x < bounds.right; x += WIND_TRAIL_MARK_SPACING) {
+            if (x < bounds.left) continue;
+            const i = y * world.cols + x;
+            const id = world.type[i];
+            if (id !== EMPTY && defs[id]?.category !== 'gas') continue;
+            drawArrow(x, y, world.displayWindX[i], world.displayWindY[i]);
+        }
+    }
+    context.restore();
 }
 
 // Where the mouse is, so the readout can show what is under it. Set from ui.js.

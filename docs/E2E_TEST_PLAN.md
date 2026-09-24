@@ -18,9 +18,16 @@ integration suite.
   and snapshot-restore contracts.
 - `e2e/navigation/` and `e2e/accessibility/` cover startup, themes, dialogs,
   focus, keyboard behavior, ARIA state, and the shared theme-styled tooltips for
-  toolbar buttons, checkboxes, and the theme selector. The Ember tooltip
-  background is opaque.
-- `e2e/tools/` covers painting, shapes, Grabber, and environment controls.
+  toolbar buttons, checkboxes, and the theme selector. The Visualizations modal
+  coverage checks its six-option grid, modal semantics, narrow viewport bounds,
+  safe placeholders, Escape and Close behavior, and focus restoration. The Ember
+  tooltip background is opaque.
+- `e2e/tools/` covers painting, shapes, Grabber, and environment controls. The
+  environment specs check the Visualizations section and Environment order,
+  equal-width rows, narrow sidebar fit, existing control behavior, Heat
+  rendering, local Humidity colors without field mutation, Wind speed colors and
+  direction marks (including localized wind-tool trails), exclusive mode
+  switching, and Normal View restoration.
 - `e2e/tools/zoom.spec.mjs` covers the transient four-level standard-world zoom
   and five-level 520×300 zoom. Both sizes start fitted at level 1 with all edges
   visible and no scrolling; the level factors are `[1, 1.5, 2, 3]` and
@@ -62,19 +69,29 @@ integration suite.
   includes the selected world size in save, resume, and load flows. The
   profiler's 1040×600 dimension remains synthetic and is not a UI option.
 - `e2e/persistence/` covers Save/Load, resume choices, validation, clear
-  behavior, and the live Autosave checkbox. Its cases verify state across New
-  Game, Resume, Load, and write failure; disabling stops future automatic
-  writes but preserves the current resume save, while re-enabling starts a new
-  five-minute interval without an immediate write. `e2e/regressions/` is
-  available for defects without a more specific functional-area owner.
+  behavior, and the live Autosave checkbox. It also verifies modern
+  visualization-mode save/load and restores Heat from a legacy payload with
+  `tools.heatViewOn` but no `tools.visualizationMode`. Its cases verify state
+  across New Game, Resume, Load, and write failure; disabling stops future
+  automatic writes but preserves the current resume save, while re-enabling
+  starts a new five-minute interval without an immediate write.
+  `e2e/regressions/` is available for defects without a more specific
+  functional-area owner.
 
-The preceding full suite passed 306/306 before the fast-metal-network update.
-For the latest focused metal thermal-network and glow update,
-`thermal-contracts` passed 9/9,
-`thermal-chamber` passed 16/16, and `thermal-air-faces` passed 7/7. The focused
-rendering browser wrapper was attempted with one worker, but did not reach
-assertions; cleanup stalled and was interrupted. No full suite was run for this
-update.
+Latest completed regression results for the visualization UI rework:
+
+- `npm.cmd test`: 336 passed, 0 failed.
+- `npm.cmd run test:smoke`: passed.
+- `npm.cmd run test:scale-profile`: Scale profile checks passed and World
+  allocation checks passed.
+- Full browser suite: 167 passed, 0 failed (12.8 minutes).
+- Focused browser regressions for tools, accessibility dialogs, and
+  persistence passed, including the localized Wind trail direction case.
+
+The full browser run used installed Chrome with video capture off because this
+machine did not have Playwright's bundled Chromium and FFmpeg installed. It ran
+through the npm wrapper with a temporary config and an already-started local
+test server; no test configuration changes were retained in the project.
 
 Each test uses a fresh browser context, opens a New Game, pauses before
 deterministic setup, and seeds randomness when the scenario needs it. The
@@ -108,6 +125,15 @@ To run a focused functional area or spec, pass its path through the npm wrapper:
 
 ```text
 npm run test:browser -- e2e/physics --workers=1 --trace=off
+```
+
+The focused visualization and environment regressions can be run with the
+owning tools, accessibility, and persistence specs:
+
+```text
+npm run test:browser -- e2e/tools/environment.spec.mjs e2e/tools/edge-cases.spec.mjs --workers=1 --trace=off
+npm run test:browser -- e2e/accessibility/dialogs.spec.mjs --workers=1 --trace=off
+npm run test:browser -- e2e/persistence/export-import.spec.mjs --workers=1 --trace=off
 ```
 
 The Insulation material catalog coverage is owned by

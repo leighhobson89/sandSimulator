@@ -141,6 +141,17 @@ globalThis.document = {
     createElementNS: (namespace, tag) => makeElement('created', tag),
     querySelectorAll(selector) {
         if (selector === '[data-large-world-size]') return [byId('worldSizeLargeOption')];
+        if (selector === '[data-visualization-mode]') {
+            return [
+                ['visualizationHeatButton', 'heat'],
+                ['visualizationHumidityButton', 'humidity'],
+                ['visualizationWindButton', 'wind']
+            ].map(([id, mode]) => {
+                const button = byId(id);
+                button.dataset.visualizationMode = mode;
+                return button;
+            });
+        }
         return [];
     },
     addEventListener: (type, handler) => { (documentListeners[type] ||= []).push(handler); },
@@ -808,12 +819,21 @@ if (clearDialog.hidden && remainingAfterClear === 0) pass('confirming Clear wipe
 else fail(`confirming Clear left ${remainingAfterClear} particles behind`);
 
 // Every non-destructive toolbar control should be clickable without blowing up.
-for (const id of ['pauseButton', 'heatViewButton', 'eraserButton']) {
+for (const id of ['pauseButton', 'eraserButton']) {
     byId(id).click();
     byId(id).click();
 }
+byId('visualizationsOptionsButton').click();
+const heatVisualizationButton = byId('visualizationHeatButton');
+heatVisualizationButton.click();
+if (heatVisualizationButton.getAttribute('aria-pressed') === 'true') pass('the Heat visualization activates from Options');
+else fail('the Heat visualization did not activate from Options');
+byId('closeVisualizationsDialog').click();
+byId('visualizationsNormalButton').click();
+if (heatVisualizationButton.getAttribute('aria-pressed') === 'false') pass('Normal View clears the Heat visualization');
+else fail('Normal View left the Heat visualization active');
 runFrames(5);
-pass('pause, heat view and eraser all work');
+pass('pause and eraser work');
 
 byId('brushSize').value = '9';
 byId('brushSize').fire('input', { target: { value: '9' } });

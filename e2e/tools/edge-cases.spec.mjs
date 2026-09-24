@@ -97,11 +97,12 @@ test('environment bounds, keyboard heat toggle, and layer dependencies remain sy
     await page.locator('label:has(#airLayers)').click();
     await expect(lapse).toBeEnabled();
 
-    await page.getByRole('button', { name: 'Heat view' }).focus();
+    await page.locator('#visualizationsOptionsButton').click();
     await page.keyboard.press('h');
-    await expect(page.locator('#heatViewButton')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('#visualizationHeatButton')).toHaveAttribute('aria-pressed', 'true');
     await page.keyboard.press('h');
-    await expect(page.locator('#heatViewButton')).toHaveAttribute('aria-pressed', 'false');
+    await expect(page.locator('#visualizationHeatButton')).toHaveAttribute('aria-pressed', 'false');
+    await page.locator('#closeVisualizationsDialog').click();
     await game.step(1);
     await expect(page.locator('#readout')).toBeVisible();
 });

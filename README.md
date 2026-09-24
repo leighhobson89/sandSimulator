@@ -15,23 +15,12 @@ The current program overview and verification basis are recorded in
 in [`docs/ISSUES.md`](docs/ISSUES.md), while superseded documentation findings
 are kept in [`docs/archive/`](docs/archive/).
 
-The latest recorded full verification on 23 September 2026 is green: `npm test`
-passes 284/284 assertions with default seed `0`, and `npm run test:smoke` passes.
-The last full Playwright run covered 121 real-browser tests and passed in both
-headless mode and a headed diagnostic run. Headed runs are optional diagnostics,
-never an acceptance or release prerequisite.
-The current source discovers 135 browser tests across navigation,
-accessibility, tools, materials, machines, blueprints, physics, electrical
-behavior, persistence, and helper contracts. The middle-click picker changes
-were verified headlessly in their three focused specs (21/21); the current full
-inventory has not been rerun.
-
-```
-npx playwright test --workers=1 --trace=off
-```
-
-Use the headless command as the required browser verification path. No headed
-run is needed for acceptance or release.
+The latest full verification on 24 September 2026 passed: `npm.cmd test` had
+336 passed and 0 failed, `npm.cmd run test:smoke` passed, both scale-profile
+and world allocation checks passed, and the full browser suite passed 167/167 tests.
+Focused visualization, accessibility, and persistence browser regressions also
+passed. Headed runs are optional diagnostics, never an acceptance or release
+prerequisite.
 
 The historical 15/15 matrix is preserved in
 [`docs/archive/E2E_PROGRESS-2026-09-23.md`](docs/archive/E2E_PROGRESS-2026-09-23.md).
@@ -51,8 +40,9 @@ with no dependencies.
 ```
 npm test                   # physics checks, no browser needed
 npm run test:smoke         # UI and persistence checks against a stand-in browser
-npx playwright install chromium
-npm run test:browser       # all 135 currently discovered browser tests
+npm run test:scale-profile # scale profile and world allocation checks
+npx playwright install chromium # one-time browser setup
+npm run test:browser -- --workers=1 --trace=off # all 167 browser tests
 ```
 
 The physics checks use seed `0` by default. Pass `--seed=1234` to
@@ -76,7 +66,7 @@ node tools/tuneIce.mjs                             # ice: lasts at room temperat
 | Right click | erase, or exit Grabber mode |
 | Space | pause |
 | E | eraser |
-| H | heat view (shows temperature instead of materials) |
+| H | Toggle Heat visualization |
 | `[` `]` | brush size |
 | Vertical mouse wheel over the canvas | Zoom one transient level at a time, from fitted level 1 through level 4; the wheel does not vertically scroll the page |
 | Horizontal or Shift + wheel | Leave horizontal scrolling to the browser where the viewport supports it |
@@ -99,9 +89,12 @@ Cancel leaves the current world untouched, and Clear World removes all
 particles. It does not change the saved Resume Game until a later autosave.
 
 The top toolbar carries the play controls, readout and theme. Materials sit to
-the left of the canvas; the icon-based Tools panel to its right contains
-Brush/Line mode and size, Grabber, air temperature, Heat View, air layering,
-wind strength and the natural breeze. Hover an icon for a short explanation;
+the left of the canvas; the Tools panel to its right contains Brush/Line mode
+and size, Grabber, Visualizations, and Environment controls. Open Options for
+Heat, Humidity, and Wind views; Normal View restores ordinary rendering. The
+Environment section keeps Layers and Breeze separate from the Wind
+visualization, followed by Layer Strength, Wind Strength, Air Temperature,
+Humidity, and Dew Point. Hover an icon for a short explanation;
 hover or focus any material button for its glossary description, properties and
 implemented reactions. The material and machine mechanics reference, including
 the glossary maintenance contract, is in

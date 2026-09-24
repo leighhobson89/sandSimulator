@@ -177,72 +177,19 @@
                     </div>
                 </section>
 
-                <section class="tool-section">
+                <section id="visualizationsSection" class="tool-section">
+                    <h3>Visualizations</h3>
+                    <div class="tool-control-row visualization-toolbar-row">
+                        <button id="visualizationsNormalButton" class="btn visualization-toolbar-button active-toggle"
+                                type="button" aria-pressed="true">Normal View</button>
+                        <button id="visualizationsOptionsButton" class="btn visualization-toolbar-button"
+                                type="button" aria-haspopup="dialog" aria-controls="visualizationsDialog">Options</button>
+                    </div>
+                </section>
+
+                <section id="environmentSection" class="tool-section">
                     <h3>Environment</h3>
-                    <div class="tool-slider-row tool-slider-row-first">
-                        <label id="airTempLabel" class="tool-slider-icon tooltip-control" for="airTemp"
-                               data-tooltip="Set the world's air temperature">
-                            <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true">
-                                <path d="M10 14.8V5a2 2 0 1 1 4 0v9.8a4.5 4.5 0 1 1-4 0Z"/>
-                                <path d="M12 9v8"/>
-                            </svg>
-                            <span class="sr-only">Air temperature</span>
-                        </label>
-                        <div class="tool-slider-block">
-                            <div class="tool-slider-heading">
-                                <span>Air temperature</span>
-                                <span class="tool-number-wrap">
-                                    <input id="airTempValue" class="number-input tool-number-input" type="number"
-                                           min="-60" max="4000" step="1" value="8"
-                                           title="Type a temperature, then click away or press Enter">
-                                    <span class="unit">&deg;C</span>
-                                </span>
-                            </div>
-                    <input id="airTemp" type="range" min="-60" max="4000" step="1" value="8">
-                        </div>
-                    </div>
-
-                    <div class="tool-slider-row">
-                        <label id="baseHumidityLabel" class="tool-slider-icon tooltip-control" for="baseHumidity"
-                               data-tooltip="Set the outside air's baseline relative humidity. Water and plants add local moisture; dry ground removes it.">
-                            <span aria-hidden="true">RH</span>
-                            <span class="sr-only">Base Humidity</span>
-                        </label>
-                        <div class="tool-slider-block">
-                            <div class="tool-slider-heading">
-                                <label for="baseHumidity">Base Humidity</label>
-                                <output id="baseHumidityValue" for="baseHumidity">50%</output>
-                            </div>
-                            <input id="baseHumidity" type="range" min="0" max="100" step="1" value="50" aria-label="Base Humidity">
-                        </div>
-                    </div>
-
-                    <div class="tool-slider-row">
-                        <label id="dewpointLabel" class="tool-slider-icon tooltip-control" for="dewpoint"
-                               data-tooltip="Air at or below this temperature can condense moisture into clouds, rain or snow.">
-                            <span aria-hidden="true">DP</span>
-                            <span class="sr-only">Dewpoint</span>
-                        </label>
-                        <div class="tool-slider-block">
-                            <div class="tool-slider-heading">
-                                <label for="dewpoint">Dewpoint</label>
-                                <output id="dewpointValue" for="dewpoint">10 &deg;C</output>
-                            </div>
-                            <input id="dewpoint" type="range" min="0" max="100" step="1" value="10" aria-label="Dewpoint">
-                        </div>
-                    </div>
-
-                    <div class="tool-icon-grid tool-icon-grid-three">
-                        <button id="heatViewButton" class="btn tool-icon-button tooltip-control"
-                                type="button" aria-label="Heat view" aria-pressed="false"
-                                data-tooltip="Show the world's temperature">
-                            <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true">
-                                <path d="M10 14.8V5a2 2 0 1 1 4 0v9.8a4.5 4.5 0 1 1-4 0Z"/>
-                                <path d="M12 8v9M9 10H6M9 6H7"/>
-                            </svg>
-                            <span>Heat</span>
-                        </button>
-
+                    <div class="tool-icon-grid environment-toggle-row">
                         <label class="tool-icon-toggle tooltip-control"
                                data-tooltip="Toggle colder air at higher levels">
                             <input id="airLayers" type="checkbox" checked>
@@ -254,7 +201,6 @@
                                 <span>Layers</span>
                             </span>
                         </label>
-
                         <label class="tool-icon-toggle tooltip-control"
                                data-tooltip="Let natural gusts cross the world">
                             <input id="ambientWind" type="checkbox">
@@ -298,6 +244,59 @@
                                 <output id="windStrengthValue" for="windStrength">2</output>
                             </div>
                             <input id="windStrength" type="range" min="1" max="8" step="1" value="2">
+                        </div>
+                    </div>
+
+                    <div class="tool-slider-row">
+                        <label id="airTempLabel" class="tool-slider-icon tooltip-control" for="airTemp"
+                               data-tooltip="Set the world's air temperature">
+                            <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true">
+                                <path d="M10 14.8V5a2 2 0 1 1 4 0v9.8a4.5 4.5 0 1 1-4 0Z"/>
+                                <path d="M12 9v8"/>
+                            </svg>
+                            <span class="sr-only">Air temperature</span>
+                        </label>
+                        <div class="tool-slider-block">
+                            <div class="tool-slider-heading">
+                                <span>Air temperature</span>
+                                <span class="tool-number-wrap">
+                                    <input id="airTempValue" class="number-input tool-number-input" type="number"
+                                           min="-60" max="4000" step="1" value="8"
+                                           title="Type a temperature, then click away or press Enter">
+                                    <span class="unit">&deg;C</span>
+                                </span>
+                            </div>
+                            <input id="airTemp" type="range" min="-60" max="4000" step="1" value="8">
+                        </div>
+                    </div>
+
+                    <div class="tool-slider-row">
+                        <label id="baseHumidityLabel" class="tool-slider-icon tooltip-control" for="baseHumidity"
+                               data-tooltip="Set the outside air's baseline relative humidity. Water and plants add local moisture; dry ground removes it.">
+                            <span aria-hidden="true">RH</span>
+                            <span class="sr-only">Base Humidity</span>
+                        </label>
+                        <div class="tool-slider-block">
+                            <div class="tool-slider-heading">
+                                <label for="baseHumidity">Humidity</label>
+                                <output id="baseHumidityValue" for="baseHumidity">50%</output>
+                            </div>
+                            <input id="baseHumidity" type="range" min="0" max="100" step="1" value="50" aria-label="Base Humidity">
+                        </div>
+                    </div>
+
+                    <div class="tool-slider-row">
+                        <label id="dewpointLabel" class="tool-slider-icon tooltip-control" for="dewpoint"
+                               data-tooltip="Air at or below this temperature can condense moisture into clouds, rain or snow.">
+                            <span aria-hidden="true">DP</span>
+                            <span class="sr-only">Dew Point</span>
+                        </label>
+                        <div class="tool-slider-block">
+                            <div class="tool-slider-heading">
+                                <label for="dewpoint">Dew Point</label>
+                                <output id="dewpointValue" for="dewpoint">10 &deg;C</output>
+                            </div>
+                            <input id="dewpoint" type="range" min="0" max="100" step="1" value="10" aria-label="Dewpoint">
                         </div>
                     </div>
                 </section>
@@ -495,6 +494,57 @@
             <div class="save-dialog-actions">
                 <button id="purgeDialogConfirm" class="btn btn-primary" type="button">Purge</button>
                 <button id="purgeDialogCancel" class="btn btn-ghost" type="button">Cancel</button>
+            </div>
+        </div>
+    </section>
+
+    <section id="visualizationsDialog" class="save-dialog" hidden role="dialog" aria-modal="true" aria-labelledby="visualizationsDialogTitle">
+        <div class="save-dialog-card save-dialog-card-small visualization-dialog-card">
+            <div class="save-dialog-heading">
+                <div>
+                    <span class="tools-kicker">Display</span>
+                    <h2 id="visualizationsDialogTitle">Visualizations</h2>
+                </div>
+            </div>
+            <div class="visualization-options-grid" role="group" aria-label="Visualization mode">
+                <button id="visualizationHeatButton" class="btn tool-icon-button visualization-mode-button tooltip-control"
+                        type="button" aria-label="Heat" aria-pressed="false" data-visualization-mode="heat"
+                        data-tooltip="Show the world's temperature">
+                    <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M10 14.8V5a2 2 0 1 1 4 0v9.8a4.5 4.5 0 1 1-4 0Z"/>
+                        <path d="M12 8v9M9 10H6M9 6H7"/>
+                    </svg>
+                    <span>Heat</span>
+                </button>
+                <button id="visualizationHumidityButton" class="btn tool-icon-button visualization-mode-button tooltip-control"
+                        type="button" aria-label="Humidity" aria-pressed="false" data-visualization-mode="humidity"
+                        data-tooltip="Show local humidity across the world">
+                    <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M12 3c-2.4 3.5-6 7.2-6 11a6 6 0 0 0 12 0c0-3.8-3.6-7.5-6-11Z"/>
+                        <path d="M9.5 15a2.5 2.5 0 0 0 2.5 2.5"/>
+                    </svg>
+                    <span>Humidity</span>
+                </button>
+                <button id="visualizationWindButton" class="btn tool-icon-button visualization-mode-button tooltip-control"
+                        type="button" aria-label="Wind" aria-pressed="false" data-visualization-mode="wind"
+                        data-tooltip="Show airflow direction and speed">
+                    <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M3 7h12l-3-3M15 7l-3 3M3 17h18l-3-3M21 17l-3 3M3 12h9"/>
+                    </svg>
+                    <span>Wind</span>
+                </button>
+                <button class="btn tool-icon-button visualization-mode-button visualization-placeholder" type="button" aria-label="Button" disabled>
+                    <span>Button</span>
+                </button>
+                <button class="btn tool-icon-button visualization-mode-button visualization-placeholder" type="button" aria-label="Button" disabled>
+                    <span>Button</span>
+                </button>
+                <button class="btn tool-icon-button visualization-mode-button visualization-placeholder" type="button" aria-label="Button" disabled>
+                    <span>Button</span>
+                </button>
+            </div>
+            <div class="save-dialog-actions">
+                <button id="closeVisualizationsDialog" class="btn btn-ghost save-dialog-close" type="button">Close</button>
             </div>
         </div>
     </section>

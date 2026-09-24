@@ -789,12 +789,14 @@ function hasAirNeighbour(x, y) {
     return false;
 }
 
+const HUMIDITY_NEIGHBOURS = [[0, -1], [1, 0], [0, 1], [-1, 0]];
+
 function humidityNearCell(x, y) {
     const i = index(x, y);
     if (AIR_SPACE_BY_TYPE[world.type[i]]) return world.humidity[i];
     let total = 0;
     let count = 0;
-    for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]]) {
+    for (const [dx, dy] of HUMIDITY_NEIGHBOURS) {
         const nx = x + dx;
         const ny = y + dy;
         if (!inBounds(nx, ny)) continue;
@@ -959,7 +961,12 @@ export function createWorld(cols, rows) {
         airflowX: new Float32Array(n),
         airflowY: new Float32Array(n),
         airflowNextX: new Float32Array(n),
-        airflowNextY: new Float32Array(n)
+        airflowNextY: new Float32Array(n),
+        // Display-only vectors for the wind tool and ambient Breeze. Fan air
+        // is rendered from its physical airflow arrays above; these samples
+        // deliberately stay transient and out of saves and blueprints.
+        displayWindX: new Float32Array(n),
+        displayWindY: new Float32Array(n)
     };
     tempFloodQueue = new Int32Array(world.temp.buffer);
     tempNextFloodQueue = new Int32Array(world.tempNext.buffer);
@@ -970,6 +977,7 @@ export function createWorld(cols, rows) {
     storageBarrierMask = null;
     tubingFlows = [];
     hasMixerMachine = false;
+    windTrailsAlive = 0;
     return world;
 }
 
@@ -1321,10 +1329,13 @@ export function clearWorld() {
     world.airflowY.fill(0);
     world.airflowNextX.fill(0);
     world.airflowNextY.fill(0);
+    world.displayWindX.fill(0);
+    world.displayWindY.fill(0);
     storageFunnelMachines = [];
     if (storageBarrierMask) storageBarrierMask.fill(0);
     tubingFlows = [];
     hasMixerMachine = false;
+    windTrailsAlive = 0;
 }
 
 // What a freshly placed particle starts with in its data slot. A plant gets a
@@ -1853,7 +1864,7 @@ function updateHumidityField() {
         let neighbourCount = 0;
         let source = 0;
         let sink = 0;
-        for (const [dx, dy] of [[0, -1], [1, 0], [0, 1], [-1, 0]]) {
+        for (const [dx, dy] of HUMIDITY_NEIGHBOURS) {
             const nx = x + dx;
             const ny = y + dy;
             if (!inBounds(nx, ny)) continue;
@@ -3803,10 +3814,25 @@ let windTrailsAlive = 0;
 
 export function getWindTrails() { return world ? world.wind : null; }
 
-function markWind(i, amount) {
+function markWind(i, amount, dirX = 0, dirY = 0) {
     if (amount <= 0) return;
     const v = world.wind[i] + amount;
     world.wind[i] = v > 255 ? 255 : v;
+    const directionLength = Math.hypot(dirX, dirY);
+    if (directionLength > 0) {
+        // Reuse the trail's local intensity as a relative display speed. The
+        // values are separate from all forces applied to particles and heat.
+        const sampleStrength = Math.max(0.2, Math.min(8, amount / 4));
+        let vx = world.displayWindX[i] + (dirX / directionLength) * sampleStrength;
+        let vy = world.displayWindY[i] + (dirY / directionLength) * sampleStrength;
+        const magnitude = Math.hypot(vx, vy);
+        if (magnitude > 12) {
+            vx *= 12 / magnitude;
+            vy *= 12 / magnitude;
+        }
+        world.displayWindX[i] = vx;
+        world.displayWindY[i] = vy;
+    }
     windTrailsAlive = 1;
 }
 
@@ -3817,12 +3843,18 @@ export function decayWindTrails() {
     const wind = world.wind;
     let alive = 0;
     for (let i = 0; i < wind.length; i++) {
+        let vx = world.displayWindX[i] * WIND_TRAIL_FADE;
+        let vy = world.displayWindY[i] * WIND_TRAIL_FADE;
+        if (Math.hypot(vx, vy) < 0.015) { vx = 0; vy = 0; }
+        world.displayWindX[i] = vx;
+        world.displayWindY[i] = vy;
+
         const v = wind[i];
-        if (v === 0) continue;
-        const next = v * WIND_TRAIL_FADE - 1;
-        if (next <= 0) { wind[i] = 0; continue; }
-        wind[i] = next;
-        alive++;
+        if (v > 0) {
+            const next = v * WIND_TRAIL_FADE - 1;
+            wind[i] = next <= 0 ? 0 : next;
+        }
+        if (wind[i] > 0 || vx !== 0 || vy !== 0) alive++;
     }
     windTrailsAlive = alive;
 }
@@ -4955,7 +4987,7 @@ export function applyWind(centreX, centreY, dirX, dirY, radius, strength) {
             // the cell it belongs to, so the gust visibly rides over whatever
             // deflected it instead of running flat through it.
             const rise = liftedAt(dx, dy) && y > 0 ? 1 : 0;
-            markWind((y - rise) * COLS + x, weight * brightness);
+            markWind((y - rise) * COLS + x, weight * brightness, dirX, dirY);
         }
     }
 
@@ -5149,7 +5181,7 @@ function blowBreeze() {
             // up it is drawn a row higher, so the gust is seen riding over the
             // drift that deflected it.
             const rise = rowLift[x] && y > 0 ? 1 : 0;
-            if (windStreak(y, streakSeed) > 0.93) markWind(i - rise * COLS, force * 75);
+            if (windStreak(y, streakSeed) > 0.93) markWind(i - rise * COLS, force * 75, b.dir, 0);
 
             const id = world.type[i];
             if (id === EMPTY) continue;
@@ -5182,7 +5214,7 @@ function blowBreeze() {
                 if (!windCanEnter(def, typeAtForMovement(def, nx, ny))) continue;
             }
             swapCells(i, ni);
-            markWind(ni, force * 75);
+            markWind(ni, force * 75, b.dir, 0);
         }
     }
 }
