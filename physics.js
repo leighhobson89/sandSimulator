@@ -400,6 +400,7 @@ export function prepareDefinitions(json) {
             depositPoint: p.depositPoint,
             depositsInto: toId(p.depositsInto),
             evaporatesAbove: p.evaporatesAbove,
+            evaporationHumidity: p.evaporationHumidity || 0,
             // Some gases can escape instead of becoming a liquid or deposit.
             // This is checked only once the gas has actually reached its
             // condensation point, so placement and production do not decide
@@ -2415,6 +2416,9 @@ function applyStateChange(x, y, i, def) {
     let over = 0;
 
     if (def.evaporatesAbove !== undefined && t > def.evaporatesAbove) {
+        if (def.evaporationHumidity > 0) {
+            world.humidity[i] = Math.min(100, world.humidity[i] + def.evaporationHumidity);
+        }
         removeParticle(i);
         return true;
     }

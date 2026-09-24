@@ -6,6 +6,10 @@ short [`Archive`](archive/README.md) index and are not current guidance.
 
 ## Active References
 
+- [`PLANT_GROWERS_HANDBOOK.md`](PLANT_GROWERS_HANDBOOK.md) - Base Humidity,
+  local humidity sources and sinks, seed temperature/humidity/substrate
+  requirements, and established plant growing ranges.
+
 The mechanics reference also covers Environment controls and display-only
 visualization modes.
 

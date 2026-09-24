@@ -9,9 +9,12 @@ and [`FUTURE_IDEAS.md`](FUTURE_IDEAS.md).
 
 ## 1. Material catalogue and glossary maintenance
 
-The material picker is also the simulator's glossary. Hovering or focusing any
-material button shows a fixed, readable tooltip with the material name, short
-description, important physical and electrical properties, and implemented
+The material picker is also the simulator's glossary. Its category headings
+are keyboard-accessible buttons that expand and collapse each material grid;
+they start expanded and show a right-side arrow for the current state.
+Hovering or focusing any material button shows a fixed, readable tooltip with
+the material name, short description, important physical and electrical
+properties, and implemented
 reactions. The tooltip is assembled from the prepared definition used by the
 physics engine, so temperatures and target materials come from the rules that
 actually run.
@@ -471,6 +474,13 @@ upright trunk with broad leaves and a fruit bunch. Water Grass / Lily Seeds need
 wet ground and nearby open water; under enough water they grow a mesh stem to
 the surface, spread Water Grass Pads, and can bloom there.
 
+Seed temperature and humidity fields are minimum germination gates; seeds do
+not define a separate maximum germination temperature. All eight seed types
+ignite above `130 C` and become Fire with a `20`-frame burn life. A mature
+Banana Plant grows `14-32` cells tall. See the
+[Plant Growers Handbook](PLANT_GROWERS_HANDBOOK.md) for the complete per-seed
+threshold and substrate table, plus practical humidity guidance.
+
 Growing cells track health against their species' minimum/maximum and ideal
 temperature and humidity, plus the required root-zone moisture. In-range plants
 thrive and grow; plants within a wider survival band pause growth while health
@@ -496,7 +506,11 @@ cloud. Enclosed chambers retain and diffuse humidity but do not spontaneously
 spawn weather. Cloud gas rises/drifts and, at or below the dewpoint in air at
 `88%` or higher humidity, can condense into individual precipitation particles:
 Water when the precipitation temperature is above `0 C`, Snow at or below
-`0 C`. Clouds are a gas material and can be placed with the material picker.
+`0 C`. A Cloud above `100 C` evaporates and restores up to `12` percentage
+points to humidity at its location, matching the amount consumed when the cloud
+formed. Local humidity is capped at `100%`, so the actual increase can be
+smaller when the air is already humid.
+Clouds are a gas material and can be placed with the material picker.
 
 Steam remains produced by boiling Water and Wet Mud, evaporates above `3000 C`,
 and has no lifetime timer. It adds moisture to nearby air and condenses to Water

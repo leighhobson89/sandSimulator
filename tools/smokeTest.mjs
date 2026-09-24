@@ -21,12 +21,23 @@ function pass(message) { console.log(`  PASS  ${message}`); }
 
 function makeElement(id, tagName = 'DIV') {
     const classes = new Set(['d-none']);
+    let ownTextContent = '';
     return {
         id,
-        style: {},
+        style: {
+            setProperty(name, value) { this[name] = String(value); }
+        },
         dataset: {},
         value: '',
-        textContent: '',
+        get textContent() {
+            return this.children.length
+                ? this.children.map(child => child.textContent || '').join('')
+                : ownTextContent;
+        },
+        set textContent(value) {
+            ownTextContent = String(value ?? '');
+            this.children = [];
+        },
         innerHTML: '',
         children: [],
         listeners: {},
@@ -59,8 +70,8 @@ function makeElement(id, tagName = 'DIV') {
             return null;
         },
         closest() { return null; },
-        appendChild(child) { this.children.push(child); },
-        replaceChildren(...children) { this.children = children; },
+        appendChild(child) { ownTextContent = ''; this.children.push(child); },
+        replaceChildren(...children) { ownTextContent = ''; this.children = children; },
         // Good enough for ".particle-button": walks the tree and matches on
         // class name, since the panel nests buttons inside group grids.
         querySelectorAll(selector) {

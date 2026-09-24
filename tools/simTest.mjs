@@ -415,6 +415,64 @@ function runThermalAirFaceFallbackRegression() {
     }
 }
 
+function runEcologyClimateRegressions() {
+    console.log('\nExtreme heat and mature Banana Plant growth');
+
+    physics.resetRandomSource();
+    setRandomSeed(0);
+
+    createWorld(12, 12);
+    setExactAirConditions(4000);
+    physics.setAmbientTarget(4000);
+    physics.setDewpointTarget(0);
+    getWorld().temp.fill(4000);
+    const lilySeedId = ID['Water Grass / Lily Seeds'];
+    const seedDefinitions = defs.filter(definition => definition?.isSeed);
+    const unburnableSeeds = seedDefinitions.filter(definition =>
+        !Number.isFinite(definition.ignitePoint) || definition.burnsInto !== ID.Fire);
+    check('every seed definition has an ignition point and burns into Fire',
+        seedDefinitions.length > 0 && unburnableSeeds.length === 0,
+        unburnableSeeds.map(definition =>
+            `${definition.name}: ignition=${definition.ignitePoint ?? 'missing'}, burnsInto=${defs[definition.burnsInto]?.name ?? 'missing'}`
+        ).join(', '));
+    if (lilySeedId > 0) setCell(6, 6, lilySeedId);
+    getWorld().temp.fill(4000);
+    physics.setRandomSource(() => 0);
+    run(2);
+    check('Water Grass / Lily Seeds ignite at 4000C',
+        lilySeedId > 0 && countOf(lilySeedId) === 0 && countOf(ID.Fire) > 0,
+        `${countOf(lilySeedId)} seeds, ${countOf(ID.Fire)} Fire`);
+
+    createWorld(12, 12);
+    setExactAirConditions(4000);
+    physics.setAmbientTarget(4000);
+    physics.setDewpointTarget(0);
+    physics.setAmbientHumidityTarget(0);
+    getWorld().temp.fill(4000);
+    getWorld().humidity.fill(0);
+    if (ID.Cloud > 0) setCell(6, 6, ID.Cloud);
+    getWorld().temp.fill(4000);
+    const cloudCell = index(6, 6);
+    run(1);
+    const evaporatedCloudHumidity = getWorld().humidity[cloudCell];
+    check('Cloud evaporates in extreme heat',
+        ID.Cloud > 0 && countOf(ID.Cloud) === 0,
+        `${countOf(ID.Cloud)} Cloud cells remain`);
+    check('evaporating Cloud returns 12 humidity points to its local air',
+        ID.Cloud > 0 && countOf(ID.Cloud) === 0 &&
+        evaporatedCloudHumidity >= 11.99 && evaporatedCloudHumidity <= 12.01,
+        `local humidity=${evaporatedCloudHumidity}, expected 12 +/- 0.01`);
+
+    const bananaHeight = defs[ID['Banana Plant']]?.growHeight ?? 0;
+    const minimumMatureHeight = Math.ceil(18 * 1.75);
+    check('mature Banana Plant growth budget is at least 75 percent taller',
+        bananaHeight >= minimumMatureHeight,
+        `${bananaHeight} cells; expected at least ${minimumMatureHeight} from the former 18-cell height`);
+
+    physics.resetRandomSource();
+    setRandomSeed(TEST_SEED);
+}
+
 function runThermalChamberRegressions() {
     // Start the contact-barrier fixture at its ambient baseline so its
     // far-side temperature only reflects heat crossing the barrier.
@@ -647,6 +705,12 @@ function runThermalChamberRegressions() {
 
 // Reuse the same legacy fixtures that run in the normal simulation suite, but
 // expose their thermal subset as a fast, focused regression target.
+if (process.argv.includes('--focus=ecology-climate')) {
+    runEcologyClimateRegressions();
+    console.log(`\n${passed} passed, ${failed} failed\n`);
+    process.exit(failed > 0 ? 1 : 0);
+}
+
 if (process.argv.includes('--focus=thermal-contracts')) {
     const callerState = captureSimulationState();
     const callerSeed = getRandomSeed();
@@ -3962,6 +4026,8 @@ console.log(`  ${perFrame.toFixed(2)} ms per frame  (diagnostic only; 60fps budg
 // the focused `npm test -- --focus=thermal-chamber` path. Run them last so
 // their ambient settings and random draws cannot affect unrelated sections.
 if (!process.argv.includes('--focus=thermal-chamber')) runThermalChamberRegressions();
+
+if (!process.argv.includes('--focus=ecology-climate')) runEcologyClimateRegressions();
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed > 0 ? 1 : 0);

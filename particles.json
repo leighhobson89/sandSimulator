@@ -83,6 +83,8 @@
     "bedrockKeepsMolten  resting on the very bottom row of the world, it never sets by cooling alone -",
     "              the floor of the world is the heat the world sits on. Water can still put it out.",
     "boilPoint     above this temperature it turns into boilsInto and puffs out boilEmits",
+    "evaporatesAbove  above this temperature the particle is removed instead of changing into another material",
+    "evaporationHumidity  local relative-humidity points restored before evaporation removes the particle",
     "depositPoint  a gas condensing where the AIR is below this turns straight into depositsInto,",
     "              a solid, instead of into a liquid. This is steam falling as snow rather than rain.",
     "condenseLossChance  chance that a particle disappears when it is due to condense, decided then",
@@ -1319,7 +1321,7 @@
     },
     "55": {
       "name": "Cloud",
-      "description": "Sparse upper-air gas formed when humid air reaches its dewpoint; saturated clouds precipitate as rain above freezing or snow at and below freezing.",
+      "description": "Visible cloud moisture forms in humid air, precipitates as rain or snow at the dewpoint, and evaporates above 100 C back into local humidity.",
       "group": "Gases",
       "color": "rgb(216, 228, 238)",
       "category": "gas",
@@ -1332,6 +1334,8 @@
       "defaultTemp": 8,
       "dewpointCondensation": true,
       "precipitationChance": 0.012,
+      "evaporatesAbove": 100,
+      "evaporationHumidity": 12,
       "corrodible": false
     },
     "56": {
@@ -1366,6 +1370,10 @@
       "plantSpecies": "moss",
       "germinationMinTemp": 0,
       "germinationMinHumidity": 78,
+      "ignitePoint": 130,
+      "burnsInto": "Fire",
+      "burnLife": 20,
+      "latent": 80,
       "sprouts": [
         { "on": "Wood", "into": "Moss", "chance": 0.04 },
         { "on": "Stone", "into": "Moss", "chance": 0.04 },
@@ -1389,6 +1397,10 @@
       "plantSpecies": "daffodil",
       "germinationMinTemp": 2,
       "germinationMinHumidity": 35,
+      "ignitePoint": 130,
+      "burnsInto": "Fire",
+      "burnLife": 20,
+      "latent": 80,
       "sprouts": [
         { "on": "Wet Mud", "into": "Daffodil", "chance": 0.04 },
         { "on": "Wet Sand", "into": "Daffodil", "chance": 0.025 }
@@ -1409,6 +1421,10 @@
       "plantSpecies": "red tulip",
       "germinationMinTemp": 4,
       "germinationMinHumidity": 38,
+      "ignitePoint": 130,
+      "burnsInto": "Fire",
+      "burnLife": 20,
+      "latent": 80,
       "sprouts": [
         { "on": "Wet Mud", "into": "Red Tulip", "chance": 0.035 },
         { "on": "Wet Sand", "into": "Red Tulip", "chance": 0.025 }
@@ -1429,6 +1445,10 @@
       "plantSpecies": "geranium",
       "germinationMinTemp": 8,
       "germinationMinHumidity": 28,
+      "ignitePoint": 130,
+      "burnsInto": "Fire",
+      "burnLife": 20,
+      "latent": 80,
       "sprouts": [
         { "on": "Wet Mud", "into": "Geranium", "chance": 0.04 },
         { "on": "Wet Sand", "into": "Geranium", "chance": 0.025 }
@@ -1449,6 +1469,10 @@
       "plantSpecies": "blue flower",
       "germinationMinTemp": 3,
       "germinationMinHumidity": 30,
+      "ignitePoint": 130,
+      "burnsInto": "Fire",
+      "burnLife": 20,
+      "latent": 80,
       "sprouts": [
         { "on": "Wet Sand", "into": "Blue Flower", "chance": 0.035 },
         { "on": "Wet Ash", "into": "Blue Flower", "chance": 0.02 }
@@ -1469,6 +1493,10 @@
       "plantSpecies": "banana",
       "germinationMinTemp": 18,
       "germinationMinHumidity": 75,
+      "ignitePoint": 130,
+      "burnsInto": "Fire",
+      "burnLife": 20,
+      "latent": 80,
       "sprouts": [
         { "on": "Wet Mud", "into": "Banana Plant", "chance": 0.035 },
         { "on": "Water", "into": "Banana Plant", "chance": 0.012 }
@@ -1492,6 +1520,10 @@
       "plantSpecies": "water grass",
       "germinationMinTemp": 8,
       "germinationMinHumidity": 65,
+      "ignitePoint": 130,
+      "burnsInto": "Fire",
+      "burnLife": 20,
+      "latent": 80,
       "submergedDepth": 3,
       "sprouts": [
         { "on": "Wet Mud", "into": "Water Grass", "submergedInto": "Water Grass", "chance": 0.035 }
@@ -1660,8 +1692,8 @@
       "category": "static",
       "density": 1.4,
       "growStyle": "banana",
-      "growHeightMin": 8,
-      "growHeight": 18,
+      "growHeightMin": 14,
+      "growHeight": 32,
       "growChance": 0.045,
       "flowerInto": "Banana Bunch",
       "plantSpecies": "banana",

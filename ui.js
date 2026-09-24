@@ -981,13 +981,34 @@ function buildParticleButtons() {
     for (const heading of headings) {
         const title = document.createElement('h3');
         title.className = 'panel-heading';
-        title.textContent = heading;
+
+        const gridId = `particleGroup-${heading.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
+        const toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'panel-heading-toggle';
+        const label = document.createElement('span');
+        label.textContent = heading;
+        const arrow = document.createElement('span');
+        arrow.className = 'panel-heading-arrow';
+        arrow.setAttribute('aria-hidden', 'true');
+        toggle.appendChild(label);
+        toggle.appendChild(arrow);
+        toggle.setAttribute('aria-expanded', 'true');
+        toggle.setAttribute('aria-controls', gridId);
+        title.appendChild(toggle);
         container.appendChild(title);
 
         const grid = document.createElement('div');
         grid.className = 'particle-grid';
+        grid.id = gridId;
         groups[heading].forEach(id => grid.appendChild(makeParticleButton(defs[id], id)));
         container.appendChild(grid);
+
+        toggle.addEventListener('click', () => {
+            const expanded = toggle.getAttribute('aria-expanded') === 'true';
+            toggle.setAttribute('aria-expanded', String(!expanded));
+            grid.hidden = expanded;
+        });
     }
 
     highlightSelectedParticle();
@@ -1126,6 +1147,12 @@ function formatMaterialTooltip(def) {
     if (def.depositPoint !== undefined && def.depositsInto !== 0) reactions.push(`when air is below ${formatTemperature(def.depositPoint)} -> ${target(def.depositsInto)}`);
     if (def.dewpointCondensation) reactions.push(`condenses at or below the ${formatTemperature(getDewpointTarget())} dewpoint in humid air`);
     if (def.precipitationChance > 0) reactions.push('saturated cloud -> Water above 0 C or Snow at/below 0 C');
+    if (def.evaporatesAbove !== undefined) {
+        const returnsHumidity = def.evaporationHumidity > 0
+            ? `, returns ${formatNumber(def.evaporationHumidity)} local humidity points`
+            : '';
+        reactions.push(`above ${formatTemperature(def.evaporatesAbove)} -> evaporates${returnsHumidity}`);
+    }
     if (def.ignitePoint !== undefined && def.burnsInto !== 0) reactions.push(`above ${formatTemperature(def.ignitePoint)} -> ${target(def.burnsInto)}${def.emberInto !== 0 ? `, leaves ${target(def.emberInto)}` : ''}`);
     if (def.wetsInto !== 0) reactions.push(`water contact -> ${target(def.wetsInto)}`);
     if (def.quenchedInto !== 0) reactions.push(`touching Water -> ${target(def.quenchedInto)}`);

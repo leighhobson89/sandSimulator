@@ -146,6 +146,34 @@ test('seed species and Cloud appear under dedicated catalog headings', async ({ 
         .getByRole('button', { name: 'Cloud', exact: true })).toBeVisible();
 });
 
+test('every catalog group can be collapsed and expanded with its accessible toggle', async ({ page }) => {
+    const game = new GamePage(page);
+    await game.openMenu();
+    await game.newGame();
+
+    const headings = page.locator('#particleButtons .panel-heading');
+    const headingCount = await headings.count();
+    expect(headingCount).toBeGreaterThan(0);
+
+    for (const heading of await headings.all()) {
+        const toggle = heading.getByRole('button');
+        const grid = heading.locator('xpath=following-sibling::div[1]');
+        await expect(toggle).toHaveCount(1);
+        await expect(toggle).toHaveAccessibleName(/\S+/);
+        await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+        await expect(grid).toBeVisible();
+
+        await toggle.focus();
+        await toggle.press('Enter');
+        await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+        await expect(grid).toBeHidden();
+
+        await toggle.press('Space');
+        await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+        await expect(grid).toBeVisible();
+    }
+});
+
 test('catalog definitions render representative powder and gas cells', async ({ page }) => {
     const game = new GamePage(page);
     await game.openMenu();
