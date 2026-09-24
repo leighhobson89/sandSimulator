@@ -1,6 +1,6 @@
 # Active issues and improvements
 
-Last reviewed: 23 September 2026.
+Last reviewed: 24 September 2026.
 
 ## Confirmed defects
 
@@ -15,11 +15,14 @@ mixed-output exclusivity.
   follow-up audit is in [`PHYSICS_REFACTOR_AUDIT.md`](PHYSICS_REFACTOR_AUDIT.md).
 
 - [ ] Add broader manual device and assistive-technology checks as the UI grows.
-  The current source discovers 137 browser tests in 34 files covering mouse, touch, themes,
-  focus, rendered canvas mapping, dialogs, keyboard state, persistence, machines,
-  blueprints, physics, and Mixer workflows. The last full run covered 121 tests;
-  the middle-click picker and scale-profile changes have focused verification,
-  but the current inventory has not been run as a full suite. This follow-up is
+  A prior discovery snapshot listed 137 browser tests in 34 files covering
+  mouse, touch, themes, focus, rendered canvas mapping, dialogs, keyboard state,
+  persistence, machines, blueprints, physics, and Mixer workflows. An earlier
+  full run passed 121 tests. A later authorized run recorded 268 passed and 21
+  failed in `npm test`; its browser run was 144/151 before focused fixes, with
+  the remaining failures in physics. The middle-click picker, scale profile,
+  fixed-world chooser/camera, and accessibility/contract areas have focused
+  verification. No full-suite rerun is recorded. This follow-up is
   supplementary to the functional-area E2E matrix.
 
 Do not archive an item until the underlying implementation and its verification

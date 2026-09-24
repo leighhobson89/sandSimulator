@@ -7,7 +7,7 @@ Exhaustive Playwright coverage for the blueprint workflow:
   edge selections, field-preserving stamps, clipping, keyboard history, and redo
   invalidation.
 - `persistence.spec.mjs` verifies all 24 library slots, slot wrapping, and a
-  portable export/import round trip through the real Save dialogs.
+  portable Save/Load round trip through the real Save dialogs.
 
 Run the eight blueprint browser tests headlessly for required verification;
 headed runs are optional diagnostics only and are never an acceptance or release

@@ -11,13 +11,20 @@ test('menu and workspace controls expose names, states, and keyboard activation'
     await game.openMenu();
 
     await expect(page.getByRole('heading', { name: 'Elemental Foundry' })).toHaveCount(1);
-    for (const name of ['New Game', 'Import Game']) {
+    for (const name of ['New Game', 'Load Game']) {
         const button = page.getByRole('button', { name });
         await expect(button).toBeVisible();
         await expect(button).toBeEnabled();
     }
     await page.getByRole('button', { name: 'New Game' }).focus();
     await page.keyboard.press('Enter');
+    const worldSizeDialog = page.locator('#worldSizeDialog');
+    await expect(worldSizeDialog).toBeVisible();
+    const startGame = page.getByRole('button', { name: 'Start Game', exact: true });
+    await startGame.focus();
+    await expect(startGame).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(worldSizeDialog).toBeHidden();
     await expect(page.locator('#canvas')).toBeVisible();
 
     const tools = page.getByRole('tab', { name: 'Tools' });
@@ -38,7 +45,7 @@ test('dialogs expose modal semantics and move focus to their primary controls', 
     await game.openMenu();
     await game.newGame();
 
-    await page.getByRole('button', { name: 'Export', exact: true }).click();
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
     const saveDialog = page.locator('#saveDialog');
     await expect(saveDialog).toHaveAttribute('role', 'dialog');
     await expect(saveDialog).toHaveAttribute('aria-modal', 'true');

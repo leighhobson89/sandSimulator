@@ -17,7 +17,7 @@ import {
 } from './constantsAndGlobalVars.js';
 import {
     loadParticleDefinitions, initializeWorld, setGameState, startGame,
-    getCanvasZoomLevel, setCanvasZoomLevel,
+    getCanvasZoomLevel, setCanvasZoomLevel, isExpandedWorldProfileAvailable,
     paintLine, paintCell, clearCanvasWorld, setHoverCell,
     canPlaceMachine, placeMachine, setMachinePlacementPreview, clearMachinePlacementPreview,
     beginGrab, dropGrab, cancelGrab, setLinePreview, clearLinePreview,
@@ -37,7 +37,7 @@ import { loadSavedTheme, buildThemeSwatches, buildThemeSelect } from './themes.j
 import {
     hasAutosave, createSaveString, parseSaveString, restoreSavePayload, restoreAutosave,
     stopAutosave, replaceAutosaveWithCurrentGame, setSavingListener, setBlueprintSaveHandlers,
-    writeAutosave
+    setAutosaveErrorListener, writeAutosave, isAutosaveEnabled, startAutosave
 } from './saveLoadGame.js';
 
 let isPainting = false;
@@ -55,6 +55,7 @@ let shapeStart = null;
 let shapeMode = null;
 let machinePlacement = null;
 let autosaveChoiceResolver = null;
+let worldSizeResolver = null;
 let marqueeMode = false;
 let isMarqueeDrawing = false;
 let marqueeStart = null;
@@ -97,11 +98,24 @@ document.addEventListener('DOMContentLoaded', async () => {
     buildThemeSelect(elements.themeSelect);
 
     elements.newGameMenuButton.addEventListener('click', () => { void startNewGame(); });
+    elements.autosaveToggle.checked = isAutosaveEnabled();
+    elements.autosaveToggle.addEventListener('change', handleAutosaveToggle);
+    elements.worldSizeStart.addEventListener('click', () => settleWorldSizeChoice(
+        elements.worldSizeDialog.querySelector('input[name="worldSize"]:checked')?.value || null
+    ));
+    elements.worldSizeCancel.addEventListener('click', () => settleWorldSizeChoice(null));
+    elements.worldSizeDialog.addEventListener('keydown', event => {
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            settleWorldSizeChoice(null);
+        }
+    });
     elements.resumeGameButton.addEventListener('click', () => { void resumeGame(); });
     elements.importGameMenuButton.addEventListener('click', openImportDialog);
     elements.exportGameButton.addEventListener('click', openExportDialog);
     elements.importGameButton.addEventListener('click', openImportDialog);
     setUpSaveDialogs();
+    window.addEventListener('resize', refreshWorldSizeChoices);
     elements.clearDialogConfirm.addEventListener('click', confirmClearWorld);
     elements.clearDialogCancel.addEventListener('click', closeClearDialog);
     elements.machineDialogOk.addEventListener('click', confirmMachineDialog);
@@ -124,7 +138,17 @@ document.addEventListener('DOMContentLoaded', async () => {
             closeMachineDialog();
         }
     });
-    setSavingListener(saving => { elements.autosaveStatus.hidden = !saving; });
+    setSavingListener(saving => {
+        if (saving) {
+            elements.autosaveStatus.classList.remove('autosave-status-error');
+            elements.autosaveStatus.hidden = false;
+            elements.autosaveStatusMessage.textContent = 'Autosaving';
+        } else if (!elements.autosaveStatus.classList.contains('autosave-status-error')) {
+            elements.autosaveStatus.hidden = true;
+            elements.autosaveStatusMessage.textContent = '';
+        }
+    });
+    setAutosaveErrorListener(showAutosaveFailure);
     updateResumeButton();
 
     elements.pauseButton.addEventListener('click', () => {
@@ -198,30 +222,119 @@ document.addEventListener('DOMContentLoaded', async () => {
 // ---------------------------------------------------------------- save/load
 
 async function startNewGame() {
+    const worldSize = await askWorldSize();
+    if (!worldSize) return;
+
     const replacingExisting = hasAutosave();
     const useAsResumeGame = replacingExisting
         ? await askToReplaceResume('Starting a new game will replace the saved resume game on this device.')
         : true;
 
     if (useAsResumeGame === null) return;
-    if (replacingExisting && !useAsResumeGame) stopAutosave();
+    if (!useAsResumeGame) {
+        stopAutosave();
+        syncAutosaveToggle();
+    }
     resetBlueprintLibrary();
     setBeginGameStatus(true);
     if (!getGameInProgress()) setGameInProgress(true);
-    setGameState(getGameVisibleActive());
-    startGame();
+    const [cols, rows] = worldSize.split('x').map(Number);
+    // The current world may be close to the cell cap with a very narrow shape.
+    // Reduce both dimensions to a safe intermediate size before setting the
+    // preset so it is not rejected against the dimensions being replaced.
+    setGridCols(200);
+    setGridRows(150);
+    setGridCols(cols);
+    setGridRows(rows);
+    startGame({ newWorld: true, alignAtGround: true });
 
     if (useAsResumeGame) {
-        try { await replaceAutosaveWithCurrentGame(); updateResumeButton(); }
-        catch { /* The simulation remains playable when storage is blocked. */ }
+        try {
+            await replaceAutosaveWithCurrentGame();
+            updateResumeButton();
+            clearAutosaveFailure();
+            syncAutosaveToggle();
+        }
+        catch (error) { showAutosaveFailure(error); }
     }
+}
+
+function handleAutosaveToggle() {
+    const toggle = getElements().autosaveToggle;
+    if (!toggle.checked) {
+        stopAutosave();
+        syncAutosaveToggle();
+        return;
+    }
+
+    if (!startAutosave({ saveNow: false })) {
+        toggle.checked = false;
+        showAutosaveFailure(new Error('Local storage is not available in this browser.'));
+        return;
+    }
+    clearAutosaveFailure();
+    syncAutosaveToggle();
+}
+
+function syncAutosaveToggle() {
+    const toggle = getElements()?.autosaveToggle;
+    if (toggle) toggle.checked = isAutosaveEnabled();
+}
+
+function askWorldSize() {
+    const elements = getElements();
+    refreshWorldSizeChoices();
+    elements.worldSizeStandard.checked = true;
+    elements.worldSizeDialog.hidden = false;
+    elements.worldSizeStandard.focus();
+    return new Promise(resolve => { worldSizeResolver = resolve; });
+}
+
+function refreshWorldSizeChoices() {
+    const elements = getElements();
+    if (!elements?.worldSizeDialog) return;
+    const fixedSizesAvailable = isExpandedWorldProfileAvailable();
+    for (const option of elements.worldSizeLargeOptions) option.hidden = !fixedSizesAvailable;
+    const selected = elements.worldSizeDialog.querySelector('input[name="worldSize"]:checked')?.closest('[data-large-world-size]');
+    if (!fixedSizesAvailable && selected) {
+        elements.worldSizeStandard.checked = true;
+    }
+}
+
+function settleWorldSizeChoice(choice) {
+    const elements = getElements();
+    elements.worldSizeDialog.hidden = true;
+    const resolve = worldSizeResolver;
+    worldSizeResolver = null;
+    if (resolve) resolve(choice);
+    elements.newGameMenuButton.focus();
+}
+
+function showAutosaveFailure(error) {
+    const status = getElements().autosaveStatus;
+    getElements().autosaveStatusMessage.textContent = `Autosave unavailable. This game is still playable; save a copy to keep it. ${error?.message || ''}`.trim();
+    status.classList.add('autosave-status-error');
+    status.hidden = false;
+    syncAutosaveToggle();
+}
+
+function clearAutosaveFailure() {
+    const status = getElements().autosaveStatus;
+    if (!status.classList.contains('autosave-status-error')) return;
+    status.classList.remove('autosave-status-error');
+    status.hidden = true;
+    getElements().autosaveStatusMessage.textContent = '';
 }
 
 async function resumeGame() {
     try {
         const payload = await restoreAutosave();
         beginLoadedGame(payload);
+        if (isAutosaveEnabled()) clearAutosaveFailure();
+        else showAutosaveFailure(new Error('Local storage is not available in this browser.'));
+        syncAutosaveToggle();
     } catch (error) {
+        syncAutosaveToggle();
         updateResumeButton();
         openImportDialog();
         showSaveError(error.message || 'The saved game could not be loaded.');
@@ -235,7 +348,7 @@ function beginLoadedGame(payload) {
     setGameInProgress(true);
     synchroniseRestoredControls();
     setGameState(getGameVisibleActive());
-    startGame({ preserveWorldSize: true });
+    startGame();
 }
 
 function synchroniseRestoredControls() {
@@ -283,7 +396,7 @@ function setUpSaveDialogs() {
 function openExportDialog() {
     const elements = getElements();
     try {
-        elements.saveDialogTitle.textContent = 'Export Game';
+        elements.saveDialogTitle.textContent = 'Save Game';
         elements.saveDialogDescription.textContent = 'Copy this LZString save to keep or share a portable snapshot of this world.';
         elements.saveString.value = createSaveString();
         elements.saveString.readOnly = true;
@@ -293,12 +406,12 @@ function openExportDialog() {
         elements.saveDialog.hidden = false;
         elements.saveString.focus();
         elements.saveString.select();
-    } catch (error) { showSaveError(error.message || 'Unable to export this game.'); }
+    } catch (error) { showSaveError(error.message || 'Unable to save this game.'); }
 }
 
 function openImportDialog() {
     const elements = getElements();
-    elements.saveDialogTitle.textContent = 'Import Game';
+    elements.saveDialogTitle.textContent = 'Load Game';
     elements.saveDialogDescription.textContent = 'Paste an Elemental Foundry LZString save here to load it.';
     elements.saveString.value = '';
     elements.saveString.readOnly = false;
@@ -331,7 +444,7 @@ async function importFromDialog() {
 
     const replacingExisting = hasAutosave();
     const useAsResumeGame = replacingExisting
-        ? await askToReplaceResume('This imported game will replace the saved resume game on this device.')
+        ? await askToReplaceResume('This loaded game will replace the saved resume game on this device.')
         : true;
 
     // Cancel leaves both the current session and its existing autosave alone.
@@ -342,9 +455,17 @@ async function importFromDialog() {
     beginLoadedGame(payload);
     closeSaveDialog();
     if (useAsResumeGame) {
-        try { await replaceAutosaveWithCurrentGame(); updateResumeButton(); }
-        catch { /* The imported game is still loaded even if storage is unavailable. */ }
-    } else stopAutosave();
+        try {
+            await replaceAutosaveWithCurrentGame();
+            updateResumeButton();
+            clearAutosaveFailure();
+            syncAutosaveToggle();
+        }
+        catch (error) { showAutosaveFailure(error); }
+    } else {
+        stopAutosave();
+        syncAutosaveToggle();
+    }
 }
 
 function askToReplaceResume(description) {
@@ -1082,7 +1203,7 @@ function setUpAmbientWind() {
 // A high z-index alone cannot escape an ancestor's overflow clipping, whereas
 // this fixed layer can sit over the canvas and every panel.
 function setUpTooltips() {
-    const panels = [getElements().toolsPanel, getElements().particleButtons];
+    const panels = [getElements().buttonRow, getElements().toolsPanel, getElements().particleButtons, getElements().worldSizeDialog];
     const tooltip = document.getElementById('toolTooltip');
     const controls = panels.flatMap(panel => Array.from(panel.querySelectorAll('.tooltip-control')));
 
@@ -1352,7 +1473,7 @@ function copyMarqueeSelection() {
     button.hidden = false;
     drawBlueprintPreview(button, blueprint);
     updateBlueprintControls();
-    // The regular minute-by-minute autosave also carries blueprints, but a
+    // The regular five-minute autosave also carries blueprints, but a
     // newly captured design is important enough to save immediately when this
     // playthrough has a local resume slot.
     void writeAutosave();
@@ -1560,7 +1681,7 @@ function setUpCanvasViewportInput() {
             anchorX: event.clientX,
             anchorY: event.clientY
         });
-        if (changed && getCanvasZoomLevel() === 1) stopEdgePan();
+        if (changed && !hasCanvasScrollExtent(area)) stopEdgePan();
     }, { passive: false });
 
     area.addEventListener('pointermove', event => {
@@ -1586,8 +1707,12 @@ function setUpCanvasViewportInput() {
 
 function canEdgePan() {
     const elements = getElements();
-    return !!elements.edgePanToggle?.checked && getCanvasZoomLevel() > 1 &&
+    return !!elements.edgePanToggle?.checked && hasCanvasScrollExtent(elements.canvasArea) &&
         !isPainting && !isGrabbing && !getGrabberOn() && !marqueeMode && !isMarqueeDrawing;
+}
+
+function hasCanvasScrollExtent(area = getElements().canvasArea) {
+    return !!area && (area.scrollWidth > area.clientWidth + 1 || area.scrollHeight > area.clientHeight + 1);
 }
 
 function startEdgePan() {
@@ -1632,13 +1757,35 @@ function edgePanTick(now) {
     } else if (edgePanPointer.y > rect.bottom - edgeY) {
         directionY = 1 - (rect.bottom - edgePanPointer.y) / edgeY;
     }
-    if (directionX === 0 && directionY === 0) return;
+    const canScrollX = area.scrollWidth > area.clientWidth + 1;
+    const canScrollY = area.scrollHeight > area.clientHeight + 1;
+    if (!canScrollX) directionX = 0;
+    if (!canScrollY) directionY = 0;
+    const maxScrollLeft = Math.max(0, area.scrollWidth - area.clientWidth);
+    const maxScrollTop = Math.max(0, area.scrollHeight - area.clientHeight);
+    const canMoveX = directionX < 0 ? area.scrollLeft > 0
+        : directionX > 0 ? area.scrollLeft < maxScrollLeft : false;
+    const canMoveY = directionY < 0 ? area.scrollTop > 0
+        : directionY > 0 ? area.scrollTop < maxScrollTop : false;
+    if (!canMoveX && !canMoveY) return;
 
     const elapsed = Math.min(50, Math.max(0, now - edgePanLastTime));
     edgePanLastTime = now;
-    area.scrollLeft += directionX * EDGE_PAN_MAX_SPEED * elapsed / 1000;
-    area.scrollTop += directionY * EDGE_PAN_MAX_SPEED * elapsed / 1000;
-    if (canEdgePan()) edgePanFrame = requestAnimationFrame(edgePanTick);
+    if (canMoveX) {
+        area.scrollLeft = Math.max(0, Math.min(maxScrollLeft,
+            area.scrollLeft + directionX * EDGE_PAN_MAX_SPEED * elapsed / 1000));
+    }
+    if (canMoveY) {
+        area.scrollTop = Math.max(0, Math.min(maxScrollTop,
+            area.scrollTop + directionY * EDGE_PAN_MAX_SPEED * elapsed / 1000));
+    }
+    const canContinueX = directionX < 0 ? area.scrollLeft > 0
+        : directionX > 0 ? area.scrollLeft < maxScrollLeft : false;
+    const canContinueY = directionY < 0 ? area.scrollTop > 0
+        : directionY > 0 ? area.scrollTop < maxScrollTop : false;
+    if (canEdgePan() && (canContinueX || canContinueY)) {
+        edgePanFrame = requestAnimationFrame(edgePanTick);
+    }
 }
 
 function setUpCanvasInput() {
@@ -2052,9 +2199,12 @@ function setUpKeyboardShortcuts() {
         const target = event.target;
         const controlFocused = target &&
             (/^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(target.tagName) || target.isContentEditable);
-        if (scrollDelta && getCanvasZoomLevel() > 1 && !controlFocused &&
+        const area = getElements().canvasArea;
+        const axisCanScroll = scrollDelta && (scrollDelta.left
+            ? area.scrollWidth > area.clientWidth + 1
+            : area.scrollHeight > area.clientHeight + 1);
+        if (scrollDelta && axisCanScroll && !controlFocused &&
             !event.altKey && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
-            const area = getElements().canvasArea;
             area.scrollLeft += scrollDelta.left;
             area.scrollTop += scrollDelta.top;
             event.preventDefault();

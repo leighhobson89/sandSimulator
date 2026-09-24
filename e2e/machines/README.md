@@ -10,7 +10,7 @@ Exhaustive browser workflows for machines and material transfer.
 - `mixer.spec.mjs` checks all documented recipes, non-mixing output, purge, and
   release behavior.
 - `persistence.spec.mjs` checks machine settings, inventories, tubing, and
-  Mixer inputs through portable export/import.
+  Mixer inputs through portable Save/Load.
 
 Run the 30 machine browser tests headlessly for required verification; headed
 runs are optional diagnostics only and are never an acceptance or release

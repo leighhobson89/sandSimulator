@@ -345,7 +345,7 @@ Vent shows its stored amount and current switch state.
 ### Persistence and regression commands
 
 Worlds and Blueprints save the source inventory, Vent inventory, Release switch,
-and fractional flow remainder. Portable export/import also preserves machine
+and fractional flow remainder. Portable Save and Load also preserve machine
 settings, inventories, Tubing, and Mixer inputs through the supported save path.
 
 The headless regression coverage in `tools/simTest.mjs` checks the `30/s` and

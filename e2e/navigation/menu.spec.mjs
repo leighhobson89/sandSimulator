@@ -18,10 +18,10 @@ test('startup exposes menu and New Game transitions to the paused workspace', as
     await expect(page.getByRole('button', { name: 'Play' })).toBeVisible();
 });
 
-test('menu import keeps the menu visible and pause transitions are reversible by button and keyboard', async ({ page }) => {
+test('menu Load Game keeps the menu visible and pause transitions are reversible by button and keyboard', async ({ page }) => {
     const game = new GamePage(page);
     await game.openMenu();
-    await page.getByRole('button', { name: 'Import Game' }).click();
+    await page.getByRole('button', { name: 'Load Game' }).click();
     await expect(page.locator('#saveDialog')).toBeVisible();
     await expect(page.locator('#menu')).toBeVisible();
     await page.getByRole('button', { name: 'Close' }).click();

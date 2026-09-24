@@ -49,6 +49,16 @@ function makeElement(id, tagName = 'DIV') {
             (this.listeners[type] || []).forEach(h => h(event));
         },
         click() { this.fire('click', { button: 0 }); },
+        querySelector(selector) {
+            if (selector === 'input[name="worldSize"]:checked') {
+                return elements.worldSizeStandard?.checked ? elements.worldSizeStandard : null;
+            }
+            if (selector.startsWith('#')) {
+                return this.children.find(child => child.id === selector.slice(1)) || null;
+            }
+            return null;
+        },
+        closest() { return null; },
         appendChild(child) { this.children.push(child); },
         replaceChildren(...children) { this.children = children; },
         // Good enough for ".particle-button": walks the tree and matches on
@@ -57,16 +67,42 @@ function makeElement(id, tagName = 'DIV') {
             const wanted = String(selector).replace('.', '');
             const found = [];
             const visit = node => node.children.forEach(child => {
-                if (String(child.className).split(' ').includes(wanted)) found.push(child);
+                const className = child.className || child.getAttribute('class') || '';
+                if (String(className).split(' ').includes(wanted)) found.push(child);
                 visit(child);
             });
             visit(this);
             return found;
         },
-        getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }),
-        get clientWidth() { return 1200; },
-        get clientHeight() { return 800; },
-        get parentElement() { return elements.canvasArea; },
+        get childElementCount() { return this.children.length; },
+        getBoundingClientRect() {
+            const left = parseFloat(this.style.left) || 0;
+            const top = parseFloat(this.style.top) || 0;
+            const width = this.clientWidth;
+            const height = this.clientHeight;
+            return { x: left, y: top, left, top, right: left + width, bottom: top + height, width, height };
+        },
+        get clientWidth() {
+            const styledWidth = parseFloat(this.style.width);
+            if (Number.isFinite(styledWidth)) return styledWidth;
+            if (this.id === 'canvasArea') return 1200;
+            if (this.id === 'canvas' || this.id === 'canvasStage' || this.id === 'machineOverlay') return this.width || 0;
+            return 800;
+        },
+        get clientHeight() {
+            const styledHeight = parseFloat(this.style.height);
+            if (Number.isFinite(styledHeight)) return styledHeight;
+            if (this.id === 'canvasArea') return 800;
+            if (this.id === 'canvas' || this.id === 'canvasStage' || this.id === 'machineOverlay') return this.height || 0;
+            return 600;
+        },
+        get clientLeft() { return 0; },
+        get clientTop() { return 0; },
+        get parentElement() {
+            if (this.id === 'canvas') return byId('canvasStage');
+            if (this.id === 'canvasStage' || this.id === 'machineOverlay') return elements.canvasArea;
+            return elements.canvasArea;
+        },
         getContext() {
             return {
                 imageSmoothingEnabled: true,
@@ -88,7 +124,10 @@ let lineStrokeCount = 0;
 let lastImageData = null;
 const elements = {};
 function byId(id) {
-    if (!elements[id]) elements[id] = makeElement(id);
+    if (!elements[id]) {
+        elements[id] = makeElement(id);
+        if (id === 'worldSizeStandard') elements[id].value = '260x150';
+    }
     return elements[id];
 }
 elements.canvasArea = makeElement('canvasArea');
@@ -100,11 +139,21 @@ globalThis.document = {
     getElementById: byId,
     createElement: tag => makeElement('created', tag),
     createElementNS: (namespace, tag) => makeElement('created', tag),
+    querySelectorAll(selector) {
+        if (selector === '[data-large-world-size]') return [byId('worldSizeLargeOption')];
+        return [];
+    },
     addEventListener: (type, handler) => { (documentListeners[type] ||= []).push(handler); },
     querySelector: () => makeElement('q'),
     // The theme is applied by setting an attribute on the body.
     body: makeElement('body')
 };
+globalThis.getComputedStyle = () => ({
+    paddingLeft: '0px',
+    paddingRight: '0px',
+    paddingTop: '0px',
+    paddingBottom: '0px'
+});
 const windowListeners = {};
 globalThis.window = {
     addEventListener(type, handler) { (windowListeners[type] ||= []).push(handler); },
@@ -235,16 +284,37 @@ if (fanButtonBeforeStart && fanButtonBeforeStart.children.length === 0) {
 }
 
 byId('newGame').click();
+byId('worldSizeStart').click();
+await Promise.resolve();
 pass('New Game started without throwing');
 
 const startedCanvas = byId('canvas');
-const canvasShare = parseInt(startedCanvas.style.width) / (elements.canvasArea.clientWidth - 32);
+const areaStyle = getComputedStyle(elements.canvasArea);
+const availableWidth = elements.canvasArea.clientWidth -
+    parseFloat(areaStyle.paddingLeft) - parseFloat(areaStyle.paddingRight);
+const canvasShare = parseFloat(startedCanvas.style.width) / availableWidth;
 if (startedCanvas.width > 200) pass(`expanded the world to ${startedCanvas.width} columns`);
 else fail(`expected more than 200 columns, got ${startedCanvas.width}`);
 if (canvasShare >= 0.99 && canvasShare <= 1) {
     pass(`canvas fills ${(canvasShare * 100).toFixed(1)}% of the workspace width`);
 } else {
     fail(`canvas fills ${(canvasShare * 100).toFixed(1)}% instead of the available middle column`);
+}
+
+function clientPointForCell(x, y) {
+    const rect = startedCanvas.getBoundingClientRect();
+    return {
+        clientX: rect.left + ((x + 0.5) / startedCanvas.width) * rect.width,
+        clientY: rect.top + ((y + 0.5) / startedCanvas.height) * rect.height
+    };
+}
+
+function cellAtClientPoint(clientX, clientY) {
+    const rect = startedCanvas.getBoundingClientRect();
+    return {
+        x: Math.floor(((clientX - rect.left) / rect.width) * startedCanvas.width),
+        y: Math.floor(((clientY - rect.top) / rect.height) * startedCanvas.height)
+    };
 }
 
 runFrames(30);
@@ -281,11 +351,10 @@ runFrames(1);
 window.fire('mouseup', { button: 0 });
 let lineCellsAfterRelease = 0;
 for (const id of physicsForLine.getWorld().type) if (id !== 0) lineCellsAfterRelease++;
-const lineMidX = Math.floor((240 / 800) * startedCanvas.width);
-const lineMidY = Math.floor((180 / 600) * 150);
+const lineMidpoint = cellAtClientPoint(240, 180);
 const lineMaterial = parseInt(stoneButtonForLine.dataset.particleId);
 const lineUsesBrushWidth = physicsForLine.getWorld().type[
-    physicsForLine.index(lineMidX, lineMidY + 3)
+    physicsForLine.index(lineMidpoint.x, lineMidpoint.y + 3)
 ] === lineMaterial;
 if (lineCellsBeforeRelease === 0 && lineStrokeCount > linePreviewBefore &&
     lineCellsAfterRelease > 0 && lineUsesBrushWidth) {
@@ -340,10 +409,7 @@ window.fire('mouseup', { button: 0 });
 // 30px icon layered over the scaled pixel canvas.
 const fanId = getDefinitions().findIndex(d => d && d.machine === 'fan');
 const fanButton = materialButtons.find(b => parseInt(b.dataset.particleId) === fanId);
-const fanClient = (x, y) => ({
-    clientX: ((x + 0.5) / startedCanvas.width) * 800,
-    clientY: ((y + 0.5) / startedCanvas.height) * 600
-});
+const fanClient = (x, y) => clientPointForCell(x, y);
 const copperForShapeId = getDefinitions().findIndex(d => d && d.name === 'Copper');
 function countMaterial(materialId) {
     let count = 0;
@@ -765,10 +831,7 @@ physicsForGrab.setCell(52, 51, stoneId);
 physicsForGrab.setCell(49, 50, glassId);
 byId('grabberSize').fire('input', { target: { value: '9' } });
 byId('grabberButton').click();
-const toClient = (x, y) => ({
-    clientX: ((x + 0.5) / startedCanvas.width) * 800,
-    clientY: ((y + 0.5) / startedCanvas.height) * 600
-});
+const toClient = (x, y) => clientPointForCell(x, y);
 canvas.fire('mousemove', toClient(50, 50));
 runFrames(1);
 if (strokeCount > 0) pass('grabber mode draws its square around the pointer');
@@ -967,6 +1030,7 @@ globalThis.localStorage = {
 };
 const autosaveBeforeCancel = localStorage.getItem(persistence.AUTOSAVE_STORAGE_KEY);
 byId('newGame').click();
+byId('worldSizeStart').click();
 await Promise.resolve();
 const choiceDialog = byId('autosaveChoiceDialog');
 byId('autosaveChoiceCancel').click();

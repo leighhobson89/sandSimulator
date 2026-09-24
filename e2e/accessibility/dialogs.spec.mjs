@@ -9,17 +9,19 @@ test.afterEach(async ({ page }, testInfo) => {
 test('save and clear dialogs expose labelled modal state and keyboard-focusable controls', async ({ page }) => {
     const game = new GamePage(page); await game.openMenu(); await game.newGame();
 
-    await page.getByRole('button', { name: 'Export' }).click();
+    await page.getByRole('button', { name: 'Save' }).click();
     const saveDialog = page.locator('#saveDialog');
     await expect(saveDialog).toHaveRole('dialog');
+    await expect(page.locator('#saveDialogTitle')).toHaveText('Save Game');
     await expect(saveDialog).toHaveAttribute('aria-modal', 'true');
     await expect(saveDialog).toHaveAttribute('aria-labelledby', 'saveDialogTitle');
     await expect(page.locator('#saveString')).toBeFocused();
     await page.getByRole('button', { name: 'Close' }).click();
     await expect(saveDialog).toBeHidden();
 
-    await page.getByRole('button', { name: 'Import' }).click();
+    await page.getByRole('button', { name: 'Load' }).click();
     await expect(page.locator('#saveDialog')).toHaveRole('dialog');
+    await expect(page.locator('#saveDialogTitle')).toHaveText('Load Game');
     await expect(page.locator('#saveString')).toBeFocused();
     await expect(page.locator('#saveString')).not.toHaveAttribute('readonly', '');
     await page.getByRole('button', { name: 'Close' }).click();
@@ -41,6 +43,10 @@ test('autosave choice is a labelled modal and supports keyboard cancellation', a
     const game = new GamePage(page); await game.openMenu(); await game.newGame();
     await page.reload();
     await page.getByRole('button', { name: 'New Game' }).click();
+    const sizeDialog = page.locator('#worldSizeDialog');
+    await expect(sizeDialog).toBeVisible();
+    await sizeDialog.getByRole('radio', { name: '260 × 150', exact: true }).check();
+    await sizeDialog.getByRole('button', { name: 'Start Game', exact: true }).click();
     const choice = page.locator('#autosaveChoiceDialog');
     await expect(choice).toHaveRole('dialog');
     await expect(choice).toHaveAttribute('aria-modal', 'true');

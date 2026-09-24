@@ -24,6 +24,10 @@ test('menu theme swatches apply, persist, and expose selected state', async ({ p
 test('toolbar theme select stays synchronized with the menu theme', async ({ page }) => {
     await page.goto('/?e2e');
     await page.getByRole('button', { name: 'New Game' }).click();
+    const sizeDialog = page.locator('#worldSizeDialog');
+    await expect(sizeDialog).toBeVisible();
+    await sizeDialog.getByRole('radio', { name: '260 × 150', exact: true }).check();
+    await sizeDialog.getByRole('button', { name: 'Start Game', exact: true }).click();
     const select = page.locator('#themeSelect');
     for (const theme of themes) {
         await select.selectOption(theme);

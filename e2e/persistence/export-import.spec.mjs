@@ -7,18 +7,18 @@ test.afterEach(async ({ page }, testInfo) => {
     if (testInfo.status !== testInfo.expectedStatus) await attachGameDiagnostics(testInfo, page, 'export-import');
 });
 
-test('export and import round-trip restores world and tool settings', async ({ page }) => {
+test('Save and Load round-trip restores world and tool settings', async ({ page }) => {
     const game = new GamePage(page); await game.openMenu(); await game.newGame();
     await page.getByRole('button', { name: 'Water', exact: true }).click();
     await page.locator('#brushSize').fill('9'); await clickCanvasCell(page, { x: 18, y: 18 });
     const before = await game.state();
-    await page.getByRole('button', { name: 'Export' }).click();
+    await page.getByRole('button', { name: 'Save' }).click();
     const save = await page.locator('#saveString').inputValue();
     expect(save.length).toBeGreaterThan(20);
     await page.locator('#closeSaveDialog').click();
     await page.getByRole('button', { name: 'Clear' }).click();
     await page.getByRole('button', { name: 'Clear World' }).click();
-    await page.getByRole('button', { name: 'Import' }).click();
+    await page.getByRole('button', { name: 'Load' }).click();
     await page.locator('#saveString').fill(save); await page.getByRole('button', { name: 'Load Game' }).click();
     if (await page.locator('#autosaveChoiceDialog').isVisible()) {
         await page.getByRole('button', { name: 'Yes, replace it' }).click();
@@ -33,20 +33,50 @@ test('export and import round-trip restores world and tool settings', async ({ p
     await expect(page.locator('#brushSize')).toHaveValue('9');
 });
 
-test('export dialog exposes a selected save and import restores all visible tool state', async ({ page }) => {
+test('a selected 520 × 300 world keeps its dimensions in version 1 Save/Load', async ({ page }) => {
+    const game = new GamePage(page);
+    await game.openMenu();
+    await game.newGame({ worldSize: '520 × 300' });
+    expect(await game.state()).toMatchObject({ cols: 520, rows: 300 });
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    const save = await page.locator('#saveString').inputValue();
+    const wireFormat = await page.evaluate(async value => {
+        const payload = (await import('/saveLoadGame.js')).parseSaveString(value);
+        return {
+            format: payload.format,
+            version: payload.version,
+            cols: payload.simulation.cols,
+            rows: payload.simulation.rows
+        };
+    }, save);
+    expect(wireFormat).toEqual({ format: 'elemental-foundry', version: 1, cols: 520, rows: 300 });
+    await page.getByRole('button', { name: 'Close', exact: true }).click();
+
+    await page.getByRole('button', { name: 'Clear', exact: true }).click();
+    await page.getByRole('button', { name: 'Clear World', exact: true }).click();
+    await page.getByRole('button', { name: 'Load', exact: true }).click();
+    await page.locator('#saveString').fill(save);
+    await page.getByRole('button', { name: 'Load Game', exact: true }).click();
+    if (await page.locator('#autosaveChoiceDialog').isVisible()) {
+        await page.getByRole('button', { name: 'Yes, replace it', exact: true }).click();
+    }
+    expect(await game.state()).toMatchObject({ cols: 520, rows: 300 });
+});
+
+test('Save dialog exposes a selected save and Load restores all visible tool state', async ({ page }) => {
     const game = new GamePage(page); await game.openMenu(); await game.newGame();
     await page.getByRole('button', { name: 'Water', exact: true }).click();
     await page.locator('#brushSize').fill('7');
     await page.getByRole('button', { name: 'Ellipse mode' }).click();
     await page.getByRole('button', { name: 'Heat view' }).click();
-    await page.getByRole('button', { name: 'Export' }).click();
+    await page.getByRole('button', { name: 'Save' }).click();
     const save = await page.locator('#saveString').inputValue();
     await expect(page.locator('#saveDialog')).toHaveAttribute('aria-labelledby', 'saveDialogTitle');
     await expect(page.locator('#saveString')).toHaveAttribute('readonly', '');
     await expect(page.locator('#copySaveString')).toBeVisible();
     await page.locator('#closeSaveDialog').click();
 
-    await page.getByRole('button', { name: 'Import' }).click();
+    await page.getByRole('button', { name: 'Load' }).click();
     await page.locator('#saveString').fill(save);
     await page.getByRole('button', { name: 'Load Game' }).click();
     if (await page.locator('#autosaveChoiceDialog').isVisible()) await page.getByRole('button', { name: 'Yes, replace it' }).click();
@@ -57,25 +87,26 @@ test('export dialog exposes a selected save and import restores all visible tool
     await expect(game.state()).resolves.toMatchObject({ cols: expect.any(Number) });
 });
 
-test('import replacement choices support Cancel, No, and Yes without losing the live target', async ({ page }) => {
+test('Load replacement choices support Cancel, No, and Yes without losing the live target', async ({ page }) => {
     const game = new GamePage(page); await game.openMenu(); await game.newGame();
     const originalResume = await page.evaluate(() => localStorage.getItem('elemental-foundry.autosave.v1'));
     await page.getByRole('button', { name: 'Water', exact: true }).click();
     await page.locator('#brushSize').fill('1');
     await clickCanvasCell(page, { x: 30, y: 30 });
-    await page.getByRole('button', { name: 'Export' }).click();
+    await page.getByRole('button', { name: 'Save' }).click();
     const imported = await page.locator('#saveString').inputValue();
     await page.locator('#closeSaveDialog').click();
     await page.getByRole('button', { name: 'Clear' }).click();
     await page.getByRole('button', { name: 'Clear World' }).click();
 
-    await page.getByRole('button', { name: 'Import' }).click();
+    await page.getByRole('button', { name: 'Load' }).click();
     await page.locator('#saveString').fill(imported);
     await page.getByRole('button', { name: 'Load Game' }).click();
     await expect(page.locator('#autosaveChoiceDialog')).toBeVisible();
     await page.getByRole('button', { name: 'Cancel', exact: true }).click();
     expect((await game.state()).typeCounts['0']).toBe((await game.state()).cols * (await game.state()).rows);
     await expect(page.locator('#saveDialog')).toBeVisible();
+    await expect(page.locator('#autosaveToggle')).toBeChecked();
     await expect(page.evaluate(() => localStorage.getItem('elemental-foundry.autosave.v1'))).resolves.toBe(originalResume);
 
     await page.getByRole('button', { name: 'Load Game' }).click();
@@ -83,24 +114,27 @@ test('import replacement choices support Cancel, No, and Yes without losing the 
     const loaded = await game.state();
     const water = loaded.definitions.find(definition => definition?.name === 'Water').id;
     expect(loaded.typeCounts[String(water)]).toBeGreaterThan(0);
+    await expect(page.locator('#autosaveToggle')).not.toBeChecked();
     await expect(page.evaluate(() => localStorage.getItem('elemental-foundry.autosave.v1'))).resolves.toBe(originalResume);
 
-    await page.getByRole('button', { name: 'Import' }).click();
+    await page.getByRole('button', { name: 'Load' }).click();
     await page.locator('#saveString').fill(imported);
     await page.getByRole('button', { name: 'Load Game' }).click();
     await page.getByRole('button', { name: 'Yes, replace it' }).click();
+    await expect(page.locator('#autosaveToggle')).toBeChecked();
     await expect.poll(() => page.evaluate(() => localStorage.getItem('elemental-foundry.autosave.v1')))
         .not.toBe(originalResume);
 });
 
 test('failed autosave replacement preserves the previous resume game', async ({ page }) => {
     const game = new GamePage(page); await game.openMenu(); await game.newGame();
+    await expect(page.locator('#autosaveToggle')).toBeChecked();
     const key = 'elemental-foundry.autosave.v1';
     await expect.poll(() => page.evaluate(storageKey => localStorage.getItem(storageKey), key))
         .not.toBeNull();
     const previousSave = await page.evaluate(storageKey => localStorage.getItem(storageKey), key);
 
-    await page.getByRole('button', { name: 'Export' }).click();
+    await page.getByRole('button', { name: 'Save' }).click();
     const save = await page.locator('#saveString').inputValue();
     await page.locator('#closeSaveDialog').click();
     await page.getByRole('button', { name: 'Clear' }).click();
@@ -113,13 +147,14 @@ test('failed autosave replacement preserves the previous resume game', async ({ 
             setItem(keyName, value);
         };
     }, key);
-    await page.getByRole('button', { name: 'Import' }).click();
+    await page.getByRole('button', { name: 'Load' }).click();
     await page.locator('#saveString').fill(save);
     await page.getByRole('button', { name: 'Load Game' }).click();
     await page.getByRole('button', { name: 'Yes, replace it' }).click();
 
     await expect(page.locator('#autosaveStatus')).toBeVisible();
     await expect(page.locator('#autosaveStatus')).toContainText(/autosave|resume/i);
+    await expect(page.locator('#autosaveToggle')).not.toBeChecked();
     await expect(page.evaluate(storageKey => localStorage.getItem(storageKey), key))
         .resolves.toBe(previousSave);
     const loaded = await game.state();

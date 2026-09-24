@@ -7,6 +7,24 @@ test.afterEach(async ({ page }, testInfo) => {
     if (testInfo.status !== testInfo.expectedStatus) await attachGameDiagnostics(testInfo, page);
 });
 
+async function levelOneFitError(page, { cols, rows }) {
+    return page.locator('#canvasArea').evaluate((area, dimensions) => {
+        const canvas = area.querySelector('#canvas');
+        const rect = canvas.getBoundingClientRect();
+        const styles = getComputedStyle(area);
+        const usableWidth = area.clientWidth - parseFloat(styles.paddingLeft) - parseFloat(styles.paddingRight);
+        const usableHeight = area.clientHeight - parseFloat(styles.paddingTop) - parseFloat(styles.paddingBottom);
+        const expectedScale = Math.min(
+            (usableWidth - 2) / dimensions.cols,
+            (usableHeight - 2) / (dimensions.rows + 12)
+        );
+        return Math.max(
+            Math.abs(rect.width / canvas.width - expectedScale),
+            Math.abs(rect.height / canvas.height - expectedScale)
+        );
+    }, { cols, rows });
+}
+
 test('canvas helper maps CSS points to exact game cells', async ({ page }) => {
     const game = new GamePage(page);
     await game.openMenu();
@@ -63,6 +81,8 @@ test('canvas keeps one pixel per cell, square CSS scaling, and pixelated renderi
     expect(first.rect.width / first.rect.height).toBeCloseTo(initial.cols / initial.rows, 2);
 
     await page.setViewportSize({ width: 700, height: 700 });
+    await expect(page.locator('#canvasArea')).toHaveAttribute('data-zoom-level', '1');
+    await expect.poll(() => levelOneFitError(page, initial)).toBeLessThan(0.02);
     const resized = await canvasMetrics(page);
     expect(resized.width).toBe(initial.cols);
     expect(resized.height).toBe(initial.rows);
@@ -79,6 +99,8 @@ test('canvas mapping remains correct at a narrow mobile viewport and fractional 
     const initial = await game.state();
 
     await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.locator('#canvasArea')).toHaveAttribute('data-zoom-level', '1');
+    await expect.poll(() => levelOneFitError(page, initial)).toBeLessThan(0.02);
     const metrics = await canvasMetrics(page);
     expect(metrics.width).toBe(initial.cols);
     expect(metrics.height).toBe(initial.rows);

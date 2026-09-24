@@ -10,7 +10,7 @@
 // -----------------------------------------------------------------------------
 
 import {
-    getGridCols, setGridCols, getGridRows, getElements, gameState,
+    getGridCols, getGridRows, getElements, gameState,
     setBeginGameStatus, setGameStateVariable, getBeginGameStatus,
     getMenuState, getGameVisiblePaused, getGameVisibleActive,
     getParticleTypeIdSelected, setParticleDefinitions,
@@ -31,16 +31,22 @@ let frames = 0;
 let lastFpsCheck = 0;
 let fps = 0;
 let loopRunning = false;
-let gridFittedToWorkspace = false;
 let resizeListenerAttached = false;
+let scrollRenderAttached = false;
 let grabbedPixels = null;
 let linePreview = null;
 let shapePreview = null;
 let machinePlacementPreview = null;
-const CANVAS_ZOOM_FACTORS = [1, 1.5, 2, 3];
+const STANDARD_ZOOM_FACTORS = [1, 1.5, 2, 3];
+const LARGE_WORLD_ZOOM_FACTORS = [1, 2, 3, 4, 6];
+const WORLD_BOUNDARY_DEPTH = 12;
+const STANDARD_WORLD_COLS = 260;
+const STANDARD_WORLD_ROWS = 150;
 let canvasZoomLevel = 1;
 let fittedCanvasWidth = 0;
 let fittedCanvasHeight = 0;
+let canvasBaseScale = 1;
+let expandedZoomProfile = false;
 let zoomStatusTimer = null;
 
 // A blueprint is a compact, rectangular copy of the persistent cell state.
@@ -62,15 +68,17 @@ export const BLUEPRINT_FIELDS = [
 
 //--------------------------------------------------------------------------------------------------------
 
-export function startGame({ preserveWorldSize = false } = {}) {
+export function startGame({ newWorld = false, alignAtGround = false } = {}) {
+    // Make the viewport measurable before sizing a new workspace.
+    setGameState(getGameVisibleActive());
     const canvas = getElements().canvas;
-    // Zoom is a view preference for the current workspace, not part of the
-    // simulation. Every new or restored workspace starts with the fitted view.
-    resetCanvasZoom();
-    if (!gridFittedToWorkspace && !preserveWorldSize) fitGridToWorkspace();
-    if (preserveWorldSize) gridFittedToWorkspace = true;
     const cols = getGridCols();
     const rows = getGridRows();
+    if (newWorld) createWorld(cols, rows);
+
+    expandedZoomProfile = hasLargeZoomProfile(cols, rows);
+    canvasBaseScale = fitCellScaleForWorld(cols, rows);
+    canvasZoomLevel = 1;
 
     // One canvas pixel per simulation cell. CSS does the scaling.
     canvas.width = cols;
@@ -81,17 +89,23 @@ export function startGame({ preserveWorldSize = false } = {}) {
     imageData = context.createImageData(cols, rows);
     pixels = imageData.data;
 
-    fitCanvasToScreen();
+    fitCanvasToScreen({ preserveAnchor: false });
+    if (alignAtGround) alignWorldAtGround();
     if (!resizeListenerAttached) {
         window.addEventListener('resize', fitCanvasToScreen);
         resizeListenerAttached = true;
+    }
+    if (!scrollRenderAttached) {
+        getElements().canvasArea.addEventListener('scroll', () => {
+            if (context && imageData) drawWorld();
+        }, { passive: true });
+        scrollRenderAttached = true;
     }
 
     if (getBeginGameStatus()) {
         setBeginGameStatus(false);
     }
-    setGameState(getGameVisibleActive());
-
+    drawWorld();
     // Going back to the menu stops the loop, so coming back in has to start it
     // again - but only ever one loop at a time.
     if (loopRunning) return;
@@ -100,48 +114,120 @@ export function startGame({ preserveWorldSize = false } = {}) {
     if (!window.__E2E_MODE__) requestAnimationFrame(gameLoop);
 }
 
-// Keep the original cell size and spend the horizontal room between the
-// material picker and tools panel on simulation columns.
-function fitGridToWorkspace() {
-    const canvas = getElements().canvas;
-    const area = getElements().canvasArea;
-    const rows = getGridRows();
-    const availableHeight = Math.max(1, area.clientHeight - 32);
-    const targetWidth = Math.max(1, area.clientWidth - 32);
-    const cellSize = Math.max(1, availableHeight / rows);
-    const cols = Math.max(200, Math.floor(targetWidth / cellSize));
+function measureCanvasArea() {
+    const elements = getElements();
+    const area = elements?.canvasArea;
+    if (!area) return { clientWidth: 0, clientHeight: 0, paddingX: 0, paddingY: 0 };
+    const container = elements.canvasContainer;
+    const hiddenForMenu = container?.classList.contains('d-none');
+    const oldClass = hiddenForMenu ? container.className : '';
+    const oldStyle = hiddenForMenu ? container.getAttribute('style') : null;
+    const oldOverflow = area.style.overflow;
+    if (hiddenForMenu) {
+        container.classList.remove('d-none');
+        container.classList.add('d-flex');
+        Object.assign(container.style, {
+            position: 'fixed', left: '0', top: '0', visibility: 'hidden',
+            pointerEvents: 'none', zIndex: '-1'
+        });
+    }
+    // Existing world scrollbars must not affect the usable viewport measurement.
+    area.style.overflow = 'hidden';
+    const style = getComputedStyle(area);
+    const metrics = {
+        clientWidth: area.clientWidth,
+        clientHeight: area.clientHeight,
+        paddingX: parseFloat(style.paddingLeft) + parseFloat(style.paddingRight),
+        paddingY: parseFloat(style.paddingTop) + parseFloat(style.paddingBottom)
+    };
+    area.style.overflow = oldOverflow;
+    if (hiddenForMenu) {
+        container.className = oldClass;
+        if (oldStyle === null) container.removeAttribute('style');
+        else container.setAttribute('style', oldStyle);
+    }
+    return metrics;
+}
 
-    setGridCols(cols);
-    const current = getWorld();
-    if (!current || current.cols !== cols || current.rows !== rows) createWorld(cols, rows);
-    gridFittedToWorkspace = true;
+function usableCanvasAreaSize() {
+    const { clientWidth, clientHeight, paddingX, paddingY } = measureCanvasArea();
+    return {
+        width: Math.max(0, clientWidth - paddingX),
+        height: Math.max(0, clientHeight - paddingY)
+    };
+}
+
+export function isExpandedWorldProfileAvailable() {
+    const { width, height } = usableCanvasAreaSize();
+    return width >= 260 && height >= 150;
+}
+
+function zoomFactors() {
+    return expandedZoomProfile ? LARGE_WORLD_ZOOM_FACTORS : STANDARD_ZOOM_FACTORS;
+}
+
+function hasLargeZoomProfile(cols = getGridCols(), rows = getGridRows()) {
+    return cols > STANDARD_WORLD_COLS || rows > STANDARD_WORLD_ROWS;
+}
+
+function fitCellScaleForWorld(cols = getGridCols(), rows = getGridRows()) {
+    const { width, height } = usableCanvasAreaSize();
+    const scaleToWidth = (width - 2) / Math.max(1, cols);
+    const scaleToHeight = (height - 2) / Math.max(1, rows + WORLD_BOUNDARY_DEPTH);
+    return Math.max(0.01, Math.min(scaleToWidth, scaleToHeight));
+}
+
+function alignWorldAtGround() {
+    const area = getElements().canvasArea;
+    area.scrollLeft = Math.max(0, (area.scrollWidth - area.clientWidth) / 2);
+    area.scrollTop = Math.max(0, area.scrollHeight - area.clientHeight);
 }
 
 // Makes the canvas as big as it fits in the work area while keeping cells
 // square. The canvas itself stays at one pixel per cell; this only stretches it.
-function fitCanvasToScreen() {
+function fitCanvasToScreen({ preserveAnchor = true } = {}) {
     const area = getElements().canvasArea;
+    const canvas = getElements().canvas;
     const cols = getGridCols();
     const rows = getGridRows();
-    const previousScrollLeft = area.scrollLeft;
-    const previousScrollTop = area.scrollTop;
+    const oldCanvasRect = canvas.getBoundingClientRect();
+    const oldAreaRect = area.getBoundingClientRect();
+    const oldPointerX = oldAreaRect.left + area.clientLeft + area.clientWidth / 2;
+    const oldPointerY = oldAreaRect.top + area.clientTop + area.clientHeight / 2;
+    const oldFractionX = oldCanvasRect.width > 0
+        ? Math.max(0, Math.min(1, (oldPointerX - oldCanvasRect.left) / oldCanvasRect.width)) : 0.5;
+    const oldFractionY = oldCanvasRect.height > 0
+        ? Math.max(0, Math.min(1, (oldPointerY - oldCanvasRect.top) / oldCanvasRect.height)) : 0.5;
+    expandedZoomProfile = hasLargeZoomProfile(cols, rows);
+    canvasBaseScale = fitCellScaleForWorld(cols, rows);
 
-    const availableWidth = area.clientWidth - 32;
-    const availableHeight = area.clientHeight - 32;
-    const scale = Math.max(1, Math.min(availableWidth / cols, availableHeight / rows));
-
-    fittedCanvasWidth = Math.max(1, Math.floor(cols * scale));
-    fittedCanvasHeight = Math.max(1, Math.floor(rows * scale));
+    fittedCanvasWidth = Math.max(1, cols * canvasBaseScale);
+    fittedCanvasHeight = Math.max(1, rows * canvasBaseScale);
     applyCanvasZoom();
 
-    // Resizing may change the scrollable extent, but it must not silently
-    // return an already zoomed workspace to level one or jump to its origin.
-    if (canvasZoomLevel > 1) {
+    // Level one is always the fitted view. At higher levels, preserve the
+    // world point at the viewport center when a resize changes the base scale.
+    if (!preserveAnchor || canvasZoomLevel === 1) {
+        area.scrollLeft = 0;
+        area.scrollTop = 0;
+    } else {
+        const nextCanvasRect = canvas.getBoundingClientRect();
+        const nextAreaRect = area.getBoundingClientRect();
+        const pointerX = nextAreaRect.left + area.clientLeft + area.clientWidth / 2;
+        const pointerY = nextAreaRect.top + area.clientTop + area.clientHeight / 2;
+        const contentX = nextCanvasRect.left - nextAreaRect.left + area.scrollLeft + oldFractionX * nextCanvasRect.width;
+        const contentY = nextCanvasRect.top - nextAreaRect.top + area.scrollTop + oldFractionY * nextCanvasRect.height;
         const maxLeft = Math.max(0, area.scrollWidth - area.clientWidth);
         const maxTop = Math.max(0, area.scrollHeight - area.clientHeight);
-        area.scrollLeft = Math.min(maxLeft, previousScrollLeft);
-        area.scrollTop = Math.min(maxTop, previousScrollTop);
+        area.scrollLeft = Math.min(maxLeft, Math.max(0, contentX - (pointerX - nextAreaRect.left)));
+        area.scrollTop = Math.min(maxTop, Math.max(0, contentY - (pointerY - nextAreaRect.top)));
     }
+
+    // Keep all scroll positions within the resized world's actual extents.
+    const maxLeft = Math.max(0, area.scrollWidth - area.clientWidth);
+    const maxTop = Math.max(0, area.scrollHeight - area.clientHeight);
+    area.scrollLeft = Math.min(maxLeft, Math.max(0, area.scrollLeft));
+    area.scrollTop = Math.min(maxTop, Math.max(0, area.scrollTop));
     positionZoomStatus();
 }
 
@@ -151,18 +237,67 @@ function applyCanvasZoom() {
     const stage = getElements().canvasStage || canvas.parentElement;
     if (!canvas || !area || !stage) return;
 
-    const factor = CANVAS_ZOOM_FACTORS[canvasZoomLevel - 1] || 1;
-    const width = Math.max(1, Math.floor(fittedCanvasWidth * factor));
-    const height = Math.max(1, Math.floor(fittedCanvasHeight * factor));
+    const factor = zoomFactors()[canvasZoomLevel - 1] || 1;
+    const width = Math.max(1, fittedCanvasWidth * factor);
+    const height = Math.max(1, fittedCanvasHeight * factor);
     canvas.style.width = `${width}px`;
     canvas.style.height = `${height}px`;
     stage.style.width = `${width}px`;
-    stage.style.height = `${height}px`;
+    stage.style.height = `${height + WORLD_BOUNDARY_DEPTH * canvasBaseScale * factor}px`;
+    const machineOverlay = getElements().machineOverlay;
+    if (machineOverlay) {
+        machineOverlay.style.width = `${width}px`;
+        machineOverlay.style.height = `${height}px`;
+    }
+    drawWorldBoundaryOverlay(width, height, canvasBaseScale * factor);
     area.dataset.zoomLevel = String(canvasZoomLevel);
-    area.classList.toggle('zoomed', canvasZoomLevel > 1);
-    if (canvasZoomLevel === 1) {
-        area.scrollLeft = 0;
-        area.scrollTop = 0;
+    const areaStyle = getComputedStyle(area);
+    const innerWidth = area.clientWidth - parseFloat(areaStyle.paddingLeft) - parseFloat(areaStyle.paddingRight);
+    const innerHeight = area.clientHeight - parseFloat(areaStyle.paddingTop) - parseFloat(areaStyle.paddingBottom);
+    const stageHeight = height + WORLD_BOUNDARY_DEPTH * canvasBaseScale * factor;
+    area.classList.toggle('zoomed', width > innerWidth || stageHeight > innerHeight);
+}
+
+function drawWorldBoundaryOverlay(displayWidth, displayHeight, scale) {
+    const canvas = getElements().canvas;
+    const stage = getElements().canvasStage || canvas.parentElement;
+    let overlay = stage.querySelector('#worldBoundaryOverlay');
+    if (!overlay) {
+        overlay = document.createElementNS(MACHINE_ICON_SVG_NS, 'svg');
+        overlay.id = 'worldBoundaryOverlay';
+        overlay.setAttribute('aria-hidden', 'true');
+        overlay.style.position = 'absolute';
+        overlay.style.left = '0';
+        overlay.style.top = '0';
+        overlay.style.overflow = 'visible';
+        overlay.style.pointerEvents = 'none';
+        stage.appendChild(overlay);
+    }
+
+    const depth = WORLD_BOUNDARY_DEPTH;
+    overlay.setAttribute('viewBox', `0 0 ${canvas.width} ${canvas.height + depth}`);
+    overlay.setAttribute('width', String(displayWidth));
+    overlay.setAttribute('height', String(displayHeight + depth * scale));
+    overlay.style.width = `${displayWidth}px`;
+    overlay.style.height = `${displayHeight + depth * scale}px`;
+    overlay.replaceChildren();
+
+    const edges = [
+        { name: 'left', d: `M 2 0 V ${canvas.height}` },
+        { name: 'right', d: `M ${canvas.width - 2} 0 V ${canvas.height}` },
+        { name: 'bottom', d: `M 0 ${canvas.height} H ${canvas.width}` }
+    ];
+    for (const edge of edges) {
+        const group = document.createElementNS(MACHINE_ICON_SVG_NS, 'g');
+        group.setAttribute('data-edge', edge.name);
+        const path = document.createElementNS(MACHINE_ICON_SVG_NS, 'path');
+        path.setAttribute('d', edge.d);
+        path.setAttribute('fill', 'none');
+        path.setAttribute('stroke', '#754521');
+        path.setAttribute('stroke-width', '4');
+        path.setAttribute('stroke-linecap', 'butt');
+        group.appendChild(path);
+        overlay.appendChild(group);
     }
 }
 
@@ -188,7 +323,7 @@ function showZoomStatus() {
     const status = getElements().zoomStatus;
     if (!status) return;
     clearTimeout(zoomStatusTimer);
-    status.textContent = `Zoom: ${canvasZoomLevel}/${CANVAS_ZOOM_FACTORS.length}`;
+    status.textContent = `Zoom: ${canvasZoomLevel}/${zoomFactors().length}`;
     status.hidden = false;
     positionZoomStatus();
     status.classList.remove('zoom-status-fade');
@@ -206,13 +341,17 @@ export function getCanvasZoomLevel() {
 }
 
 export function resetCanvasZoom() {
+    expandedZoomProfile = hasLargeZoomProfile();
     canvasZoomLevel = 1;
     applyCanvasZoom();
+    const area = getElements().canvasArea;
+    area.scrollLeft = 0;
+    area.scrollTop = 0;
     hideZoomStatus();
 }
 
 export function setCanvasZoomLevel(level, { anchorX, anchorY } = {}) {
-    const nextLevel = Math.max(1, Math.min(CANVAS_ZOOM_FACTORS.length, Math.round(level)));
+    const nextLevel = Math.max(1, Math.min(zoomFactors().length, Math.round(level)));
     if (nextLevel === canvasZoomLevel) return false;
 
     const area = getElements().canvasArea;
@@ -230,8 +369,6 @@ export function setCanvasZoomLevel(level, { anchorX, anchorY } = {}) {
     applyCanvasZoom();
     showZoomStatus();
     if (context && imageData) drawWorld();
-    if (nextLevel === 1) return true;
-
     // Keep the cell under the pointer under the pointer while changing level.
     // This also gives keyboard and test-driven zoom changes a useful centered
     // starting position without inventing a separate pan model.
@@ -278,6 +415,31 @@ export function renderWorld() {
     drawWorld();
 }
 
+function visibleCellBounds(margin = 0) {
+    const { canvas, canvasArea: area } = getElements();
+    const rect = canvas.getBoundingClientRect();
+    const areaRect = area.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return { left: 0, top: 0, right: 0, bottom: 0 };
+    const viewLeft = areaRect.left + area.clientLeft;
+    const viewTop = areaRect.top + area.clientTop;
+    const viewRight = viewLeft + area.clientWidth;
+    const viewBottom = viewTop + area.clientHeight;
+    const left = Math.max(viewLeft, rect.left);
+    const top = Math.max(viewTop, rect.top);
+    const right = Math.min(viewRight, rect.right);
+    const bottom = Math.min(viewBottom, rect.bottom);
+    if (right <= left || bottom <= top) return { left: 0, top: 0, right: 0, bottom: 0 };
+
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    return {
+        left: Math.max(0, Math.floor((left - rect.left) * scaleX) - margin),
+        top: Math.max(0, Math.floor((top - rect.top) * scaleY) - margin),
+        right: Math.min(canvas.width, Math.ceil((right - rect.left) * scaleX) + margin),
+        bottom: Math.min(canvas.height, Math.ceil((bottom - rect.top) * scaleY) + margin)
+    };
+}
+
 function drawWorld() {
     const world = getWorld();
     const defs = getDefinitions();
@@ -289,13 +451,15 @@ function drawWorld() {
     const power = world.power;
     const charge = world.charge;
     const wind = world.wind;
-    const total = type.length;
+    const bounds = visibleCellBounds();
     const heatView = getHeatViewOn();
     const airTint = airTintForTemperature(getAmbientTarget());
     // Lit gunpowder flickers between its two colours while it catches.
     const flicker = (getFrameCount() & 2) === 0;
 
-    for (let i = 0; i < total; i++) {
+    for (let y = bounds.top; y < bounds.bottom; y++) {
+        for (let x = bounds.left; x < bounds.right; x++) {
+        const i = y * world.cols + x;
         const p = i * 4;
         const id = type[i];
 
@@ -387,10 +551,14 @@ function drawWorld() {
         pixels[p + 1] = clampByte(g + wobble);
         pixels[p + 2] = clampByte(b + wobble);
         pixels[p + 3] = Math.round(255 * (def.alpha === undefined ? 1 : def.alpha));
+        }
     }
 
     drawGrabberPreview();
-    context.putImageData(imageData, 0, 0);
+    if (bounds.right > bounds.left && bounds.bottom > bounds.top) {
+        context.putImageData(imageData, 0, 0, bounds.left, bounds.top,
+            bounds.right - bounds.left, bounds.bottom - bounds.top);
+    }
     drawMachineOverlays();
     drawGrabberOutline();
     drawLinePreview();
@@ -424,6 +592,10 @@ function drawMachineOverlays() {
     const canvas = getElements().canvas;
     const cellWidth = canvas.clientWidth / world.cols;
     const cellHeight = canvas.clientHeight / world.rows;
+    const iconMargin = Math.ceil(32 / Math.max(0.25, Math.min(cellWidth, cellHeight)));
+    const viewport = visibleCellBounds();
+    const visible = visibleCellBounds(Math.max(34, iconMargin) + 1);
+    const defs = getDefinitions();
     const rotations = [0, 180, -90, 90, -45, -135, 135, 45];
     const coneLayer = document.createElementNS(MACHINE_ICON_SVG_NS, 'svg');
     coneLayer.setAttribute('class', 'machine-cone-overlay');
@@ -474,14 +646,14 @@ function drawMachineOverlays() {
             '<path d="M7 23h16M11 25v2M19 25v2" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>'
     };
 
-    drawTubingFlowOverlay(flowLayer, getTubingFlows(), cellWidth, cellHeight);
+    drawTubingFlowOverlay(flowLayer, getTubingFlows(), cellWidth, cellHeight, viewport);
 
-    for (let i = 0; i < world.type.length; i++) {
-        const def = getDefinitions()[world.type[i]];
+    for (let y = visible.top; y < visible.bottom; y++) {
+      for (let x = visible.left; x < visible.right; x++) {
+        const i = y * world.cols + x;
+        const def = defs[world.type[i]];
         const machine = def?.machine;
         if (!machine || !icons[machine]) continue;
-        const x = i % world.cols;
-        const y = Math.floor(i / world.cols);
         if ((machine === 'heater' || machine === 'cooler') && isMachinePoweredAt(x, y)) {
             const cone = document.createElementNS(MACHINE_ICON_SVG_NS, 'path');
             cone.setAttribute('class', `machine-cone machine-cone-${machine}`);
@@ -503,6 +675,7 @@ function drawMachineOverlays() {
             ? 0 : rotations[world.data[i] & 7] + mixerRotation}deg)`;
         icon.innerHTML = icons[machine];
         overlay.appendChild(icon);
+      }
     }
 
     if (machinePlacementPreview) {
@@ -539,7 +712,7 @@ function drawMachineOverlays() {
 // the material. Unlike an SVG centreline, the bands stay in real cells at a
 // bend, while their sequence makes the direction from Storage Bin to Vent (or
 // another compatible bin) unambiguous.
-function drawTubingFlowOverlay(layer, flows, cellWidth, cellHeight) {
+function drawTubingFlowOverlay(layer, flows, cellWidth, cellHeight, visible) {
     const frame = getFrameCount();
     const world = getWorld();
     for (let flowIndex = 0; flowIndex < flows.length; flowIndex++) {
@@ -557,6 +730,7 @@ function drawTubingFlowOverlay(layer, flows, cellWidth, cellHeight) {
             const cell = flow.path[position];
             const x = cell % world.cols;
             const y = Math.floor(cell / world.cols);
+            if (x < visible.left || x >= visible.right || y < visible.top || y >= visible.bottom) continue;
             const band = document.createElementNS(MACHINE_ICON_SVG_NS, 'rect');
             band.setAttribute('class', 'tubing-flow-band-cell');
             band.setAttribute('x', String(x * cellWidth));
@@ -568,7 +742,7 @@ function drawTubingFlowOverlay(layer, flows, cellWidth, cellHeight) {
             band.setAttribute('data-route-position', String(position));
             route.appendChild(band);
         }
-        layer.appendChild(route);
+        if (route.childElementCount) layer.appendChild(route);
     }
 }
 

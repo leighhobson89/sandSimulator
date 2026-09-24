@@ -35,7 +35,7 @@ async function seedMachineState(page) {
     });
 }
 
-test('machine settings, inventories, tubing, and mixer inputs survive portable export/import', async ({ page }) => {
+test('machine settings, inventories, tubing, and mixer inputs survive portable Save/Load', async ({ page }) => {
     const game = new GamePage(page);
     await game.openMenu();
     await game.newGame();
@@ -43,7 +43,7 @@ test('machine settings, inventories, tubing, and mixer inputs survive portable e
     await game.step(0);
     const before = await page.evaluate(() => window.__GAME_INSTANCE__.captureState());
 
-    await page.getByRole('button', { name: 'Export', exact: true }).click();
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
     const saveString = await page.locator('#saveString').inputValue();
     expect(saveString.length).toBeGreaterThan(20);
     await page.getByRole('button', { name: 'Close', exact: true }).click();
@@ -52,7 +52,7 @@ test('machine settings, inventories, tubing, and mixer inputs survive portable e
         const physics = await import('/physics.js');
         physics.clearWorld();
     });
-    await page.getByRole('button', { name: 'Import', exact: true }).click();
+    await page.getByRole('button', { name: 'Load', exact: true }).click();
     await page.locator('#saveString').fill(saveString);
     await page.getByRole('button', { name: 'Load Game', exact: true }).click();
     await expect(page.locator('#autosaveChoiceDialog')).toBeVisible();

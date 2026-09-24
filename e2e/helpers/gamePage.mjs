@@ -9,8 +9,13 @@ export class GamePage {
         await expect(this.page.getByRole('heading', { name: 'Elemental Foundry' })).toBeVisible();
     }
 
-    async newGame() {
+    async newGame({ worldSize = '260 × 150' } = {}) {
         await this.page.getByRole('button', { name: 'New Game' }).click();
+        const sizeDialog = this.page.locator('#worldSizeDialog');
+        if (await sizeDialog.isVisible()) {
+            await sizeDialog.getByRole('radio', { name: worldSize, exact: true }).check();
+            await sizeDialog.getByRole('button', { name: 'Start Game', exact: true }).click();
+        }
         await expectCanvasVisible(this.page);
         await this.page.getByRole('button', { name: 'Pause' }).click();
     }

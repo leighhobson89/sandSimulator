@@ -19,7 +19,7 @@
             <div class="menu-actions">
                 <button id="newGame" class="btn btn-primary btn-lead">New Game</button>
                 <button id="resumeGame" class="btn btn-lead d-none">Resume Game</button>
-                <button id="importGameMenu" class="btn btn-ghost">Import Game</button>
+                <button id="importGameMenu" class="btn btn-ghost">Load Game</button>
             </div>
 
             <div class="theme-picker">
@@ -39,14 +39,18 @@
                 </div>
 
                 <div class="toolbar-group">
-                    <button id="pauseButton" class="btn btn-tool">Pause</button>
-                    <button id="clearButton" class="btn btn-tool">Clear</button>
-                    <button id="eraserButton" class="btn btn-tool">Eraser</button>
-                    <button id="exportGame" class="btn btn-tool">Export</button>
-                    <button id="importGame" class="btn btn-tool">Import</button>
-                    <label class="toggle edge-pan-toggle" title="Slowly pan when the pointer reaches the canvas edge">
+                    <button id="pauseButton" class="btn btn-tool tooltip-control" data-tooltip="Pause or resume the simulation">Pause</button>
+                    <button id="clearButton" class="btn btn-tool tooltip-control" data-tooltip="Remove every particle from the current world">Clear</button>
+                    <button id="eraserButton" class="btn btn-tool tooltip-control" data-tooltip="Toggle eraser mode">Eraser</button>
+                    <button id="exportGame" class="btn btn-tool tooltip-control" data-tooltip="Save this world as a save string">Save</button>
+                    <button id="importGame" class="btn btn-tool tooltip-control" data-tooltip="Load a world from a save string">Load</button>
+                    <label class="toggle edge-pan-toggle tooltip-control" data-tooltip="Slowly pan when the pointer reaches the canvas edge">
                         <input id="edgePanToggle" type="checkbox">
                         <span>Edge pan</span>
+                    </label>
+                    <label class="toggle autosave-toggle tooltip-control" data-tooltip="Save progress to this device every five minutes. Turn off to stop future updates while keeping the current resume save.">
+                        <input id="autosaveToggle" type="checkbox" aria-label="Autosave">
+                        <span>Autosave</span>
                     </label>
                 </div>
 
@@ -61,7 +65,7 @@
                         </svg>
                         <span id="chargeIndicatorValue">0%</span>
                     </div>
-                    <select id="themeSelect" class="select-input" title="Change the look"></select>
+                    <select id="themeSelect" class="select-input tooltip-control" data-tooltip="Change the visual theme"></select>
                 </div>
             </div>
         </header>
@@ -328,12 +332,29 @@
         <span>Autosaving</span>
     </div>
 
+    <section id="worldSizeDialog" class="save-dialog" hidden role="dialog" aria-modal="true" aria-labelledby="worldSizeTitle" aria-describedby="worldSizeDescription">
+        <div class="save-dialog-card save-dialog-card-small world-size-card">
+            <span class="tools-kicker">New world</span>
+            <h2 id="worldSizeTitle">Choose a world size</h2>
+            <p id="worldSizeDescription" class="save-dialog-description">Choose once for this game. The world size is saved with your game.</p>
+            <fieldset class="world-size-options" role="radiogroup" aria-label="World size">
+                <legend class="sr-only">World size</legend>
+                <label class="world-size-option"><input id="worldSizeStandard" type="radio" name="worldSize" value="260x150" aria-label="260 × 150" aria-describedby="worldSize260Description" checked><span><strong>260 × 150</strong><small id="worldSize260Description">39,000 cells · Standard</small></span></label>
+                <label class="world-size-option" data-large-world-size><input type="radio" name="worldSize" value="520x300" aria-label="520 × 300" aria-describedby="worldSize520Description"><span><span class="world-size-heading"><strong>520 × 300</strong><span class="world-size-warning tooltip-control" role="img" aria-label="Performance warning" tabindex="0" data-tooltip="Performance-heavy world size; autosave will freeze the game.">⚠</span></span><small id="worldSize520Description">156,000 cells</small></span></label>
+            </fieldset>
+            <div class="save-dialog-actions">
+                <button id="worldSizeStart" class="btn btn-primary" type="button">Start Game</button>
+                <button id="worldSizeCancel" class="btn btn-ghost" type="button">Cancel</button>
+            </div>
+        </div>
+    </section>
+
     <section id="saveDialog" class="save-dialog" hidden role="dialog" aria-modal="true" aria-labelledby="saveDialogTitle">
         <div class="save-dialog-card">
             <div class="save-dialog-heading">
                 <div>
                     <span class="tools-kicker">Save string</span>
-                    <h2 id="saveDialogTitle">Export Game</h2>
+                    <h2 id="saveDialogTitle">Save Game</h2>
                 </div>
                 <button id="closeSaveDialog" class="btn btn-ghost save-dialog-close" type="button" aria-label="Close">Close</button>
             </div>

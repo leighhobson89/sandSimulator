@@ -6,10 +6,10 @@ test.afterEach(async ({ page }, testInfo) => {
     if (testInfo.status !== testInfo.expectedStatus) await attachGameDiagnostics(testInfo, page, 'validation');
 });
 
-test('malformed import is rejected without mutating the live world', async ({ page }) => {
+test('malformed save data is rejected on Load without mutating the live world', async ({ page }) => {
     const game = new GamePage(page); await game.openMenu(); await game.newGame();
     const before = await game.state();
-    await page.getByRole('button', { name: 'Import' }).click();
+    await page.getByRole('button', { name: 'Load' }).click();
     await page.locator('#saveString').fill('not-a-save');
     await page.getByRole('button', { name: 'Load Game' }).click();
     await expect(page.locator('#saveDialogError')).toContainText('valid Elemental Foundry save');
@@ -25,7 +25,7 @@ test('empty, unsupported, and structurally invalid saves stay in the dialog and 
         const { compressToEncodedURIComponent } = await import('/lzString.js');
         return compressToEncodedURIComponent(JSON.stringify({ format: 'elemental-foundry', version: 99, simulation: {} }));
     });
-    await page.getByRole('button', { name: 'Import' }).click();
+    await page.getByRole('button', { name: 'Load' }).click();
     for (const value of ['', '   ', unsupported]) {
         await page.locator('#saveString').fill(value);
         await page.getByRole('button', { name: 'Load Game' }).click();

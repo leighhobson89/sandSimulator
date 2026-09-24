@@ -19,12 +19,7 @@ small, reviewable changes.
 
 ### Quick Mode
 
-When a user includes the exact code word `QMODE` in a development prompt,
-the main agent may make the requested minor change directly without handing it
-through the specialist workflow and without running tests. The main agent must
-decide whether the change is minor enough for Quick Mode and whether any
-documentation needs updating; if it is not clearly minor, use the normal
-handoff workflow instead.
+When a user includes the exact code word `QMODE` in a development prompt, including if it is in a steering prompt, ie one that is sent during activity from a previous prompt, the main agent may make the requested minor change directly without handing it through the specialist workflow and without running tests. The main agent must decide whether the change is minor enough for Quick Mode and whether any documentation needs updating; if it is not clearly minor, use the normal handoff workflow instead.
 
 ## Documentation Memory
 

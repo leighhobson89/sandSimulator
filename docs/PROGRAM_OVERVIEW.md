@@ -15,10 +15,10 @@ thermodynamics solver.
 `physics.js` turns those definitions into a headless simulation. `game.js`
 renders that state to a single pixelated canvas and drives the animation loop.
 `ui.js` connects controls and pointer input; `themes.js` owns presentation
-themes; `saveLoadGame.js` owns portable saves and the local resume slot. A
-150-row world is stored as flat typed arrays for material, temperature,
-lifetime, state-change progress, movement, visual shade, liquid surface,
-charge, power and wind/airflow state.
+themes; `saveLoadGame.js` owns portable saves and the local resume slot. The
+260×150 and 520×300 worlds are stored as flat typed arrays for material,
+temperature, lifetime, state-change progress, movement, visual shade, liquid
+surface, charge, power and wind/airflow state.
 
 Each active frame broadly does this:
 
@@ -34,26 +34,44 @@ ambient temperature eases toward its setting
 
 ## View and input ownership
 
-The canvas viewport is a view layer around the same simulation canvas, not part
-of the saved world state:
+The New Game chooser offers exactly two fixed world sizes: **260×150** and
+**520×300**. The larger choice carries a warning that it is performance-heavy
+and autosaving will freeze the game. It stays hidden until the usable
+`#canvasArea` content box is at least 260×150 CSS pixels. Both worlds start at a
+fitted view with every edge visible and no scrolling. New worlds begin centered
+horizontally; the stage is aligned to the bottom. When zoomed, scrolling is
+clamped to the world's left, right, and bottom boundaries. World size is part of
+the v1 save data, so Resume and the Load action restore the selected dimensions.
 
-- `game.js` keeps the fitted canvas dimensions, applies four transient zoom
-  levels (level 1 fits the full view; levels 2-4 enlarge it), sizes the scroll
-  stage, and displays the top-right `Zoom: N/4` status for one second after a
-  change. Entering the workspace and reloading reset the level and scroll
-  offsets; no zoom state is serialized.
+The canvas viewport is a view layer around the simulation canvas. Zoom and
+scroll offsets are transient and are not serialized:
+
+- `game.js` keeps the fitted canvas dimensions and sizes the scroll stage. Both
+  world sizes start at fitted zoom level 1 with all edges visible. The 260×150
+  zoom factors are `[1, 1.5, 2, 3]`; the 520×300 factors are `[1, 2, 3, 4, 6]`.
+  A 4px brown boundary stroke is centered on the canvas edges: the side strokes
+  are centered at x=2 and x=width−2, and the bottom stroke at y=height. The
+  top-right zoom status reports the active level count for one second after a
+  change. Entering the workspace and reloading reset zoom and scroll.
 - `ui.js` owns viewport gestures. An unmodified vertical mouse wheel is
   exclusively zoom input and is prevented from vertically scrolling. Horizontal
   or Shift + wheel remains available to the browser for native horizontal
   scrolling where supported. Above level 1, thin theme-responsive scrollbars
   and unmodified arrow keys scroll the viewport; arrow keys continue to belong
   to focused controls instead of the canvas.
-- The optional, unchecked **Edge pan** checkbox beside Import enables slow
+- The optional, unchecked **Edge pan** checkbox beside Load enables slow
   pointer-hover panning only inside the outer 5% of the viewport, and only
   above level 1. There is no application-owned drag-pan gesture. Middle-click
   samples a non-empty material only in Brush, Line, Rectangle, or Ellipse mode;
   other active tools are unchanged. Its browser default is prevented, so it
   cannot trigger native autoscroll or pan the viewport.
+- The adjacent **Autosave** checkbox reflects the live autosave state through
+  New Game, Resume, Load, and save failures. Turning it off stops future
+  periodic writes while preserving the current resume save. Turning it back on
+  starts a fresh five-minute timer without an immediate write; a failed write
+  turns the checkbox off and displays the unavailable status. Toolbar buttons,
+  checkboxes, and the theme selector use the shared theme-styled tooltip. Its
+  Ember background is opaque.
 - `cellFromEvent()` continues to map pointer coordinates through the rendered
   canvas rectangle. Painting, erasing, material sampling, touch input, and
   machine overlay hit testing therefore retain their existing coordinate
@@ -82,22 +100,24 @@ rule based on the surface of connected liquid, not a Navier–Stokes solution.
 - The simulator is testable outside the browser. The physics core has no DOM
   dependency, and the headless suite checks 284 assertions with default seed
   `0`, plus a 260x150 performance budget. A second smoke suite covers startup,
-  input and autosave decisions. The last recorded full Playwright execution
-  covered 121 browser tests and passed headlessly. Separately, the current test
-  inventory discovers 137 tests in 34 spec files; that inventory count is not a
+  input and autosave decisions. An earlier full Playwright execution covered
+  121 browser tests and passed headlessly. A prior test discovery
+  snapshot listed 137 tests in 34 spec files; that inventory count is not a
   claim that a 137-test full run has passed. The focused middle-click picker
   specs passed 21/21 headlessly. Headed runs are optional diagnostics and never
   an acceptance or release prerequisite.
 - `npm run profile:scale` is a fixed, no-CLI-option, headless physics-only
-  synthetic profile of 260x150, 520x300, and 1040x600. The 1040x600 case is
-  profiler-only: there is no world-size selector or larger playable world, and
-  new worlds still default to 150 rows with workspace-fitted columns. Profiling
-  does not measure canvas rendering or SVG overlays. World creation is checked
-  against a 2,000,000-cell limit before dimensions change or arrays allocate;
-  its memory figures estimate 85 bytes of primary physics arrays plus 8 bytes
-  of render memory per cell, not process RSS. Timings are machine-specific and
-  informational. `npm run test:scale-profile` runs the profile math/CLI checks
-  and the world-allocation checks.
+  synthetic profile of 260×150, 520×300, and 1040×600. The 1040×600 case is
+  profiler-only; the two selectable worlds are 260×150 and 520×300. Profiling
+  excludes canvas rendering and SVG overlays. The recorded 520×300 physics-only
+  step averaged 27.535 ms with a 37.675 ms p95 on the profiling machine. These
+  machine-specific measurements are diagnostic and do not guarantee 60 fps;
+  browser rendering and interaction add work. A 780×450 option was tried and
+  removed after a focused browser Start Game action exceeded 10 seconds. World
+  creation is checked against a 2,000,000-cell limit before dimensions change
+  or arrays allocate; memory figures estimate 85 bytes of primary physics
+  arrays plus 8 bytes of render memory per cell, not process RSS. The
+  `test:scale-profile` script runs profile math/CLI and world-allocation checks.
 - The interaction design is polished for a small sandbox: brush and line
   modes, right-click erase, mode-gated middle-click material sampling, heat
   view, a move-only-one-material Grabber, environmental controls, keyboard
@@ -106,9 +126,10 @@ rule based on the surface of connected liquid, not a Navier–Stokes solution.
   active tools untouched, and never pans or triggers browser autoscroll. The
   material picker doubles as a glossary: every entry has a keyboard-accessible
   tooltip built from its live properties and reactions.
-- Full worlds can be exported as an LZString and imported by pasting it back.
-  The current game also autosaves locally once per minute and can be resumed
-  from the menu.
+- The **Save** action stores full worlds as LZString strings; use **Load** to
+  restore one by pasting its save string.
+  When Autosave is enabled, the game updates its local resume save every five
+  minutes and can be resumed from the menu.
 
 ## What it intentionally does less well
 
@@ -141,13 +162,22 @@ community content, modding, advanced circuitry, or broader toybox variety.
 ## Verification basis
 
 The recorded verification includes the seeded headless suite at 284/284
-assertions with default seed `0`, the passing smoke suite, and a last full
-Playwright run of 121 tests that passed headlessly. The current inventory
-discovery is 137 tests in 34 files; it is an inventory count, not a full-suite
-pass. Focused middle-click picker specs passed 21/21 headlessly. For the scale
-profile change, both `test:scale-profile` checks passed, the focused headless
-Playwright run passed 5/5, and the fixed profile completed with informational
-timings; no full suite was run for that change:
+assertions with default seed `0`, the passing smoke suite, and an earlier full
+Playwright run of 121 tests that passed headlessly. Focused middle-click picker
+specs passed 21/21. For the fixed-world chooser and camera work, 38 unique cases
+were confirmed across multiple headless Chrome-channel runs using a temporary
+config because bundled Chromium was unavailable: the first run passed 35/38,
+then five focused gate/edge cases passed after the visibility and edge-pan
+fixes. This was not one 38-case run. Later focused results were 14/14 for the
+zoom spec, 9/9 across accessibility and contract files, and passing scale-profile
+and smoke checks (the smoke mock geometry was corrected first). One authorized
+full run recorded `npm test` at 268 passed and 21 failed; the browser run was
+144/151 before later focused fixes, with the remaining failures in physics.
+There is no full-suite rerun recorded, and the latest QMODE border-geometry edit
+was not intentionally retested. The autosave persistence Playwright area passed
+13/13 headlessly. No full suite was run for the autosave and tooltip handoff;
+the newest tooltip-only QMODE adjustment, including the opaque Ember
+background, was not separately tested.
 
 ```text
 npm run test:scale-profile

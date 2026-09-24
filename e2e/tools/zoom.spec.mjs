@@ -9,10 +9,10 @@ test.afterEach(async ({ page }, testInfo) => {
     if (testInfo.status !== testInfo.expectedStatus) await attachGameDiagnostics(testInfo, page, 'zoom');
 });
 
-async function start(page) {
+async function start(page, worldSize = '260 × 150') {
     const game = new GamePage(page);
     await game.openMenu();
-    await game.newGame();
+    await game.newGame({ worldSize });
     await game.seed(1001);
     return game;
 }
@@ -36,11 +36,104 @@ function typeAt(state, { x, y }) {
     return state.arrays.type[y * state.cols + x];
 }
 
-test('wheel zoom exposes levels 1 through 4 and clamps at both ends', async ({ page }) => {
+async function canvasCellScale(page) {
+    return page.locator('#canvas').evaluate(canvas => {
+        const rect = canvas.getBoundingClientRect();
+        return { x: rect.width / canvas.width, y: rect.height / canvas.height };
+    });
+}
+
+async function fitSnapshot(page) {
+    return page.locator('#canvasArea').evaluate(area => {
+        const canvas = area.querySelector('#canvas');
+        const stage = area.querySelector('#canvasStage');
+        const bottomEdge = area.querySelector('[data-edge="bottom"]');
+        const leftEdge = area.querySelector('[data-edge="left"]');
+        const rightEdge = area.querySelector('[data-edge="right"]');
+        const areaRect = area.getBoundingClientRect();
+        const canvasRect = canvas.getBoundingClientRect();
+        const stageRect = stage.getBoundingClientRect();
+        const styles = getComputedStyle(area);
+        const paddingLeft = parseFloat(styles.paddingLeft);
+        const paddingRight = parseFloat(styles.paddingRight);
+        const paddingTop = parseFloat(styles.paddingTop);
+        const paddingBottom = parseFloat(styles.paddingBottom);
+        const contentLeft = areaRect.left + area.clientLeft + paddingLeft;
+        const contentTop = areaRect.top + area.clientTop + paddingTop;
+        const usableWidth = area.clientWidth - paddingLeft - paddingRight;
+        const usableHeight = area.clientHeight - paddingTop - paddingBottom;
+        return {
+            usableWidth,
+            usableHeight,
+            cols: canvas.width,
+            rows: canvas.height,
+            scaleX: canvasRect.width / canvas.width,
+            scaleY: canvasRect.height / canvas.height,
+            canvasRect: { left: canvasRect.left, top: canvasRect.top, right: canvasRect.right, bottom: canvasRect.bottom },
+            stageRect: { left: stageRect.left, top: stageRect.top, right: stageRect.right, bottom: stageRect.bottom },
+            contentRect: {
+                left: contentLeft,
+                top: contentTop,
+                right: contentLeft + usableWidth,
+                bottom: contentTop + usableHeight
+            },
+            edgeRects: [leftEdge, rightEdge, bottomEdge].map(edge => {
+                const rect = edge.getBoundingClientRect();
+                return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom };
+            }),
+            scrollWidth: area.scrollWidth,
+            scrollHeight: area.scrollHeight,
+            clientWidth: area.clientWidth,
+            clientHeight: area.clientHeight
+        };
+    });
+}
+
+async function expectWorldFit(page, { cols, rows }) {
+    await expectZoom(page, 1);
+    const fit = await fitSnapshot(page);
+    const expectedScale = Math.min(
+        (fit.usableWidth - 2) / cols,
+        (fit.usableHeight - 2) / (rows + 12)
+    );
+    expect(Math.abs(fit.scaleX - expectedScale)).toBeLessThan(0.02);
+    expect(Math.abs(fit.scaleY - expectedScale)).toBeLessThan(0.02);
+    expect(fit.scrollWidth).toBeLessThanOrEqual(fit.clientWidth + 1);
+    expect(fit.scrollHeight).toBeLessThanOrEqual(fit.clientHeight + 1);
+    expect(fit.stageRect.left).toBeGreaterThanOrEqual(fit.contentRect.left - 1);
+    expect(fit.stageRect.right).toBeLessThanOrEqual(fit.contentRect.right + 1);
+    expect(fit.stageRect.bottom).toBeLessThanOrEqual(fit.contentRect.bottom + 1);
+    expect(Math.abs(fit.stageRect.bottom - fit.contentRect.bottom)).toBeLessThanOrEqual(2);
+    for (const edge of fit.edgeRects) {
+        expect(edge.left).toBeGreaterThanOrEqual(fit.contentRect.left - 1);
+        expect(edge.right).toBeLessThanOrEqual(fit.contentRect.right + 1);
+        expect(edge.top).toBeGreaterThanOrEqual(fit.contentRect.top - 1);
+        expect(edge.bottom).toBeLessThanOrEqual(fit.contentRect.bottom + 1);
+    }
+    expect(fit.edgeRects[2].bottom).toBeGreaterThanOrEqual(fit.canvasRect.bottom);
+    return fit;
+}
+
+test('standard worlds keep the original four zoom levels from level one', async ({ page }) => {
     await start(page);
     await expectZoom(page, 1);
-    await zoom(page, 3);
+    const baseScale = await canvasCellScale(page);
+    await zoom(page, 1);
+    await expectZoom(page, 2);
+    let scale = await canvasCellScale(page);
+    expect(scale.x).toBeCloseTo(baseScale.x * 1.5, 1);
+    expect(scale.y).toBeCloseTo(baseScale.y * 1.5, 1);
+    await zoom(page, 1);
+    await expectZoom(page, 3);
+    scale = await canvasCellScale(page);
+    expect(scale.x).toBeCloseTo(baseScale.x * 2, 1);
+    expect(scale.y).toBeCloseTo(baseScale.y * 2, 1);
+    await zoom(page, 1);
     await expectZoom(page, 4);
+    scale = await canvasCellScale(page);
+    expect(scale.x).toBeCloseTo(baseScale.x * 3, 1);
+    expect(scale.y).toBeCloseTo(baseScale.y * 3, 1);
+    await expect(page.locator('#zoomStatus')).toHaveText('Zoom: 4/4');
     await wheel(page, -120);
     await expectZoom(page, 4);
     await zoom(page, -3);
@@ -49,7 +142,135 @@ test('wheel zoom exposes levels 1 through 4 and clamps at both ends', async ({ p
     await expectZoom(page, 1);
 });
 
-test('vertical wheel is zoom-only and shows a fading zoom level overlay', async ({ page }) => {
+for (const size of [
+    { label: '260 × 150', cols: 260, rows: 150, factors: [1, 1.5, 2, 3] },
+    { label: '520 × 300', cols: 520, rows: 300, factors: [1, 2, 3, 4, 6] }
+]) {
+    test(`${size.label} fits the world and boundary at level one, with its complete zoom profile`, async ({ page }) => {
+        const game = await start(page, size.label);
+        await expect(game.state()).resolves.toMatchObject({ cols: size.cols, rows: size.rows });
+        const fit = await expectWorldFit(page, size);
+        const baseScale = { x: fit.scaleX, y: fit.scaleY };
+
+        for (let index = 1; index < size.factors.length; index++) {
+            await zoom(page, 1);
+            const level = index + 1;
+            await expectZoom(page, level);
+            await expect(page.locator('#zoomStatus')).toHaveText(`Zoom: ${level}/${size.factors.length}`);
+            const scale = await canvasCellScale(page);
+            expect(scale.x).toBeCloseTo(baseScale.x * size.factors[index], 1);
+            expect(scale.y).toBeCloseTo(baseScale.y * size.factors[index], 1);
+        }
+
+        await wheel(page, -120);
+        await expectZoom(page, size.factors.length);
+        await zoom(page, -(size.factors.length - 1));
+        await expectWorldFit(page, size);
+        await expect(page.locator('#zoomStatus')).toHaveText(`Zoom: 1/${size.factors.length}`);
+        await wheel(page, 120);
+        await expectZoom(page, 1);
+    });
+}
+
+test('screens below the canvas-area threshold retain four zoom levels and status', async ({ page }) => {
+    const game = new GamePage(page);
+    await game.openMenu();
+    await page.addStyleTag({ content: '#canvasArea { flex: 0 0 auto !important; width: 259px !important; height: 150px !important; padding: 0 !important; }' });
+    await game.newGame();
+    await expectZoom(page, 1);
+    await zoom(page, 3);
+    await expectZoom(page, 4);
+    await expect(page.locator('#zoomStatus')).toHaveText('Zoom: 4/4');
+    await wheel(page, -120);
+    await expectZoom(page, 4);
+});
+
+test('world fit recalculates to the smaller available dimension after viewport resize', async ({ page }) => {
+    const game = await start(page, '520 × 300');
+    await expect(game.state()).resolves.toMatchObject({ cols: 520, rows: 300 });
+
+    for (const viewport of [
+        { width: 900, height: 800 },
+        { width: 1600, height: 500 }
+    ]) {
+        await page.setViewportSize(viewport);
+        await expect.poll(async () => {
+            const fit = await fitSnapshot(page);
+            const expected = Math.min(
+                (fit.usableWidth - 2) / 520,
+                (fit.usableHeight - 2) / 312
+            );
+            return Math.abs(fit.scaleX - expected);
+        }).toBeLessThan(0.02);
+        const fit = await expectWorldFit(page, { cols: 520, rows: 300 });
+        const widthLimited = (fit.usableWidth - 2) / 520 < (fit.usableHeight - 2) / 312;
+        expect(widthLimited).toBe(viewport.width < 1200);
+    }
+});
+
+test('expanded-world edges and camera clamps remain correct after zooming in from fitted view', async ({ page }) => {
+    await page.setViewportSize({ width: 1100, height: 500 });
+    const game = new GamePage(page);
+    await game.openMenu();
+    await game.newGame({ worldSize: '520 × 300' });
+    const area = page.locator('#canvasArea');
+    await expect(game.state()).resolves.toMatchObject({ cols: 520, rows: 300 });
+    await expectWorldFit(page, { cols: 520, rows: 300 });
+
+    await zoom(page, 1);
+    await expectZoom(page, 2);
+    const zoomed = await canvasViewportMetrics(page);
+    const maxLeft = zoomed.scrollWidth - zoomed.clientWidth;
+    const maxTop = zoomed.scrollHeight - zoomed.clientHeight;
+    expect(maxLeft).toBeGreaterThan(0);
+    expect(maxTop).toBeGreaterThan(0);
+
+    const overlay = page.locator('svg#worldBoundaryOverlay');
+    await expect(overlay).toHaveAttribute('aria-hidden', 'true');
+    for (const edge of ['left', 'right', 'bottom']) {
+        const group = overlay.locator(`[data-edge="${edge}"]`);
+        await expect(group).toHaveCount(1);
+        const strokes = await group.locator('path').evaluateAll(paths => paths.map(path => {
+            const style = getComputedStyle(path);
+            const match = style.stroke.match(/\d+(?:\.\d+)?/g) || [];
+            return { color: match.slice(0, 3).map(Number), width: parseFloat(style.strokeWidth) };
+        }));
+        expect(strokes).toHaveLength(1);
+        expect(strokes[0].color).toEqual([117, 69, 33]);
+        expect(strokes[0].width).toBe(4);
+    }
+    const bottomEdge = await overlay.locator('[data-edge="bottom"]').evaluate(group =>
+        Math.min(...[...group.querySelectorAll('path')].map(path => path.getBBox().y))
+    );
+    const canvasHeight = await page.locator('#canvas').evaluate(canvas => canvas.height);
+    expect(bottomEdge).toBeGreaterThanOrEqual(canvasHeight);
+
+    await area.evaluate((element, extents) => element.scrollTo(extents.maxLeft / 2, extents.maxTop / 2), {
+        maxLeft,
+        maxTop
+    });
+    const centered = await canvasViewportMetrics(page);
+    expect(Math.abs(centered.scrollLeft - maxLeft / 2)).toBeLessThanOrEqual(2);
+    expect(Math.abs(centered.scrollTop - maxTop / 2)).toBeLessThanOrEqual(2);
+    await area.evaluate(element => element.scrollTo(-100, -100));
+    await expect.poll(async () => {
+        const metrics = await canvasViewportMetrics(page);
+        return [metrics.scrollLeft, metrics.scrollTop];
+    }).toEqual([0, 0]);
+    await area.evaluate(element => element.scrollTo(element.scrollWidth + 1000, element.scrollHeight + 1000));
+    const atFarEdge = await canvasViewportMetrics(page);
+    expect(atFarEdge.scrollLeft).toBe(atFarEdge.scrollWidth - atFarEdge.clientWidth);
+    expect(atFarEdge.scrollTop).toBe(atFarEdge.scrollHeight - atFarEdge.clientHeight);
+    await area.focus();
+    await page.keyboard.press('ArrowDown');
+    const afterBoundaryInput = await canvasViewportMetrics(page);
+    expect(afterBoundaryInput.scrollTop).toBe(atFarEdge.scrollTop);
+    await page.keyboard.press('ArrowUp');
+    const afterOppositeInput = await canvasViewportMetrics(page);
+    expect(afterOppositeInput.scrollTop).toBeLessThan(atFarEdge.scrollTop);
+});
+
+test('standard-world zoom status reports four levels and fades', async ({ page }) => {
     await start(page);
     const area = page.locator('#canvasArea');
     const status = page.locator('#zoomStatus');
@@ -79,8 +300,9 @@ test('vertical wheel is zoom-only and shows a fading zoom level overlay', async 
     await expect(status).toHaveText('Zoom: 4/4');
 });
 
-test('level one fits while higher levels expose scrollbars and themed thin state', async ({ page }) => {
+test('standard level one fits while zoomed-in levels expose themed scrollbars', async ({ page }) => {
     await start(page);
+    await expectZoom(page, 1);
     let metrics = await canvasViewportMetrics(page);
     expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.clientWidth + 1);
     expect(metrics.scrollHeight).toBeLessThanOrEqual(metrics.clientHeight + 1);
@@ -105,7 +327,7 @@ test('level one fits while higher levels expose scrollbars and themed thin state
     }
 });
 
-test('arrow keys scroll only above level one and never hijack focused controls', async ({ page }) => {
+test('arrow keys scroll above level one and never hijack focused controls', async ({ page }) => {
     await start(page);
     await page.evaluate(() => document.activeElement?.blur());
     let before = await canvasViewportMetrics(page);
@@ -233,7 +455,7 @@ test('machine overlay stays aligned for hit testing after zoom and scroll', asyn
 });
 
 test('edge pan is disabled by default, only moves near the outer five percent, and stops promptly', async ({ page }) => {
-    await start(page);
+    await start(page, '520 × 300');
     await zoom(page, 1);
     await expectZoom(page, 2);
     const toggle = page.locator('#edgePanToggle');
@@ -250,10 +472,23 @@ test('edge pan is disabled by default, only moves near the outer five percent, a
     await toggle.check();
     await page.evaluate(() => {
         const canvasArea = document.querySelector('#canvasArea');
+        window.__edgePanPointerProbe = null;
+        canvasArea.addEventListener('pointermove', event => {
+            const rect = canvasArea.getBoundingClientRect();
+            window.__edgePanPointerProbe = {
+                pointerType: event.pointerType,
+                insideArea: event.clientX >= rect.left && event.clientX <= rect.right &&
+                    event.clientY >= rect.top && event.clientY <= rect.bottom,
+                enabled: document.querySelector('#edgePanToggle').checked,
+                canScrollX: canvasArea.scrollWidth > canvasArea.clientWidth + 1
+            };
+        }, true);
         canvasArea.scrollLeft = Math.floor((canvasArea.scrollWidth - canvasArea.clientWidth) / 2);
         canvasArea.scrollTop = Math.floor((canvasArea.scrollHeight - canvasArea.clientHeight) / 2);
     });
-    await page.mouse.move(box.x + 2, box.y + box.height / 2);
+    await area.hover({ position: { x: 1, y: box.height / 2 } });
+    await expect.poll(() => page.evaluate(() => window.__edgePanPointerProbe))
+        .toMatchObject({ pointerType: 'mouse', insideArea: true, enabled: true, canScrollX: true });
     const edgeBefore = await canvasViewportMetrics(page);
     await page.waitForTimeout(350);
     const edgeAfter = await canvasViewportMetrics(page);

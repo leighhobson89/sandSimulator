@@ -13,10 +13,17 @@ async function createSave(page) {
     await game.newGame();
     await page.getByRole('button', { name: 'Sand', exact: true }).click();
     await clickCanvasCell(page, { x: 18, y: 18 });
-    await page.getByRole('button', { name: 'Export', exact: true }).click();
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
     const save = await page.locator('#saveString').inputValue();
     await page.getByRole('button', { name: 'Close', exact: true }).click();
     return save;
+}
+
+async function chooseStandardWorld(page) {
+    const dialog = page.locator('#worldSizeDialog');
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole('radio', { name: '260 × 150', exact: true }).check();
+    await dialog.getByRole('button', { name: 'Start Game', exact: true }).click();
 }
 
 test('New Game autosave choices support Cancel and No without losing the existing resume slot', async ({ page }) => {
@@ -27,6 +34,7 @@ test('New Game autosave choices support Cancel and No without losing the existin
     await page.reload();
 
     await page.getByRole('button', { name: 'New Game' }).click();
+    await chooseStandardWorld(page);
     const choice = page.locator('#autosaveChoiceDialog');
     await expect(choice).toBeVisible();
     await page.getByRole('button', { name: 'Cancel', exact: true }).click();
@@ -34,13 +42,14 @@ test('New Game autosave choices support Cancel and No without losing the existin
     await expect(page.getByRole('button', { name: 'Resume Game' })).toBeVisible();
 
     await page.getByRole('button', { name: 'New Game' }).click();
+    await chooseStandardWorld(page);
     await expect(choice).toBeVisible();
     await page.getByRole('button', { name: 'No, play without autosave', exact: true }).click();
     await expect(page.locator('#canvas')).toBeVisible();
     expect(await page.evaluate(() => localStorage.getItem('elemental-foundry.autosave.v1'))).toBe(save);
 });
 
-test('Import Cancel leaves both the live world and existing resume save unchanged', async ({ page }) => {
+test('Load Cancel leaves both the live world and existing resume save unchanged', async ({ page }) => {
     const game = new GamePage(page);
     await page.goto('/?e2e');
     await page.evaluate(() => localStorage.clear());
@@ -48,12 +57,12 @@ test('Import Cancel leaves both the live world and existing resume save unchange
     await page.getByRole('button', { name: 'Water', exact: true }).click();
     await clickCanvasCell(page, { x: 22, y: 22 });
     const before = await game.state();
-    await page.getByRole('button', { name: 'Export', exact: true }).click();
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
     const save = await page.locator('#saveString').inputValue();
     await page.getByRole('button', { name: 'Close', exact: true }).click();
     await page.evaluate(value => localStorage.setItem('elemental-foundry.autosave.v1', value), save);
 
-    await page.getByRole('button', { name: 'Import', exact: true }).click();
+    await page.getByRole('button', { name: 'Load', exact: true }).click();
     await page.locator('#saveString').fill(save);
     await page.getByRole('button', { name: 'Load Game', exact: true }).click();
     await expect(page.locator('#autosaveChoiceDialog')).toBeVisible();

@@ -35,7 +35,7 @@ test('captures multiple library slots and wraps after the final slot', async ({ 
     await expect(game.state()).resolves.toMatchObject({ cols: expect.any(Number) });
 });
 
-test('portable export and import restores the blueprint library and stamp result', async ({ page }) => {
+test('portable Save and Load restores the blueprint library and stamp result', async ({ page }) => {
     const game = new GamePage(page);
     await game.openMenu();
     await game.newGame();
@@ -49,12 +49,12 @@ test('portable export and import restores the blueprint library and stamp result
     });
     await capture(page, { x: 8, y: 8 }, { x: 9, y: 8 });
     await page.getByRole('tab', { name: 'Tools' }).click();
-    await page.getByRole('button', { name: 'Export', exact: true }).click();
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
     const save = page.locator('#saveString');
     await expect(save).toHaveValue(/.+/);
     const portable = await save.inputValue();
     await page.getByRole('button', { name: 'Close', exact: true }).click();
-    await page.getByRole('button', { name: 'Import', exact: true }).click();
+    await page.getByRole('button', { name: 'Load', exact: true }).click();
     await save.fill(portable);
     await page.getByRole('button', { name: 'Load Game', exact: true }).click();
     await expect(page.locator('#autosaveChoiceDialog')).toBeVisible();

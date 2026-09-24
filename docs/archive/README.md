@@ -19,6 +19,15 @@ in [`../README.md`](../README.md); active findings remain in
 
 ## Executed Plans
 
+- [`plans/live-autosave-and-toolbar-tooltips-2026-09-24.md`](plans/live-autosave-and-toolbar-tooltips-2026-09-24.md)
+  — the live Autosave control and shared toolbar-tooltip implementation from
+  24 September 2026.
+- [`plans/fitted-camera-and-canvas-borders-2026-09-24.md`](plans/fitted-camera-and-canvas-borders-2026-09-24.md)
+  — the fitted start-view and canvas boundary-stroke follow-up from 24
+  September 2026.
+- [`plans/large-world-sizes-and-camera-2026-09-24.md`](plans/large-world-sizes-and-camera-2026-09-24.md)
+  — the executed fixed world-size chooser, canvas gate, and large-world camera
+  plan from 24 September 2026.
 - [`plans/scale-profile-infrastructure-2026-09-23.md`](plans/scale-profile-infrastructure-2026-09-23.md)
   — the executed headless scale-profile infrastructure plan from 23 September
   2026.

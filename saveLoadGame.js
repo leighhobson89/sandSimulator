@@ -12,7 +12,7 @@ import { compressToEncodedURIComponent, decompressFromEncodedURIComponent } from
 
 export const AUTOSAVE_STORAGE_KEY = 'elemental-foundry.autosave.v1';
 const SAVE_VERSION = 1;
-const AUTOSAVE_INTERVAL_MS = 60_000;
+const AUTOSAVE_INTERVAL_MS = 5 * 60_000;
 const MAX_WORLD_CELLS = 2_000_000;
 const ARRAY_TYPES = { Uint8Array, Uint16Array, Int16Array, Float32Array };
 const BLUEPRINT_FIELD_TYPES = {
@@ -35,11 +35,16 @@ const BLUEPRINT_FIELD_TYPES = {
 let autosaveTimer = null;
 let autosaveEnabled = false;
 let autosaveWriting = false;
+let autosaveGeneration = 0;
 let savingListener = () => {};
+let autosaveErrorListener = () => {};
 let blueprintStateProvider = () => null;
 let blueprintStateRestorer = () => {};
 
 export function setSavingListener(listener) { savingListener = typeof listener === 'function' ? listener : () => {}; }
+export function setAutosaveErrorListener(listener) {
+    autosaveErrorListener = typeof listener === 'function' ? listener : () => {};
+}
 
 // The blueprint library belongs to the UI, whereas this module owns the save
 // wire format. These hooks keep that boundary clean while including the same
@@ -108,11 +113,15 @@ export async function restoreAutosave() {
     return payload;
 }
 
-// The regular autosave always runs once per minute. saveNow is only used when
+// The regular autosave always runs every five minutes. saveNow is only used when
 // a player explicitly chooses a new resume target, so that choice is durable.
-export function startAutosave({ saveNow = false } = {}) {
-    if (!storageWorks()) return false;
+export function startAutosave({ saveNow = false, checkStorage = true } = {}) {
+    if (checkStorage && !storageWorks()) {
+        stopAutosave();
+        return false;
+    }
     autosaveEnabled = true;
+    autosaveGeneration++;
     if (autosaveTimer) clearInterval(autosaveTimer);
     autosaveTimer = setInterval(() => { void writeAutosave(); }, AUTOSAVE_INTERVAL_MS);
     if (saveNow) void writeAutosave();
@@ -121,6 +130,7 @@ export function startAutosave({ saveNow = false } = {}) {
 
 export function stopAutosave() {
     autosaveEnabled = false;
+    autosaveGeneration++;
     if (autosaveTimer) clearInterval(autosaveTimer);
     autosaveTimer = null;
 }
@@ -132,22 +142,38 @@ export function clearAutosave() {
 export function isAutosaveEnabled() { return autosaveEnabled; }
 
 export async function replaceAutosaveWithCurrentGame() {
-    clearAutosave();
-    if (!startAutosave()) throw new Error('Local storage is not available in this browser.');
-    await writeAutosave();
+    // Serialize before touching the resume slot. localStorage.setItem is atomic:
+    // a quota failure leaves the previous string in place.
+    try {
+        const replacement = createSaveString();
+        localStorage.setItem(AUTOSAVE_STORAGE_KEY, replacement);
+    } catch (error) {
+        stopAutosave();
+        throw new Error(`The resume game could not be saved (${error?.message || 'local storage rejected the save'}).`);
+    }
+    startAutosave({ checkStorage: false });
 }
 
 export async function writeAutosave() {
-    if (!autosaveEnabled || autosaveWriting || !storageWorks()) return false;
+    if (!autosaveEnabled || autosaveWriting) return false;
+    if (!storageWorks()) {
+        const error = new Error('Local storage is not available in this browser.');
+        stopAutosave();
+        autosaveErrorListener(error);
+        return false;
+    }
+    const generation = autosaveGeneration;
     autosaveWriting = true;
     savingListener(true);
-    await nextPaint();
     try {
+        await nextPaint();
+        if (!autosaveEnabled || generation !== autosaveGeneration) return false;
         localStorage.setItem(AUTOSAVE_STORAGE_KEY, createSaveString());
         return true;
     } catch (error) {
         console.warn('Could not autosave Elemental Foundry game:', error);
         stopAutosave();
+        autosaveErrorListener(error);
         return false;
     } finally {
         autosaveWriting = false;

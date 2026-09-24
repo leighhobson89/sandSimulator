@@ -2,9 +2,10 @@
 
 **Purpose:** source-backed planning for a possible future `physics.js` refactor.
 This is an audit, not permission to refactor, rewrite, or change simulation
-behavior. Do not infer that the profile's synthetic 1040×600 workload is a
-playable-world requirement. Worker, WASM, WebGL, and WebGPU work remains deferred
-in [`FUTURE_IDEAS.md`](FUTURE_IDEAS.md).
+behavior. The supported world choices are 260×150 and 520×300; do not infer
+that the profile's synthetic 1040×600 workload is a playable-world requirement.
+Worker, WASM, WebGL, and WebGPU work for sizes beyond the current 520×300 option
+remains deferred in [`FUTURE_IDEAS.md`](FUTURE_IDEAS.md).
 
 ## Audit baseline and boundaries
 
@@ -107,7 +108,8 @@ boundary.
 - `createWorld()` constructs the typed-array layout at lines 648–701 and now
   validates dimensions before any global dimension mutation or allocation. It
   fills temperature from current ambient and shades from the active RNG. The
-  scale guard is not authorization to add larger playable worlds.
+  scale guard is not authorization to expand beyond the supported 260×150 and
+  520×300 playable worlds.
 - Preserve each typed-array constructor, initialization behavior, and field
   reset semantics. `setCell`, `transform`, and `removeParticle` reset different
   subsets. `swapCells` transfers particle-associated values and marks both cells
@@ -149,6 +151,10 @@ there is no active breeze, and restore does not rewind the shared RNG. RNG
 seed/PRNG progress, current breeze position, root traversal stamps, and display
 flow summaries are not part of this save state. Tests that require replay
 reseed explicitly; a saved world alone is not an RNG rewind point.
+
+The v1 save stores the selected world dimensions through `simulation.cols` and
+`simulation.rows`. Resume and Load therefore restore either supported size;
+camera zoom and scroll position remain transient view state.
 
 ### Tick ordering and determinism
 
@@ -236,13 +242,16 @@ The existing verification surface is complementary:
   `thermal.spec.mjs`, `settling.spec.mjs`, and `reactions.spec.mjs`; machine
   behavior is split among `electrical.spec.mjs`, `powered.spec.mjs`,
   `storage.spec.mjs`, `tubing-vents.spec.mjs`, `mixer.spec.mjs`, placement and
-  persistence specs; `e2e/persistence/` guards saves/imports; and
-  `e2e/scaling/default-world.spec.mjs` protects the 150-row no-selector product
-  behavior. Select only the affected areas for each stage.
+  persistence specs; `e2e/persistence/` guards saves/loads; and
+  `e2e/scaling/default-world.spec.mjs` protects the fixed 260×150 and 520×300
+  chooser options and large-choice canvas threshold. Select only the affected
+  areas for each stage.
 - `npm run profile:scale` covers a fixed physics-only synthetic matrix
   (260×150, 520×300, 1040×600). It excludes canvas rendering and SVG overlays;
-  memory is estimated. Treat it as diagnostic performance evidence, never as
-  an equivalence test or a larger-world product test.
+  memory is estimated. The 520×300 measurement of 27.535 ms average and
+  37.675 ms p95 is machine-specific diagnostic evidence, not a 60-fps guarantee.
+  Treat profiles as neither equivalence tests nor product support for the
+  synthetic 1040×600 case.
 
 For each extraction, set the seed and fixtures explicitly, compare frame count
 and all relevant persisted arrays after every fixed tick, and include transient
