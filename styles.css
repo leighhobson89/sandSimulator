@@ -1492,7 +1492,36 @@ canvas.tubing-hover { cursor: help; }
 }
 .save-string:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
 .save-dialog-actions { display: flex; flex-wrap: wrap; gap: 0.6rem; justify-content: flex-end; }
+.autosave-choice-card { width: min(680px, 100%); }
+.autosave-choice-actions {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr) max-content;
+    gap: 0.6rem;
+}
+.autosave-choice-actions .btn { min-width: 0; white-space: nowrap; }
 .save-dialog-error { margin: 0; color: var(--accent-hover); }
+
+@media (max-width: 620px) {
+    #autosaveChoiceDialog { padding: 0.5rem; }
+    .autosave-choice-card { padding: 1rem; }
+    .autosave-choice-actions { gap: 0.35rem; }
+    .autosave-choice-actions .btn {
+        padding-inline: 0.3rem;
+        font-size: 0.72rem;
+        letter-spacing: 0.02em;
+    }
+}
+
+@media (max-width: 420px) {
+    #autosaveChoiceDialog { padding: 0.35rem; }
+    .autosave-choice-card { padding: 0.55rem; }
+    .autosave-choice-actions { gap: 0.2rem; }
+    .autosave-choice-actions .btn {
+        padding-inline: 0.2rem;
+        font-size: 0.53rem;
+        letter-spacing: 0.01em;
+    }
+}
 
 /* ---------------------------------------------------------------- scrollbar */
 

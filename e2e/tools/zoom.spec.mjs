@@ -233,17 +233,28 @@ test('expanded-world edges and camera clamps remain correct after zooming in fro
         const strokes = await group.locator('path').evaluateAll(paths => paths.map(path => {
             const style = getComputedStyle(path);
             const match = style.stroke.match(/\d+(?:\.\d+)?/g) || [];
-            return { color: match.slice(0, 3).map(Number), width: parseFloat(style.strokeWidth) };
+            return {
+                color: match.slice(0, 3).map(Number),
+                width: parseFloat(style.strokeWidth),
+                path: path.getAttribute('d')
+            };
         }));
         expect(strokes).toHaveLength(1);
         expect(strokes[0].color).toEqual([117, 69, 33]);
-        expect(strokes[0].width).toBe(4);
+        expect(strokes[0].width).toBe(2);
+        const canvasSize = await page.locator('#canvas').evaluate(canvas => ({ width: canvas.width, height: canvas.height }));
+        const expectedPath = {
+            left: `M 0 0 V ${canvasSize.height + 1}`,
+            right: `M ${canvasSize.width} 0 V ${canvasSize.height + 1}`,
+            bottom: `M 0 ${canvasSize.height} H ${canvasSize.width}`
+        }[edge];
+        expect(strokes[0].path).toBe(expectedPath);
     }
     const bottomEdge = await overlay.locator('[data-edge="bottom"]').evaluate(group =>
         Math.min(...[...group.querySelectorAll('path')].map(path => path.getBBox().y))
     );
     const canvasHeight = await page.locator('#canvas').evaluate(canvas => canvas.height);
-    expect(bottomEdge).toBeGreaterThanOrEqual(canvasHeight);
+    expect(bottomEdge).toBe(canvasHeight);
 
     await area.evaluate((element, extents) => element.scrollTo(extents.maxLeft / 2, extents.maxTop / 2), {
         maxLeft,

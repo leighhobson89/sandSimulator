@@ -283,8 +283,8 @@ function drawWorldBoundaryOverlay(displayWidth, displayHeight, scale) {
     overlay.replaceChildren();
 
     const edges = [
-        { name: 'left', d: `M 2 0 V ${canvas.height}` },
-        { name: 'right', d: `M ${canvas.width - 2} 0 V ${canvas.height}` },
+        { name: 'left', d: `M 0 0 V ${canvas.height + 1}` },
+        { name: 'right', d: `M ${canvas.width} 0 V ${canvas.height + 1}` },
         { name: 'bottom', d: `M 0 ${canvas.height} H ${canvas.width}` }
     ];
     for (const edge of edges) {
@@ -294,7 +294,7 @@ function drawWorldBoundaryOverlay(displayWidth, displayHeight, scale) {
         path.setAttribute('d', edge.d);
         path.setAttribute('fill', 'none');
         path.setAttribute('stroke', '#754521');
-        path.setAttribute('stroke-width', '4');
+        path.setAttribute('stroke-width', '2');
         path.setAttribute('stroke-linecap', 'butt');
         group.appendChild(path);
         overlay.appendChild(group);

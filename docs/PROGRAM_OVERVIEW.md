@@ -49,9 +49,10 @@ scroll offsets are transient and are not serialized:
 - `game.js` keeps the fitted canvas dimensions and sizes the scroll stage. Both
   world sizes start at fitted zoom level 1 with all edges visible. The 260×150
   zoom factors are `[1, 1.5, 2, 3]`; the 520×300 factors are `[1, 2, 3, 4, 6]`.
-  A 4px brown boundary stroke is centered on the canvas edges: the side strokes
-  are centered at x=2 and x=width−2, and the bottom stroke at y=height. The
-  top-right zoom status reports the active level count for one second after a
+  A 2px brown boundary stroke is centered on the canvas's outer edge: its side
+  paths are at x=0 and x=width, run from y=0 to y=height+1, matching the lower
+  stroke edge of the bottom path centered at y=height. The top-right zoom status
+  reports the active level count for one second after a
   change. Entering the workspace and reloading reset zoom and scroll.
 - `ui.js` owns viewport gestures. An unmodified vertical mouse wheel is
   exclusively zoom input and is prevented from vertically scrolling. Horizontal
@@ -69,7 +70,8 @@ scroll offsets are transient and are not serialized:
   New Game, Resume, Load, and save failures. Turning it off stops future
   periodic writes while preserving the current resume save. Turning it back on
   starts a fresh five-minute timer without an immediate write; a failed write
-  turns the checkbox off and displays the unavailable status. Toolbar buttons,
+  turns the checkbox off and displays the unavailable status. The resume-save
+  replacement dialog keeps its three actions in a single row. Toolbar buttons,
   checkboxes, and the theme selector use the shared theme-styled tooltip. Its
   Ember background is opaque.
 - `cellFromEvent()` continues to map pointer coordinates through the rendered
@@ -173,9 +175,10 @@ zoom spec, 9/9 across accessibility and contract files, and passing scale-profil
 and smoke checks (the smoke mock geometry was corrected first). One authorized
 full run recorded `npm test` at 268 passed and 21 failed; the browser run was
 144/151 before later focused fixes, with the remaining failures in physics.
-There is no full-suite rerun recorded, and the latest QMODE border-geometry edit
-was not intentionally retested. The autosave persistence Playwright area passed
-13/13 headlessly. No full suite was run for the autosave and tooltip handoff;
+There is no full-suite rerun recorded, and the latest QMODE boundary-position
+edit was not intentionally retested. The autosave persistence
+Playwright area passed 13/13 headlessly. No full suite was run for the autosave
+and tooltip handoff;
 the newest tooltip-only QMODE adjustment, including the opaque Ember
 background, was not separately tested.
 

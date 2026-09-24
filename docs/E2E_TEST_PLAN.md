@@ -70,8 +70,8 @@ the zoom spec 14/14 and accessibility/contract files 9/9; scale-profile passed,
 and smoke passed after its mock geometry was fixed. One authorized full run
 recorded `npm test` at 268 passed and 21 failed; its browser run was 144/151
 before later focused fixes, with the remaining failures in physics. No full
-suite rerun is recorded. The latest QMODE boundary-stroke edit was not
-intentionally retested.
+suite rerun is recorded. The latest QMODE boundary-position edit was
+not intentionally retested.
 
 The autosave persistence area passed 13/13 headlessly. No full suite was run
 for the autosave/tooltip handoff, and the latest tooltip-only QMODE edit
