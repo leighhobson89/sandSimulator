@@ -1282,6 +1282,15 @@ input[type="range"]::-moz-range-thumb {
     pointer-events: none;
 }
 
+.machine-port-connector-preview-layer {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+    pointer-events: none;
+}
+
 .tubing-flow-overlay {
     position: absolute;
     inset: 0;
@@ -1312,6 +1321,11 @@ input[type="range"]::-moz-range-thumb {
     fill: #55a9ff;
 }
 
+.machine-cone-fan {
+    color: #80c9d7;
+    fill: #80c9d7;
+}
+
 .machine-cone-preview {
     stroke-opacity: 0.14;
     fill-opacity: 0.06;
@@ -1321,8 +1335,8 @@ input[type="range"]::-moz-range-thumb {
 .machine-overlay-icon {
     position: absolute;
     display: block;
-    width: 30px;
-    height: 30px;
+    width: 64px;
+    height: 64px;
     transform-origin: 50% 50%;
     filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.85));
 }
@@ -1333,17 +1347,14 @@ input[type="range"]::-moz-range-thumb {
 .machine-overlay-icon.machine-storagePowder { color: #e0ad72; }
 .machine-overlay-icon.machine-storageLiquid { color: #72d2dd; }
 .machine-overlay-icon.machine-storageGas { color: #c39aff; }
-.machine-overlay-icon.machine-vent { color: #b8e2e5; }
+.machine-overlay-icon.machine-sprinkler { color: #b8e2e5; }
 .machine-overlay-icon.machine-mixer { color: #f2c15d; }
-.machine-overlay-icon.machine-storagePowder,
-.machine-overlay-icon.machine-storageLiquid,
-.machine-overlay-icon.machine-storageGas {
-    width: 32px;
-    height: 32px;
-}
-.machine-overlay-icon.machine-mixer {
-    width: 64px;
-    height: 64px;
+.machine-overlay-icon.machine-splitter { color: #91c7dc; }
+.machine-overlay-icon.machine-collector { color: #75c7e7; }
+.machine-port-stub {
+    fill: none;
+    stroke-width: 2px;
+    stroke-linecap: round;
 }
 .machine-placement-preview { opacity: 0.82; }
 
@@ -1534,7 +1545,7 @@ canvas.tubing-hover { cursor: help; }
     color: var(--text-dim);
     font: 0.72rem var(--mono);
 }
-.machine-dialog-vent-toggle {
+.machine-dialog-toggle {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -1546,7 +1557,7 @@ canvas.tubing-hover { cursor: help; }
     border-radius: var(--radius-sm);
     cursor: pointer;
 }
-.machine-dialog-vent-toggle[hidden] { display: none; }
+.machine-dialog-toggle[hidden] { display: none; }
 .mixer-dialog-card { max-width: 46rem; }
 .mixer-dialog-bins {
     display: grid;
@@ -1615,7 +1626,7 @@ canvas.tubing-hover { cursor: help; }
     .mixer-dialog-bins { grid-template-columns: 1fr; }
     .mixer-dialog-arrow { transform: rotate(90deg); justify-self: center; }
 }
-.machine-dialog-vent-toggle input {
+.machine-dialog-toggle input {
     appearance: none;
     width: 2.55rem;
     height: 1.4rem;
@@ -1627,7 +1638,7 @@ canvas.tubing-hover { cursor: help; }
     position: relative;
     transition: background 120ms ease;
 }
-.machine-dialog-vent-toggle input::after {
+.machine-dialog-toggle input::after {
     content: '';
     position: absolute;
     top: 0.16rem;
@@ -1638,12 +1649,12 @@ canvas.tubing-hover { cursor: help; }
     background: var(--text-dim);
     transition: transform 120ms ease, background 120ms ease;
 }
-.machine-dialog-vent-toggle input:checked { background: var(--accent); }
-.machine-dialog-vent-toggle input:checked::after {
+.machine-dialog-toggle input:checked { background: var(--accent); }
+.machine-dialog-toggle input:checked::after {
     transform: translateX(1.1rem);
     background: #fff;
 }
-.machine-dialog-vent-toggle input:focus-visible {
+.machine-dialog-toggle input:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
 }

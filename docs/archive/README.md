@@ -19,6 +19,9 @@ in [`../README.md`](../README.md); active findings remain in
 
 ## Executed Plans
 
+- [`plans/2026-09-25-machine-ports-sprinkler-collector-splitter.md`](plans/2026-09-25-machine-ports-sprinkler-collector-splitter.md)
+  — machine ports, two-stage placement, Sprinkler migration, Collector sealing,
+  Splitter flow, compatibility regressions, and final verification record.
 - [`plans/2026-09-25-windows-agent-playwright-permissions.md`](plans/2026-09-25-windows-agent-playwright-permissions.md)
   — Windows sandbox browser-cache access diagnosis and verified command-level approval workflow.
 - [`plans/2026-09-25-e2e-browser-setup-guidance.md`](plans/2026-09-25-e2e-browser-setup-guidance.md)

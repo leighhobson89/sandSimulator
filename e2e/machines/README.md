@@ -1,20 +1,39 @@
 Exhaustive browser workflows for machines and material transfer.
 
-- `placement.spec.mjs` checks every machine family, previews, blocked placement,
-  all Fan directions, hit testing, the Fan 1-50 setting range and default speed
-  7, settings bounds, and tooltip behavior.
+- `placement.spec.mjs` checks every machine family, ghost-only first placement
+  stage, two-click machine-plus-connector commit, Collector's output-only lead
+  preview, blocked placement, all Fan directions, hit testing, Fan speed
+  bounds/default, settings bounds, and tooltip behavior.
 - `powered.spec.mjs` checks powered/unpowered Fan, Heater, and Cooler outcomes.
-- `storage.spec.mjs` checks all storage dialogs, categories, intake, capacity,
-  type retention, and purge confirmation.
-- `tubing-vents.spec.mjs` checks Vent release/rate controls, topology, 10/20/30
-  per-second bottlenecks, flow visualization, and storage transfer.
+- `storage.spec.mjs` checks storage dialogs, family categories, tubing-only
+  intake, capacity, type retention, and purge. It also checks Collector
+  two-cell world suction and compatible Tubing transfer to Storage. Its
+  direction-3, zoom-2 overflow case UI-pours Water into a Collector within
+  continuous UI-painted Glass flanks and verifies that it fills to 100 before
+  overflow stays upstream of the first opaque funnel row, Water remains
+  conserved, and intake resumes when capacity opens. For the default
+  down-facing icon, the first opaque row is `y = machine.y - 7`. The spec also
+  checks accepted intake up to capacity, all-facing suction barriers and
+  visible lips, open intake/output geometry, opaque-artwork paint blocking,
+  side-leak probes, and transparent/opaque alpha-aware painting across machine
+  overlays.
+- `sprinkler.spec.mjs` checks Drain Mode defaults and both outlets, Sprinkler
+  rate controls, topology, 10/20/30 per-second bottlenecks, flow visualization,
+  and storage transfer.
 - `mixer.spec.mjs` checks all documented recipes, non-mixing output, purge, and
   release behavior.
-- `persistence.spec.mjs` checks machine settings, inventories, tubing, and
-  Mixer inputs through portable Save/Load. It also verifies one-time migration
-  of legacy Fan speeds in saved worlds and blueprint cell settings.
+- `ports.spec.mjs` checks the 64px reference artwork at default and zoomed cell
+  scales, including rotated Liquid Storage icon centers, port markers, stubs,
+  and hit projection from world `connectionCell` anchors. It also checks the
+  20 CSS pixel hit distance, declared port roles, near-port Tubing snapping,
+  and rejection of incompatible Copper at Mixer inputs.
+- `persistence.spec.mjs` checks machine settings, inventories, tubing, Mixer
+  inputs, Sprinkler fractional credits and launch state, and machine state
+  through portable Save/Load, blueprints, and Grabber moves. It also verifies
+  legacy Sprinkler mode and spray-credit migration, compatible legacy machine
+  port endpoint migration, and one-time migration of Fan speeds.
 
-Run the 30 machine browser tests headlessly for required verification; headed
+Run the machine browser tests headlessly for required verification; headed
 runs are optional diagnostics only and are never an acceptance or release
 prerequisite. The physics boundary seeds inventory for deterministic setup; UI
 placement, dialogs, toggles, tooltips, and canvas interaction use Playwright.

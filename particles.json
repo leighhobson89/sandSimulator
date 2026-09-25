@@ -456,7 +456,7 @@
     "15": {
       "name": "Plant",
       "description": "Growing life that climbs from wet soil, flowers at full height, burns above its ignition point and freezes into Sand.",
-      "group": "Solids",
+      "group": "Vegetation",
       "color": "rgb(48, 162, 62)",
       "category": "static",
       "density": 1.4,
@@ -651,7 +651,7 @@
     "25": {
       "name": "Grass",
       "description": "Hardy low grass grown from Grass Seeds on damp soil; it thrives in mild temperatures and humid air and releases moisture as it grows.",
-      "group": "Solids",
+      "group": "Vegetation",
       "color": "rgb(104, 174, 74)",
       "category": "static",
       "density": 1.4,
@@ -687,7 +687,7 @@
     "24": {
       "name": "Flower",
       "description": "Mature land flower that burns or freezes like a Plant and sets Seed only when water is nearby.",
-      "group": "Solids",
+      "group": "Vegetation",
       "color": "rgb(232, 96, 160)",
       "rainbow": true,
       "category": "static",
@@ -743,7 +743,7 @@
     "28": {
       "name": "Lily Stem",
       "description": "Open-mesh aquatic plant grown from submerged Seeds that climbs through water and opens into Lily Pads.",
-      "group": "Solids",
+      "group": "Vegetation",
       "color": "rgb(52, 124, 84)",
       "category": "static",
       "density": 1.4,
@@ -766,7 +766,7 @@
     "29": {
       "name": "Lily Pad",
       "description": "Surface-growing aquatic plant that spreads across water and opens into a Lily Flower.",
-      "group": "Solids",
+      "group": "Vegetation",
       "color": "rgb(84, 166, 92)",
       "category": "static",
       "density": 1.2,
@@ -789,7 +789,7 @@
     "30": {
       "name": "Lily Flower",
       "description": "Aquatic flower that can set Seed near water and freezes or burns like other growing plants.",
-      "group": "Solids",
+      "group": "Vegetation",
       "color": "rgb(246, 244, 236)",
       "category": "static",
       "density": 1.2,
@@ -882,7 +882,7 @@
     "34": {
       "name": "Ash Grass",
       "description": "Short yellow grass grown from Wet Ash that burns above its ignition point and freezes into Sand in deep cold.",
-      "group": "Solids",
+      "group": "Vegetation",
       "color": "rgb(176, 166, 70)",
       "category": "static",
       "density": 1.35,
@@ -1207,7 +1207,7 @@
     },
     "48": {
       "name": "Powder Storage Bin",
-      "description": "Always-active storage machine that accepts one kind of powder through its rear entrance and holds up to 500 particles.",
+      "description": "Tubing-fed storage machine that accepts one kind of powder and holds up to 500 particles.",
       "group": "Storage",
       "color": "rgb(171, 119, 70)",
       "category": "static",
@@ -1223,7 +1223,7 @@
     },
     "49": {
       "name": "Liquid Storage Bin",
-      "description": "Always-active storage machine that accepts one kind of liquid, including molten metal, through its rear entrance and holds up to 500 particles.",
+      "description": "Tubing-fed storage machine that accepts one kind of liquid, including molten metal, and holds up to 500 particles.",
       "group": "Storage",
       "color": "rgb(55, 151, 166)",
       "category": "static",
@@ -1239,7 +1239,7 @@
     },
     "50": {
       "name": "Gas Storage Bin",
-      "description": "Always-active storage machine that accepts one kind of non-flaming gas through its rear entrance and holds up to 500 particles.",
+      "description": "Tubing-fed storage machine that accepts one kind of non-flaming gas and holds up to 500 particles.",
       "group": "Storage",
       "color": "rgb(136, 91, 181)",
       "category": "static",
@@ -1275,8 +1275,8 @@
       "corrodible": true
     },
     "52": {
-      "name": "Vent",
-      "description": "Always-active machine that receives one stored material through connected Tubing and releases it into the canvas below. Turn release off to store up to 100 particles.",
+      "name": "Sprinkler",
+      "description": "Always-active machine that receives one stored material through connected Tubing and holds up to 100 particles. Release controls whether stored material is emitted; Drain Mode selects the normal downward outlet or seven-direction sprinkler spray.",
       "group": "Machines",
       "color": "rgb(126, 151, 160)",
       "category": "static",
@@ -1285,7 +1285,7 @@
       "cooling": 0.002,
       "bulkInsulation": 0.3,
       "meltPoint": 10000,
-      "machine": "vent",
+      "machine": "sprinkler",
       "corrodible": false
     },
     "53": {
@@ -1533,7 +1533,7 @@
     "64": {
       "name": "Moss",
       "description": "Low creeping plant that spreads across damp wood, stone or wet ground in cool, very humid air and slowly releases moisture nearby.",
-      "group": "Solids",
+      "group": "Vegetation",
       "color": "rgb(75, 128, 54)",
       "category": "static",
       "density": 1.35,
@@ -1563,7 +1563,7 @@
     "65": {
       "name": "Daffodil",
       "description": "Cool-season flowering plant that grows from damp soil, adds humidity and opens into a bright yellow Daffodil Bloom.",
-      "group": "Solids",
+      "group": "Vegetation",
       "color": "rgb(72, 146, 64)",
       "category": "static",
       "density": 1.35,
@@ -1594,7 +1594,7 @@
     "66": {
       "name": "Red Tulip",
       "description": "Mild-climate plant that grows from damp soil, contributes humidity and matures into a vivid red Tulip Bloom.",
-      "group": "Solids",
+      "group": "Vegetation",
       "color": "rgb(63, 138, 61)",
       "category": "static",
       "density": 1.35,
@@ -1625,7 +1625,7 @@
     "67": {
       "name": "Geranium",
       "description": "Warm-climate branching plant that grows on damp soil and matures into clusters of pink Geranium blooms.",
-      "group": "Solids",
+      "group": "Vegetation",
       "color": "rgb(52, 144, 69)",
       "category": "static",
       "density": 1.35,
@@ -1656,7 +1656,7 @@
     "68": {
       "name": "Blue Flower",
       "description": "Cool-season plant with slender stems that grows on damp sand or ash and opens into a blue flower.",
-      "group": "Solids",
+      "group": "Vegetation",
       "color": "rgb(68, 132, 102)",
       "category": "static",
       "density": 1.3,
@@ -1687,7 +1687,7 @@
     "69": {
       "name": "Banana Plant",
       "description": "Tall tropical plant that needs warm temperatures, saturated humid air and wet soil; it contributes moisture and grows a broad fruit bunch.",
-      "group": "Solids",
+      "group": "Vegetation",
       "color": "rgb(56, 130, 49)",
       "category": "static",
       "density": 1.4,
@@ -1718,7 +1718,7 @@
     "70": {
       "name": "Water Grass",
       "description": "Aquatic net-forming plant that climbs through open water, spreads along its surface and contributes moisture to the local air.",
-      "group": "Solids",
+      "group": "Vegetation",
       "color": "rgb(42, 119, 83)",
       "category": "static",
       "density": 1.3,
@@ -1751,7 +1751,7 @@
     "71": {
       "name": "Daffodil Bloom",
       "description": "Bright yellow flower at the mature tip of a Daffodil plant; it produces new Daffodil Seeds only while the plant is thriving.",
-      "group": "Solids",
+      "group": "Vegetation",
       "color": "rgb(248, 205, 48)",
       "category": "static",
       "density": 1.2,
@@ -1773,7 +1773,7 @@
     "72": {
       "name": "Tulip Bloom",
       "description": "Red flower at the mature tip of a Red Tulip; it produces Red Tulip Seeds only while the plant is thriving.",
-      "group": "Solids",
+      "group": "Vegetation",
       "color": "rgb(222, 42, 52)",
       "category": "static",
       "density": 1.2,
@@ -1795,7 +1795,7 @@
     "73": {
       "name": "Geranium Bloom",
       "description": "Pink flower cluster on a mature Geranium; it produces Geranium Seeds only while the plant is thriving.",
-      "group": "Solids",
+      "group": "Vegetation",
       "color": "rgb(233, 96, 157)",
       "category": "static",
       "density": 1.2,
@@ -1817,7 +1817,7 @@
     "74": {
       "name": "Blue Flower Bloom",
       "description": "Blue flower at the mature tip of a Blue Flower plant; it produces Blue Flower Seeds only while the plant is thriving.",
-      "group": "Solids",
+      "group": "Vegetation",
       "color": "rgb(73, 116, 238)",
       "category": "static",
       "density": 1.2,
@@ -1839,7 +1839,7 @@
     "75": {
       "name": "Banana Bunch",
       "description": "Mature fruiting form of a healthy Banana Plant; it produces new Banana Seeds in tropical humid conditions.",
-      "group": "Solids",
+      "group": "Vegetation",
       "color": "rgb(245, 212, 48)",
       "category": "static",
       "density": 1.2,
@@ -1861,7 +1861,7 @@
     "76": {
       "name": "Water Grass Bloom",
       "description": "Aquatic flower at the surface of mature Water Grass; it produces aquatic seeds only while the rooted plant is thriving.",
-      "group": "Solids",
+      "group": "Vegetation",
       "color": "rgb(242, 245, 218)",
       "category": "static",
       "density": 1.2,
@@ -1883,7 +1883,7 @@
     "77": {
       "name": "Water Grass Pad",
       "description": "Broad floating leaf that spreads along the open water surface before Water Grass blooms.",
-      "group": "Solids",
+      "group": "Vegetation",
       "color": "rgb(58, 155, 91)",
       "category": "static",
       "density": 1.15,
@@ -1906,7 +1906,7 @@
     "78": {
       "name": "Banana Leaf",
       "description": "Wide, raised leaf frond on the upright Banana Plant trunk.",
-      "group": "Solids",
+      "group": "Vegetation",
       "color": "rgb(43, 151, 52)",
       "category": "static",
       "density": 1.12,
@@ -1940,6 +1940,35 @@
       "dischargeBattery": true,
       "powerConsumption": 0.5,
       "wireReach": 2
+    },
+    "80": {
+      "name": "Splitter",
+      "description": "Tubing machine that buffers one incoming material and divides its flow evenly between two Tubing outputs.",
+      "group": "Machines",
+      "color": "rgb(105, 151, 178)",
+      "category": "static",
+      "density": 7.8,
+      "conductivity": 0.04,
+      "cooling": 0.002,
+      "bulkInsulation": 0.3,
+      "meltPoint": 10000,
+      "machine": "splitter",
+      "corrodible": false
+    },
+    "81": {
+      "name": "Collector",
+      "description": "Directional funnel that gathers ordinary powder, liquid, or gas into a one-material buffer of up to 100 particles and sends it through compatible Tubing at up to 30 units per second, limited by line capacity.",
+      "group": "Machines",
+      "color": "rgb(74, 133, 164)",
+      "category": "static",
+      "density": 7.8,
+      "conductivity": 0.04,
+      "cooling": 0.002,
+      "bulkInsulation": 0.3,
+      "meltPoint": 10000,
+      "machine": "collector",
+      "storageCapacity": 100,
+      "corrodible": false
     }
   }
 }

@@ -1,7 +1,8 @@
 # Elemental Foundry
 
-A living elemental sandbox: 53 materials and tools on a 150-row grid that adds
-enough columns to fill about 90% of the workspace beside the material picker,
+A living elemental sandbox with 81 picker entries across materials, machines,
+and tools, on a 150-row grid that adds enough columns to fill about 90% of the
+workspace beside the material picker,
 with heat that spreads from cell to cell so that things melt, boil, freeze and
 catch fire on their own, weather that blows across the world of its own accord,
 and electricity that charges Battery, powers connected metals and drives Sparks
@@ -15,11 +16,14 @@ The current program overview and verification basis are recorded in
 in [`docs/ISSUES.md`](docs/ISSUES.md), while superseded documentation findings
 are kept in [`docs/archive/`](docs/archive/).
 
-The latest full verification on 24 September 2026 passed: `npm.cmd test` had
-336 passed and 0 failed, `npm.cmd run test:smoke` passed, both scale-profile
-and world allocation checks passed, and the full browser suite passed 167/167 tests.
-Focused visualization, accessibility, and persistence browser regressions also
-passed. Headed runs are optional diagnostics, never an acceptance or release
+On 25 September 2026, `npm.cmd test` passed 371 checks, smoke passed 59 checks,
+scale-profile and world-allocation checks passed, and the focused machine
+browser suite passed 23 tests. The full browser run recorded 191 passes and a
+30-second timeout in the v1 Sprinkler migration test. After raising that test's
+timeout to 60 seconds, its focused rerun passed in 35.5 seconds; the full
+browser suite was not rerun after that adjustment. The QMODE palette catalog
+regression passed 8/8. The commands below remain the supported test entry
+points. Headed runs are optional diagnostics, never an acceptance or release
 prerequisite.
 
 The historical 15/15 matrix is preserved in
@@ -41,7 +45,7 @@ with no dependencies.
 npm test                   # physics checks, no browser needed
 npm run test:smoke         # UI and persistence checks against a stand-in browser
 npm run test:scale-profile # scale profile and world allocation checks
-npm run test:browser -- --workers=1 --trace=off # all 167 browser tests
+npm run test:browser -- --workers=1 --trace=off # full Playwright browser suite
 ```
 
 The physics checks use seed `0` by default. Pass `--seed=1234` to
@@ -80,16 +84,19 @@ continues while the viewport is scrolled. Zoom changes briefly show a top-right
 view state only: entering the workspace or reloading resets them to the fitted
 view and they are not saved. There is no app-owned drag-to-pan mode. Middle
 click sampling uses the same cell mapping while zoomed or scrolled, and prevents
-the browser's middle-button autoscroll behavior. Existing painting, erasing,
-touch input and machine overlays remain unchanged.
+the browser's middle-button autoscroll behavior. Machine artwork, port markers,
+stubs, previews, and hit targets follow the zoomed cell geometry; the pointer
+hit distance remains 20 CSS pixels.
 
 **Clear** is deliberately confirm-first: the toolbar button opens a warning,
 Cancel leaves the current world untouched, and Clear World removes all
 particles. It does not change the saved Resume Game until a later autosave.
 
 The top toolbar carries the play controls, readout and theme. Materials sit to
-the left of the canvas; the Tools panel to its right contains Brush/Line mode
-and size, Grabber, Visualizations, and Environment controls. Open Options for
+the left of the canvas; the picker orders them as Powders, Liquids, Gases,
+Solids, Seeds, Vegetation, then Metals, Machines, Storage, and Tools. The Tools
+panel to its right contains Brush/Line mode and size, Grabber, Visualizations,
+and Environment controls. Open Options for
 Heat, Humidity, and Wind views; Normal restores ordinary rendering. The
 Environment section places the Breeze toggle above General Wind and Gust
 Strength, Air Temperature, Humidity, and Dew Point, separate from the Wind
@@ -183,29 +190,51 @@ than a nudge from the mouse - so one dial covers both, and turning it up gives
 weather to match. It is off to start with, since a world that blows itself about
 is not what someone laying out a scene wants.
 
-**Fan, Heater and Cooler** are powered machines in the Machines section. Their
-picker buttons place one machine cell regardless of brush size or drawing mode;
-drag while placing to face any of the eight cardinal or diagonal directions.
-A powered Fan blows at its configured strength (default 7, range 1 to 20)
+**Machine placement** uses two stages. Drag to position and face a ghost; this
+first gesture does not change the world. On release, the pose freezes and a
+size-3 connector preview appears from the first input port in definition order
+(the Collector previews from its Tubing output). A second click commits the
+machine and connector together. Invalid placement remains available to retry;
+Escape or right-click cancels. Only committed machines are included in saves
+and blueprints. Clicking a placed machine opens its settings or inventory.
+
+**Fan, Heater and Cooler** are powered machines in the Machines section. A
+powered Fan blows at its configured strength (default 7, range 1 to 20)
 through a 28-cell cone, while a powered Heater and Cooler drive 28-cell cones
 toward 2000 C and -60 C and launch matching ray particles along their
-centreline. Their faint cone and directional icon preview the facing while
-dragging; the machine is committed, and starts affecting the world, only when
-the mouse is released. The Heater and Cooler each draw 100
-power load, twice the Fan's 50, and all three switch off when they are not
-powered. Copper, Iron, and Stainless Steel wire can reach conductive machines
-through up to two empty cells beyond the physical wire end. This lets a machine
-sit beside a wire without touching the drawn pixels.
+centreline. The Heater and Cooler each draw 100 power, twice the Fan's 50, and
+all three switch off when they are not powered. Copper, Iron, and Stainless
+Steel wire can reach conductive machines through up to two empty cells beyond
+the physical wire end.
 
-**Vent** is an always-active machine. A Vent connected to a storage bin with
-painted **Tubing** accepts the bin's stored material and drops it into the
-canvas below. Tubing only connects through shared edges and needs another
-machine at its far end. Its transfer rate is 10 particles per second for every
-cell in the narrowest cross-section: a three-cell-wide run carries 30/s, while
-a two-cell pinch carries 20/s. Moving particles are shown only while the run is
-valid and flowing. Click a Vent to turn its default-on Release switch off; it
-then buffers one material type up to 100 particles, and a full Vent stops the
-connected tubing flow.
+**Storage Bins** accept only their matching Powder, Liquid, or Gas family over
+Tubing and hold one material type at a time. **Tubing** connects through shared
+cell edges between declared machine ports. Its capacity is 10 particles per
+second per cell of the narrowest cross-section: a three-cell-wide run carries
+30/s, while a two-cell pinch carries 20/s. The Sprinkler accepts Tubing input
+and releases its stored material into the world. Its Drain Mode defaults on
+with one downward outlet; turning it off sprays in seven directions while
+preserving the configured total release rate.
+
+**Collector** gathers Powder, Liquid, or Gas from its facing funnel into a
+one-type buffer of up to 100 particles, then sends it through its Tubing output
+at up to 30/s subject to route capacity. A material is accepted only when its
+type matches the buffer (or the buffer is empty) and there is room; full or
+rejected material stays upstream and remains conserved. For the default
+down-facing Collector, the
+first opaque funnel row is `y = machine.y - 7` and blocks overflow. Intake
+resumes when capacity opens. Transparent pixels in every 64px machine artwork
+overlay allow painting through to the world, while opaque artwork pixels block
+painting. Glass or Wood guardrails can therefore be painted through transparent
+Collector areas to contain overflow without covering the artwork.
+
+The **Mixer** has two Tubing inputs and releases recipe output into the world;
+the **Splitter** divides one Tubing input across two outputs. Machine port
+markers and connector stubs are projected from each port's declared world
+connection cell. Artwork, ports, and previews scale with zoom while pointer hit
+distance stays 20 CSS pixels. Portable saves use format version 2 and continue
+to load version-1 saves, migrating legacy Sprinkler mode and machine-port
+layouts.
 
 ## Themes
 

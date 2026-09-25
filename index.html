@@ -409,9 +409,13 @@
                 <input id="machineDialogInput" class="number-input machine-dialog-input" type="number" step="1" autocomplete="off">
                 <span id="machineDialogUnit" class="unit">&deg;C</span>
             </div>
-            <label id="machineDialogVentToggleWrap" class="machine-dialog-vent-toggle" hidden>
+            <label id="machineDialogSprinklerReleaseToggleWrap" class="machine-dialog-toggle" hidden>
                 <span>Release into canvas</span>
-                <input id="machineDialogVentToggle" type="checkbox" role="switch" aria-label="Release vent contents into the canvas">
+                <input id="machineDialogSprinklerReleaseToggle" type="checkbox" role="switch" aria-label="Release Sprinkler contents into the canvas">
+            </label>
+            <label id="machineDialogDrainModeToggleWrap" class="machine-dialog-toggle" hidden>
+                <span>Drain Mode</span>
+                <input id="machineDialogDrainModeToggle" type="checkbox" role="switch" aria-label="Drain Mode">
             </label>
             <p id="machineDialogError" class="save-dialog-error" role="alert" hidden></p>
             <div class="save-dialog-actions">
@@ -452,7 +456,7 @@
                     <button id="mixerDialogBinPurge1" class="btn btn-ghost" type="button">Purge</button>
                 </div>
             </div>
-            <label id="mixerDialogToggleWrap" class="machine-dialog-vent-toggle">
+            <label id="mixerDialogToggleWrap" class="machine-dialog-toggle">
                 <span>Release mixed contents</span>
                 <input id="mixerDialogToggle" type="checkbox" role="switch" aria-label="Release mixed contents into the canvas">
             </label>

@@ -11,6 +11,12 @@ test('catalog groups materials, selects them accessibly, and describes their beh
     await game.openMenu();
     await game.newGame();
 
+    const headingOrder = await page.locator('#particleButtons .panel-heading-toggle > span:first-child').allTextContents();
+    expect(headingOrder).toEqual([
+        'Powders', 'Liquids', 'Gases', 'Solids', 'Seeds', 'Vegetation',
+        'Metals', 'Machines', 'Storage', 'Tools'
+    ]);
+
     const sand = page.getByRole('button', { name: 'Sand', exact: true });
     const water = page.getByRole('button', { name: 'Water', exact: true });
     await expect(sand).toBeVisible();
@@ -183,7 +189,7 @@ test('every prepared definition has a catalog button and generated glossary text
     }
 });
 
-test('seed species and Cloud appear under dedicated catalog headings', async ({ page }) => {
+test('seed and vegetation species and Cloud appear under dedicated catalog headings', async ({ page }) => {
     const game = new GamePage(page);
     await game.openMenu();
     await game.newGame();
@@ -198,6 +204,20 @@ test('seed species and Cloud appear under dedicated catalog headings', async ({ 
     for (const name of seedNames) {
         await expect(page.getByRole('button', { name, exact: true })).toBeVisible();
         await expect(seedGrid.getByRole('button', { name, exact: true })).toBeVisible();
+    }
+    const vegetationNames = [
+        'Plant', 'Grass', 'Flower', 'Lily Stem', 'Lily Pad', 'Lily Flower', 'Ash Grass',
+        'Moss', 'Daffodil', 'Red Tulip', 'Geranium', 'Blue Flower', 'Banana Plant',
+        'Water Grass', 'Daffodil Bloom', 'Tulip Bloom', 'Geranium Bloom', 'Blue Flower Bloom',
+        'Banana Bunch', 'Water Grass Bloom', 'Water Grass Pad', 'Banana Leaf'
+    ];
+    const vegetationHeading = page.locator('#particleButtons .panel-heading')
+        .filter({ hasText: /^Vegetation/ });
+    const vegetationGrid = vegetationHeading.locator('xpath=following-sibling::div[1]');
+    await expect(vegetationHeading).toBeVisible();
+    for (const name of vegetationNames) {
+        await expect(page.getByRole('button', { name, exact: true })).toBeVisible();
+        await expect(vegetationGrid.getByRole('button', { name, exact: true })).toBeVisible();
     }
     await expect(page.getByRole('button', { name: 'Seed', exact: true })).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Cloud', exact: true })).toBeVisible();

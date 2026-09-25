@@ -19,7 +19,8 @@ visualization modes.
   and comparison context.
 - [`GAME_MECHANICS.md`](GAME_MECHANICS.md) — material catalogue and glossary
   maintenance, material behavior, machine controls and capacities, Mixer
-  recipes and lifecycle rules, storage intake geometry, and Tubing/Vent
+  recipes and lifecycle rules, two-stage machine placement, zoom-aligned ports,
+  Collector intake and sealing, Sprinkler release, save migration, and Tubing
   connections and regression maintenance.
 - [`ISSUES.md`](ISSUES.md) — active defects, quality work, and maintenance
   follow-ups.

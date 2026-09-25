@@ -21,9 +21,12 @@ import {
     loadParticleDefinitions, initializeWorld, setGameState, startGame,
     getCanvasZoomLevel, setCanvasZoomLevel, isExpandedWorldProfileAvailable,
     paintLine, paintCell, clearCanvasWorld, setHoverCell,
-    canPlaceMachine, placeMachine, setMachinePlacementPreview, clearMachinePlacementPreview,
+    canPlaceMachine, placeMachineWithLead, setMachinePlacementPreview, clearMachinePlacementPreview,
+    getMachinePlacementLeadPort,
     beginGrab, dropGrab, cancelGrab, setLinePreview, clearLinePreview,
     setShapePreview, clearShapePreview, paintShape,
+    getMachinePortAtClientPoint, paintMachinePortConnector, setMachinePortConnectorPreview,
+    getMachineArtworkAtClientPoint, preloadMachineArtworkAlpha,
     captureBlueprint, stampBlueprint, stampBlueprintAt, BLUEPRINT_SLOT_COUNT
 } from './game.js';
 import {
@@ -34,10 +37,12 @@ import {
     setGustWindStrength as setPhysicsGustWindStrength,
     getWorld, index, getMachineSetting, setMachineSetting,
     FAN_WIND_SCALE, migrateLegacyFanWindSettings,
-    getStorageInventory, purgeStorageBin, getVentInventory, getVentReleaseRate,
-    setVentReleaseRate, isVentReleaseEnabled, setVentReleaseEnabled,
-    getTubingFlows, getVentTubingRate, getMixerInventory, purgeMixerBin,
-    isMixerReleaseEnabled, setMixerReleaseEnabled, isMachinePoweredAt
+    getStorageInventory, purgeStorageBin, getSprinklerInventory, getSprinklerReleaseRate,
+    setSprinklerReleaseRate, isSprinklerReleaseEnabled, setSprinklerReleaseEnabled,
+    isDrainModeEnabled, setDrainModeEnabled,
+    getTubingFlows, getSprinklerTubingRate, getMixerInventory, purgeMixerBin,
+    isMixerReleaseEnabled, setMixerReleaseEnabled, isMachinePoweredAt,
+    migrateLegacyMachinePortEndpointRemap
 } from './physics.js';
 import { loadSavedTheme, buildThemeSwatches, buildThemeSelect } from './themes.js';
 import {
@@ -60,6 +65,9 @@ let lineStart = null;
 let shapeStart = null;
 let shapeMode = null;
 let machinePlacement = null;
+let deferredMachinePortGesture = null;
+let activeMachinePortGesture = null;
+let lastPointerEvent = null;
 let autosaveChoiceResolver = null;
 let worldSizeResolver = null;
 let marqueeMode = false;
@@ -86,7 +94,7 @@ const EDGE_PAN_MAX_SPEED = 180;
 const CANVAS_SCROLL_STEP = 80;
 
 document.addEventListener('DOMContentLoaded', async () => {
-    await loadParticleDefinitions();
+    await Promise.all([loadParticleDefinitions(), preloadMachineArtworkAlpha()]);
     initializeWorld();
     setElements();
     if (window.__E2E_MODE__) await import('./e2eHooks.js');
@@ -132,7 +140,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     elements.purgeDialogConfirm.addEventListener('click', confirmPurgeDialog);
     elements.purgeDialogCancel.addEventListener('click', closePurgeDialog);
     elements.machineDialogInput.addEventListener('input', validateMachineInput);
-    elements.machineDialogVentToggle.addEventListener('change', updateVentReleaseToggle);
+    elements.machineDialogSprinklerReleaseToggle.addEventListener('change', updateSprinklerReleaseToggle);
+    elements.machineDialogDrainModeToggle.addEventListener('change', updateDrainModeToggle);
     elements.mixerDialogCancel.addEventListener('click', closeMixerDialog);
     elements.mixerDialogToggle.addEventListener('change', updateMixerReleaseToggle);
     elements.mixerDialogBinPurge0.addEventListener('click', () => purgeMixerDialogBin(0));
@@ -585,11 +594,11 @@ const MACHINE_CONTROL_SPECS = {
     fan: { label: 'Wind speed', min: 1, max: FAN_WIND_SCALE, unit: '', defaultValue: 7 },
     heater: { label: 'Temperature', min: 0, max: 4000, unit: '°C' },
     cooler: { label: 'Temperature', min: -60, max: 20, unit: '°C' },
-    vent: { label: 'Release rate', min: 1, max: 100, unit: 'particles/s', defaultValue: 10 }
+    sprinkler: { label: 'Release rate', min: 1, max: 100, unit: 'particles/s', defaultValue: 10 }
 };
 
 function isStorageMachineDefinition(def) {
-    return !!def?.storageCategory;
+    return !!def?.storageCategory || def?.machine === 'splitter' || def?.machine === 'collector';
 }
 
 function storageContentsText(inventory) {
@@ -614,34 +623,126 @@ function tubingAtCell(cell) {
     return def?.tubing ? { id, def, x: cell.x, y: cell.y, tubing: true } : null;
 }
 
-// The SVG machine face is 32 CSS pixels wide, while the simulation machine is
+// The SVG machine face is 64 CSS pixels wide, while the simulation machine is
 // only one cell. Hit-test against that visible face so a pointer near its edge
 // still gets the hand cursor and can open the machine controls.
 function machineAtPointer(event) {
-    const world = getWorld();
+    if (!event) return null;
+    // Paint is resolved to a world cell, so dialogs and paint must agree on
+    // the same cell-center alpha sample even when the browser rounds a
+    // fractional CSS pointer coordinate to a neighboring screen pixel.
     const canvas = getElements().canvas;
-    if (!world || !canvas || !event) return null;
+    const world = getWorld();
+    if (!canvas || !world) return null;
     const rect = canvas.getBoundingClientRect();
-    const pointerX = event.clientX - rect.left;
-    const pointerY = event.clientY - rect.top;
-    const cellWidth = rect.width / world.cols;
-    const cellHeight = rect.height / world.rows;
     const cell = cellFromEvent(event);
-    const iconHalfSize = machineAtCell(cellFromEvent(event))?.def.machine === 'mixer' ? 32 : 16;
-    const radiusX = Math.ceil(iconHalfSize / Math.max(1, cellWidth) + 0.5);
-    const radiusY = Math.ceil(iconHalfSize / Math.max(1, cellHeight) + 0.5);
+    if (cell.x < 0 || cell.y < 0 || cell.x >= world.cols || cell.y >= world.rows) return null;
+    return getMachineArtworkAtClientPoint(
+        rect.left + (cell.x + 0.5) * rect.width / world.cols,
+        rect.top + (cell.y + 0.5) * rect.height / world.rows);
+}
 
-    for (let y = cell.y - radiusY; y <= cell.y + radiusY; y++) {
-        for (let x = cell.x - radiusX; x <= cell.x + radiusX; x++) {
-            if (x < 0 || y < 0 || x >= world.cols || y >= world.rows) continue;
-            const centreX = (x + 0.5) * cellWidth;
-            const centreY = (y + 0.5) * cellHeight;
-            if (Math.abs(pointerX - centreX) > iconHalfSize || Math.abs(pointerY - centreY) > iconHalfSize) continue;
-            const machine = machineAtCell({ x, y });
-            if (machine) return machine;
+function updateMachinePortGesture(event) {
+    if (deferredMachinePortGesture && event) {
+        const moved = Math.hypot(event.clientX - deferredMachinePortGesture.startClientX,
+            event.clientY - deferredMachinePortGesture.startClientY);
+        const connectorMaterialId = getDefinitions().findIndex(definition =>
+            definition?.name === deferredMachinePortGesture.port.connectorMaterial);
+        const nearestCompatiblePort = getMachinePortAtClientPoint(
+            event.clientX, event.clientY, connectorMaterialId, 20);
+        const movedToAnotherPort = nearestCompatiblePort &&
+            (nearestCompatiblePort.machineX !== deferredMachinePortGesture.port.machineX ||
+                nearestCompatiblePort.machineY !== deferredMachinePortGesture.port.machineY ||
+                nearestCompatiblePort.id !== deferredMachinePortGesture.port.id);
+        // Paired ports can be only a few CSS pixels apart while their logical
+        // cells remain distinct. Reaching the other compatible port is an
+        // unambiguous drag even when it falls below the ordinary jitter guard.
+        if (moved >= 4 || movedToAnotherPort) {
+            activeMachinePortGesture = deferredMachinePortGesture;
+            deferredMachinePortGesture = null;
+            updateMachinePortConnectorPreview(activeMachinePortGesture, event);
+            return true;
         }
     }
-    return null;
+    if (activeMachinePortGesture && event) {
+        updateMachinePortConnectorPreview(activeMachinePortGesture, event);
+        return true;
+    }
+    return false;
+}
+
+function machinePortMarkerAtPointer(port, event) {
+    const overlay = getElements().machineOverlay;
+    const icon = overlay?.querySelector(`.machine-overlay-icon[data-machine-x="${port.machineX}"][data-machine-y="${port.machineY}"]`);
+    const marker = [...(icon?.querySelectorAll('.machine-port') || [])]
+        .find(circle => circle.getAttribute('data-port-id') === port.id);
+    const rect = marker?.getBoundingClientRect();
+    if (!rect) return false;
+    const distance = Math.hypot(event.clientX - (rect.left + rect.width / 2),
+        event.clientY - (rect.top + rect.height / 2));
+    return distance <= Math.max(rect.width, rect.height) / 2 + 2;
+}
+
+function finishDeferredMachinePortClick(port, event) {
+    const selectedPort = getMachinePortAtClientPoint(event.clientX, event.clientY,
+        getParticleTypeIdSelected(), 20);
+    const selectedPortMatches = selectedPort && selectedPort.machineX === port.machineX &&
+        selectedPort.machineY === port.machineY && selectedPort.id === port.id;
+    if (selectedPortMatches || machinePortMarkerAtPointer(port, event)) {
+        openMachineDialog(port.machineX, port.machineY);
+        return;
+    }
+
+    const machine = machineAtPointer(event);
+    if (machine && openMachineDialog(machine.x, machine.y, machine)) return;
+
+    currentCell = cellFromEvent(event);
+    lastPointerEvent = event;
+    paintCell(currentCell.x, currentCell.y, 0, 0, strokeRayDirection);
+}
+
+function updateMachinePortConnectorPreview(gesture, event) {
+    setMachinePortConnectorPreview({
+        startClientX: gesture.port.markerClientX,
+        startClientY: gesture.port.markerClientY,
+        endClientX: event.clientX,
+        endClientY: event.clientY,
+        material: gesture.port.connectorMaterial
+    });
+}
+
+function clearMachinePortGesture() {
+    deferredMachinePortGesture = null;
+    activeMachinePortGesture = null;
+    setMachinePortConnectorPreview(null);
+}
+
+function previewMachinePlacementLead(event = null) {
+    const port = getMachinePlacementLeadPort();
+    if (!port) return;
+    const pointerX = event?.clientX ?? port.markerClientX + port.directionX * 12;
+    const pointerY = event?.clientY ?? port.markerClientY + port.directionY * 12;
+    setMachinePortConnectorPreview({
+        startClientX: port.markerClientX,
+        startClientY: port.markerClientY,
+        endClientX: pointerX,
+        endClientY: pointerY,
+        material: port.connectorMaterial
+    });
+}
+
+function commitMachinePlacementLead(event) {
+    if (!machinePlacement || machinePlacement.stage !== 'extensionPreview') return false;
+    const placement = machinePlacement;
+    if (!placeMachineWithLead(placement.x, placement.y, placement.machine,
+        placement.direction, event.clientX, event.clientY)) {
+        previewMachinePlacementLead(event);
+        return false;
+    }
+    machinePlacement = null;
+    clearMachinePlacementPreview();
+    setMachinePortConnectorPreview(null);
+    return true;
 }
 
 function updateMachineCursor(cell, event) {
@@ -657,57 +758,63 @@ function openMachineDialog(x, y, machine = machineAtCell({ x, y })) {
     if (!machine) return false;
     const spec = MACHINE_CONTROL_SPECS[machine.def.machine];
     const storage = isStorageMachineDefinition(machine.def);
-    const vent = machine.def.machine === 'vent';
+    const sprinkler = machine.def.machine === 'sprinkler';
     if (machine.def.machine === 'mixer') return openMixerDialog(x, y);
-    if (!spec && !storage && !vent) return false;
+    if (!spec && !storage && !sprinkler) return false;
 
     const elements = getElements();
     hideMachineTooltip();
-    const current = vent ? getVentReleaseRate(x, y) : getMachineSetting(x, y);
-    editingMachine = { x, y, machine: machine.def.machine, fallback: current, storage, vent };
+    const current = sprinkler ? getSprinklerReleaseRate(x, y) : getMachineSetting(x, y);
+    editingMachine = { x, y, machine: machine.def.machine, fallback: current, storage, sprinkler };
     elements.machineDialogTitle.textContent = storage ? `${machine.def.name} contents` : `${machine.def.name} settings`;
     elements.machineDialogDescription.textContent = storage
-        ? `Stores one ${machine.def.storageCategory} type, up to ${machine.def.storageCapacity} particles. Wrong types are refused. Purge the bin to empty it and accept a new type.`
-        : vent
-            ? 'Always active. Set the release rate in particles per second. Turn release off to retain up to 100 particles.'
+        ? machine.def.machine === 'splitter'
+            ? 'Receives one compatible Tubing material and buffers it while dividing flow evenly between its two outputs. Purge the buffer to accept a different material.'
+            : machine.def.machine === 'collector'
+                ? 'Suction collects powder, liquid, or gas into a one-material buffer of up to 100 particles. A connected Tubing output sends compatible material at up to 30 particles per second, limited by line capacity; otherwise contents stay buffered.'
+                : `Receives one ${machine.def.storageCategory} type through connected Tubing and stores up to ${machine.def.storageCapacity || 500} particles. World particles pass by without entering. Wrong types are refused until the buffer is emptied. Purge the bin to empty it and accept a new type.`
+        : sprinkler
+            ? 'Always active. Set the release rate in particles per second. Release controls whether stored material leaves the 100-particle buffer. Drain Mode on uses the downward outlet; off sprays the stored material in seven directions.'
         : machine.def.machine === 'fan'
             ? 'Fan speed uses the 1 to 50 Breeze scale. Speed 50 matches the old Fan speed 15.'
             : `${machine.def.name} will only ${machine.def.machine === 'heater' ? 'raise' : 'lower'} temperatures toward this target in its facing direction.`;
     const storageSummary = elements.machineDialogStorageSummary;
     if (storage) {
         renderInventorySummary(storageSummary, getStorageInventory(x, y));
-    } else if (vent) {
-        renderInventorySummary(storageSummary, getVentInventory(x, y));
+    } else if (sprinkler) {
+        renderInventorySummary(storageSummary, getSprinklerInventory(x, y));
     } else {
         storageSummary.textContent = '';
     }
-    storageSummary.hidden = !storage && !vent;
+    storageSummary.hidden = !storage && !sprinkler;
     elements.machineDialogLabel.textContent = spec?.label || 'Contents';
     elements.machineDialogLabel.hidden = storage;
     elements.machineDialogInputWrap.hidden = storage;
     elements.machineDialogInput.hidden = storage;
     elements.machineDialogInput.disabled = storage;
-    elements.machineDialogVentToggleWrap.hidden = !vent;
-    elements.machineDialogVentToggle.checked = vent && isVentReleaseEnabled(x, y);
+    elements.machineDialogSprinklerReleaseToggleWrap.hidden = !sprinkler;
+    elements.machineDialogSprinklerReleaseToggle.checked = sprinkler && isSprinklerReleaseEnabled(x, y);
+    elements.machineDialogDrainModeToggleWrap.hidden = !sprinkler;
+    elements.machineDialogDrainModeToggle.checked = sprinkler && isDrainModeEnabled(x, y);
     elements.machineDialogInput.setAttribute('aria-label', spec?.label || 'Contents');
     if (spec) {
         elements.machineDialogInput.min = String(spec.min);
-        const ventRate = vent ? getVentTubingRate(x, y) : null;
-        const inputMax = vent ? ventRate : spec.max;
+        const sprinklerRate = sprinkler ? getSprinklerTubingRate(x, y) : null;
+        const inputMax = sprinkler ? sprinklerRate : spec.max;
         elements.machineDialogInput.max = String(inputMax || spec.max);
         elements.machineDialogInput.step = '1';
-        elements.machineDialogInput.placeholder = vent && !ventRate ? 'Not Connected' : '';
-        elements.machineDialogInput.disabled = storage || (vent && !ventRate);
-        elements.machineDialogInput.value = vent && !ventRate
+        elements.machineDialogInput.placeholder = sprinkler && !sprinklerRate ? 'Not Connected' : '';
+        elements.machineDialogInput.disabled = storage || (sprinkler && !sprinklerRate);
+        elements.machineDialogInput.value = sprinkler && !sprinklerRate
             ? ''
             : String(Number.isFinite(current) ? Math.min(current, inputMax) : (spec.defaultValue ?? spec.min));
     }
     elements.machineDialogUnit.textContent = spec?.unit || '';
     elements.machineDialogUnit.hidden = !spec?.unit;
     elements.machineDialogError.hidden = true;
-    elements.machineDialogOk.hidden = storage || vent;
+    elements.machineDialogOk.hidden = storage || sprinkler;
     elements.machineDialogPurge.hidden = !storage;
-    elements.machineDialogCancel.textContent = storage || vent ? 'Close' : 'Cancel';
+    elements.machineDialogCancel.textContent = storage || sprinkler ? 'Close' : 'Cancel';
     elements.machineDialog.hidden = false;
     if (machineDialogTimer) clearInterval(machineDialogTimer);
     refreshMachineDialog();
@@ -830,17 +937,17 @@ function refreshMachineDialog() {
     if (editingMachine.storage) {
         renderInventorySummary(elements.machineDialogStorageSummary,
             getStorageInventory(editingMachine.x, editingMachine.y));
-    } else if (editingMachine.vent) {
+    } else if (editingMachine.sprinkler) {
         renderInventorySummary(elements.machineDialogStorageSummary,
-            getVentInventory(editingMachine.x, editingMachine.y));
-        updateVentReleaseInput();
+            getSprinklerInventory(editingMachine.x, editingMachine.y));
+        updateSprinklerReleaseInput();
     }
 }
 
-function updateVentReleaseInput() {
-    if (!editingMachine?.vent) return;
+function updateSprinklerReleaseInput() {
+    if (!editingMachine?.sprinkler) return;
     const input = getElements().machineDialogInput;
-    const tubingRate = getVentTubingRate(editingMachine.x, editingMachine.y);
+    const tubingRate = getSprinklerTubingRate(editingMachine.x, editingMachine.y);
     input.max = String(tubingRate || 100);
     input.placeholder = tubingRate ? '' : 'Not Connected';
     input.disabled = !tubingRate;
@@ -848,18 +955,26 @@ function updateVentReleaseInput() {
         input.value = '';
         return;
     }
-    const current = getVentReleaseRate(editingMachine.x, editingMachine.y);
+    const current = getSprinklerReleaseRate(editingMachine.x, editingMachine.y);
     const value = Math.min(current, tubingRate);
-    if (current !== value) setVentReleaseRate(editingMachine.x, editingMachine.y, value);
+    if (current !== value) setSprinklerReleaseRate(editingMachine.x, editingMachine.y, value);
     input.value = String(value);
 }
 
-function updateVentReleaseToggle() {
-    if (!editingMachine?.vent) return;
+function updateSprinklerReleaseToggle() {
+    if (!editingMachine?.sprinkler) return;
     const elements = getElements();
-    setVentReleaseEnabled(editingMachine.x, editingMachine.y, elements.machineDialogVentToggle.checked);
+    setSprinklerReleaseEnabled(editingMachine.x, editingMachine.y,
+        elements.machineDialogSprinklerReleaseToggle.checked);
     renderInventorySummary(elements.machineDialogStorageSummary,
-        getVentInventory(editingMachine.x, editingMachine.y));
+        getSprinklerInventory(editingMachine.x, editingMachine.y));
+}
+
+function updateDrainModeToggle() {
+    if (!editingMachine?.sprinkler) return;
+    const elements = getElements();
+    setDrainModeEnabled(editingMachine.x, editingMachine.y,
+        elements.machineDialogDrainModeToggle.checked);
 }
 
 function validateMachineInput() {
@@ -871,13 +986,13 @@ function validateMachineInput() {
     if (!raw) return null;
     const numeric = Number(raw);
     if (!Number.isFinite(numeric)) return null;
-    const max = editingMachine.vent
-        ? getVentTubingRate(editingMachine.x, editingMachine.y)
+    const max = editingMachine.sprinkler
+        ? getSprinklerTubingRate(editingMachine.x, editingMachine.y)
         : spec.max;
     if (!max) return null;
     const value = Math.max(spec.min, Math.min(max, Math.round(numeric)));
     if (String(value) !== raw) input.value = String(value);
-    if (editingMachine.vent) setVentReleaseRate(editingMachine.x, editingMachine.y, value);
+    if (editingMachine.sprinkler) setSprinklerReleaseRate(editingMachine.x, editingMachine.y, value);
     getElements().machineDialogError.hidden = true;
     return value;
 }
@@ -894,8 +1009,10 @@ function closeMachineDialog() {
     elements.machineDialogInput.disabled = false;
     elements.machineDialogInput.hidden = false;
     elements.machineDialogInputWrap.hidden = false;
-    elements.machineDialogVentToggleWrap.hidden = true;
-    elements.machineDialogVentToggle.checked = false;
+    elements.machineDialogSprinklerReleaseToggleWrap.hidden = true;
+    elements.machineDialogSprinklerReleaseToggle.checked = false;
+    elements.machineDialogDrainModeToggleWrap.hidden = true;
+    elements.machineDialogDrainModeToggle.checked = false;
     elements.machineDialogOk.hidden = false;
     elements.machineDialogPurge.hidden = true;
     elements.machineDialogCancel.textContent = 'Cancel';
@@ -932,7 +1049,7 @@ function confirmPurgeDialog() {
 }
 
 function confirmMachineDialog() {
-    if (!editingMachine || editingMachine.storage || editingMachine.vent) return;
+    if (!editingMachine || editingMachine.storage || editingMachine.sprinkler) return;
     const value = validateMachineInput();
     const finalValue = value === null ? editingMachine.fallback : value;
     if (Number.isFinite(finalValue)) {
@@ -961,7 +1078,7 @@ function buildParticleButtons() {
     const defs = getDefinitions();
     container.innerHTML = '';
 
-    const order = ['Powders', 'Seeds', 'Liquids', 'Gases', 'Solids', 'Metals', 'Machines', 'Storage', 'Tools', 'Other'];
+    const order = ['Powders', 'Liquids', 'Gases', 'Solids', 'Seeds', 'Vegetation', 'Metals', 'Machines', 'Storage', 'Tools', 'Other'];
     const groups = {};
     for (let id = 1; id < defs.length; id++) {
         if (!defs[id]) continue;
@@ -1081,6 +1198,7 @@ function formatMaterialTooltip(def) {
     if (def.powerConsumption > 0) properties.push(`draws ${formatNumber(def.powerConsumption)} power/tick`);
     if (def.machine) properties.push(`machine: ${titleCase(def.machine)}`);
     if (def.storageCategory) properties.push(`stores one ${def.storageCategory} type, up to ${formatNumber(def.storageCapacity)} particles`);
+    if (def.machine === 'collector') properties.push('suction intake stores one powder, liquid or gas type, up to 100 particles; Tubing output is capped at 30/s and limited by line capacity');
     if (def.tubing) properties.push('tubing: carries stored material between connected machines');
     if (def.machineTemp !== undefined) properties.push(`outputs ${formatTemperature(def.machineTemp)} over ${formatNumber(def.machineRange)} cells`);
     if (def.machineRate > 0) properties.push(`output rate ${formatPercent(def.machineRate)}`);
@@ -1411,11 +1529,12 @@ function machineTooltipText(machine) {
         lines.push('Status: Active (no power required)');
         return lines.join('\n');
     }
-    if (def.machine === 'vent') {
-        lines.push(`Contents: ${storageContentsText(getVentInventory(machine.x, machine.y))}`);
-        lines.push(`Release rate: ${formatNumber(getVentReleaseRate(machine.x, machine.y))}/s`);
-        lines.push(`Release: ${isVentReleaseEnabled(machine.x, machine.y) ? 'On' : 'Off'}`);
-        lines.push('Click to change the release switch');
+    if (def.machine === 'sprinkler') {
+        lines.push(`Contents: ${storageContentsText(getSprinklerInventory(machine.x, machine.y))}`);
+        lines.push(`Release rate: ${formatNumber(getSprinklerReleaseRate(machine.x, machine.y))}/s`);
+        lines.push(`Release: ${isSprinklerReleaseEnabled(machine.x, machine.y) ? 'On' : 'Off'}`);
+        lines.push(`Drain Mode: ${isDrainModeEnabled(machine.x, machine.y) ? 'On' : 'Off'}`);
+        lines.push('Click to change Sprinkler settings');
         return lines.join('\n');
     }
 
@@ -1634,11 +1753,24 @@ function copyMarqueeSelection() {
 }
 
 function captureBlueprintLibrary() {
-    return { fanWindScale: FAN_WIND_SCALE, slots: blueprints, nextSlot: nextBlueprintSlot };
+    return {
+        sprinklerModeVersion: 2,
+        machinePortLayoutVersion: 2,
+        fanWindScale: FAN_WIND_SCALE,
+        slots: blueprints,
+        nextSlot: nextBlueprintSlot
+    };
 }
 
 function restoreBlueprintLibrary(state) {
     blueprints = Array.from({ length: BLUEPRINT_SLOT_COUNT }, (_, slot) => state.slots[slot] || null);
+    for (const blueprint of blueprints) {
+        if (!blueprint?.cells || blueprint.machinePortLayoutVersion === 2) continue;
+        migrateLegacyMachinePortEndpointRemap(blueprint.cells.type,
+            blueprint.cells.machinePortEndpointRemap, blueprint.width, blueprint.height,
+            blueprint.cells.data, blueprint.cells.machinePortEndpointSlot);
+        blueprint.machinePortLayoutVersion = 2;
+    }
     if (state.fanWindScale !== FAN_WIND_SCALE) {
         for (const blueprint of blueprints) {
             if (blueprint?.cells) {
@@ -1973,6 +2105,7 @@ function setUpCanvasInput() {
             return;
         }
         stopEdgePan();
+        lastPointerEvent = event;
         currentCell = cellFromEvent(event);
         setHoverCell(currentCell.x, currentCell.y);
         const pointerMachine = machineAtPointer(event);
@@ -1994,10 +2127,31 @@ function setUpCanvasInput() {
             return;
         }
 
+        if (machinePlacement?.stage === 'extensionPreview') {
+            if (event.button === 2) cancelPainting();
+            else if (event.button === 0) commitMachinePlacementLead(event);
+            return;
+        }
+
+        // Defer a left-click on an idle visible port until pointer-up. A short
+        // click opens the same controls as the machine body; a drag becomes a
+        // forced Tubing/Copper connector stroke.
+        if (event.button === 0 && !getGrabberOn() && !getEraserOn()) {
+            const port = getMachinePortAtClientPoint(event.clientX, event.clientY, null, 20);
+            if (port) {
+                deferredMachinePortGesture = {
+                    port,
+                    startClientX: event.clientX,
+                    startClientY: event.clientY
+                };
+                return;
+            }
+        }
+
         // A left click on an existing machine edits that machine instead of
         // starting a paint stroke. Grabber mode keeps priority so machines can
         // still be moved normally.
-        if (event.button === 0 && !getGrabberOn() && pointerMachine &&
+        if (event.button === 0 && !getGrabberOn() && !getEraserOn() && pointerMachine &&
             openMachineDialog(pointerMachine.x, pointerMachine.y, pointerMachine)) {
             cancelPainting();
             return;
@@ -2023,12 +2177,14 @@ function setUpCanvasInput() {
         lastCell = null;
         const machine = selectedMachine();
         if (event.button === 0 && machine) {
+            const initialDirection = machine === 'collector' ? 3 : 0;
             machinePlacement = canPlaceMachine(currentCell.x, currentCell.y, machine)
-                ? { x: currentCell.x, y: currentCell.y, machine, direction: 0 }
+                ? { x: currentCell.x, y: currentCell.y, machine,
+                    direction: initialDirection, stage: 'poseSelecting' }
                 : null;
             isPainting = !!machinePlacement;
             if (machinePlacement) setMachinePlacementPreview(
-                machinePlacement.x, machinePlacement.y, machinePlacement.machine, 0);
+                machinePlacement.x, machinePlacement.y, machinePlacement.machine, machinePlacement.direction);
             return;
         }
         if (getDrawMode() === 'line') {
@@ -2046,23 +2202,35 @@ function setUpCanvasInput() {
     });
 
     canvas.addEventListener('mousemove', event => {
+        lastPointerEvent = event;
         currentCell = cellFromEvent(event);
         setHoverCell(currentCell.x, currentCell.y);
         updateMachineCursor(currentCell, event);
+        if (deferredMachinePortGesture || activeMachinePortGesture) {
+            updateMachinePortGesture(event);
+            return;
+        }
         if (activeBlueprintSlot !== null) updateStampPreview(currentCell);
         if (isMarqueeDrawing) {
             updateMarqueeAt(currentCell);
             return;
         }
         if (isGrabbing) return;
+        if (machinePlacement?.stage === 'extensionPreview') {
+            previewMachinePlacementLead(event);
+            return;
+        }
         if (!isPainting) return;
         updateRayStrokeDirection(event);
         if (machinePlacement || selectedMachine()) {
             if (machinePlacement) {
-                machinePlacement.direction = fanDirection(
-                    currentCell.x - machinePlacement.x, currentCell.y - machinePlacement.y);
-                setMachinePlacementPreview(machinePlacement.x, machinePlacement.y,
-                    machinePlacement.machine, machinePlacement.direction);
+                const dx = currentCell.x - machinePlacement.x;
+                const dy = currentCell.y - machinePlacement.y;
+                if (dx !== 0 || dy !== 0) {
+                    machinePlacement.direction = fanDirection(dx, dy);
+                    setMachinePlacementPreview(machinePlacement.x, machinePlacement.y,
+                        machinePlacement.machine, machinePlacement.direction);
+                }
             }
             return;
         }
@@ -2078,6 +2246,20 @@ function setUpCanvasInput() {
 
     window.addEventListener('mouseup', event => {
         if (event.button === 1) return;
+        lastPointerEvent = event;
+        if (deferredMachinePortGesture) {
+            const port = deferredMachinePortGesture.port;
+            deferredMachinePortGesture = null;
+            if (event.button === 0) finishDeferredMachinePortClick(port, event);
+            return;
+        }
+        if (activeMachinePortGesture) {
+            const gesture = activeMachinePortGesture;
+            updateMachinePortConnectorPreview(gesture, event);
+            paintMachinePortConnector(gesture.port, event.clientX, event.clientY);
+            clearMachinePortGesture();
+            return;
+        }
         if (isMarqueeDrawing) {
             if (event.button === 0) updateMarqueeAt(currentCell);
             isMarqueeDrawing = false;
@@ -2103,6 +2285,7 @@ function setUpCanvasInput() {
     canvas.addEventListener('touchstart', event => {
         stopEdgePan();
         event.preventDefault();
+        lastPointerEvent = event.touches[0];
         currentCell = cellFromEvent(event.touches[0]);
         setHoverCell(currentCell.x, currentCell.y);
         const pointerMachine = machineAtPointer(event.touches[0]);
@@ -2115,7 +2298,23 @@ function setUpCanvasInput() {
             beginMarqueeAt(currentCell);
             return;
         }
-        if (!getGrabberOn() && pointerMachine &&
+        if (machinePlacement?.stage === 'extensionPreview') {
+            commitMachinePlacementLead(event.touches[0]);
+            return;
+        }
+        if (!getGrabberOn() && !getEraserOn()) {
+            const port = getMachinePortAtClientPoint(event.touches[0].clientX,
+                event.touches[0].clientY, null, 20);
+            if (port) {
+                deferredMachinePortGesture = {
+                    port,
+                    startClientX: event.touches[0].clientX,
+                    startClientY: event.touches[0].clientY
+                };
+                return;
+            }
+        }
+        if (!getGrabberOn() && !getEraserOn() && pointerMachine &&
             openMachineDialog(pointerMachine.x, pointerMachine.y, pointerMachine)) {
             cancelPainting();
             return;
@@ -2129,12 +2328,14 @@ function setUpCanvasInput() {
         lastCell = null;
         const machine = selectedMachine();
         if (machine) {
+            const initialDirection = machine === 'collector' ? 3 : 0;
             machinePlacement = canPlaceMachine(currentCell.x, currentCell.y, machine)
-                ? { x: currentCell.x, y: currentCell.y, machine, direction: 0 }
+                ? { x: currentCell.x, y: currentCell.y, machine,
+                    direction: initialDirection, stage: 'poseSelecting' }
                 : null;
             isPainting = !!machinePlacement;
             if (machinePlacement) setMachinePlacementPreview(
-                machinePlacement.x, machinePlacement.y, machinePlacement.machine, 0);
+                machinePlacement.x, machinePlacement.y, machinePlacement.machine, machinePlacement.direction);
             return;
         }
         if (getDrawMode() === 'line') {
@@ -2153,21 +2354,33 @@ function setUpCanvasInput() {
 
     canvas.addEventListener('touchmove', event => {
         event.preventDefault();
+        lastPointerEvent = event.touches[0];
         currentCell = cellFromEvent(event.touches[0]);
         setHoverCell(currentCell.x, currentCell.y);
+        if (deferredMachinePortGesture || activeMachinePortGesture) {
+            updateMachinePortGesture(event.touches[0]);
+            return;
+        }
         if (isMarqueeDrawing) {
             updateMarqueeAt(currentCell);
             return;
         }
         if (isGrabbing) return;
+        if (machinePlacement?.stage === 'extensionPreview') {
+            previewMachinePlacementLead(event.touches[0]);
+            return;
+        }
         if (!isPainting) return;
         updateRayStrokeDirection(event.touches[0]);
         if (machinePlacement || selectedMachine()) {
             if (machinePlacement) {
-                machinePlacement.direction = fanDirection(
-                    currentCell.x - machinePlacement.x, currentCell.y - machinePlacement.y);
-                setMachinePlacementPreview(machinePlacement.x, machinePlacement.y,
-                    machinePlacement.machine, machinePlacement.direction);
+                const dx = currentCell.x - machinePlacement.x;
+                const dy = currentCell.y - machinePlacement.y;
+                if (dx !== 0 || dy !== 0) {
+                    machinePlacement.direction = fanDirection(dx, dy);
+                    setMachinePlacementPreview(machinePlacement.x, machinePlacement.y,
+                        machinePlacement.machine, machinePlacement.direction);
+                }
             }
             return;
         }
@@ -2181,7 +2394,21 @@ function setUpCanvasInput() {
         }
     }, { passive: false });
 
-    canvas.addEventListener('touchend', () => {
+    canvas.addEventListener('touchend', event => {
+        const touch = event.changedTouches?.[0] || lastPointerEvent;
+        if (deferredMachinePortGesture) {
+            const port = deferredMachinePortGesture.port;
+            deferredMachinePortGesture = null;
+            if (touch) finishDeferredMachinePortClick(port, touch);
+            return;
+        }
+        if (activeMachinePortGesture) {
+            const gesture = activeMachinePortGesture;
+            if (touch) updateMachinePortConnectorPreview(gesture, touch);
+            if (touch) paintMachinePortConnector(gesture.port, touch.clientX, touch.clientY);
+            clearMachinePortGesture();
+            return;
+        }
         if (isMarqueeDrawing) {
             updateMarqueeAt(currentCell);
             isMarqueeDrawing = false;
@@ -2198,16 +2425,17 @@ function setUpCanvasInput() {
 
 function finishPainting(button) {
     if (machinePlacement) {
-        const placement = machinePlacement;
-        machinePlacement = null;
-        clearMachinePlacementPreview();
         isPainting = false;
         lastCell = null;
         clearRayStrokeState();
         stopPaintTimer();
-        if (button === 0) placeMachine(placement.x, placement.y,
-            placement.machine, placement.direction);
-        if (button === 2) setEraserOn(false);
+        if (button !== 0) {
+            cancelPainting();
+            if (button === 2) setEraserOn(false);
+            return;
+        }
+        machinePlacement.stage = 'extensionPreview';
+        previewMachinePlacementLead();
         return;
     }
     if (shapeStart && isShapeMode(shapeMode)) {
@@ -2231,9 +2459,11 @@ function finishPainting(button) {
 }
 
 function cancelPainting() {
+    clearMachinePortGesture();
     isPainting = false;
     machinePlacement = null;
     clearMachinePlacementPreview();
+    setMachinePortConnectorPreview(null);
     lineStart = null;
     shapeStart = null;
     shapeMode = null;
@@ -2326,6 +2556,23 @@ function cellFromEvent(event) {
 }
 
 function paintAtCurrentCell() {
+    if (!getEraserOn() && lastPointerEvent) {
+        const nearbyPort = getMachinePortAtClientPoint(lastPointerEvent.clientX,
+            lastPointerEvent.clientY, getParticleTypeIdSelected(), 20);
+        if (nearbyPort && !nearbyPort.connected) {
+            if (lastCell) paintLine(lastCell.x, lastCell.y,
+                nearbyPort.connectionCell.x, nearbyPort.connectionCell.y, strokeRayDirection);
+            paintCell(currentCell.x, currentCell.y, 0, 0, strokeRayDirection, nearbyPort);
+            lastCell = { ...nearbyPort.connectionCell };
+            return;
+        }
+    }
+    if (!getEraserOn() && lastPointerEvent && machineAtPointer(lastPointerEvent)) {
+        // Only visible machine artwork blocks paint. Transparent overlay pixels
+        // remain available for ordinary brush strokes and Collector rails.
+        lastCell = { x: currentCell.x, y: currentCell.y };
+        return;
+    }
     if (lastCell) {
         paintLine(lastCell.x, lastCell.y, currentCell.x, currentCell.y, strokeRayDirection);
     } else {
@@ -2339,7 +2586,7 @@ function paintAtCurrentCell() {
 function startPaintTimer() {
     if (paintTimer) return;
     paintTimer = setInterval(() => {
-        if (isPainting) paintCell(currentCell.x, currentCell.y, 0, 0, strokeRayDirection);
+        if (isPainting) paintAtCurrentCell();
     }, 30);
 }
 
@@ -2350,6 +2597,11 @@ function stopPaintTimer() {
 
 function setUpKeyboardShortcuts() {
     document.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && machinePlacement) {
+            event.preventDefault();
+            cancelPainting();
+            return;
+        }
         const keyScrolls = {
             ArrowLeft: { left: -CANVAS_SCROLL_STEP, top: 0 },
             ArrowRight: { left: CANVAS_SCROLL_STEP, top: 0 },

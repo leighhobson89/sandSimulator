@@ -252,14 +252,14 @@ test('Fan power state is false without a source and true only after a connected 
     expect(powered.cells[0].power).toBe(7);
 });
 
-test('a three-cell gap rejects the machine connection and invalid electrical queries stay inert', async ({ page }) => {
+test('a Copper lead outside the visible machine port rejects connection and invalid electrical queries stay inert', async ({ page }) => {
     const game = new GamePage(page);
     await game.openMenu();
     await game.newGame();
     await installElectricalFixture(page, {
         batteries: [[20, 35]],
         conductors: [[21, 35, 'Copper']],
-        machine: [24, 35, 'Fan'],
+        machine: [25, 35, 'Fan'],
         batteryCharge: 2
     });
 
@@ -267,7 +267,7 @@ test('a three-cell gap rejects the machine connection and invalid electrical que
     const result = await page.evaluate(async () => {
         const physics = await import('/physics.js');
         return {
-            farMachine: physics.isMachinePoweredAt(24, 35),
+            farMachine: physics.isMachinePoweredAt(25, 35),
             nonBattery: physics.getConnectedBatteryCharge(21, 35),
             outsideBattery: physics.getConnectedBatteryCharge(-1, 35),
             outsideCharge: physics.getStoredCharge(-1, 35),

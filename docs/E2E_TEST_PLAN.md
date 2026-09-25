@@ -166,10 +166,13 @@ own workflow captures them. See the [Playwright HTML reporter guide](https://pla
   chamber breach, local rays/fire/Lava effects, retained Steam, Insulation
   isolation, Wall mixed-face cooling, and heat transfer through fast metal
   bridges between enclosed chambers without open-air leakage.
-- `e2e/machines/` covers placement, powered machines, storage, tubing, Vents,
-  Mixers, electrical behavior, and machine persistence. Fan placement coverage
-  checks the 1-50 speed range and default speed 7; machine persistence checks
-  one-time migration of legacy Fan speeds in both saved worlds and blueprints.
+- `e2e/machines/` covers two-stage placement, powered machines, storage,
+  Collector intake/sealing, Sprinkler release, machine ports and Tubing, Mixers,
+  Splitter flow, electrical behavior, and persistence. Fan placement coverage
+  checks its 1-50 speed range and default speed 7; machine persistence checks
+  legacy Sprinkler mode and endpoint migration, plus one-time migration of Fan
+  speeds in saved worlds and blueprints. The Sprinkler browser coverage lives in
+  `e2e/machines/sprinkler.spec.mjs`.
 - `e2e/blueprints/` covers capture, stamping, history, lifecycle, and portable
   persistence.
 - `e2e/scaling/default-world.spec.mjs` covers the two fixed New Game choices

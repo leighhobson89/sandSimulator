@@ -7,6 +7,12 @@ that the profile's synthetic 1040×600 workload is a playable-world requirement.
 Worker, WASM, WebGL, and WebGPU work for sizes beyond the current 520×300 option
 remains deferred in [`FUTURE_IDEAS.md`](FUTURE_IDEAS.md).
 
+**Snapshot note:** the line map and terms such as `Vent` and
+`tubing-vents.spec.mjs` below describe the older source snapshot audited here.
+The current machine name is Sprinkler, with browser coverage in
+`e2e/machines/sprinkler.spec.mjs`; recheck all line references before using this
+historical map for future refactor work.
+
 ## Audit baseline and boundaries
 
 The inspected `physics.js` is 4,691 lines. Line references below describe this

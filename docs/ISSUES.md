@@ -1,6 +1,6 @@
 # Active issues and improvements
 
-Last reviewed: 24 September 2026.
+Last reviewed: 25 September 2026.
 
 ## Confirmed defects
 
@@ -15,15 +15,14 @@ mixed-output exclusivity.
   follow-up audit is in [`PHYSICS_REFACTOR_AUDIT.md`](PHYSICS_REFACTOR_AUDIT.md).
 
 - [ ] Add broader manual device and assistive-technology checks as the UI grows.
-  A prior discovery snapshot listed 137 browser tests in 34 files covering
-  mouse, touch, themes, focus, rendered canvas mapping, dialogs, keyboard state,
-  persistence, machines, blueprints, physics, and Mixer workflows. An earlier
-  full run passed 121 tests. A later authorized run recorded 268 passed and 21
-  failed in `npm test`; its browser run was 144/151 before focused fixes, with
-  the remaining failures in physics. The middle-click picker, scale profile,
-  fixed-world chooser/camera, and accessibility/contract areas have focused
-  verification. No full-suite rerun is recorded. This follow-up is
-  supplementary to the functional-area E2E matrix.
+  On 25 September, `npm.cmd test` passed 371 checks, smoke passed 59 checks,
+  scale-profile and world-allocation checks passed, and the focused machine
+  browser suite passed 23 tests. A full browser run passed 191 tests and had
+  one 30-second timeout in the v1 Sprinkler migration test. After raising that
+  test's timeout to 60 seconds, its focused rerun passed in 35.5 seconds; the
+  full browser suite was not rerun after this adjustment. The later QMODE
+  palette catalog regression passed 8/8. This follow-up remains supplementary
+  to the functional-area E2E matrix.
 
 Do not archive an item until the underlying implementation and its verification
 have changed.

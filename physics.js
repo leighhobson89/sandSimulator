@@ -44,6 +44,7 @@ const OUT_OF_BOUNDS = -1;
 const STORAGE_VIRTUAL_WALL = -2;
 const NO_SURFACE = 32000;
 const MAX_WATER_INFILTRATION_DEPTH = 50;
+const CORROSION_POWDER_EXPOSURE_REQUIRED = 360;
 const POWER_GLOW_FRAMES = 7;
 const BATTERY_DISCHARGE_SCALE = 100;
 const ELECTRICAL_NEIGHBOURS = [
@@ -150,6 +151,9 @@ export function prepareDefinitions(json) {
     const raw = json.particles;
     const nameToId = {};
     Object.keys(raw).forEach(id => { nameToId[raw[id].name.toLowerCase()] = parseInt(id); });
+    // Particle ID 52 is now named Sprinkler. Keep the former display name as
+    // an input alias while resolving names embedded in legacy particle rules.
+    if (nameToId.sprinkler !== undefined) nameToId.vent = nameToId.sprinkler;
 
     const toId = name => (name ? (nameToId[String(name).toLowerCase()] || EMPTY) : EMPTY);
 
@@ -813,14 +817,24 @@ const PERSISTED_WORLD_FIELDS = [
     'type', 'temp', 'life', 'lifeMax', 'residue', 'shade', 'heat', 'data',
     'humidity', 'plantHealth', 'corrosionExposure', 'plantCooldown',
     'machineSetting', 'storageType', 'storageCount', 'storageFlowRemainder',
+    'machinePortEndpointRemap', 'machinePortEndpointSlot',
+    'machinePortLeadRemap', 'machinePortLeadSlot',
+    'sprinklerLaunchDirection', 'sprinklerLaunchAge',
+    'splitterOutputFlowA', 'splitterOutputFlowB',
     'mixerInputTypeA', 'mixerInputCountA', 'mixerInputFlowA',
     'mixerInputTypeB', 'mixerInputCountB', 'mixerInputFlowB',
     'mixerOutputCountA', 'mixerOutputCountB', 'mixerOutputTypeA', 'mixerOutputTypeB', 'mixerOutputMixed',
     'mixerOutputFlow', 'mixerNextInput',
     'mixerOutputNext',
+    'sprinklerSprayFlow9', 'sprinklerSprayFlow8', 'sprinklerSprayFlow7', 'sprinklerSprayFlow6',
+    'sprinklerSprayFlow5', 'sprinklerSprayFlow4', 'sprinklerSprayFlow3',
     'power', 'powerDelay', 'charge', 'wind', 'airflowX', 'airflowY',
     'airflowNextX', 'airflowNextY'
 ];
+const LEGACY_SPRINKLER_SPRAY_FIELD = field =>
+    field.startsWith('sprinklerSprayFlow')
+        ? field.replace('sprinklerSprayFlow', 'ventSprayFlow')
+        : null;
 const TUBING_NEIGHBOURS = [[0, -1], [1, 0], [0, 1], [-1, 0]];
 
 // Fan settings share Breeze's current 0-50 scale. Fan output formulas retain
@@ -850,6 +864,8 @@ export function captureSimulationState() {
     for (const field of PERSISTED_WORLD_FIELDS) arrays[field] = world[field];
     return {
         version: 1,
+        sprinklerModeVersion: 2,
+        machinePortLayoutVersion: 2,
         fanWindScale: FAN_WIND_SCALE,
         cols: COLS,
         rows: ROWS,
@@ -878,7 +894,9 @@ export function restoreSimulationState(state) {
     createWorld(state.cols, state.rows);
     const hasSavedMachineSettings = !!state.arrays.machineSetting;
     for (const field of PERSISTED_WORLD_FIELDS) {
-        const source = state.arrays[field];
+        const source = state.arrays[field] ||
+            (LEGACY_SPRINKLER_SPRAY_FIELD(field)
+                ? state.arrays[LEGACY_SPRINKLER_SPRAY_FIELD(field)] : null);
         // Environment and plant fields were added after the first save format.
         // Older version-1 saves restore with current defaults and empty biology.
         if (['humidity', 'plantHealth', 'corrosionExposure', 'plantCooldown'].includes(field) && !source) {
@@ -903,17 +921,39 @@ export function restoreSimulationState(state) {
         // saves simply have empty inventories because newly-created arrays are
         // already zero-filled.
         if ((field === 'storageType' || field === 'storageCount' || field === 'storageFlowRemainder' ||
-            field.startsWith('mixer')) && !source) continue;
+            field.startsWith('machinePortEndpoint') || field.startsWith('machinePortLead') ||
+            field.startsWith('mixer') || field.startsWith('sprinklerSpray') ||
+            field.startsWith('splitter') || field.startsWith('sprinklerLaunch')) && !source) continue;
         if (!source || source.length !== cells) {
             throw new Error(`This save has invalid ${field} data.`);
         }
         world[field].set(source);
     }
 
+    // Version 1 used bit 1 for Sprinkler mode. Version 2 uses the same bit for
+    // Drain Mode, so only legacy, explicitly stored settings need inversion.
+    // When old saves omit the setting array, createWorld's current defaults
+    // already provide Release + Drain Mode on (value 3).
+    if (hasSavedMachineSettings && state.sprinklerModeVersion !== 2) {
+        for (let i = 0; i < cells; i++) {
+            if (DEFS[world.type[i]]?.machine !== 'sprinkler') continue;
+            const oldSetting = Math.round(world.machineSetting[i]);
+            world.machineSetting[i] = (oldSetting & 1) | ((oldSetting & 2) ? 0 : 2);
+        }
+    }
+
     // Saves without this marker stored Fan speeds on the old 1-20 scale,
     // whose physical formulas used 15 as the Breeze-equivalent maximum.
     if (hasSavedMachineSettings && state.fanWindScale !== FAN_WIND_SCALE) {
         migrateLegacyFanWindSettings(world.type, world.machineSetting);
+    }
+
+    // Old layouts attached tube cells anywhere in the broad port target area.
+    // Preserve those existing physical endpoints as explicit per-cell remaps;
+    // all newly created connections attach only at their exact anchor.
+    if (state.machinePortLayoutVersion !== 2) {
+        migrateLegacyMachinePortEndpointRemap(world.type, world.machinePortEndpointRemap,
+            COLS, ROWS, world.data, world.machinePortEndpointSlot);
     }
 
     // Mixer state is restored by copying typed arrays directly, so rebuild
@@ -989,6 +1029,14 @@ export function createWorld(cols, rows) {
         storageType: new Uint8Array(n),
         storageCount: new Uint16Array(n),
         storageFlowRemainder: new Float32Array(n),
+        machinePortEndpointRemap: new Uint8Array(n),
+        machinePortEndpointSlot: new Uint8Array(n),
+        machinePortLeadRemap: new Uint32Array(n),
+        machinePortLeadSlot: new Uint8Array(n),
+        sprinklerLaunchDirection: new Uint8Array(n),
+        sprinklerLaunchAge: new Uint8Array(n),
+        splitterOutputFlowA: new Float32Array(n),
+        splitterOutputFlowB: new Float32Array(n),
         mixerInputTypeA: new Uint8Array(n),
         mixerInputCountA: new Uint16Array(n),
         mixerInputFlowA: new Float32Array(n),
@@ -1003,6 +1051,13 @@ export function createWorld(cols, rows) {
         mixerOutputFlow: new Float32Array(n),
         mixerNextInput: new Uint8Array(n),
         mixerOutputNext: new Uint8Array(n),
+        sprinklerSprayFlow9: new Float32Array(n),
+        sprinklerSprayFlow8: new Float32Array(n),
+        sprinklerSprayFlow7: new Float32Array(n),
+        sprinklerSprayFlow6: new Float32Array(n),
+        sprinklerSprayFlow5: new Float32Array(n),
+        sprinklerSprayFlow4: new Float32Array(n),
+        sprinklerSprayFlow3: new Float32Array(n),
         power: new Uint8Array(n),
         powerDelay: new Uint16Array(n),
         charge: new Float32Array(n),
@@ -1029,6 +1084,9 @@ export function createWorld(cols, rows) {
     for (let i = 0; i < n; i++) world.shade[i] = random() * 255;
     storageFunnelMachines = [];
     storageBarrierMask = null;
+    collectorSealMask = null;
+    collectorRimMask = null;
+    collectorMasksDirty = true;
     tubingFlows = [];
     hasMixerMachine = false;
     windTrailsAlive = 0;
@@ -1048,9 +1106,17 @@ export function getWorld() { return world; }
 
 function defaultMachineSetting(def) {
     if (def?.machine === 'fan') return def.machineWindSpeed ?? 7;
-    if (def?.machine === 'vent') return 1;
+    if (def?.machine === 'sprinkler') return 3;
     if (def?.machine === 'mixer') return 1;
     return def?.machineTemp ?? 0;
+}
+
+function sprinklerReleaseSetting(i) {
+    return (Math.round(world.machineSetting[i]) & 1) !== 0;
+}
+
+function sprinklerDrainModeSetting(i) {
+    return (Math.round(world.machineSetting[i]) & 2) !== 0;
 }
 
 function machineSettingBounds(def) {
@@ -1061,30 +1127,121 @@ function machineSettingBounds(def) {
 }
 
 const STORAGE_CAPACITY = 500;
-const VENT_CAPACITY = 100;
+const COLLECTOR_CAPACITY = 100;
+const COLLECTOR_OUTPUT_RATE = 30;
+const SPRINKLER_CAPACITY = 100;
 const MIXER_INPUT_CAPACITY = 500;
 const MIXER_OUTPUT_SIDE_CAPACITY = 500;
 const MIXER_OUTPUT_CAPACITY = 1000;
 const MIXER_INPUT_RATE = 5;
 const MIXER_RELEASE_RATE = 8;
-// The mixer face is a 64px overlay. Simulation cells are kept available for
-// tubing and particles, so this is an invisible logical footprint rather than
-// extra occupied cells. At the normal four-pixel logical cell scale it spans
-// eight cells from the anchor in every direction.
-const MIXER_LOGICAL_HALF_WIDTH = 8;
-const MIXER_LOGICAL_HALF_HEIGHT = 8;
-const DEFAULT_VENT_RELEASE_RATE = 10;
-const MAX_VENT_RELEASE_RATE = 100;
+const SPLITTER_OUTPUT_COUNT = 2;
+const DEFAULT_SPRINKLER_RELEASE_RATE = 10;
+const MAX_SPRINKLER_RELEASE_RATE = 100;
 const SIMULATION_STEPS_PER_SECOND = 60;
-// A storage icon is 32 screen pixels wide and a simulation cell is normally
-// about four screen pixels. Its invisible intake therefore spans roughly nine
-// cells and sits one cell behind the machine centre, at the funnel-to-bin
-// join. Keeping this close to the housing prevents an empty visual pocket
-// inside the icon. Diagonal barriers use the same one-step placement and a
-// supercover staircase across the rotated width.
-const STORAGE_OPENING_HALF_WIDTH = 4;
-const STORAGE_BARRIER_DISTANCE = 1;
-const STORAGE_DIAGONAL_BARRIER_STEPS = 1;
+const SPRINKLER_LAUNCH_FRAMES = 12;
+const SPRINKLER_LAUNCH_PROFILES = Object.freeze({
+    3: { x: 1, y: 0, initialGravity: 0 },
+    4: { x: Math.sqrt(3) / 2, y: 0.5, initialGravity: 0.05 },
+    5: { x: 0.5, y: Math.sqrt(3) / 2, initialGravity: 0.25 },
+    7: { x: -0.5, y: Math.sqrt(3) / 2, initialGravity: 0.25 },
+    8: { x: -Math.sqrt(3) / 2, y: 0.5, initialGravity: 0.05 },
+    9: { x: -1, y: 0, initialGravity: 0 }
+});
+const SPRINKLER_SPRAY_FIELDS = [
+    'sprinklerSprayFlow9', 'sprinklerSprayFlow8', 'sprinklerSprayFlow7', 'sprinklerSprayFlow6',
+    'sprinklerSprayFlow5', 'sprinklerSprayFlow4', 'sprinklerSprayFlow3'
+];
+const SPRINKLER_SPRAY_CLOCK_POSITIONS = [9, 8, 7, 6, 5, 4, 3];
+const SPRINKLER_SPRAY_OFFSETS = [
+    [-3, 0], [-3, 1], [-2, 3], [0, 3], [2, 3], [3, 1], [3, 0]
+];
+const MACHINE_DIRECTION_ROTATIONS = [0, 180, -90, 90, -45, -135, 135, 45];
+export function getSprinklerLaunchGravityMultiplier(clockPosition, age) {
+    const profile = SPRINKLER_LAUNCH_PROFILES[clockPosition];
+    if (!profile) return 1;
+    const progress = Math.max(0, Math.min(1,
+        (Number.isFinite(age) ? age : 0) / SPRINKLER_LAUNCH_FRAMES));
+    return profile.initialGravity + (1 - profile.initialGravity) * progress;
+}
+
+export function getSprinklerLaunchState(x, y) {
+    if (!world || !inBounds(x, y)) return null;
+    const i = index(x, y);
+    const direction = world.sprinklerLaunchDirection[i];
+    const age = world.sprinklerLaunchAge[i];
+    return {
+        direction,
+        age,
+        gravityMultiplier: direction
+            ? getSprinklerLaunchGravityMultiplier(direction, age) : 1
+    };
+}
+
+// Port geometry is stored in logical cell offsets from the machine anchor.
+// targetRadius describes the usable circular connection area, including the
+// short adjacent stub cells painted by the user.
+const MACHINE_PORT_DEFINITIONS = Object.freeze({
+    fan: [{ id: 'power', role: 'input', material: 'Copper', family: 'copper', sourceX: 138, sourceY: 196, x: -3, y: 0, targetRadius: 1.6, stubLength: 6 }],
+    heater: [{ id: 'power', role: 'input', material: 'Copper', family: 'copper', sourceX: 76, sourceY: 196, x: -3, y: 0, targetRadius: 1.6, stubLength: 6 }],
+    cooler: [{ id: 'power', role: 'input', material: 'Copper', family: 'copper', sourceX: 41, sourceY: 196, x: -3, y: 0, targetRadius: 1.6, stubLength: 6 }],
+    storagePowder: [
+        { id: 'material', role: 'input', material: 'Tubing', family: 'storage', sourceX: 298, sourceY: 55, x: 0, y: -3, targetRadius: 1.6, stubLength: 6 },
+        { id: 'tubing-out', role: 'output', material: 'Tubing', family: 'tubing', sourceX: 298, sourceY: 251, x: 0, y: 3, targetRadius: 1.6, stubLength: 6 }
+    ],
+    storageLiquid: [
+        { id: 'material', role: 'input', material: 'Tubing', family: 'storage', sourceX: 256, sourceY: 55, x: 0, y: -3, targetRadius: 1.6, stubLength: 6 },
+        { id: 'tubing-out', role: 'output', material: 'Tubing', family: 'tubing', sourceX: 256, sourceY: 230, x: 0, y: 3, targetRadius: 1.6, stubLength: 6 }
+    ],
+    storageGas: [
+        { id: 'material', role: 'input', material: 'Tubing', family: 'storage', sourceX: 215, sourceY: 55, x: 0, y: -3, targetRadius: 1.6, stubLength: 6 },
+        { id: 'tubing-out', role: 'output', material: 'Tubing', family: 'tubing', sourceX: 215, sourceY: 230, x: 0, y: 3, targetRadius: 1.6, stubLength: 6 }
+    ],
+    sprinkler: [
+        { id: 'tubing-in', role: 'input', material: 'Tubing', family: 'tubing', sourceX: 298, sourceY: 46, x: 0, y: -3, targetRadius: 1.6, stubLength: 6 }
+    ],
+    mixer: [
+        { id: 'input-a', role: 'input', material: 'Tubing', family: 'tubing', sourceX: 75, sourceY: 135, x: -4, y: -3, targetRadius: 1.5, stubLength: 6 },
+        { id: 'input-b', role: 'input', material: 'Tubing', family: 'tubing', sourceX: 359, sourceY: 135, x: 4, y: -3, targetRadius: 1.5, stubLength: 6 }
+    ],
+    splitter: [
+        { id: 'input', role: 'input', material: 'Tubing', family: 'tubing', sourceX: 256, sourceY: 38, x: 0, y: -3, targetRadius: 1.5, stubLength: 6 },
+        { id: 'output-a', role: 'output', material: 'Tubing', family: 'tubing', sourceX: 158, sourceY: 188, x: -2, y: 3, targetRadius: 1.5, stubLength: 6 },
+        { id: 'output-b', role: 'output', material: 'Tubing', family: 'tubing', sourceX: 354, sourceY: 188, x: 2, y: 3, targetRadius: 1.5, stubLength: 6 }
+    ],
+    collector: [
+        { id: 'tubing-out', role: 'output', material: 'Tubing', family: 'tubing',
+            // The default down-facing outlet puts the circle on the icon's
+            // horizontal centerline, five viewBox pixels above the outer row.
+            // Keep the logical connection offset unchanged.
+            sourceX: 50.6, sourceY: 32, x: 3, y: 0,
+            targetRadius: 1.5, stubLength: 6, visualRadius: 4 }
+    ]
+});
+
+// Source-space alpha bounds are the same rectangles returned by trimming each
+// cell of resources/icons.png. Port marker centers come from the companion
+// iconsInputsOutputs.png sheet, while port hit and physical target geometry
+// stay independent of the fixed-size artwork.
+const MACHINE_ARTWORK_LAYOUTS = Object.freeze({
+    fan: { tileX: 0, tileY: 0, trimX: 121, trimY: 89, trimWidth: 357, trimHeight: 208 },
+    heater: { tileX: 512, tileY: 0, trimX: 58, trimY: 106, trimWidth: 390, trimHeight: 192 },
+    cooler: { tileX: 1024, tileY: 0, trimX: 21, trimY: 88, trimWidth: 368, trimHeight: 210 },
+    storagePowder: { tileX: 0, tileY: 341, trimX: 168, trimY: 42, trimWidth: 262, trimHeight: 240 },
+    storageLiquid: { tileX: 512, tileY: 341, trimX: 139, trimY: 32, trimWidth: 233, trimHeight: 236 },
+    storageGas: { tileX: 1024, tileY: 341, trimX: 94, trimY: 33, trimWidth: 245, trimHeight: 233 },
+    sprinkler: { tileX: 0, tileY: 683, trimX: 146, trimY: 27, trimWidth: 308, trimHeight: 178 },
+    splitter: { tileX: 512, tileY: 683, trimX: 118, trimY: 19, trimWidth: 276, trimHeight: 222 },
+    mixer: { tileX: 1024, tileY: 683, trimX: 54, trimY: 39, trimWidth: 324, trimHeight: 221 }
+});
+const MACHINE_ARTWORK_FACE_SIZE = 64;
+const MACHINE_ARTWORK_MAX_SIZE = 56;
+// The Collector's directional intake uses a short rotated barrier spanning
+// the visible funnel mouth. Diagonal barriers use a supercover staircase.
+const COLLECTOR_CARDINAL_BARRIER_DEPTH = 7;
+const COLLECTOR_CARDINAL_HALF_WIDTH = 5;
+const COLLECTOR_DIAGONAL_BARRIER_DEPTH = 5;
+const COLLECTOR_DIAGONAL_HALF_WIDTH = 3;
 const STORAGE_SUCTION_DEPTH = 2;
 
 function clearMixerState(i) {
@@ -1102,6 +1259,17 @@ function clearMixerState(i) {
     world.mixerOutputFlow[i] = 0;
     world.mixerNextInput[i] = 0;
     world.mixerOutputNext[i] = 0;
+    world.splitterOutputFlowA[i] = 0;
+    world.splitterOutputFlowB[i] = 0;
+}
+
+function clearSprinklerSprayState(i) {
+    for (const field of SPRINKLER_SPRAY_FIELDS) world[field][i] = 0;
+}
+
+function clearSprinklerLaunchState(i) {
+    world.sprinklerLaunchDirection[i] = 0;
+    world.sprinklerLaunchAge[i] = 0;
 }
 
 function resetEmptyMixer(i) {
@@ -1131,16 +1299,29 @@ function isStorageMachine(def) {
     return !!def?.storageCategory && def.storageCapacity > 0;
 }
 
-function isVentMachine(def) {
-    return def?.machine === 'vent';
+function isStorageInventoryMachine(def) {
+    return isStorageMachine(def) || isSplitterMachine(def) || isCollectorMachine(def);
+}
+
+function isSprinklerMachine(def) {
+    return def?.machine === 'sprinkler';
 }
 
 function isMixerMachine(def) {
     return def?.machine === 'mixer';
 }
 
+function isSplitterMachine(def) {
+    return def?.machine === 'splitter';
+}
+
+function isCollectorMachine(def) {
+    return def?.machine === 'collector';
+}
+
 function isTubingEndpoint(def) {
-    return isStorageMachine(def) || isVentMachine(def) || isMixerMachine(def);
+    return !!MACHINE_PORT_DEFINITIONS[def?.machine]?.some(port =>
+        port.family === 'tubing' || port.family === 'storage');
 }
 
 function storageAccepts(def, particle) {
@@ -1151,39 +1332,454 @@ function storageAccepts(def, particle) {
     return false;
 }
 
+function collectorAccepts(particle) {
+    return !!particle && !particle.tool && !particle.machine && !particle.tubing &&
+        ['powder', 'liquid', 'gas'].includes(particle.category);
+}
+
+function portAcceptsMaterial(port, material) {
+    const particle = typeof material === 'string'
+        ? DEFS.find(def => def?.name?.toLowerCase() === material.toLowerCase())
+        : DEFS[material];
+    if (!port || !particle) return false;
+    if (port.family === 'tubing') return !!particle.tubing;
+    if (port.family === 'copper') return particle.name === 'Copper';
+    if (port.family === 'sprinkler-output') return !particle.tool && !particle.machine && !particle.tubing;
+    if (port.family === 'storage') {
+        // Storage connectors always use Tubing. Payload category is a separate
+        // transfer check in storageAccepts(); raw particles beside a bin are
+        // never treated as a connected port or snap target.
+        return !!particle.tubing;
+    }
+    return false;
+}
+
+function rotatedPortOffset(machine, localX, localY) {
+    const def = DEFS[world.type[machine]];
+    const direction = isSprinklerMachine(def) ? 0 : (world.data[machine] & 7);
+    const angle = (MACHINE_DIRECTION_ROTATIONS[direction] || 0) * Math.PI / 180;
+    const cosine = Math.cos(angle);
+    const sine = Math.sin(angle);
+    return { x: localX * cosine - localY * sine, y: localX * sine + localY * cosine };
+}
+
+function machineArtworkGeometry(machineType) {
+    if (machineType === 'collector') {
+        return { tileX: 0, tileY: 0, trimX: 0, trimY: 0, trimWidth: 64, trimHeight: 64,
+            sourceX: 0, sourceY: 0, scale: 1, faceSize: MACHINE_ARTWORK_FACE_SIZE,
+            x: 0, y: 0, width: 64, height: 64 };
+    }
+    const layout = MACHINE_ARTWORK_LAYOUTS[machineType];
+    if (!layout) return null;
+    const scale = Math.min(MACHINE_ARTWORK_MAX_SIZE / layout.trimWidth,
+        MACHINE_ARTWORK_MAX_SIZE / layout.trimHeight);
+    const width = layout.trimWidth * scale;
+    const height = layout.trimHeight * scale;
+    return {
+        ...layout,
+        sourceX: layout.tileX + layout.trimX,
+        sourceY: layout.tileY + layout.trimY,
+        scale,
+        faceSize: MACHINE_ARTWORK_FACE_SIZE,
+        x: (MACHINE_ARTWORK_FACE_SIZE - width) / 2,
+        y: (MACHINE_ARTWORK_FACE_SIZE - height) / 2,
+        width,
+        height
+    };
+}
+
+export function getMachineArtworkLayout(machineType) {
+    const geometry = machineArtworkGeometry(machineType);
+    return geometry ? { ...geometry } : null;
+}
+
+function transformedPortVisual(spec, machineType) {
+    const geometry = machineArtworkGeometry(machineType);
+    if (!geometry) return null;
+    const markerX = geometry.x + (spec.sourceX - geometry.trimX) * geometry.scale;
+    const markerY = geometry.y + (spec.sourceY - geometry.trimY) * geometry.scale;
+    const centerX = geometry.x + geometry.width / 2;
+    const centerY = geometry.y + geometry.height / 2;
+    const length = Math.hypot(spec.sourceX - (geometry.trimX + geometry.trimWidth / 2),
+        spec.sourceY - (geometry.trimY + geometry.trimHeight / 2)) || 1;
+    return {
+        x: markerX,
+        y: markerY,
+        radius: spec.visualRadius || 14.5 * geometry.scale,
+        directionX: (spec.sourceX - (geometry.trimX + geometry.trimWidth / 2)) / length,
+        directionY: (spec.sourceY - (geometry.trimY + geometry.trimHeight / 2)) / length
+    };
+}
+
+function machinePortDescriptors(machine) {
+    if (!Number.isInteger(machine) || machine < 0 || machine >= world.type.length) return [];
+    const machineDef = DEFS[world.type[machine]];
+    const specs = MACHINE_PORT_DEFINITIONS[machineDef?.machine];
+    if (!specs) return [];
+    const anchorX = machine % COLS;
+    const anchorY = Math.floor(machine / COLS);
+    return specs.map((spec, order) => {
+        const offset = rotatedPortOffset(machine, spec.x, spec.y);
+        const centerX = anchorX + offset.x;
+        const centerY = anchorY + offset.y;
+        const visual = transformedPortVisual(spec, machineDef.machine);
+        const direction = rotatedPortOffset(machine,
+            visual?.directionX || 0, visual?.directionY || -1);
+        const directionLength = Math.hypot(direction.x, direction.y) || 1;
+        const radius = spec.targetRadius;
+        const cells = [];
+        const extent = Math.ceil(radius + 0.5);
+        for (let dy = -extent; dy <= extent; dy++) for (let dx = -extent; dx <= extent; dx++) {
+            const x = Math.round(centerX + dx);
+            const y = Math.round(centerY + dy);
+            if (!inBounds(x, y) || (x === anchorX && y === anchorY)) continue;
+            if ((x - centerX) ** 2 + (y - centerY) ** 2 > radius ** 2 + 0.12) continue;
+            if (cells.some(cell => cell.x === x && cell.y === y)) continue;
+            cells.push({ x, y });
+        }
+        cells.sort((a, b) => ((a.x - centerX) ** 2 + (a.y - centerY) ** 2) -
+            ((b.x - centerX) ** 2 + (b.y - centerY) ** 2) || a.y - b.y || a.x - b.x);
+        const connectionCell = { x: Math.round(centerX), y: Math.round(centerY) };
+        return {
+            id: spec.id,
+            slot: order,
+            order,
+            role: spec.role,
+            material: spec.material,
+            family: spec.family,
+            machine: machineDef.machine,
+            machineIndex: machine,
+            x: centerX,
+            y: centerY,
+            centerX,
+            centerY,
+            connectionCell,
+            localX: spec.x,
+            localY: spec.y,
+            worldOffsetX: offset.x,
+            worldOffsetY: offset.y,
+            rotationDegrees: isSprinklerMachine(machineDef) ? 0 : MACHINE_DIRECTION_ROTATIONS[world.data[machine] & 7],
+            visualX: visual?.x ?? 32,
+            visualY: visual?.y ?? 32,
+            visualRadius: visual?.radius ?? 2.5,
+            hitRadiusCss: 20,
+            localDirectionX: visual?.directionX ?? 0,
+            localDirectionY: visual?.directionY ?? -1,
+            directionX: direction.x / directionLength,
+            directionY: direction.y / directionLength,
+            targetRadius: radius,
+            connectorMaterial: spec.family === 'copper' ? 'Copper' : 'Tubing',
+            connected: machinePortHasConnection({ ...spec, slot: order, machineIndex: machine,
+                connectionCell, targetCells: cells }),
+            stubLength: spec.stubLength,
+            targetCells: cells
+        };
+    });
+}
+
+function encodeLegacyPortMachineOffset(machineX, machineY, cellX, cellY) {
+    const dx = machineX - cellX;
+    const dy = machineY - cellY;
+    if (dx < -8 || dx > 7 || dy < -8 || dy > 7) return 0;
+    const encoded = ((dx + 8) << 4) | (dy + 8);
+    // Zero is reserved for cells without a legacy remap. This offset cannot
+    // occur for the legacy machine port areas currently in the world.
+    return encoded || 0;
+}
+
+function remappedMachineAtCell(x, y, remapPlane = world?.machinePortEndpointRemap,
+    cols = COLS, rows = ROWS) {
+    if (!remapPlane || x < 0 || y < 0 || x >= cols || y >= rows) return -1;
+    const code = remapPlane[y * cols + x];
+    if (!code) return -1;
+    const machineX = x + ((code >> 4) - 8);
+    const machineY = y + ((code & 15) - 8);
+    if (machineX < 0 || machineY < 0 || machineX >= cols || machineY >= rows) return -1;
+    return machineY * cols + machineX;
+}
+
+function leadOwnerAtCell(x, y) {
+    if (!inBounds(x, y)) return -1;
+    const code = world.machinePortLeadRemap[index(x, y)];
+    if (!code) return -1;
+    const machineX = x + (code >>> 16) - 32768;
+    const machineY = y + (code & 0xffff) - 32768;
+    return inBounds(machineX, machineY) ? index(machineX, machineY) : -1;
+}
+
+export function getMachinePortLeadOwner(x, y) {
+    return leadOwnerAtCell(x, y);
+}
+
+export function registerMachinePortLead(machineX, machineY, slot, cells) {
+    if (!inBounds(machineX, machineY)) return;
+    for (const cell of cells) {
+        const x = cell % COLS;
+        const y = Math.floor(cell / COLS);
+        const dx = machineX - x;
+        const dy = machineY - y;
+        if (Math.abs(dx) >= 32768 || Math.abs(dy) >= 32768) continue;
+        world.machinePortLeadRemap[cell] = (((dx + 32768) << 16) | (dy + 32768)) >>> 0;
+        world.machinePortLeadSlot[cell] = slot + 1;
+    }
+}
+
+export function migrateLegacyMachinePortEndpointRemap(typePlane, remapPlane,
+    cols, rows, dataPlane = null, slotPlane = null) {
+    if (!typePlane || !remapPlane || !slotPlane || typePlane.length !== cols * rows ||
+        remapPlane.length !== cols * rows || slotPlane.length !== cols * rows) return;
+    remapPlane.fill(0);
+    slotPlane.fill(0);
+    const tubingId = DEFS.findIndex(def => !!def?.tubing);
+    const copperId = DEFS.findIndex(def => def?.name === 'Copper');
+    const candidates = new Map();
+    const addCandidate = (machine, slot, cellX, cellY) => {
+        if (cellX < 0 || cellY < 0 || cellX >= cols || cellY >= rows) return;
+        const cell = cellY * cols + cellX;
+        const material = typePlane[cell];
+        if (material !== tubingId && material !== copperId) return;
+        const machineX = machine % cols;
+        const machineY = Math.floor(machine / cols);
+        const code = encodeLegacyPortMachineOffset(machineX, machineY, cellX, cellY);
+        if (!code) return;
+        const distance = (cellX - machineX) ** 2 + (cellY - machineY) ** 2;
+        const previous = candidates.get(cell);
+        if (!previous || distance < previous.distance ||
+            (distance === previous.distance && machine < previous.machine)) {
+            candidates.set(cell, { code, slot, distance, machine });
+        }
+    };
+    for (let machine = 0; machine < typePlane.length; machine++) {
+        const machineType = DEFS[typePlane[machine]]?.machine;
+        if (!MACHINE_PORT_DEFINITIONS[machineType]) continue;
+        const machineX = machine % cols;
+        const machineY = Math.floor(machine / cols);
+        if (machineType === 'fan' || machineType === 'heater' || machineType === 'cooler' ||
+            machineType === 'sprinkler' || machineType.startsWith('storage')) {
+            const expected = (machineType === 'fan' || machineType === 'heater' || machineType === 'cooler')
+                ? copperId : tubingId;
+            for (const [dx, dy] of TUBING_NEIGHBOURS) {
+                const cellX = machineX + dx;
+                const cellY = machineY + dy;
+                if (cellX < 0 || cellY < 0 || cellX >= cols || cellY >= rows ||
+                    typePlane[cellY * cols + cellX] !== expected) continue;
+                // Old Storage Bin attachments were bidirectional. A special
+                // slot value preserves that existing endpoint in both roles.
+                addCandidate(machine, machineType.startsWith('storage') ? 255 : 1, cellX, cellY);
+            }
+            continue;
+        }
+        if (machineType !== 'mixer') continue;
+        // Preserve only the two legacy Mixer inlet locations (and a one-cell
+        // connector join around each). The old broad output footprint is not
+        // migrated, so existing output Tubing remains ordinary Tubing.
+        for (let slot = 0; slot < 2; slot++) {
+            const portX = machineX + (slot === 0 ? -4 : 4);
+            const portY = machineY - 3;
+            for (const [dx, dy] of [[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1]]) {
+                const cellX = portX + dx;
+                const cellY = portY + dy;
+                if (cellX < 0 || cellY < 0 || cellX >= cols || cellY >= rows ||
+                    typePlane[cellY * cols + cellX] !== tubingId) continue;
+                addCandidate(machine, slot + 1, cellX, cellY);
+            }
+        }
+    }
+    for (const [cell, candidate] of candidates) {
+        if (!remapPlane[cell]) {
+            remapPlane[cell] = candidate.code;
+            slotPlane[cell] = candidate.slot;
+        }
+    }
+}
+
+function isLegacyPortContact(port, x, y) {
+    const machine = remappedMachineAtCell(x, y);
+    if (machine !== port.machineIndex || !world.machinePortEndpointSlot) return false;
+    const slot = world.machinePortEndpointSlot[index(x, y)];
+    const machineDef = DEFS[world.type[machine]];
+    return slot === port.slot + 1 || (slot === 255 && isStorageMachine(machineDef));
+}
+
+function legacyPortCells(machine, port) {
+    const machineType = DEFS[world.type[machine]]?.machine;
+    const machineX = machine % COLS;
+    const machineY = Math.floor(machine / COLS);
+    let candidates = [];
+    if (machineType === 'mixer') {
+        const portX = machineX + (port.slot === 0 ? -4 : 4);
+        const portY = machineY - 3;
+        candidates = [[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1]]
+            .map(([dx, dy]) => ({ x: portX + dx, y: portY + dy }));
+    } else {
+        candidates = TUBING_NEIGHBOURS.map(([dx, dy]) => ({ x: machineX + dx, y: machineY + dy }));
+    }
+    return candidates.filter(cell => inBounds(cell.x, cell.y) &&
+        isLegacyPortContact(port, cell.x, cell.y));
+}
+
+export function getMachinePortTemplates(machineType, direction = 0) {
+    const specs = MACHINE_PORT_DEFINITIONS[machineType];
+    if (!specs) return [];
+    const rotation = ((Math.round(direction) % 8) + 8) % 8;
+    const angle = machineType === 'sprinkler' ? 0 : MACHINE_DIRECTION_ROTATIONS[rotation];
+    const radians = angle * Math.PI / 180;
+    return specs.map((spec, order) => ({
+        ...transformedPortVisual(spec, machineType),
+        visualX: transformedPortVisual(spec, machineType)?.x ?? 32,
+        visualY: transformedPortVisual(spec, machineType)?.y ?? 32,
+        visualRadius: transformedPortVisual(spec, machineType)?.radius ?? 2.5,
+        id: spec.id,
+        slot: order,
+        role: spec.role,
+        material: spec.material,
+        family: spec.family,
+        hitRadiusCss: 20,
+        localDirectionX: transformedPortVisual(spec, machineType)?.directionX ?? 0,
+        localDirectionY: transformedPortVisual(spec, machineType)?.directionY ?? -1,
+        directionX: ((transformedPortVisual(spec, machineType)?.directionX ?? 0) * Math.cos(radians) -
+            (transformedPortVisual(spec, machineType)?.directionY ?? -1) * Math.sin(radians)),
+        directionY: ((transformedPortVisual(spec, machineType)?.directionX ?? 0) * Math.sin(radians) +
+            (transformedPortVisual(spec, machineType)?.directionY ?? -1) * Math.cos(radians)),
+        connectorMaterial: spec.family === 'copper' ? 'Copper' : 'Tubing',
+        connected: false,
+        stubLength: spec.stubLength,
+        connectionOffset: { x: spec.x, y: spec.y },
+        worldOffsetX: spec.x * Math.cos(radians) - spec.y * Math.sin(radians),
+        worldOffsetY: spec.x * Math.sin(radians) + spec.y * Math.cos(radians),
+        rotationDegrees: angle
+    }));
+}
+
+export function getMachinePorts(x, y) {
+    if (!inBounds(x, y)) return [];
+    return machinePortDescriptors(index(x, y));
+}
+
+export function isMachinePortMaterialCompatible(x, y, portId, material) {
+    if (!inBounds(x, y)) return false;
+    const port = machinePortDescriptors(index(x, y)).find(candidate => candidate.id === portId);
+    return !!port && portAcceptsMaterial(port, material);
+}
+
+export function getMachinePortAt(x, y, material) {
+    if (!world || !inBounds(x, y)) return null;
+    const candidates = [];
+    for (let machineY = Math.max(0, y - 12); machineY <= Math.min(ROWS - 1, y + 12); machineY++) {
+        for (let machineX = Math.max(0, x - 12); machineX <= Math.min(COLS - 1, x + 12); machineX++) {
+            const machine = index(machineX, machineY);
+            if (!MACHINE_PORT_DEFINITIONS[DEFS[world.type[machine]]?.machine]) continue;
+            for (const port of machinePortDescriptors(machine)) {
+                if (!portAcceptsMaterial(port, material) ||
+                    port.connectionCell.x !== x || port.connectionCell.y !== y) continue;
+                const distance = (x - port.centerX) ** 2 + (y - port.centerY) ** 2;
+                candidates.push({ port, distance });
+            }
+        }
+    }
+    candidates.sort((a, b) => a.distance - b.distance || a.port.order - b.port.order ||
+        a.port.machineIndex - b.port.machineIndex);
+    return candidates[0]?.port || null;
+}
+
+function machinePortHasConnection(port) {
+    if (!world || !port?.connectionCell) return false;
+    const { x, y } = port.connectionCell;
+    if (inBounds(x, y)) {
+        const material = world.type[index(x, y)];
+        if (material !== EMPTY && portAcceptsMaterial(port, material)) {
+            if (leadOwnerAtCell(x, y) !== port.machineIndex) return true;
+            // A committed lead is only a socket extension. It is connected
+            // once compatible, independently placed material touches it.
+            const radius = 24;
+            const machineX = port.machineIndex % COLS;
+            const machineY = Math.floor(port.machineIndex / COLS);
+            for (let cy = Math.max(0, machineY - radius); cy <= Math.min(ROWS - 1, machineY + radius); cy++) {
+                for (let cx = Math.max(0, machineX - radius); cx <= Math.min(COLS - 1, machineX + radius); cx++) {
+                    const ci = index(cx, cy);
+                    if (leadOwnerAtCell(cx, cy) !== port.machineIndex ||
+                        world.machinePortLeadSlot[ci] !== port.slot + 1) continue;
+                    for (const [ox, oy] of TUBING_NEIGHBOURS) {
+                        const nx = cx + ox;
+                        const ny = cy + oy;
+                        if (!inBounds(nx, ny) || !portAcceptsMaterial(port, world.type[index(nx, ny)])) continue;
+                        if (leadOwnerAtCell(nx, ny) !== port.machineIndex) return true;
+                    }
+                }
+            }
+        }
+    }
+    return legacyPortCells(port.machineIndex, port).some(cell =>
+        portAcceptsMaterial(port, world.type[index(cell.x, cell.y)]));
+}
+
+export function getMachinePortSnapTarget(x, y, material) {
+    if (!world || !inBounds(x, y)) return null;
+    const particle = typeof material === 'string'
+        ? DEFS.find(def => def?.name?.toLowerCase() === material.toLowerCase())
+        : DEFS[material];
+    if (!particle || (!particle.tubing && particle.name !== 'Copper')) return null;
+    const candidates = [];
+    const machineRadius = 12;
+    for (let machineY = Math.max(0, y - machineRadius); machineY <= Math.min(ROWS - 1, y + machineRadius); machineY++) {
+        for (let machineX = Math.max(0, x - machineRadius); machineX <= Math.min(COLS - 1, x + machineRadius); machineX++) {
+            const machine = index(machineX, machineY);
+            if (!MACHINE_PORT_DEFINITIONS[DEFS[world.type[machine]]?.machine]) continue;
+            for (const port of machinePortDescriptors(machine)) {
+                const compatiblePortFamily = particle.tubing
+                    ? (port.family === 'tubing' || port.family === 'storage')
+                    : port.family === 'copper';
+                if (!compatiblePortFamily || !portAcceptsMaterial(port, particle.id) ||
+                    machinePortHasConnection(port)) continue;
+                const cell = port.connectionCell;
+                if (world.type[index(cell.x, cell.y)] !== EMPTY) continue;
+                const distance = (x - cell.x) ** 2 + (y - cell.y) ** 2;
+                if (distance > 2.25) continue;
+                candidates.push({ ...port, portId: port.id, x: cell.x, y: cell.y, snapX: cell.x, snapY: cell.y, distance });
+            }
+        }
+    }
+    candidates.sort((a, b) => a.distance - b.distance || a.order - b.order ||
+        a.machineIndex - b.machineIndex || a.y - b.y || a.x - b.x);
+    return candidates[0] || null;
+}
+
 export function getStorageInventory(x, y) {
     if (!inBounds(x, y)) return null;
     const i = index(x, y);
     const def = DEFS[world.type[i]];
-    if (!isStorageMachine(def)) return null;
+    if (!isStorageInventoryMachine(def)) return null;
     return {
         type: world.storageType[i],
         count: world.storageCount[i],
-        capacity: def.storageCapacity || STORAGE_CAPACITY,
-        category: def.storageCategory
+        capacity: def.storageCapacity || (isCollectorMachine(def) ? COLLECTOR_CAPACITY : STORAGE_CAPACITY),
+        category: def.storageCategory || (isCollectorMachine(def) ? 'any' : 'mixed')
     };
 }
 
 export function purgeStorageBin(x, y) {
     if (!inBounds(x, y)) return false;
     const i = index(x, y);
-    if (!isStorageMachine(DEFS[world.type[i]])) return false;
+    if (!isStorageInventoryMachine(DEFS[world.type[i]])) return false;
     world.storageType[i] = EMPTY;
     world.storageCount[i] = 0;
     world.storageFlowRemainder[i] = 0;
+    world.splitterOutputFlowA[i] = 0;
+    world.splitterOutputFlowB[i] = 0;
     return true;
 }
 
-export function getVentInventory(x, y) {
+export function getSprinklerInventory(x, y) {
     if (!inBounds(x, y)) return null;
     const i = index(x, y);
-    if (!isVentMachine(DEFS[world.type[i]])) return null;
+    if (!isSprinklerMachine(DEFS[world.type[i]])) return null;
     return {
         type: world.storageType[i],
         count: world.storageCount[i],
-        capacity: VENT_CAPACITY,
-        releaseEnabled: world.machineSetting[i] !== 0,
-        releaseRate: getVentReleaseRate(x, y)
+        capacity: SPRINKLER_CAPACITY,
+        releaseEnabled: sprinklerReleaseSetting(i),
+        drainModeEnabled: sprinklerDrainModeSetting(i),
+        releaseRate: getSprinklerReleaseRate(x, y)
     };
 }
 
@@ -1241,51 +1837,91 @@ export function isMixerReleaseEnabled(x, y) {
     return isMixerMachine(DEFS[world.type[i]]) && world.machineSetting[i] !== 0;
 }
 
-export function getVentReleaseRate(x, y) {
+export function getSprinklerReleaseRate(x, y) {
     if (!inBounds(x, y)) return null;
     const i = index(x, y);
-    if (!isVentMachine(DEFS[world.type[i]])) return null;
-    return Math.max(1, Math.min(MAX_VENT_RELEASE_RATE,
-        Math.round(world.data[i] || DEFAULT_VENT_RELEASE_RATE)));
+    if (!isSprinklerMachine(DEFS[world.type[i]])) return null;
+    return Math.max(1, Math.min(MAX_SPRINKLER_RELEASE_RATE,
+        Math.round(world.data[i] || DEFAULT_SPRINKLER_RELEASE_RATE)));
 }
 
-export function getVentTubingRate(x, y) {
+export function getSprinklerTubingRate(x, y) {
     if (!inBounds(x, y)) return null;
-    const vent = index(x, y);
-    if (!isVentMachine(DEFS[world.type[vent]])) return null;
+    const sprinkler = index(x, y);
+    if (!isSprinklerMachine(DEFS[world.type[sprinkler]])) return null;
     let maxRate = 0;
-    for (const component of buildTubingComponents()) {
-        if (component.attachments.size !== 2 || !component.attachments.has(vent)) continue;
-        const destination = [...component.attachments.keys()].find(machine => machine !== vent);
-        if (destination === undefined || !isStorageMachine(DEFS[world.type[destination]])) continue;
-        const path = shortestTubingPath(component.cellSet, component.attachments.get(destination),
-            component.attachments.get(vent));
-        if (!path) continue;
-        maxRate = Math.max(maxRate, tubingPathCapacity(path, component.cellSet, destination, vent) * 10);
+    const components = buildTubingComponents();
+    const routeRateTo = (component, destination, visiting = new Set()) => {
+        if (component.attachments.size !== 2 || !component.attachments.has(destination)) return 0;
+        const source = [...component.attachments.keys()].find(machine => machine !== destination);
+        if (source === undefined) return 0;
+        const sourceDef = DEFS[world.type[source]];
+        if (!(isStorageMachine(sourceDef) || isSplitterMachine(sourceDef) || isCollectorMachine(sourceDef))) return 0;
+        const sourcePort = componentPortConnection(component, source, 'output');
+        const destinationPort = componentPortConnection(component, destination, 'input');
+        if (!sourcePort || !destinationPort) return 0;
+        const path = shortestTubingPath(component.cellSet, sourcePort.contacts, destinationPort.contacts);
+        if (!path) return 0;
+        const lineRate = tubingPathCapacity(path, component.cellSet, source, destination) * 10;
+        let rate = isCollectorMachine(sourceDef) ? Math.min(lineRate, COLLECTOR_OUTPUT_RATE) : lineRate;
+        if (isSplitterMachine(sourceDef)) {
+            if (visiting.has(source)) return Math.min(rate, lineRate / SPLITTER_OUTPUT_COUNT);
+            const nextVisiting = new Set(visiting);
+            nextVisiting.add(source);
+            let incomingRate = 0;
+            for (const incoming of components) {
+                if (!incoming.attachments.has(source) || incoming === component) continue;
+                incomingRate = Math.max(incomingRate, routeRateTo(incoming, source, nextVisiting));
+            }
+            // A prefilled splitter without a connected inlet still divides
+            // its nominal outlet capacity in half, matching the flow scheduler.
+            rate = Math.min(rate, (incomingRate || lineRate) / SPLITTER_OUTPUT_COUNT);
+        }
+        return rate;
+    };
+    for (const component of components) {
+        if (component.attachments.size !== 2 || !component.attachments.has(sprinkler)) continue;
+        maxRate = Math.max(maxRate, routeRateTo(component, sprinkler));
     }
     return maxRate;
 }
 
-export function setVentReleaseRate(x, y, value) {
+export function setSprinklerReleaseRate(x, y, value) {
     if (!inBounds(x, y) || !Number.isFinite(value)) return false;
     const i = index(x, y);
-    if (!isVentMachine(DEFS[world.type[i]])) return false;
-    world.data[i] = Math.max(1, Math.min(MAX_VENT_RELEASE_RATE, Math.round(value)));
+    if (!isSprinklerMachine(DEFS[world.type[i]])) return false;
+    world.data[i] = Math.max(1, Math.min(MAX_SPRINKLER_RELEASE_RATE, Math.round(value)));
     return true;
 }
 
-export function isVentReleaseEnabled(x, y) {
+export function isSprinklerReleaseEnabled(x, y) {
     if (!inBounds(x, y)) return false;
     const i = index(x, y);
-    return isVentMachine(DEFS[world.type[i]]) && world.machineSetting[i] !== 0;
+    return isSprinklerMachine(DEFS[world.type[i]]) && sprinklerReleaseSetting(i);
 }
 
-export function setVentReleaseEnabled(x, y, enabled) {
+export function setSprinklerReleaseEnabled(x, y, enabled) {
     if (!inBounds(x, y)) return false;
     const i = index(x, y);
-    if (!isVentMachine(DEFS[world.type[i]])) return false;
-    world.machineSetting[i] = enabled ? 1 : 0;
+    if (!isSprinklerMachine(DEFS[world.type[i]])) return false;
+    const current = Math.round(world.machineSetting[i]) & 2;
+    world.machineSetting[i] = current | (enabled ? 1 : 0);
     if (!enabled) world.storageFlowRemainder[i] = 0;
+    return true;
+}
+
+export function isDrainModeEnabled(x, y) {
+    if (!inBounds(x, y)) return false;
+    const i = index(x, y);
+    return isSprinklerMachine(DEFS[world.type[i]]) && sprinklerDrainModeSetting(i);
+}
+
+export function setDrainModeEnabled(x, y, enabled) {
+    if (!inBounds(x, y)) return false;
+    const i = index(x, y);
+    if (!isSprinklerMachine(DEFS[world.type[i]])) return false;
+    const current = Math.round(world.machineSetting[i]) & 1;
+    world.machineSetting[i] = current | (enabled ? 2 : 0);
     return true;
 }
 
@@ -1373,6 +2009,14 @@ export function clearWorld() {
     world.storageType.fill(0);
     world.storageCount.fill(0);
     world.storageFlowRemainder.fill(0);
+    world.machinePortEndpointRemap.fill(0);
+    world.machinePortEndpointSlot.fill(0);
+    world.machinePortLeadRemap.fill(0);
+    world.machinePortLeadSlot.fill(0);
+    world.sprinklerLaunchDirection.fill(0);
+    world.sprinklerLaunchAge.fill(0);
+    world.splitterOutputFlowA.fill(0);
+    world.splitterOutputFlowB.fill(0);
     world.mixerInputTypeA.fill(0);
     world.mixerInputCountA.fill(0);
     world.mixerInputFlowA.fill(0);
@@ -1384,6 +2028,7 @@ export function clearWorld() {
     world.mixerOutputFlow.fill(0);
     world.mixerNextInput.fill(0);
     world.mixerOutputNext.fill(0);
+    for (const field of SPRINKLER_SPRAY_FIELDS) world[field].fill(0);
     world.power.fill(0);
     world.powerDelay.fill(0);
     world.charge.fill(0);
@@ -1400,6 +2045,9 @@ export function clearWorld() {
     world.displayWindY.fill(0);
     storageFunnelMachines = [];
     if (storageBarrierMask) storageBarrierMask.fill(0);
+    if (collectorSealMask) collectorSealMask.fill(0);
+    if (collectorRimMask) collectorRimMask.fill(0);
+    collectorMasksDirty = false;
     tubingFlows = [];
     hasMixerMachine = false;
     windTrailsAlive = 0;
@@ -1417,7 +2065,7 @@ export function clearWorld() {
 // That is decided here, once, and never revisited, so a seed that came up a
 // floater is a floater for as long as it lasts.
 function startingData(def) {
-    if (def?.machine === 'vent') return DEFAULT_VENT_RELEASE_RATE;
+    if (def?.machine === 'sprinkler') return DEFAULT_SPRINKLER_RELEASE_RATE;
     // Hand-painted rays start with the tool's direction before the UI sees its
     // first drag. Machine emissions overwrite this with their marked direction.
     if (def?.name === 'Heat Ray') return 2; // up
@@ -1440,12 +2088,18 @@ function typeAt(x, y) {
 }
 
 function storageIntakeIsWall(x, y) {
+    ensureCollectorMasks();
     return inBounds(x, y) && !!storageBarrierMask?.[index(x, y)];
+}
+
+function collectorSealIsWall(x, y) {
+    ensureCollectorMasks();
+    return inBounds(x, y) && !!collectorSealMask?.[index(x, y)];
 }
 
 function typeAtForMovement(def, x, y) {
     const id = typeAt(x, y);
-    if (id !== EMPTY || !storageIntakeIsWall(x, y)) return id;
+    if (id !== EMPTY || (!storageIntakeIsWall(x, y) && !collectorSealIsWall(x, y))) return id;
     return STORAGE_VIRTUAL_WALL;
 }
 
@@ -1455,7 +2109,9 @@ export function setCell(x, y, id, keepTemp) {
     if (!inBounds(x, y)) return;
     const i = y * COLS + x;
     const def = DEFS[id];
-    const wasSameRay = world.type[i] === id && def?.forceRate > 0;
+    const previousType = world.type[i];
+    if (isCollectorMachine(DEFS[previousType]) || isCollectorMachine(def)) collectorMasksDirty = true;
+    const wasSameRay = previousType === id && def?.forceRate > 0;
     world.type[i] = id;
     if (def?.machine === 'mixer') hasMixerMachine = true;
     world.residue[i] = EMPTY;
@@ -1479,7 +2135,15 @@ export function setCell(x, y, id, keepTemp) {
     world.storageType[i] = 0;
     world.storageCount[i] = 0;
     world.storageFlowRemainder[i] = 0;
+    if (previousType !== id) {
+        world.machinePortEndpointRemap[i] = 0;
+        world.machinePortEndpointSlot[i] = 0;
+        world.machinePortLeadRemap[i] = 0;
+        world.machinePortLeadSlot[i] = 0;
+    }
+    clearSprinklerLaunchState(i);
     clearMixerState(i);
+    clearSprinklerSprayState(i);
     world.power[i] = 0;
     world.powerDelay[i] = 0;
     world.charge[i] = 0;
@@ -1492,6 +2156,7 @@ export function setCell(x, y, id, keepTemp) {
 // changing state does not change how hot that spot is.
 function transform(i, id, life, residue) {
     const def = DEFS[id];
+    if (isCollectorMachine(DEFS[world.type[i]]) || isCollectorMachine(def)) collectorMasksDirty = true;
     world.type[i] = id;
     const lifetime = life !== undefined ? life
         : (def.life > 0 ? def.life + Math.floor((random() - 0.5) * def.lifeVariance) : 0);
@@ -1507,7 +2172,13 @@ function transform(i, id, life, residue) {
     world.storageType[i] = 0;
     world.storageCount[i] = 0;
     world.storageFlowRemainder[i] = 0;
+    world.machinePortEndpointRemap[i] = 0;
+    world.machinePortEndpointSlot[i] = 0;
+    world.machinePortLeadRemap[i] = 0;
+    world.machinePortLeadSlot[i] = 0;
+    clearSprinklerLaunchState(i);
     clearMixerState(i);
+    clearSprinklerSprayState(i);
     world.power[i] = 0;
     world.powerDelay[i] = 0;
     world.charge[i] = 0;
@@ -1523,6 +2194,7 @@ function defaultBulkInsulation(category) {
 }
 
 function removeParticle(i) {
+    if (isCollectorMachine(DEFS[world.type[i]])) collectorMasksDirty = true;
     world.type[i] = EMPTY;
     world.life[i] = 0;
     world.lifeMax[i] = 0;
@@ -1536,7 +2208,13 @@ function removeParticle(i) {
     world.storageType[i] = 0;
     world.storageCount[i] = 0;
     world.storageFlowRemainder[i] = 0;
+    world.machinePortEndpointRemap[i] = 0;
+    world.machinePortEndpointSlot[i] = 0;
+    world.machinePortLeadRemap[i] = 0;
+    world.machinePortLeadSlot[i] = 0;
+    clearSprinklerLaunchState(i);
     clearMixerState(i);
+    clearSprinklerSprayState(i);
     world.power[i] = 0;
     world.powerDelay[i] = 0;
     world.charge[i] = 0;
@@ -1544,6 +2222,9 @@ function removeParticle(i) {
 }
 
 function swapCells(i1, i2) {
+    if (isCollectorMachine(DEFS[world.type[i1]]) || isCollectorMachine(DEFS[world.type[i2]])) {
+        collectorMasksDirty = true;
+    }
     let t = world.type[i1]; world.type[i1] = world.type[i2]; world.type[i2] = t;
     let h = world.temp[i1]; world.temp[i1] = world.temp[i2]; world.temp[i2] = h;
     let l = world.life[i1]; world.life[i1] = world.life[i2]; world.life[i2] = l;
@@ -1560,13 +2241,22 @@ function swapCells(i1, i2) {
     let st = world.storageType[i1]; world.storageType[i1] = world.storageType[i2]; world.storageType[i2] = st;
     let sc = world.storageCount[i1]; world.storageCount[i1] = world.storageCount[i2]; world.storageCount[i2] = sc;
     let sfr = world.storageFlowRemainder[i1]; world.storageFlowRemainder[i1] = world.storageFlowRemainder[i2]; world.storageFlowRemainder[i2] = sfr;
-    if (isMixerMachine(DEFS[world.type[i1]]) || isMixerMachine(DEFS[world.type[i2]])) {
+    let endpointRemap = world.machinePortEndpointRemap[i1]; world.machinePortEndpointRemap[i1] = world.machinePortEndpointRemap[i2]; world.machinePortEndpointRemap[i2] = endpointRemap;
+    let endpointSlot = world.machinePortEndpointSlot[i1]; world.machinePortEndpointSlot[i1] = world.machinePortEndpointSlot[i2]; world.machinePortEndpointSlot[i2] = endpointSlot;
+    let leadRemap = world.machinePortLeadRemap[i1]; world.machinePortLeadRemap[i1] = world.machinePortLeadRemap[i2]; world.machinePortLeadRemap[i2] = leadRemap;
+    let leadSlot = world.machinePortLeadSlot[i1]; world.machinePortLeadSlot[i1] = world.machinePortLeadSlot[i2]; world.machinePortLeadSlot[i2] = leadSlot;
+    let sprinklerDirection = world.sprinklerLaunchDirection[i1]; world.sprinklerLaunchDirection[i1] = world.sprinklerLaunchDirection[i2]; world.sprinklerLaunchDirection[i2] = sprinklerDirection;
+    let sprinklerAge = world.sprinklerLaunchAge[i1]; world.sprinklerLaunchAge[i1] = world.sprinklerLaunchAge[i2]; world.sprinklerLaunchAge[i2] = sprinklerAge;
+    let splitterFlowA = world.splitterOutputFlowA[i1]; world.splitterOutputFlowA[i1] = world.splitterOutputFlowA[i2]; world.splitterOutputFlowA[i2] = splitterFlowA;
+    let splitterFlowB = world.splitterOutputFlowB[i1]; world.splitterOutputFlowB[i1] = world.splitterOutputFlowB[i2]; world.splitterOutputFlowB[i2] = splitterFlowB;
+    if (isMixerMachine(DEFS[world.type[i1]]) || isMixerMachine(DEFS[world.type[i2]]) ||
+        isSprinklerMachine(DEFS[world.type[i1]]) || isSprinklerMachine(DEFS[world.type[i2]])) {
         for (const field of [
             'mixerInputTypeA', 'mixerInputCountA', 'mixerInputFlowA',
             'mixerInputTypeB', 'mixerInputCountB', 'mixerInputFlowB',
             'mixerOutputCountA', 'mixerOutputCountB', 'mixerOutputTypeA', 'mixerOutputTypeB', 'mixerOutputMixed',
             'mixerOutputFlow',
-            'mixerNextInput', 'mixerOutputNext'
+            'mixerNextInput', 'mixerOutputNext', ...SPRINKLER_SPRAY_FIELDS
         ]) {
             const value = world[field][i1]; world[field][i1] = world[field][i2]; world[field][i2] = value;
         }
@@ -2014,12 +2704,12 @@ export function stepSimulation() {
     updateActiveMachines();
     applyFanAirflowToParticles();
     updateStorageBins();
-    updateVents();
+    updateSprinklers();
     updateTubingFlows();
     updateMixers();
     // A newly delivered item can use release credit accumulated earlier in
     // this frame, but the rate is accrued only once per frame.
-    updateVents(false);
+    updateSprinklers(false);
 
     // Natural wind applies on freshly cleared moved flags, before gravity and
     // particle motion, so a carried item still moves at most once this tick.
@@ -2052,7 +2742,11 @@ export function stepSimulation() {
                 continue;
             }
 
-            if (!def.moves) continue;
+            if (!def.moves) {
+                if (world.sprinklerLaunchDirection[i]) clearSprinklerLaunchState(i);
+                continue;
+            }
+            if (moveSprinklerLaunchedParticle(x, y, i, def)) continue;
 
             // moveChance is how readily something shifts about of its own
             // accord. Gravity is not a matter of choice: everything falls at
@@ -2619,7 +3313,7 @@ function applyReactions(x, y, i, def) {
         } else {
             world.corrosionExposure[i] = Math.max(0, world.corrosionExposure[i] - 2);
         }
-        if (world.corrosionExposure[i] >= 120) {
+        if (world.corrosionExposure[i] >= CORROSION_POWDER_EXPOSURE_REQUIRED) {
             transform(i, idOf('Corrosion'));
             return true;
         }
@@ -3437,10 +4131,11 @@ function explode(x, y, def) {
                 continue;
             }
 
-        world.type[ni] = EMPTY;
-        world.life[ni] = 0;
-        world.lifeMax[ni] = 0;
-        world.residue[ni] = EMPTY;
+            world.type[ni] = EMPTY;
+            world.life[ni] = 0;
+            world.lifeMax[ni] = 0;
+            world.residue[ni] = EMPTY;
+            clearSprinklerLaunchState(ni);
             world.data[ni] = 0;
             world.heat[ni] = 0;
             world.power[ni] = 0;
@@ -3511,13 +4206,128 @@ function isSolidBarrier(id) {
 
 let storageFunnelMachines = [];
 let storageBarrierMask = null;
+let collectorSealMask = null;
+let collectorRimMask = null;
+let collectorMasksDirty = true;
 
-function buildStorageBarrierCells(x, y, frontX, frontY) {
+const COLLECTOR_LOCAL_ROTATION = [0, 180, -90, 90, -45, -135, 135, 45];
+
+function rotateCollectorOffset(x, y, direction) {
+    const angle = COLLECTOR_LOCAL_ROTATION[direction & 7] * Math.PI / 180;
+    return {
+        x: Math.round(x * Math.cos(angle) - y * Math.sin(angle)),
+        y: Math.round(x * Math.sin(angle) + y * Math.cos(angle))
+    };
+}
+
+function collectorFunnelGeometry(frontX, frontY) {
     const diagonal = frontX !== 0 && frontY !== 0;
-    const depthSteps = diagonal
-        ? STORAGE_DIAGONAL_BARRIER_STEPS
-        : STORAGE_BARRIER_DISTANCE;
-    const halfSteps = diagonal ? 3 : STORAGE_OPENING_HALF_WIDTH;
+    return {
+        diagonal,
+        barrierDepth: diagonal
+            ? COLLECTOR_DIAGONAL_BARRIER_DEPTH
+            : COLLECTOR_CARDINAL_BARRIER_DEPTH,
+        halfWidth: diagonal
+            ? COLLECTOR_DIAGONAL_HALF_WIDTH
+            : COLLECTOR_CARDINAL_HALF_WIDTH,
+        projectionScale: diagonal ? 2 : 1
+    };
+}
+
+function collectorSegmentCells(x0, y0, x1, y1) {
+    const cells = [];
+    const seen = new Set();
+    const add = (x, y) => {
+        const key = `${x},${y}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        cells.push({ x, y });
+    };
+    let x = x0;
+    let y = y0;
+    const dx = Math.abs(x1 - x0);
+    const dy = Math.abs(y1 - y0);
+    const sx = x0 < x1 ? 1 : -1;
+    const sy = y0 < y1 ? 1 : -1;
+    let ix = 0;
+    let iy = 0;
+    add(x, y);
+    while (ix < dx || iy < dy) {
+        const decision = (1 + 2 * ix) * dy - (1 + 2 * iy) * dx;
+        if (decision === 0) {
+            add(x + sx, y);
+            add(x, y + sy);
+            x += sx;
+            y += sy;
+            ix++;
+            iy++;
+        } else if (decision < 0) {
+            x += sx;
+            ix++;
+        } else {
+            y += sy;
+            iy++;
+        }
+        add(x, y);
+    }
+    return cells;
+}
+
+function buildCollectorShellCells(x, y, frontX, frontY) {
+    const cells = new Map();
+    const tangentX = -frontY;
+    const tangentY = frontX;
+    const { halfWidth, barrierDepth } = collectorFunnelGeometry(frontX, frontY);
+    const mouthX = x - frontX * barrierDepth;
+    const mouthY = y - frontY * barrierDepth;
+    const outputOffset = rotatedPortOffset(index(x, y), 3, 0);
+    const outputX = x + Math.round(outputOffset.x);
+    const outputY = y + Math.round(outputOffset.y);
+    const add = (cellX, cellY, rim = false) => {
+        if (!inBounds(cellX, cellY) || (cellX === outputX && cellY === outputY)) return;
+        const key = `${cellX},${cellY}`;
+        const prior = cells.get(key);
+        cells.set(key, { x: cellX, y: cellY, i: index(cellX, cellY), rim: rim || !!prior?.rim });
+    };
+
+    // Each rim endpoint follows a sealed supercover rail down to one side of
+    // the body. The middle of the mouth remains reserved for suction.
+    for (const side of [-1, 1]) {
+        const startX = mouthX + tangentX * halfWidth * side;
+        const startY = mouthY + tangentY * halfWidth * side;
+        const shoulderX = x + frontX * 2 + tangentX * 2 * side;
+        const shoulderY = y + frontY * 2 + tangentY * 2 * side;
+        const rail = collectorSegmentCells(startX, startY, shoulderX, shoulderY);
+        for (const cell of rail) add(cell.x, cell.y, true);
+        // A short shell around the body flanks closes the black-space gaps,
+        // while remaining short of the outward Tubing anchor.
+        const flankStartX = x + frontX + tangentX * side * 2;
+        const flankStartY = y + frontY + tangentY * side * 2;
+        const flankEndX = x + frontX * 2 + tangentX * side * 2;
+        const flankEndY = y + frontY * 2 + tangentY * side * 2;
+        for (const cell of collectorSegmentCells(flankStartX, flankStartY, flankEndX, flankEndY)) {
+            add(cell.x, cell.y);
+        }
+    }
+    const baseA = { x: x + frontX * 2 - tangentX * 2, y: y + frontY * 2 - tangentY * 2 };
+    const baseB = { x: x + frontX * 2 + tangentX * 2, y: y + frontY * 2 + tangentY * 2 };
+    for (const cell of collectorSegmentCells(baseA.x, baseA.y, baseB.x, baseB.y)) add(cell.x, cell.y);
+    return [...cells.values()];
+}
+
+function ensureCollectorMasks() {
+    if (collectorMasksDirty && world) refreshStorageFunnelMachines();
+}
+
+export function isCollectorRimCell(x, y) {
+    if (!inBounds(x, y)) return false;
+    ensureCollectorMasks();
+    return !!collectorRimMask?.[index(x, y)];
+}
+
+function buildCollectorBarrierCells(x, y, frontX, frontY) {
+    const { diagonal, barrierDepth: depthSteps, halfWidth: halfSteps } =
+        collectorFunnelGeometry(frontX, frontY);
     const tangentX = -frontY;
     const tangentY = frontX;
     const centreX = x - frontX * depthSteps;
@@ -3549,17 +4359,20 @@ function buildStorageBarrierCells(x, y, frontX, frontY) {
     return cells;
 }
 
-function isStorageFunnelArea(x, y, def) {
+function isStorageFunnelArea(x, y) {
     for (const funnel of storageFunnelMachines) {
         const relativeX = x - funnel.x;
         const relativeY = y - funnel.y;
-        const depth = relativeX * funnel.rearUnitX + relativeY * funnel.rearUnitY;
+        const depth = (relativeX * -funnel.frontX + relativeY * -funnel.frontY) /
+            funnel.projectionScale;
         if (depth < 0) continue;
-        const tangent = relativeX * funnel.tangentUnitX + relativeY * funnel.tangentUnitY;
-        // The visible wings widen as they extend away from the bin. Treat the
-        // same area as the sealed funnel when a solid wall is drawn there.
-        const width = STORAGE_OPENING_HALF_WIDTH +
-            Math.max(0, depth - STORAGE_BARRIER_DISTANCE);
+        const tangent = (relativeX * -funnel.frontY + relativeY * funnel.frontX) /
+            funnel.projectionScale;
+        // Keep collision corner checks aligned with the drawn funnel mouth:
+        // seven cells deep and five half-width for cardinal fronts; diagonal
+        // depth/width are measured in paired-axis steps so the 45-degree
+        // projections match their per-axis raster geometry.
+        const width = funnel.halfWidth + Math.max(0, depth - funnel.barrierDepth);
         if (Math.abs(tangent) <= width) return true;
     }
     return false;
@@ -3572,7 +4385,7 @@ function isStorageFunnelArea(x, y, def) {
 function canSinkDiagonally(def, x, y, nx, ny) {
     if (!canSinkInto(def, typeAtForMovement(def, nx, ny))) return false;
     if (nx === x || ny === y) return true;
-    if (!isStorageFunnelArea(x, y, def) && !isStorageFunnelArea(nx, ny, def)) return true;
+    if (!isStorageFunnelArea(x, y) && !isStorageFunnelArea(nx, ny)) return true;
     return !isSolidBarrier(typeAtForMovement(def, nx, y)) &&
         !isSolidBarrier(typeAtForMovement(def, x, ny));
 }
@@ -3580,12 +4393,99 @@ function canSinkDiagonally(def, x, y, nx, ny) {
 function canRiseDiagonally(def, x, y, nx, ny) {
     if (typeAtForMovement(def, nx, ny) !== EMPTY) return false;
     if (nx === x || ny === y) return true;
-    if (!isStorageFunnelArea(x, y, def) && !isStorageFunnelArea(nx, ny, def)) return true;
+    if (!isStorageFunnelArea(x, y) && !isStorageFunnelArea(nx, ny)) return true;
     return !isSolidBarrier(typeAtForMovement(def, nx, y)) &&
         !isSolidBarrier(typeAtForMovement(def, x, ny));
 }
 
 function randomSign() { return random() < 0.5 ? -1 : 1; }
+
+function sprinklerGravityDisplacement(clockPosition, age) {
+	let displacement = 0;
+	for (let frame = 0; frame < age; frame++) {
+		// Native gravity advances a cell per frame in this simulation. Summing
+		// the ramped multiplier gives a deterministic fractional-cell fall rate;
+		// deriving it from age means save/restore needs no extra movement credit.
+		displacement += getSprinklerLaunchGravityMultiplier(clockPosition, frame);
+	}
+	return displacement;
+}
+
+function sprinklerLaunchOffset(clockPosition, age) {
+    const profile = SPRINKLER_LAUNCH_PROFILES[clockPosition];
+    if (!profile) return { x: 0, y: 0 };
+    const horizontalMajor = Math.abs(profile.x) >= Math.abs(profile.y);
+    const majorX = Math.sign(profile.x);
+    const majorY = Math.sign(profile.y);
+    const minorRatio = horizontalMajor
+        ? Math.abs(profile.y / profile.x)
+        : Math.abs(profile.x / profile.y);
+    const x = horizontalMajor
+        ? majorX * age
+        : majorX * Math.floor(age * minorRatio + 1e-8);
+    const y = horizontalMajor
+        ? majorY * Math.floor(age * minorRatio + 1e-8)
+        : majorY * age;
+    return {
+        x,
+        y: y + Math.floor(sprinklerGravityDisplacement(clockPosition, age) + 1e-8)
+    };
+}
+
+function canSprinklerLaunchEnter(def, x, y, nx, ny) {
+    if (!inBounds(nx, ny)) return false;
+    if (nx !== x && ny > y) return canSinkDiagonally(def, x, y, nx, ny);
+    return canSinkInto(def, typeAtForMovement(def, nx, ny));
+}
+
+// Sprinkler output particles get a short, deterministic ballistic projection.
+// Their clock-position tag and age travel with the particle in swapCells;
+// colliding with an obstacle ends the launch and returns them to their native
+// material movement on the same frame.
+function moveSprinklerLaunchedParticle(x, y, i, def) {
+    const clockPosition = world.sprinklerLaunchDirection[i];
+    if (!clockPosition) return false;
+    const age = world.sprinklerLaunchAge[i];
+    if (!SPRINKLER_LAUNCH_PROFILES[clockPosition] || age >= SPRINKLER_LAUNCH_FRAMES) {
+        clearSprinklerLaunchState(i);
+        return false;
+    }
+
+    const start = sprinklerLaunchOffset(clockPosition, age);
+    const finish = sprinklerLaunchOffset(clockPosition, age + 1);
+    let remainingX = Math.abs(finish.x - start.x);
+    let remainingY = Math.abs(finish.y - start.y);
+    const stepX = Math.sign(finish.x - start.x);
+    let cx = x;
+    let cy = y;
+    let current = i;
+    let moved = false;
+
+    while (remainingX > 0 || remainingY > 0) {
+        const diagonal = remainingX > 0 && remainingY > 0;
+        const nx = cx + (remainingX > 0 ? stepX : 0);
+        const ny = cy + (remainingY > 0 ? 1 : 0);
+        if (!canSprinklerLaunchEnter(def, cx, cy, nx, ny)) {
+            clearSprinklerLaunchState(current);
+            return moved;
+        }
+        const next = index(nx, ny);
+        swapCells(current, next);
+        current = next;
+        cx = nx;
+        cy = ny;
+        moved = true;
+        if (remainingX > 0) remainingX--;
+        if (remainingY > 0) remainingY--;
+        // The vertical and horizontal parts of an angle share a diagonal step
+        // when both are due on the same frame.
+        if (!diagonal && remainingY > 0 && remainingX === 0) continue;
+    }
+
+    world.sprinklerLaunchAge[current] = age + 1;
+    if (age + 1 >= SPRINKLER_LAUNCH_FRAMES) clearSprinklerLaunchState(current);
+    return moved;
+}
 
 // How often a floating seed shifts one cell along the surface. Low on purpose:
 // it should wander to one side over a while, not scoot across the pond.
@@ -4076,6 +4976,21 @@ function moveProjectile(x, y, i, def) {
 function machineIsPowered(x, y, i) {
     if (world.power[i] > 0 || world.powerDelay[i] > 0) return true;
 
+    // Broad power-port targets can include copper cells that sit just outside
+    // the ordinary two-cell wire reach. A live pulse on any declared copper
+    // contact powers the machine through that port, while bare copper still
+    // cannot activate it.
+    const poweredCopperPort = machinePortDescriptors(i).some(port =>
+        port.family === 'copper' && [port.connectionCell, ...legacyPortCells(i, port)]
+            .some(cell => {
+                if (!inBounds(cell.x, cell.y)) return false;
+                const contact = index(cell.x, cell.y);
+                const def = DEFS[world.type[contact]];
+                return def?.name === 'Copper' &&
+                    (world.power[contact] > 0 || world.powerDelay[contact] > 0);
+            }));
+    if (poweredCopperPort) return true;
+
     // A live Spark or a Spark source touching a machine is enough to start it.
     // The source check is deliberate: a source does not need an empty cell on
     // the machine-facing side in order to energize a machine it is touching.
@@ -4087,41 +5002,24 @@ function machineIsPowered(x, y, i) {
     return false;
 }
 
-// A storage bin is an always-active one-cell machine with a 32px-wide virtual
-// barrier at the outside edge of its drawn funnel. The same rasterized cells
-// are used here and by movement collision, so the visible opening and the
-// working intake cannot drift apart. Each barrier cell draws acceptable matter
-// from up to two cells directly outside it, which prevents packed liquids from
-// waiting for a random movement before entering. A wrong particle, a different
-// stored type, or a full bin still meets the barrier as a solid wall and also
-// blocks suction from reaching through it.
+// Storage bins are tubing-fed. World collection belongs to the rotating
+// Collector, which keeps the established one-material suction behavior.
 function updateStorageBins() {
     for (const funnel of storageFunnelMachines) {
         const i = funnel.i;
-        const def = DEFS[world.type[i]];
-        if (!isStorageMachine(def)) continue;
-
+        if (!isCollectorMachine(DEFS[world.type[i]])) continue;
         for (const barrier of funnel.barrierCells) {
-            if (world.storageCount[i] >= (def.storageCapacity || STORAGE_CAPACITY)) break;
+            if (world.storageCount[i] >= COLLECTOR_CAPACITY) break;
             for (let depth = 1; depth <= STORAGE_SUCTION_DEPTH; depth++) {
                 const sourceX = barrier.x - funnel.frontX * depth;
                 const sourceY = barrier.y - funnel.frontY * depth;
                 if (!inBounds(sourceX, sourceY)) break;
-
                 const source = index(sourceX, sourceY);
                 const particle = DEFS[world.type[source]];
                 if (!particle) continue;
-
-                // Suction never reaches through an unacceptable particle.
-                // It stays against the virtual wall and behaves normally
-                // under gravity and wind while also shielding anything behind
-                // it from being collected through the blockage.
-                if (!storageAccepts(def, particle) ||
+                if (!collectorAccepts(particle) ||
                     (world.storageType[i] !== EMPTY && world.storageType[i] !== particle.id) ||
-                    world.storageCount[i] >= (def.storageCapacity || STORAGE_CAPACITY)) {
-                    break;
-                }
-
+                    world.storageCount[i] >= COLLECTOR_CAPACITY) break;
                 world.storageType[i] = particle.id;
                 world.storageCount[i]++;
                 removeParticle(source);
@@ -4144,6 +5042,26 @@ export function getTubingFlows() {
 function buildTubingComponents() {
     const visited = new Uint8Array(world.type.length);
     const components = [];
+    // A route attaches only where a connector physically occupies the stable
+    // logical anchor. Broad pointer targets and visible port markers are UI
+    // affordances; neither creates a tubing connection by proximity.
+    const portForTubeCell = new Map();
+    for (let machine = 0; machine < world.type.length; machine++) {
+        if (!isTubingEndpoint(DEFS[world.type[machine]])) continue;
+        for (const port of machinePortDescriptors(machine)) {
+                if (!portAcceptsMaterial(port, DEFS.findIndex(def => !!def?.tubing))) continue;
+            const attach = cell => {
+                const tubeCell = index(cell.x, cell.y);
+                let matches = portForTubeCell.get(tubeCell);
+                if (!matches) portForTubeCell.set(tubeCell, matches = []);
+                if (!matches.some(match => match.machine === machine && match.port.id === port.id)) {
+                    matches.push({ machine, port });
+                }
+            };
+            attach(port.connectionCell);
+            for (const cell of legacyPortCells(machine, port)) attach(cell);
+        }
+    }
 
     for (let start = 0; start < world.type.length; start++) {
         if (visited[start] || !DEFS[world.type[start]]?.tubing) continue;
@@ -4168,36 +5086,20 @@ function buildTubingComponents() {
         }
 
         const attachments = new Map();
+        const portAttachments = new Map();
         for (const tube of cells) {
-            const x = tube % COLS;
-            const y = Math.floor(tube / COLS);
-            const contacts = [];
-            for (const [dx, dy] of TUBING_NEIGHBOURS) {
-                const nx = x + dx;
-                const ny = y + dy;
-                if (!inBounds(nx, ny)) continue;
-                const machine = index(nx, ny);
-                const def = DEFS[world.type[machine]];
-                if (isTubingEndpoint(def)) contacts.push(machine);
-            }
-            for (let dy = -MIXER_LOGICAL_HALF_HEIGHT; dy <= MIXER_LOGICAL_HALF_HEIGHT; dy++) {
-                for (let dx = -MIXER_LOGICAL_HALF_WIDTH; dx <= MIXER_LOGICAL_HALF_WIDTH; dx++) {
-                    if (dx === 0 && dy === 0) continue;
-                    const nx = x + dx;
-                    const ny = y + dy;
-                    if (!inBounds(nx, ny)) continue;
-                    const machine = index(nx, ny);
-                    if (isMixerMachine(DEFS[world.type[machine]]) &&
-                        mixerContactSlot(machine, tube) >= 0) contacts.push(machine);
-                }
-            }
-            for (const machine of contacts) {
-                const machineContacts = attachments.get(machine);
+            for (const match of portForTubeCell.get(tube) || []) {
+                const machineContacts = attachments.get(match.machine);
                 if (machineContacts) machineContacts.push(tube);
-                else attachments.set(machine, [tube]);
+                else attachments.set(match.machine, [tube]);
+                let ports = portAttachments.get(match.machine);
+                if (!ports) portAttachments.set(match.machine, ports = new Map());
+                let connection = ports.get(match.port.id);
+                if (!connection) ports.set(match.port.id, connection = { port: match.port, contacts: [] });
+                connection.contacts.push(tube);
             }
         }
-        if (attachments.size >= 2) components.push({ cells, cellSet, attachments });
+        if (attachments.size >= 2) components.push({ cells, cellSet, attachments, portAttachments });
     }
     return components;
 }
@@ -4237,6 +5139,15 @@ function shortestTubingPath(cellSet, sourceContacts, destinationContacts) {
     for (let current = end; current >= 0; current = parents.get(current)) path.push(current);
     path.reverse();
     return path;
+}
+
+function componentPortConnection(component, machine, role) {
+    const ports = component.portAttachments?.get(machine);
+    if (!ports) return null;
+    for (const connection of ports.values()) {
+        if (connection.port.role === role) return connection;
+    }
+    return null;
 }
 
 function tubingRunWidth(cellSet, x, y, stepX, stepY) {
@@ -4290,92 +5201,47 @@ function tubingPathCapacity(path, cellSet, source, destination) {
     return Number.isFinite(narrowest) ? Math.max(1, narrowest) : 1;
 }
 
-function destinationCanAccept(destination, material) {
+function destinationCanAccept(destination, material, port = null) {
     const def = DEFS[world.type[destination]];
     if (isStorageMachine(def)) {
-        return storageAccepts(def, DEFS[material]) &&
+        return (!port || port.role === 'input') && storageAccepts(def, DEFS[material]) &&
             world.storageCount[destination] < (def.storageCapacity || STORAGE_CAPACITY) &&
             (world.storageType[destination] === EMPTY || world.storageType[destination] === material);
     }
-    if (isVentMachine(def)) {
-        const releaseEnabled = world.machineSetting[destination] !== 0;
-        return (world.storageCount[destination] < VENT_CAPACITY || releaseEnabled) &&
+    if (isSprinklerMachine(def)) {
+        if (port && port.id !== 'tubing-in') return false;
+        const releaseEnabled = sprinklerReleaseSetting(destination);
+        return (world.storageCount[destination] < SPRINKLER_CAPACITY || releaseEnabled) &&
             (world.storageType[destination] === EMPTY || world.storageType[destination] === material);
     }
-    if (isMixerMachine(def)) return mixerInputCanAccept(destination, 0, material) ||
-        mixerInputCanAccept(destination, 1, material);
+    if (isMixerMachine(def)) {
+        if (port?.id === 'input-a') return mixerInputCanAccept(destination, 0, material);
+        if (port?.id === 'input-b') return mixerInputCanAccept(destination, 1, material);
+        return !port && (mixerInputCanAccept(destination, 0, material) ||
+            mixerInputCanAccept(destination, 1, material));
+    }
+    if (isSplitterMachine(def)) {
+        if (port && port.id !== 'input') return false;
+        const particle = DEFS[material];
+        const supported = particle && (particle.category === 'powder' || particle.category === 'liquid' ||
+            (particle.category === 'gas' && particle.emit <= 0));
+        return !!supported && world.storageCount[destination] < STORAGE_CAPACITY &&
+            (world.storageType[destination] === EMPTY || world.storageType[destination] === material);
+    }
     return false;
-}
-
-function mixerSourceMaterial(i) {
-        const preferred = world.mixerOutputNext[i] & 1;
-    if (preferred === 0 && world.mixerOutputCountA[i] > 0) return world.mixerInputTypeA[i];
-    if (preferred === 1 && world.mixerOutputCountB[i] > 0) return world.mixerInputTypeB[i];
-    if (world.mixerOutputCountA[i] > 0) return world.mixerInputTypeA[i];
-    if (world.mixerOutputCountB[i] > 0) return world.mixerInputTypeB[i];
-    return EMPTY;
-}
-
-function mixerSourceCount(i, material) {
-    return material === world.mixerInputTypeA[i] ? world.mixerOutputCountA[i] : world.mixerOutputCountB[i];
-}
-
-function consumeMixerOutput(i, material) {
-    if (material === world.mixerInputTypeA[i]) world.mixerOutputCountA[i]--;
-    else world.mixerOutputCountB[i]--;
-    resetEmptyMixer(i);
 }
 
 function destinationSpace(destination) {
     const def = DEFS[world.type[destination]];
-    const capacity = isStorageMachine(def) ? (def.storageCapacity || STORAGE_CAPACITY) : VENT_CAPACITY;
+    const capacity = isStorageMachine(def) ? (def.storageCapacity || STORAGE_CAPACITY)
+        : isCollectorMachine(def) ? COLLECTOR_CAPACITY
+            : isSplitterMachine(def) ? STORAGE_CAPACITY : SPRINKLER_CAPACITY;
     return Math.max(0, capacity - world.storageCount[destination]);
 }
 
 function receiveTubingMaterial(destination, material) {
     world.storageType[destination] = material;
     world.storageCount[destination]++;
-}
-
-function mixerSlotForContact(machine, tubeCell) {
-    const mx = machine % COLS;
-    const my = Math.floor(machine / COLS);
-    const tx = tubeCell % COLS;
-    const ty = Math.floor(tubeCell / COLS);
-    return tx < mx ? 0 : 1;
-}
-
-function mixerPortDistance(machine, tubeCell, slot) {
-    const mx = machine % COLS;
-    const my = Math.floor(machine / COLS);
-    const tx = tubeCell % COLS;
-    const ty = Math.floor(tubeCell / COLS);
-    const portX = mx + (slot === 0 ? -4 : 4);
-    const portY = my - 3;
-    return Math.abs(tx - portX) + Math.abs(ty - portY);
-}
-
-function mixerContactSlot(machine, tubeCell) {
-    const mx = machine % COLS;
-    const my = Math.floor(machine / COLS);
-    const tx = tubeCell % COLS;
-    const ty = Math.floor(tubeCell / COLS);
-    const dx = tx - mx;
-    const dy = ty - my;
-    if (Math.abs(dx) > MIXER_LOGICAL_HALF_WIDTH ||
-        Math.abs(dy) > MIXER_LOGICAL_HALF_HEIGHT || (dx === 0 && dy === 0)) {
-        return -1;
-    }
-
-    // Any tubing cell touching the invisible 64px footprint is a valid input.
-    // Keep the old corner-port distance as a tie-breaker for cells near the
-    // upper inlet positions, then use the footprint side for all other cells.
-    const leftDistance = mixerPortDistance(machine, tubeCell, 0);
-    const rightDistance = mixerPortDistance(machine, tubeCell, 1);
-    if (Math.min(leftDistance, rightDistance) <= 1) {
-        return leftDistance <= rightDistance ? 0 : 1;
-    }
-    return dx < 0 ? 0 : 1;
 }
 
 function mixerSlotState(machine, slot) {
@@ -4398,10 +5264,6 @@ function receiveMixerMaterial(machine, slot, material) {
 
 function mixerOutputTotal(i) {
     return world.mixerOutputCountA[i] + world.mixerOutputCountB[i];
-}
-
-function mixerOutputType(i, material) {
-    return material === world.mixerInputTypeA[i] ? world.mixerOutputCountA[i] : world.mixerOutputCountB[i];
 }
 
 function receiveMixerOutput(i, slot) {
@@ -4574,112 +5436,167 @@ function updateMixers() {
 
 function updateTubingFlows() {
     tubingFlows = [];
-    const sourceBins = [];
-    for (let i = 0; i < world.type.length; i++) {
-        if (isStorageMachine(DEFS[world.type[i]]) && world.storageCount[i] > 0) sourceBins.push(i);
-    }
-    if (sourceBins.length === 0) return;
+    const sourceMachines = [];
+    const components = buildTubingComponents();
+    const hasSourceInventory = machine =>
+        (isStorageMachine(DEFS[world.type[machine]]) || isSplitterMachine(DEFS[world.type[machine]]) ||
+            isCollectorMachine(DEFS[world.type[machine]])) && world.storageCount[machine] > 0;
+    const sourceMaterial = machine => world.storageType[machine];
+    const sourceCount = machine => world.storageCount[machine];
+    for (let i = 0; i < world.type.length; i++) if (hasSourceInventory(i)) sourceMachines.push(i);
 
+    const routes = [];
+    for (const component of components) {
+        if (component.attachments.size !== 2) continue;
+        const endpoints = [...component.attachments.keys()];
+        let route = null;
+        for (const source of endpoints) {
+            const destination = endpoints[0] === source ? endpoints[1] : endpoints[0];
+            const sourcePort = componentPortConnection(component, source, 'output');
+            const destinationPort = componentPortConnection(component, destination, 'input');
+            if (sourcePort && destinationPort) {
+                route = { component, source, destination, sourcePort, destinationPort };
+                break;
+            }
+        }
+        if (!route) continue;
+        route.path = shortestTubingPath(component.cellSet, route.sourcePort.contacts,
+            route.destinationPort.contacts);
+        if (!route.path) continue;
+        route.width = tubingPathCapacity(route.path, component.cellSet, route.source, route.destination);
+        route.tubingRate = route.width * 10;
+        routes.push(route);
+    }
+
+    // The splitter's nominal rate comes from its attached incoming line.
+    // For a prefilled buffer with no active inlet route, use one output line's
+    // capacity as the nominal total rather than multiplying by branch count.
+    // Buffering keeps excess material safe if an output is slower or blocked.
+    const splitterInputRate = new Map();
+    const splitterMaterial = new Map();
+    for (const route of routes) {
+        if (!isSplitterMachine(DEFS[world.type[route.destination]]) ||
+            !hasSourceInventory(route.source)) continue;
+        const material = sourceMaterial(route.source);
+        if (!destinationCanAccept(route.destination, material, route.destinationPort.port)) continue;
+        splitterInputRate.set(route.destination, Math.max(
+            splitterInputRate.get(route.destination) || 0, route.tubingRate));
+        splitterMaterial.set(route.destination, material);
+    }
     const activeSources = new Set();
     const claimedSources = new Set();
-    for (const component of buildTubingComponents()) {
-        // A tube has a meaningful direction only when it runs between exactly
-        // two machines. Branches must be completed into a separate run rather
-        // than silently choosing an arbitrary output.
-        if (component.attachments.size !== 2) continue;
-        const endpoints = [...component.attachments.keys()].sort((a, b) => a - b);
-        for (const source of endpoints) {
-            if (claimedSources.has(source) || !sourceBins.includes(source)) continue;
-            const mixerSource = false;
-            const material = world.storageType[source];
-            if (material === EMPTY) continue;
-            const destination = endpoints[0] === source ? endpoints[1] : endpoints[0];
-            const destinationDef = DEFS[world.type[destination]];
-            const destinationContacts = component.attachments.get(destination);
-            const mixerSlot = isMixerMachine(destinationDef)
-                ? (destinationContacts.map(tube => mixerContactSlot(destination, tube))
-                    .find(slot => slot >= 0) ?? mixerSlotForContact(destination, destinationContacts[0]))
-                : -1;
-            const accepts = isMixerMachine(destinationDef)
-                ? mixerInputCanAccept(destination, mixerSlot, material)
-                : destinationCanAccept(destination, material);
-            if (!accepts) continue;
+    for (const route of routes) {
+        const { component, source, destination, sourcePort, destinationPort, path, width, tubingRate } = route;
+        if (!hasSourceInventory(source)) continue;
+        if (claimedSources.has(source) && !isSplitterMachine(DEFS[world.type[source]])) continue;
+        const material = sourceMaterial(source);
+        if (material === EMPTY || !destinationCanAccept(destination, material, destinationPort.port)) continue;
+        const destinationDef = DEFS[world.type[destination]];
+        const destinationX = destination % COLS;
+        const destinationY = Math.floor(destination / COLS);
+        const sprinklerBackpressure = isSprinklerMachine(destinationDef) &&
+            isSprinklerReleaseEnabled(destinationX, destinationY) &&
+            world.storageCount[destination] >= SPRINKLER_CAPACITY - 1;
+        let rate = tubingRate;
+        if (isMixerMachine(destinationDef)) rate = Math.min(rate, MIXER_INPUT_RATE);
+        if (sprinklerBackpressure) rate = Math.min(rate,
+            getSprinklerReleaseRate(destinationX, destinationY));
+        if (isCollectorMachine(DEFS[world.type[source]])) rate = Math.min(rate, COLLECTOR_OUTPUT_RATE);
+        if (isSplitterMachine(DEFS[world.type[source]])) {
+            const incomingRate = splitterInputRate.get(source) || tubingRate;
+            // The machine always divides by its two physical outlets. If one
+            // route is absent or blocked, its half-rate remains buffered.
+            rate = Math.min(rate, incomingRate / SPLITTER_OUTPUT_COUNT);
+        }
+        if (rate <= 0) continue;
 
-            const path = shortestTubingPath(component.cellSet, component.attachments.get(source),
-                component.attachments.get(destination));
-            if (!path) continue;
-            const width = tubingPathCapacity(path, component.cellSet, source, destination);
-            const tubingRate = width * 10;
-            const destinationX = destination % COLS;
-            const destinationY = Math.floor(destination / COLS);
-            // An active Vent accepts tubing flow while it has room. Once its
-            // buffer reaches capacity, its release setting becomes the
-            // downstream back-pressure limit. This lets a faster tube fill a
-            // vent first, while a faster vent simply drains at the tube rate.
-            const ventBackpressure = isVentMachine(destinationDef) &&
-                isVentReleaseEnabled(destinationX, destinationY) &&
-                world.storageCount[destination] >= VENT_CAPACITY - 1;
-            const rate = isMixerMachine(destinationDef)
-                ? Math.min(tubingRate, MIXER_INPUT_RATE)
-                : ventBackpressure
-                    ? Math.min(tubingRate, getVentReleaseRate(destinationX, destinationY))
-                    : tubingRate;
-            if (rate <= 0) continue;
-
-            activeSources.add(source);
-            claimedSources.add(source);
+        activeSources.add(source);
+        claimedSources.add(source);
+        let remainder;
+        let flowField = null;
+        if (isSplitterMachine(DEFS[world.type[source]])) {
+            flowField = sourcePort.port.id === 'output-a' ? 'splitterOutputFlowA' : 'splitterOutputFlowB';
+            world[flowField][source] = Math.min(1,
+                world[flowField][source] + rate / SIMULATION_STEPS_PER_SECOND);
+            remainder = world[flowField][source];
+        } else {
             world.storageFlowRemainder[source] += rate / SIMULATION_STEPS_PER_SECOND;
-            const transferred = Math.min(
-                mixerSource ? mixerSourceCount(source, material) : world.storageCount[source],
-                isMixerMachine(destinationDef)
-                    ? MIXER_INPUT_CAPACITY - mixerSlotState(destination, mixerSlot).count[destination]
-                    : destinationSpace(destination),
-                Math.floor(world.storageFlowRemainder[source])
-            );
-            if (transferred > 0) {
-                world.storageFlowRemainder[source] -= transferred;
-                if (mixerSource) consumeMixerOutput(source, material);
-                else world.storageCount[source] -= transferred;
-                if (mixerSource && transferred > 1) {
-                    for (let item = 1; item < transferred; item++) consumeMixerOutput(source, material);
-                }
-                for (let item = 0; item < transferred; item++) {
-                    if (isMixerMachine(destinationDef)) receiveMixerMaterial(destination, mixerSlot, material);
-                    else receiveTubingMaterial(destination, material);
-                }
-                if (!mixerSource && world.storageCount[source] === 0) {
-                    world.storageType[source] = EMPTY;
+            remainder = world.storageFlowRemainder[source];
+        }
+        const available = sourceCount(source);
+        const destinationCapacity = isMixerMachine(destinationDef)
+            ? MIXER_INPUT_CAPACITY - mixerSlotState(destination, destinationPort.port.id === 'input-a' ? 0 : 1).count[destination]
+            : destinationSpace(destination);
+        const transferred = Math.min(available, destinationCapacity, Math.floor(remainder));
+        if (transferred > 0) {
+            if (flowField) world[flowField][source] -= transferred;
+            else world.storageFlowRemainder[source] -= transferred;
+            world.storageCount[source] -= transferred;
+            for (let item = 0; item < transferred; item++) {
+                if (isMixerMachine(destinationDef)) {
+                    receiveMixerMaterial(destination, destinationPort.port.id === 'input-a' ? 0 : 1, material);
+                } else receiveTubingMaterial(destination, material);
+            }
+            if (world.storageCount[source] === 0) {
+                world.storageType[source] = EMPTY;
+                if (!isSplitterMachine(DEFS[world.type[source]])) {
                     world.storageFlowRemainder[source] = 0;
                 }
             }
-            if ((mixerSource ? mixerOutputTotal(source) : world.storageCount[source]) > 0) {
-                tubingFlows.push({
-                    source, destination, material, rate, width,
-                    // The pulse renderer follows this ordered, physical route
-                    // from the source contact to the destination contact. It
-                    // uses the unmodified cell path, never an inferred visual
-                    // centreline that could cut across a painted bend.
-                    path,
-                    cells: component.cells
-                });
-            }
-            break;
+        }
+        if (sourceCount(source, material) > 0 ||
+            (isSplitterMachine(DEFS[world.type[source]]) && splitterMaterial.has(source))) {
+            tubingFlows.push({ source, destination, material, rate, width,
+                path, cells: component.cells });
         }
     }
-    for (const source of sourceBins) {
+    for (const source of sourceMachines) {
         if (!activeSources.has(source)) world.storageFlowRemainder[source] = 0;
     }
 }
 
-// A Vent uses the same compact type/count inventory as a bin. With release on
-// it places one stored particle in the canvas cell below each frame; with
-// release off it simply retains material until its 100-particle buffer is full.
-function updateVents(accrueRate = true) {
+// A Sprinkler uses the same compact type/count inventory as a bin. With
+// Release on and Drain Mode on, it uses the existing downward outlet; with
+// Drain Mode off, it projects the stored material through seven spray rays.
+function updateSprinklers(accrueRate = true) {
     for (let i = 0; i < world.type.length; i++) {
-        if (!isVentMachine(DEFS[world.type[i]]) || world.machineSetting[i] === 0 ||
+        if (!isSprinklerMachine(DEFS[world.type[i]]) || !sprinklerReleaseSetting(i) ||
             world.storageCount[i] === 0) continue;
+        const x = i % COLS;
+        const y = Math.floor(i / COLS);
+        if (!sprinklerDrainModeSetting(i)) {
+            const material = world.storageType[i];
+            if (material === EMPTY) continue;
+            if (accrueRate) {
+                const sharePerFrame = (getSprinklerReleaseRate(x, y) / 6) * (6 / 7) /
+                    SIMULATION_STEPS_PER_SECOND;
+                for (const field of SPRINKLER_SPRAY_FIELDS) {
+                    world[field][i] = Math.min(1, world[field][i] + sharePerFrame);
+                }
+            }
+            for (let stream = 0; stream < SPRINKLER_SPRAY_FIELDS.length; stream++) {
+                if (world.storageCount[i] === 0) break;
+                const field = SPRINKLER_SPRAY_FIELDS[stream];
+                if (world[field][i] < 1) continue;
+                const clockPosition = SPRINKLER_SPRAY_CLOCK_POSITIONS[stream];
+                const [offsetX, offsetY] = SPRINKLER_SPRAY_OFFSETS[stream];
+                const target = { x: x + offsetX, y: y + offsetY };
+                if (!inBounds(target.x, target.y) || storageIntakeIsWall(target.x, target.y)) continue;
+                const output = index(target.x, target.y);
+                if (world.type[output] !== EMPTY) continue;
+                setCell(target.x, target.y, material);
+                if (clockPosition !== 6) {
+                    world.sprinklerLaunchDirection[output] = clockPosition;
+                    world.sprinklerLaunchAge[output] = 0;
+                }
+                world[field][i] -= 1;
+                world.storageCount[i]--;
+                if (world.storageCount[i] === 0) world.storageType[i] = EMPTY;
+            }
+            continue;
+        }
         if (accrueRate) {
-            const releaseRate = getVentReleaseRate(i % COLS, Math.floor(i / COLS));
+            const releaseRate = getSprinklerReleaseRate(i % COLS, Math.floor(i / COLS));
             // Keep at most one ready particle buffered. This preserves the
             // requested average rate without releasing a burst after an output
             // cell has been blocked for a while.
@@ -4687,9 +5604,7 @@ function updateVents(accrueRate = true) {
                 world.storageFlowRemainder[i] + releaseRate / SIMULATION_STEPS_PER_SECOND);
         }
         if (world.storageFlowRemainder[i] < 1) continue;
-        const x = i % COLS;
-        const y = Math.floor(i / COLS);
-        // Release below the full 30px Vent icon. The cell immediately below
+        // Release below the full 64px Sprinkler icon. The cell immediately below
         // the logical anchor is still covered by the drawn housing.
         const outputY = y + 2;
         if (!inBounds(x, outputY) || storageIntakeIsWall(x, outputY)) continue;
@@ -4712,32 +5627,32 @@ function refreshStorageFunnelMachines() {
     } else {
         storageBarrierMask.fill(0);
     }
-
+    if (!collectorSealMask || collectorSealMask.length !== world.type.length) {
+        collectorSealMask = new Uint8Array(world.type.length);
+    } else {
+        collectorSealMask.fill(0);
+    }
+    if (!collectorRimMask || collectorRimMask.length !== world.type.length) {
+        collectorRimMask = new Uint8Array(world.type.length);
+    } else {
+        collectorRimMask.fill(0);
+    }
     for (let i = 0; i < world.type.length; i++) {
-        const def = DEFS[world.type[i]];
-        if (!isStorageMachine(def)) continue;
-
+        if (!isCollectorMachine(DEFS[world.type[i]])) continue;
         const x = i % COLS;
         const y = Math.floor(i / COLS);
-        const [frontX, frontY] = fanDirectionVector(world.data[i] & 7);
-        const directionLength = Math.hypot(frontX, frontY);
-        const rearUnitX = -frontX / directionLength;
-        const rearUnitY = -frontY / directionLength;
-        const tangentX = -frontY;
-        const tangentY = frontX;
-        const barrierCells = buildStorageBarrierCells(x, y, frontX, frontY);
+        const direction = world.data[i] & 7;
+        const [frontX, frontY] = fanDirectionVector(direction);
+        const geometry = collectorFunnelGeometry(frontX, frontY);
+        const barrierCells = buildCollectorBarrierCells(x, y, frontX, frontY);
         for (const cell of barrierCells) storageBarrierMask[cell.i] = 1;
-        storageFunnelMachines.push({
-            i, x, y,
-            frontX,
-            frontY,
-            rearUnitX,
-            rearUnitY,
-            tangentUnitX: tangentX / directionLength,
-            tangentUnitY: tangentY / directionLength,
-            barrierCells
-        });
+        for (const cell of buildCollectorShellCells(x, y, frontX, frontY)) {
+            collectorSealMask[cell.i] = 1;
+            if (cell.rim) collectorRimMask[cell.i] = 1;
+        }
+        storageFunnelMachines.push({ i, x, y, frontX, frontY, ...geometry, barrierCells });
     }
+    collectorMasksDirty = false;
 }
 
 function emitMachineProjectile(x, y, direction, def, targetTemp) {
@@ -4768,7 +5683,7 @@ export function isMachinePoweredAt(x, y) {
     if (!world || !inBounds(x, y)) return false;
     const i = index(x, y);
     const def = DEFS[world.type[i]];
-    if (isStorageMachine(def) || isVentMachine(def)) return true;
+    if (isStorageMachine(def) || isSprinklerMachine(def) || isCollectorMachine(def)) return true;
     return !!def?.machine && machineIsPowered(x, y, i);
 }
 

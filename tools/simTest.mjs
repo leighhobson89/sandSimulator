@@ -17,9 +17,9 @@ import {
     captureSimulationState, restoreSimulationState,
     applyWind, getWindTrails, decayWindTrails,
     setAmbientWindOn, isBreezeBlowing, isPowered, getStoredCharge,
-    getConnectedBatteryCharge, getStorageInventory, getVentInventory, getVentReleaseRate,
-    getVentTubingRate,
-    getTubingFlows, setVentReleaseEnabled, setVentReleaseRate, setRandomSeed,
+    getConnectedBatteryCharge, getStorageInventory, getSprinklerInventory, getSprinklerReleaseRate,
+    getSprinklerTubingRate,
+    getTubingFlows, setSprinklerReleaseEnabled, setSprinklerReleaseRate, setRandomSeed,
     getMixerInventory, setMixerReleaseEnabled, purgeMixerBin,
     getRandomSeed, EMPTY
 } from '../physics.js';
@@ -30,6 +30,7 @@ const defs = prepareDefinitions(json);
 
 const ID = {};
 defs.forEach((d, i) => { if (d && i > 0) ID[d.name] = i; });
+const SPRINKLER_ID = ID.Sprinkler;
 // ID 19 remains stable so old saves containing generic Seeds load as Grass Seeds.
 
 const COLS = 60;
@@ -76,6 +77,63 @@ function fillRect(x0, y0, w, h, id) {
     for (let y = y0; y < y0 + h; y++) {
         for (let x = x0; x < x0 + w; x++) setCell(x, y, id);
     }
+}
+
+function connectMachinePorts(source, destination, { sourcePortId = null, destinationPortId = null, width = 1 } = {}) {
+    if (typeof physics.getMachinePorts !== 'function') return [];
+    const sourcePorts = physics.getMachinePorts(source.x, source.y) || [];
+    const destinationPorts = physics.getMachinePorts(destination.x, destination.y) || [];
+    const from = sourcePorts.find(port => port.role === 'output' &&
+        (!sourcePortId || port.id === sourcePortId))?.connectionCell;
+    const to = destinationPorts.find(port => port.role === 'input' &&
+        (!destinationPortId || port.id === destinationPortId))?.connectionCell;
+    if (!from || !to) return [];
+
+    const key = (x, y) => `${x},${y}`;
+    const forbidden = new Set([
+        key(source.x, source.y), key(destination.x, destination.y),
+        ...sourcePorts.filter(port => port.connectionCell !== from)
+            .map(port => key(port.connectionCell.x, port.connectionCell.y)),
+        ...destinationPorts.filter(port => port.connectionCell !== to)
+            .map(port => key(port.connectionCell.x, port.connectionCell.y))
+    ]);
+    const startKey = key(from.x, from.y);
+    const targetKey = key(to.x, to.y);
+    const queue = [from];
+    const previous = new Map([[startKey, null]]);
+    for (let cursor = 0; cursor < queue.length && !previous.has(targetKey); cursor++) {
+        const cell = queue[cursor];
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+            const x = cell.x + dx;
+            const y = cell.y + dy;
+            if (x < 0 || y < 0 || x >= COLS || y >= ROWS) continue;
+            const nextKey = key(x, y);
+            if (previous.has(nextKey) || (forbidden.has(nextKey) && nextKey !== targetKey)) continue;
+            const type = typeAt(x, y);
+            if (type !== EMPTY && type !== ID.Tubing && nextKey !== targetKey) continue;
+            previous.set(nextKey, key(cell.x, cell.y));
+            queue.push({ x, y });
+        }
+    }
+    if (!previous.has(targetKey)) return [];
+
+    const path = [];
+    for (let current = targetKey; current; current = previous.get(current)) {
+        const [x, y] = current.split(',').map(Number);
+        path.push({ x, y });
+    }
+    path.reverse();
+    const radius = width >= 3 ? 1 : 0;
+    for (const cell of path) {
+        for (let dy = -radius; dy <= radius; dy++) for (let dx = -radius; dx <= radius; dx++) {
+            const x = cell.x + dx;
+            const y = cell.y + dy;
+            if (x < 0 || y < 0 || x >= COLS || y >= ROWS || forbidden.has(key(x, y))) continue;
+            const type = typeAt(x, y);
+            if (type === EMPTY || type === ID.Tubing) setCell(x, y, ID.Tubing);
+        }
+    }
+    return path;
 }
 
 // The height of the highest filled cell in a column, or -1 when it is empty.
@@ -207,7 +265,7 @@ function createSealedMetalFixture(materialId, waterContact) {
 }
 
 function runSealedWaterContactCorrosionRegression() {
-    console.log('\nSealed Water contact corrodes metal while a dry sealed control does not');
+    console.log('\nSealed Water contact corrodes metal within 1600 frames while a dry sealed control does not');
     const corrosionId = ID.Corrosion;
 
     if (![corrosionId, ID.Iron, ID.Water, ID.Wall].every(id => Number.isInteger(id) && id > 0)) {
@@ -218,14 +276,14 @@ function runSealedWaterContactCorrosionRegression() {
 
     physics.setRandomSource(() => 0);
     createSealedMetalFixture(ID.Iron, true);
-    run(800);
+    run(1600);
     const sealedWaterContactCorrosion = countOf(corrosionId);
     createSealedMetalFixture(ID.Iron, false);
-    run(800);
+    run(1600);
     const sealedDryControlCorrosion = countOf(corrosionId);
     check('cardinal Water contact corrodes sealed metal in low-humidity air',
         sealedWaterContactCorrosion > 0,
-        `${sealedWaterContactCorrosion} Corrosion cells after direct Water contact`);
+        `${sealedWaterContactCorrosion} Corrosion cells after 1600 frames of direct Water contact`);
     check('sealed dry metal without Water contact does not corrode',
         sealedDryControlCorrosion === 0,
         `${sealedDryControlCorrosion} Corrosion cells in dry control`);
@@ -892,8 +950,829 @@ function runFanWindScaleAlignmentRegression() {
     }
 }
 
+function runMachinePortsFlowRegressions() {
+    console.log('\nMachine ports, Sprinkler modes, and Splitter flow');
+    const portApiReady = typeof physics.getMachinePorts === 'function' &&
+        typeof physics.getMachinePortAt === 'function' &&
+        typeof physics.getMachinePortSnapTarget === 'function' &&
+        typeof physics.isDrainModeEnabled === 'function' &&
+        typeof physics.setDrainModeEnabled === 'function';
+    check('machine port and sprinkler APIs are available', portApiReady);
+    if (!portApiReady) return;
+
+    const portId = port => port.id ?? port.slot;
+    const machineId = name => ID[name];
+    const newWorld = () => { createWorld(COLS, ROWS); };
+    check('Sprinkler keeps legacy particle ID 52 under its new name',
+        SPRINKLER_ID === 52 && defs[52]?.name === 'Sprinkler',
+        `id ${SPRINKLER_ID}, definition ${defs[52]?.name}`);
+    check('new simulation states declare the Drain Mode encoding version',
+        captureSimulationState().sprinklerModeVersion === 2,
+        String(captureSimulationState().sprinklerModeVersion));
+    check('new simulation states declare the machine port layout version',
+        captureSimulationState().machinePortLayoutVersion === 2,
+        String(captureSimulationState().machinePortLayoutVersion));
+
+    newWorld();
+    setCell(30, 20, ID.Mixer);
+    const mixerPorts = physics.getMachinePorts(30, 20) || [];
+    const mixerInputs = mixerPorts.filter(port => port.role === 'input');
+    const mixerOutputs = mixerPorts.filter(port => port.role === 'output');
+    check('Mixer exposes two separate Tubing inputs and no Tubing output',
+        mixerInputs.length === 2 && mixerOutputs.length === 0 &&
+        mixerInputs.every(port => String(port.material).toLowerCase() === 'tubing'),
+        JSON.stringify(mixerPorts));
+    check('Mixer exposes two distinct stable connection anchors outside its logical center',
+        mixerPorts.length === 2 && mixerPorts.every(port => port.connectionCell &&
+            !(port.connectionCell.x === 30 && port.connectionCell.y === 20)) &&
+        new Set(mixerPorts.map(port => `${port.connectionCell.x},${port.connectionCell.y}`)).size === 2,
+        JSON.stringify(mixerPorts.map(port => ({ id: portId(port), anchor: port.connectionCell }))));
+
+    const mixerInput = mixerInputs[0];
+    const mixerCell = mixerInput?.connectionCell;
+    const compatibleTube = ID.Tubing;
+    const incompatibleCopper = ID.Copper ?? ID['Copper Wire'];
+    const resolvedMixerPort = mixerCell
+        ? physics.getMachinePortAt(mixerCell.x, mixerCell.y, compatibleTube) : null;
+    check('Mixer input resolves Tubing by its port target',
+        !!resolvedMixerPort && portId(resolvedMixerPort) === portId(mixerInput),
+        JSON.stringify(resolvedMixerPort));
+    check('Mixer input rejects Copper',
+        !!mixerCell && Number.isInteger(incompatibleCopper) &&
+        physics.getMachinePortAt(mixerCell.x, mixerCell.y, incompatibleCopper) === null);
+    const snapOrigin = mixerCell ? { x: mixerCell.x + 1, y: mixerCell.y } : null;
+    const snap = snapOrigin
+        ? physics.getMachinePortSnapTarget(snapOrigin.x, snapOrigin.y, compatibleTube) : null;
+    check('a nearby compatible Mixer drag snaps to its free target',
+        !!snap && !!snapOrigin && (snap.portId ?? portId(snap)) === portId(mixerInput) &&
+        snap.x === mixerCell.x && snap.y === mixerCell.y &&
+        getWorld().type[index(snapOrigin.x, snapOrigin.y)] === EMPTY,
+        JSON.stringify({ from: snapOrigin, to: snap }));
+    if (mixerCell) setCell(mixerCell.x, mixerCell.y, compatibleTube);
+    check('Tubing at a Mixer connection anchor resolves physically while Copper remains incompatible',
+        !!mixerCell && portId(physics.getMachinePortAt(mixerCell.x, mixerCell.y, compatibleTube)) ===
+            portId(mixerInput) && physics.getMachinePortAt(mixerCell.x, mixerCell.y, incompatibleCopper) === null,
+        JSON.stringify({ anchor: mixerCell, tube: getWorld().type[index(mixerCell.x, mixerCell.y)] }));
+
+    const storageCases = [
+        { name: 'Powder Storage Bin', accepts: ID.Sand, rejects: ID.Water },
+        { name: 'Liquid Storage Bin', accepts: ID.Water, rejects: ID.Sand },
+        { name: 'Gas Storage Bin', accepts: ID.Steam, rejects: ID.Fire }
+    ];
+    for (let row = 0; row < storageCases.length; row++) {
+        const item = storageCases[row];
+        newWorld();
+        setCell(30, 20, machineId(item.name));
+        const ports = physics.getMachinePorts(30, 20) || [];
+        const intake = ports.find(port => port.role === 'input');
+        const output = ports.find(port => port.role === 'output');
+        const intakeCell = intake?.connectionCell;
+        const outputCell = output?.connectionCell;
+        check(`${item.name} exposes a Tubing input for its ${item.name.split(' ')[0].toLowerCase()} payload family`,
+            !!intakeCell && String(intake.material).toLowerCase() === item.name.split(' ')[0].toLowerCase() &&
+            physics.getMachinePortAt(intakeCell.x, intakeCell.y, ID.Tubing)?.id === intake.id &&
+            physics.getMachinePortAt(intakeCell.x, intakeCell.y, incompatibleCopper) === null,
+            JSON.stringify(ports));
+        check(`${item.name} exposes a separate Tubing output`,
+            !!outputCell && output?.material === 'Tubing' &&
+            physics.getMachinePortAt(outputCell.x, outputCell.y, ID.Tubing)?.id === output.id &&
+            ports.filter(port => port !== output).every(port =>
+                port.connectionCell.x !== output.connectionCell.x ||
+                port.connectionCell.y !== output.connectionCell.y),
+            JSON.stringify(ports));
+    }
+
+    const collectorId = machineId('Collector');
+    check('Collector definition is registered', Number.isInteger(collectorId), String(collectorId));
+    if (Number.isInteger(collectorId)) {
+        newWorld();
+        setCell(30, 20, collectorId);
+        const collectorPorts = physics.getMachinePorts(30, 20) || [];
+        const collectorOutput = collectorPorts[0];
+        check('Collector exposes one Tubing output and no world-material port',
+            collectorPorts.length === 1 && collectorOutput.role === 'output' &&
+            collectorOutput.material === 'Tubing' &&
+            physics.getMachinePortAt(collectorOutput.connectionCell.x,
+                collectorOutput.connectionCell.y, ID.Tubing)?.id === collectorOutput.id,
+            JSON.stringify(collectorPorts));
+        const defaultOutput = collectorOutput?.connectionCell;
+        getWorld().data[index(30, 20)] = 2;
+        const rotatedOutput = physics.getMachinePorts(30, 20)[0]?.connectionCell;
+        check('Collector rotates its Tubing output with its machine direction',
+            !!defaultOutput && !!rotatedOutput &&
+            (defaultOutput.x !== rotatedOutput.x || defaultOutput.y !== rotatedOutput.y),
+            JSON.stringify({ defaultOutput, rotatedOutput }));
+
+        const collectedKinds = [
+            { label: 'powder', material: ID.Ash },
+            { label: 'liquid', material: ID.Water },
+            { label: 'gas', material: ID.Steam },
+            { label: 'flaming gas', material: ID.Fire }
+        ];
+        for (const item of collectedKinds) {
+            newWorld();
+            setCell(30, 20, collectorId);
+            getWorld().data[index(30, 20)] = 0;
+            setCell(28, 20, item.material);
+            setCell(27, 20, item.material);
+            stepSimulation();
+            const inventory = getStorageInventory(30, 20);
+            check(`Collector world suction accepts ordinary ${item.label} material`,
+                inventory?.type === item.material && inventory.count === 2,
+                JSON.stringify(inventory));
+        }
+
+        newWorld();
+        setCell(30, 20, collectorId);
+        const lockedCollectorIndex = index(30, 20);
+        getWorld().storageType[lockedCollectorIndex] = ID.Ash;
+        getWorld().storageCount[lockedCollectorIndex] = 4;
+        setCell(28, 20, ID.Water);
+        stepSimulation();
+        check('Collector keeps one exact inventory type and leaves a different material in the world',
+            getStorageInventory(30, 20)?.type === ID.Ash &&
+            getStorageInventory(30, 20)?.count === 4 && countOf(ID.Water) > 0,
+            JSON.stringify({ inventory: getStorageInventory(30, 20), water: countOf(ID.Water) }));
+
+        newWorld();
+        setCell(30, 20, collectorId);
+        const cappedCollectorIndex = index(30, 20);
+        getWorld().storageType[cappedCollectorIndex] = ID.Ash;
+        getWorld().storageCount[cappedCollectorIndex] = 99;
+        setCell(28, 20, ID.Ash);
+        stepSimulation();
+        check('Collector inventory stops at its 100-unit capacity',
+            getStorageInventory(30, 20)?.type === ID.Ash &&
+            getStorageInventory(30, 20)?.count === 100,
+            JSON.stringify(getStorageInventory(30, 20)));
+
+        const buildStraightCollectorRoute = (collector, receiver, width = 1) => {
+            const output = physics.getMachinePorts(collector.x, collector.y)
+                .find(port => port.role === 'output')?.connectionCell;
+            const input = physics.getMachinePorts(receiver.x, receiver.y)
+                .find(port => port.role === 'input')?.connectionCell;
+            if (!output || !input || output.y < input.y) return null;
+            const turnX = input.x - 2;
+            const path = [];
+            for (let x = output.x; x <= turnX; x++) path.push({ x, y: output.y });
+            for (let y = output.y - 1; y >= input.y; y--) path.push({ x: turnX, y });
+            for (let x = turnX + 1; x <= input.x; x++) path.push({ x, y: input.y });
+            const radius = Math.floor(Math.max(1, width) / 2);
+            for (const cell of path) {
+                for (let oy = -radius; oy <= radius; oy++) for (let ox = -radius; ox <= radius; ox++) {
+                    const x = cell.x + ox;
+                    const y = cell.y + oy;
+                    if (x < 0 || y < 0 || x >= COLS || y >= ROWS ||
+                        (x === collector.x && y === collector.y) ||
+                        (x === receiver.x && y === receiver.y)) continue;
+                    setCell(x, y, ID.Tubing);
+                }
+            }
+            return { output, input, path };
+        };
+
+        newWorld();
+        const collector = { x: 20, y: 20 };
+        const sprinklerReceiver = { x: 35, y: 20 };
+        setCell(collector.x, collector.y, collectorId);
+        setCell(sprinklerReceiver.x, sprinklerReceiver.y, SPRINKLER_ID);
+        const collectorRoute = buildStraightCollectorRoute(collector, sprinklerReceiver);
+        const collectorIndex = index(collector.x, collector.y);
+        const sprinklerIndex = index(sprinklerReceiver.x, sprinklerReceiver.y);
+        getWorld().storageType[collectorIndex] = ID.Ash;
+        getWorld().storageCount[collectorIndex] = 100;
+        physics.setSprinklerReleaseEnabled(sprinklerReceiver.x, sprinklerReceiver.y, false);
+        stepSimulation();
+        const collectorFlow = getTubingFlows().find(flow =>
+            flow.source === collectorIndex && flow.destination === sprinklerIndex && flow.material === ID.Ash);
+        check('one-cell Collector Tubing route reports its 10 units-per-second capacity',
+            !!collectorRoute && collectorFlow?.rate === 10, JSON.stringify(getTubingFlows()));
+        run(60);
+        check('Collector transfers material to a compatible Tubing receiver',
+            getStorageInventory(collector.x, collector.y)?.count === 90 &&
+            getSprinklerInventory(sprinklerReceiver.x, sprinklerReceiver.y)?.type === ID.Ash &&
+            getSprinklerInventory(sprinklerReceiver.x, sprinklerReceiver.y)?.count === 10,
+            JSON.stringify({ source: getStorageInventory(collector.x, collector.y),
+                receiver: getSprinklerInventory(sprinklerReceiver.x, sprinklerReceiver.y) }));
+
+        for (const [width, expectedRate] of [[3, 30], [5, 30]]) {
+            newWorld();
+            const wideCollector = { x: 20, y: 20 };
+            const wideReceiver = { x: 35, y: 20 };
+            setCell(wideCollector.x, wideCollector.y, collectorId);
+            setCell(wideReceiver.x, wideReceiver.y, SPRINKLER_ID);
+            buildStraightCollectorRoute(wideCollector, wideReceiver, width);
+            const wideCollectorIndex = index(wideCollector.x, wideCollector.y);
+            getWorld().storageType[wideCollectorIndex] = ID.Ash;
+            getWorld().storageCount[wideCollectorIndex] = 100;
+            physics.setSprinklerReleaseEnabled(wideReceiver.x, wideReceiver.y, false);
+            stepSimulation();
+            const route = getTubingFlows().find(flow => flow.source === wideCollectorIndex &&
+                flow.destination === index(wideReceiver.x, wideReceiver.y) && flow.material === ID.Ash);
+            check(`Collector ${width}-wide route is capped at 30 units per second`,
+                route?.rate === expectedRate, JSON.stringify(getTubingFlows()));
+        }
+
+        newWorld();
+        setCell(30, 20, collectorId);
+        const heldCollector = index(30, 20);
+        getWorld().storageType[heldCollector] = ID.Water;
+        getWorld().storageCount[heldCollector] = 9;
+        run(60);
+        check('Collector retains inventory when there is no compatible output route',
+            getStorageInventory(30, 20)?.type === ID.Water &&
+            getStorageInventory(30, 20)?.count === 9 && getTubingFlows().length === 0,
+            JSON.stringify(getStorageInventory(30, 20)));
+
+        newWorld();
+        const incompatibleCollector = { x: 20, y: 20 };
+        const powderReceiver = { x: 35, y: 20 };
+        setCell(incompatibleCollector.x, incompatibleCollector.y, collectorId);
+        setCell(powderReceiver.x, powderReceiver.y, machineId('Powder Storage Bin'));
+        buildStraightCollectorRoute(incompatibleCollector, powderReceiver);
+        const incompatibleIndex = index(incompatibleCollector.x, incompatibleCollector.y);
+        const powderIndex = index(powderReceiver.x, powderReceiver.y);
+        getWorld().storageType[incompatibleIndex] = ID.Water;
+        getWorld().storageCount[incompatibleIndex] = 9;
+        stepSimulation();
+        run(60);
+        check('Collector retains material when the connected receiver rejects its category',
+            getStorageInventory(incompatibleCollector.x, incompatibleCollector.y)?.count === 9 &&
+            getStorageInventory(powderReceiver.x, powderReceiver.y)?.count === 0 &&
+            !getTubingFlows().some(flow => flow.source === incompatibleIndex && flow.destination === powderIndex),
+            JSON.stringify(getTubingFlows()));
+    }
+
+    const storageWorldMaterials = [
+        { name: 'Powder Storage Bin', material: ID.Ash },
+        { name: 'Liquid Storage Bin', material: ID.Water },
+        { name: 'Gas Storage Bin', material: ID.Steam }
+    ];
+    for (const item of storageWorldMaterials) {
+        newWorld();
+        const x = 30;
+        const y = 20;
+        setCell(x, y, machineId(item.name));
+        getWorld().data[index(x, y)] = 3;
+        setCell(x, y - 2, item.material);
+        setCell(x, y - 3, item.material);
+        stepSimulation();
+        check(`${item.name} does not collect loose world material`,
+            getStorageInventory(x, y)?.count === 0,
+            JSON.stringify(getStorageInventory(x, y)));
+    }
+
+    newWorld();
+    const sprinklerX = 30;
+    const sprinklerY = 20;
+    setCell(sprinklerX, sprinklerY, SPRINKLER_ID);
+    const sprinklerPorts = physics.getMachinePorts(sprinklerX, sprinklerY) || [];
+    const sprinklerInput = sprinklerPorts.find(port => port.role === 'input');
+    const sprinklerInputCell = sprinklerInput?.connectionCell;
+    check('Sprinkler exposes one Tubing input and no Tubing outlet',
+        sprinklerPorts.length === 1 && sprinklerInput?.material === 'Tubing' &&
+        physics.getMachinePortAt(sprinklerInputCell?.x, sprinklerInputCell?.y, ID.Tubing)?.id ===
+            sprinklerInput?.id &&
+        physics.getMachinePortAt(sprinklerInputCell?.x, sprinklerInputCell?.y, ID.Copper) === null,
+        JSON.stringify(sprinklerPorts));
+    const sprinklerIndex = index(sprinklerX, sprinklerY);
+    getWorld().storageType[sprinklerIndex] = ID.Water;
+    getWorld().storageCount[sprinklerIndex] = 1000;
+    setSprinklerReleaseEnabled(sprinklerX, sprinklerY, true);
+    setSprinklerReleaseRate(sprinklerX, sprinklerY, 21);
+    check('Drain Mode defaults on while Release remains on',
+        getWorld().machineSetting[sprinklerIndex] === 3 &&
+        physics.isDrainModeEnabled(sprinklerX, sprinklerY) === true &&
+        physics.isSprinklerReleaseEnabled(sprinklerX, sprinklerY) === true);
+
+    const beforeCreditState = captureSimulationState();
+    const creditFields = Object.keys(beforeCreditState.arrays)
+        .filter(field => field.toLowerCase().startsWith('sprinklerspray'));
+    check('Sprinkler exposes seven per-direction saved fractional credit planes',
+        creditFields.length === 7 && creditFields.every(field =>
+            beforeCreditState.arrays[field].length === COLS * ROWS), creditFields.join(', '));
+    if (creditFields.length === 7) {
+        for (const field of creditFields) beforeCreditState.arrays[field][sprinklerIndex] = 0.375;
+        restoreSimulationState(beforeCreditState);
+        const restoredCredits = captureSimulationState().arrays;
+        check('Sprinkler fractional credits survive simulation save and restore',
+            creditFields.every(field => restoredCredits[field][sprinklerIndex] === 0.375));
+        const legacyState = captureSimulationState();
+        for (const field of creditFields) delete legacyState.arrays[field];
+        restoreSimulationState(legacyState);
+        check('older saves without sprinkler credits default each stream to zero',
+            creditFields.every(field => getWorld()[field]?.[sprinklerIndex] === 0));
+    }
+
+    newWorld();
+    setCell(sprinklerX, sprinklerY, SPRINKLER_ID);
+    getWorld().storageType[index(sprinklerX, sprinklerY)] = ID.Water;
+    getWorld().storageCount[index(sprinklerX, sprinklerY)] = 10;
+    setSprinklerReleaseEnabled(sprinklerX, sprinklerY, true);
+    setSprinklerReleaseRate(sprinklerX, sprinklerY, 60);
+    physics.setDrainModeEnabled(sprinklerX, sprinklerY, true);
+    stepSimulation();
+    check('Drain Mode on preserves the single downward outlet',
+        typeAt(sprinklerX, sprinklerY + 2) === ID.Water &&
+        typeAt(sprinklerX - 2, sprinklerY) !== ID.Water && typeAt(sprinklerX + 2, sprinklerY) !== ID.Water,
+        `${typeAt(sprinklerX, sprinklerY + 2)}, side ${typeAt(sprinklerX - 2, sprinklerY)}/${typeAt(sprinklerX + 2, sprinklerY)}`);
+    check('legacy Sprinkler output carries no sprinkler launch metadata',
+        getWorld().sprinklerLaunchDirection[index(sprinklerX, sprinklerY + 2)] === 0 &&
+        getWorld().sprinklerLaunchAge[index(sprinklerX, sprinklerY + 2)] === 0);
+
+    newWorld();
+    const spraySourceX = 10;
+    const spraySourceY = 20;
+    setCell(spraySourceX, spraySourceY, ID['Powder Storage Bin']);
+    setCell(sprinklerX, sprinklerY, SPRINKLER_ID);
+    const sprayMaterial = ID.Ash;
+    const sprayRoute = connectMachinePorts(
+        { x: spraySourceX, y: spraySourceY }, { x: sprinklerX, y: sprinklerY });
+    const spraySourceIndex = index(spraySourceX, spraySourceY);
+    const spraySprinklerIndex = index(sprinklerX, sprinklerY);
+    getWorld().storageType[spraySourceIndex] = sprayMaterial;
+    getWorld().storageCount[spraySourceIndex] = 600;
+    setSprinklerReleaseEnabled(sprinklerX, sprinklerY, false);
+    setSprinklerReleaseRate(sprinklerX, sprinklerY, 10);
+    physics.setDrainModeEnabled(sprinklerX, sprinklerY, true);
+    stepSimulation();
+    check('Sprinkler receives the non-Water material through a compatible Tubing port',
+        sprayRoute.length > 1 && getTubingFlows().some(flow =>
+            flow.source === spraySourceIndex && flow.destination === spraySprinklerIndex &&
+            flow.material === sprayMaterial), JSON.stringify(getTubingFlows()));
+    run(600);
+    const filledSprinkler = getSprinklerInventory(sprinklerX, sprinklerY);
+    check('the release-off Sprinkler stores 100 Tubing-fed Ash before the sprinkler timing check',
+        filledSprinkler?.type === sprayMaterial && filledSprinkler.count === 100 &&
+        getStorageInventory(spraySourceX, spraySourceY)?.count === 500,
+        `${getStorageInventory(spraySourceX, spraySourceY)?.count ?? 0} source, ${filledSprinkler?.count ?? 0} Sprinkler`);
+    getWorld().storageType[spraySourceIndex] = EMPTY;
+    getWorld().storageCount[spraySourceIndex] = 0;
+    for (const cell of sprayRoute) setCell(cell.x, cell.y, EMPTY);
+    setSprinklerReleaseEnabled(sprinklerX, sprinklerY, true);
+    physics.setDrainModeEnabled(sprinklerX, sprinklerY, false);
+    check('Drain Mode off selects sprinkler output while Release stays enabled',
+        !physics.isDrainModeEnabled(sprinklerX, sprinklerY) && physics.isSprinklerReleaseEnabled(sprinklerX, sprinklerY));
+    const streamClocks = [9, 8, 7, 6, 5, 4, 3];
+    const directionCounts = new Map(streamClocks.map(clock => [clock, 0]));
+    const sprayFrames = 600;
+    const collectSprayParticles = () => {
+        const type = getWorld().type;
+        for (let y = 0; y < ROWS; y++) {
+            for (let x = 0; x < COLS; x++) {
+                const i = index(x, y);
+                if (type[i] !== sprayMaterial) continue;
+                const dx = x - sprinklerX;
+                const dy = y - sprinklerY;
+                if (dy >= 0 && (dx !== 0 || dy !== 0)) {
+                    let angle = Math.atan2(dy, dx) * 180 / Math.PI;
+                    if (angle < 0) angle += 360;
+                    const clock = Math.round(angle / 30) + 3;
+                    if (directionCounts.has(clock)) {
+                        directionCounts.set(clock, directionCounts.get(clock) + 1);
+                    }
+                }
+                type[i] = EMPTY;
+            }
+        }
+    };
+    for (let frame = 0; frame < sprayFrames; frame++) {
+        stepSimulation();
+        collectSprayParticles();
+    }
+    const directionValues = streamClocks.map(clock => directionCounts.get(clock));
+    const emittedTotal = directionValues.reduce((sum, value) => sum + value, 0);
+    const expectedTotal = 10 * sprayFrames / 60;
+    const accumulatedShares = creditFields.reduce((sum, field) =>
+        sum + getWorld()[field][spraySprinklerIndex], 0);
+    const sprayInventory = getSprinklerInventory(sprinklerX, sprinklerY)?.count ?? 0;
+    check('Sprinkler emits its stored Tubing-fed material through all seven clock directions',
+        directionValues.every(count => count > 0), JSON.stringify([...directionCounts]));
+    check('seven normalized Sprinkler streams conserve configured total release',
+        Math.abs(emittedTotal + accumulatedShares - expectedTotal) <= 0.02 &&
+        emittedTotal + sprayInventory === filledSprinkler.count,
+        `${emittedTotal} particles + ${accumulatedShares.toFixed(4)} fractional credits; ${sprayInventory} stored from ${filledSprinkler.count}`);
+    check('each Sprinkler direction approaches the unrounded releaseRate / 7 share',
+        directionValues.every((count, stream) => {
+            const field = `sprinklerSprayFlow${streamClocks[stream]}`;
+            return Math.abs(count + getWorld()[field][spraySprinklerIndex] -
+                expectedTotal / 7) <= 0.02;
+        }),
+        JSON.stringify(directionValues.map((count, stream) => ({
+            clock: streamClocks[stream], count,
+            credit: getWorld()[`sprinklerSprayFlow${streamClocks[stream]}`][spraySprinklerIndex]
+        }))));
+
+    console.log('  Sprinkler launch direction, gravity ramp, and particle state');
+    const launchFields = ['sprinklerLaunchDirection', 'sprinklerLaunchAge'];
+    const launchApiReady = launchFields.every(field => getWorld()[field] instanceof Uint8Array) &&
+        typeof physics.getSprinklerLaunchGravityMultiplier === 'function';
+    check('Sprinkler exposes saved per-particle launch direction and age state', launchApiReady,
+        launchFields.filter(field => !(getWorld()[field] instanceof Uint8Array)).join(', '));
+    if (launchApiReady) {
+        const gravity = physics.getSprinklerLaunchGravityMultiplier;
+        const launchProfiles = [
+            { clock: 3, initial: 0 }, { clock: 9, initial: 0 },
+            { clock: 4, initial: 0.05 }, { clock: 8, initial: 0.05 },
+            { clock: 5, initial: 0.25 }, { clock: 7, initial: 0.25 }
+        ];
+        check('Sprinkler clock 3/9 launch gravity starts at zero',
+            gravity(3, 0) === 0 && gravity(9, 0) === 0,
+            `${gravity(3, 0)}, ${gravity(9, 0)}`);
+        check('Sprinkler clock 4/8 launch gravity starts very low',
+            gravity(4, 0) === 0.05 && gravity(8, 0) === 0.05,
+            `${gravity(4, 0)}, ${gravity(8, 0)}`);
+        check('Sprinkler clock 5/7 launch gravity starts higher',
+            gravity(5, 0) === 0.25 && gravity(7, 0) === 0.25,
+            `${gravity(5, 0)}, ${gravity(7, 0)}`);
+        check('each Sprinkler gravity profile ramps linearly to native gravity by frame 12',
+            launchProfiles.every(({ clock, initial }) =>
+                Math.abs(gravity(clock, 6) - (initial + (1 - initial) / 2)) < 1e-7 &&
+                gravity(clock, 12) === 1),
+            JSON.stringify(launchProfiles.map(({ clock }) => ({
+                clock, half: gravity(clock, 6), full: gravity(clock, 12)
+            }))));
+        check('clock 6 keeps ordinary native gravity',
+            gravity(6, 0) === 1 && gravity(6, 12) === 1, `${gravity(6, 0)}, ${gravity(6, 12)}`);
+
+        const singleSpray = (material, clock) => {
+            newWorld();
+            setAmbientWindOn(false);
+            const x = 30;
+            const y = 12;
+            setCell(x, y, SPRINKLER_ID);
+            const sprinklerIndex = index(x, y);
+            getWorld().storageType[sprinklerIndex] = material;
+            getWorld().storageCount[sprinklerIndex] = 3;
+            physics.setSprinklerReleaseEnabled(x, y, true);
+            physics.setDrainModeEnabled(x, y, false);
+            setSprinklerReleaseRate(x, y, 1);
+            const flowField = `sprinklerSprayFlow${clock}`;
+            getWorld()[flowField][sprinklerIndex] = 1;
+            stepSimulation();
+            let output = null;
+            for (let i = 0; i < getWorld().type.length; i++) {
+                if (getWorld().type[i] !== material || i === sprinklerIndex) continue;
+                const direction = getWorld().sprinklerLaunchDirection[i];
+                if ((clock === 6 && direction === 0) || direction === clock) {
+                    output = { x: i % COLS, y: Math.floor(i / COLS) };
+                    break;
+                }
+            }
+            return { x, y, sprinklerIndex, output, material, clock };
+        };
+        const findTaggedParticle = (material, clock) => {
+            for (let i = 0; i < getWorld().type.length; i++) {
+                if (getWorld().type[i] === material &&
+                    getWorld().sprinklerLaunchDirection[i] === clock) {
+                    return { x: i % COLS, y: Math.floor(i / COLS), index: i };
+                }
+            }
+            return null;
+        };
+        for (const { material, clock, label } of [
+            { material: ID.Sand, clock: 3, label: 'powder' },
+            { material: ID.Water, clock: 5, label: 'liquid' },
+            { material: ID.Smoke, clock: 9, label: 'gas' }
+        ]) {
+            const emitted = singleSpray(material, clock);
+            const outputIndex = emitted.output ? index(emitted.output.x, emitted.output.y) : -1;
+            check(`Sprinkler keeps a ${label} material ID and tags its selected launch direction`,
+                !!emitted.output && getWorld().type[outputIndex] === material &&
+                getWorld().sprinklerLaunchDirection[outputIndex] === clock &&
+                getWorld().sprinklerLaunchAge[outputIndex] === 0,
+                JSON.stringify({ emitted, type: outputIndex >= 0 ? getWorld().type[outputIndex] : null,
+                    direction: outputIndex >= 0 ? getWorld().sprinklerLaunchDirection[outputIndex] : null }));
+            run(3);
+            const launched = findTaggedParticle(material, clock);
+            const dx = launched ? launched.x - emitted.output.x : 0;
+            const dy = launched ? launched.y - emitted.output.y : 0;
+            const expectedHorizontal = [3, 4, 5].includes(clock) ? dx > 0 : dx < 0;
+            const expectedVertical = clock === 3 || clock === 9 ? dy === 0 : dy > 0;
+            check(`launched ${label} projects laterally along clock ${clock} and retains its ID`,
+                !!launched && expectedHorizontal && expectedVertical &&
+                getWorld().sprinklerLaunchAge[launched.index] === 3,
+                JSON.stringify({ from: emitted.output, launched, dx, dy,
+                    age: launched && getWorld().sprinklerLaunchAge[launched.index] }));
+        }
+
+        const clockSix = singleSpray(ID.Water, 6);
+        const clockSixIndex = clockSix.output ? index(clockSix.output.x, clockSix.output.y) : -1;
+        check('clock 6 emits its water without a sprinkler launch tag',
+            !!clockSix.output && getWorld().type[clockSixIndex] === ID.Water &&
+            getWorld().sprinklerLaunchDirection[clockSixIndex] === 0 &&
+            getWorld().sprinklerLaunchAge[clockSixIndex] === 0);
+        if (clockSix.output) {
+            run(1);
+            check('clock 6 resumes ordinary vertical liquid movement',
+                [...getWorld().type].some((id, i) => id === ID.Water &&
+                    i % COLS === clockSix.output.x && Math.floor(i / COLS) > clockSix.output.y),
+                `water column ${clockSix.output.x} below ${clockSix.output.y}`);
+        }
+
+        newWorld();
+        const stateCell = index(10, 10);
+        setCell(10, 10, ID.Sand);
+        getWorld().sprinklerLaunchDirection[stateCell] = 7;
+        getWorld().sprinklerLaunchAge[stateCell] = 4;
+        let launchState = captureSimulationState();
+        restoreSimulationState(launchState);
+        check('Sprinkler launch direction and fractional age survive simulation save and restore',
+            getWorld().sprinklerLaunchDirection[stateCell] === 7 &&
+            getWorld().sprinklerLaunchAge[stateCell] === 4);
+        launchState = captureSimulationState();
+        delete launchState.arrays.sprinklerLaunchDirection;
+        delete launchState.arrays.sprinklerLaunchAge;
+        restoreSimulationState(launchState);
+        check('older saves without Sprinkler launch state default to untagged particles',
+            getWorld().sprinklerLaunchDirection[stateCell] === 0 &&
+            getWorld().sprinklerLaunchAge[stateCell] === 0);
+
+        const launchFixtures = [
+            { material: ID.Sand, clock: 3, dx: 1, dy: 0 },
+            { material: ID.Smoke, clock: 9, dx: -1, dy: 0 },
+            { material: ID.Water, clock: 4, dx: 1, dy: 1 },
+            { material: ID.Sand, clock: 8, dx: -1, dy: 1 },
+            { material: ID.Water, clock: 5, dx: 1, dy: 1 },
+            { material: ID.Smoke, clock: 7, dx: -1, dy: 1 }
+        ];
+        for (const fixture of launchFixtures) {
+            newWorld();
+            setAmbientWindOn(false);
+            setRandomSeed(TEST_SEED);
+            const start = { x: 30, y: 16 };
+            const startIndex = index(start.x, start.y);
+            setCell(start.x, start.y, fixture.material);
+            getWorld().sprinklerLaunchDirection[startIndex] = fixture.clock;
+            getWorld().sprinklerLaunchAge[startIndex] = 0;
+            run(3);
+            let particle = null;
+            for (let i = 0; i < getWorld().type.length; i++) {
+                if (getWorld().type[i] === fixture.material &&
+                    getWorld().sprinklerLaunchDirection[i] === fixture.clock) {
+                    particle = { x: i % COLS, y: Math.floor(i / COLS), index: i };
+                    break;
+                }
+            }
+            check(`Sprinkler clock ${fixture.clock} projects its ${fixture.material === ID.Water ? 'liquid' : fixture.material === ID.Smoke ? 'gas' : 'powder'} particle along the launch ray`,
+                !!particle &&
+                Math.sign(particle.x - start.x) === fixture.dx &&
+                Math.sign(particle.y - start.y) === fixture.dy &&
+                getWorld().sprinklerLaunchAge[particle.index] === 3,
+                JSON.stringify({ start, particle, age: particle && getWorld().sprinklerLaunchAge[particle.index] }));
+        }
+
+        newWorld();
+        setAmbientWindOn(false);
+        const rampEnd = { x: 30, y: 16 };
+        setCell(rampEnd.x, rampEnd.y, ID.Sand);
+        const rampEndIndex = index(rampEnd.x, rampEnd.y);
+        getWorld().sprinklerLaunchDirection[rampEndIndex] = 3;
+        getWorld().sprinklerLaunchAge[rampEndIndex] = 12;
+        stepSimulation();
+        const nativeAfterRamp = getWorld().type.findIndex(id => id === ID.Sand);
+        check('a completed launch clears its tag and returns to native powder motion',
+            nativeAfterRamp >= 0 && Math.floor(nativeAfterRamp / COLS) ===
+                rampEnd.y + defs[ID.Sand].fallSpeed &&
+            getWorld().sprinklerLaunchDirection[nativeAfterRamp] === 0 &&
+            getWorld().sprinklerLaunchAge[nativeAfterRamp] === 0,
+            `Sand at row ${nativeAfterRamp >= 0 ? Math.floor(nativeAfterRamp / COLS) : 'missing'}, ` +
+                `launch ${nativeAfterRamp >= 0 ? getWorld().sprinklerLaunchDirection[nativeAfterRamp] : 'missing'}`);
+
+        newWorld();
+        setAmbientWindOn(false);
+        setRandomSeed(TEST_SEED);
+        const swapStart = { x: 30, y: 16 };
+        setCell(swapStart.x, swapStart.y, ID.Sand);
+        const swapIndex = index(swapStart.x, swapStart.y);
+        getWorld().sprinklerLaunchDirection[swapIndex] = 3;
+        getWorld().sprinklerLaunchAge[swapIndex] = 0;
+        stepSimulation();
+        const swappedLaunch = getWorld().sprinklerLaunchDirection.findIndex(direction => direction === 3);
+        check('Sprinkler launch direction and age follow a particle when it swaps cells',
+            swappedLaunch >= 0 && swappedLaunch !== swapIndex &&
+            getWorld().sprinklerLaunchAge[swappedLaunch] === 1,
+            JSON.stringify({ from: swapIndex, to: swappedLaunch,
+                age: swappedLaunch >= 0 ? getWorld().sprinklerLaunchAge[swappedLaunch] : null }));
+
+        newWorld();
+        setAmbientWindOn(false);
+        const edgeIndex = index(0, 10);
+        setCell(0, 10, ID.Sand);
+        getWorld().sprinklerLaunchDirection[edgeIndex] = 9;
+        getWorld().sprinklerLaunchAge[edgeIndex] = 0;
+        stepSimulation();
+        check('Sprinkler launch at a world boundary keeps its material in bounds',
+            countOf(ID.Sand) === 1 && getWorld().sprinklerLaunchDirection.every(direction =>
+                direction === 0 || [3, 4, 5, 7, 8, 9].includes(direction)),
+            `${countOf(ID.Sand)} Sand particles after edge launch`);
+
+        newWorld();
+        setAmbientWindOn(false);
+        const blockedX = 30;
+        const blockedY = 16;
+        setCell(blockedX, blockedY, ID.Sand);
+        setCell(blockedX + 1, blockedY, ID.Stone);
+        const blockedIndex = index(blockedX, blockedY);
+        getWorld().sprinklerLaunchDirection[blockedIndex] = 3;
+        getWorld().sprinklerLaunchAge[blockedIndex] = 0;
+        stepSimulation();
+        check('Sprinkler launch respects a solid obstruction without replacing either material',
+            countOf(ID.Sand) === 1 && typeAt(blockedX + 1, blockedY) === ID.Stone,
+            `${countOf(ID.Sand)} Sand, obstruction ${typeAt(blockedX + 1, blockedY)}`);
+
+        newWorld();
+        setAmbientWindOn(false);
+        const nativeStart = { x: 30, y: 16 };
+        setCell(nativeStart.x, nativeStart.y, ID.Sand);
+        stepSimulation();
+        const nativeSand = getWorld().type.findIndex(id => id === ID.Sand);
+        const sandDefinition = defs[ID.Sand];
+        check('an untagged particle keeps ordinary powder gravity',
+            nativeSand >= 0 && Math.floor(nativeSand / COLS) === nativeStart.y + sandDefinition.fallSpeed &&
+            getWorld().sprinklerLaunchDirection[nativeSand] === 0,
+            `Sand at row ${nativeSand >= 0 ? Math.floor(nativeSand / COLS) : 'missing'}`);
+    }
+
+    const splitterId = machineId('Splitter');
+    check('Splitter definition is registered', Number.isInteger(splitterId), String(splitterId));
+    if (Number.isInteger(splitterId)) {
+        newWorld();
+        setCell(30, 20, splitterId);
+        const ports = physics.getMachinePorts(30, 20) || [];
+        check('Splitter exposes one Tubing input and two distinct Tubing outputs',
+            ports.filter(port => port.role === 'input').length === 1 &&
+            ports.filter(port => port.role === 'output').length === 2 &&
+            ports.every(port => String(port.material).toLowerCase().includes('tubing')),
+            JSON.stringify(ports));
+
+        const source = { x: 30, y: 6, name: 'Liquid Storage Bin' };
+        const splitter = { x: 30, y: 20, name: 'Splitter' };
+        const sinkA = { x: 6, y: 40, name: 'Liquid Storage Bin' };
+        const sinkB = { x: 54, y: 40, name: 'Liquid Storage Bin' };
+        for (const machine of [source, splitter, sinkA, sinkB]) {
+            setCell(machine.x, machine.y, machineId(machine.name));
+        }
+        const portsFor = machine => physics.getMachinePorts(machine.x, machine.y) || [];
+        const sourceOut = portsFor(source).find(port => port.role === 'output');
+        const splitterIn = portsFor(splitter).find(port => port.role === 'input');
+        const splitterOuts = portsFor(splitter).filter(port => port.role === 'output');
+        const sinkInputs = [sinkA, sinkB].map(machine =>
+            portsFor(machine).find(port => port.role === 'input'));
+        const machines = [source, splitter, sinkA, sinkB];
+        const allPorts = machines.flatMap(machine => portsFor(machine));
+        const routeCells = new Set();
+        const coordinateKey = (x, y) => `${x},${y}`;
+        const endpointCell = port => port?.connectionCell ? [port.connectionCell] : [];
+        const findPortPath = (startPort, endPort) => {
+            const endpointKeys = new Set([
+                ...endpointCell(startPort).map(cell => coordinateKey(cell.x, cell.y)),
+                ...endpointCell(endPort).map(cell => coordinateKey(cell.x, cell.y))
+            ]);
+            const forbidden = new Set(machines.map(machine => coordinateKey(machine.x, machine.y)));
+            for (const port of allPorts) {
+                if (port === startPort || port === endPort) continue;
+                for (const cell of endpointCell(port)) forbidden.add(coordinateKey(cell.x, cell.y));
+            }
+            for (const key of routeCells) {
+                forbidden.add(key);
+                const [routeX, routeY] = key.split(',').map(Number);
+                for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+                    const adjacentKey = coordinateKey(routeX + dx, routeY + dy);
+                    if (!endpointKeys.has(adjacentKey)) forbidden.add(adjacentKey);
+                }
+            }
+            const queue = [];
+            const previous = new Map();
+            for (const cell of endpointCell(startPort)) {
+                const key = coordinateKey(cell.x, cell.y);
+                if (forbidden.has(key) && !endpointKeys.has(key)) continue;
+                queue.push(cell);
+                previous.set(key, null);
+            }
+            let destinationKey = null;
+            const targetKeys = new Set(endpointCell(endPort).map(cell => coordinateKey(cell.x, cell.y)));
+            for (let cursor = 0; cursor < queue.length && !destinationKey; cursor++) {
+                const cell = queue[cursor];
+                const key = coordinateKey(cell.x, cell.y);
+                if (targetKeys.has(key)) { destinationKey = key; break; }
+                for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+                    const x = cell.x + dx;
+                    const y = cell.y + dy;
+                    if (x < 1 || y < 1 || x >= COLS - 1 || y >= ROWS - 1) continue;
+                    const nextKey = coordinateKey(x, y);
+                    if (previous.has(nextKey) || (forbidden.has(nextKey) && !endpointKeys.has(nextKey))) continue;
+                    previous.set(nextKey, key);
+                    queue.push({ x, y });
+                }
+            }
+            if (!destinationKey) return [];
+            const path = [];
+            for (let key = destinationKey; key; key = previous.get(key)) {
+                const [x, y] = key.split(',').map(Number);
+                path.push({ x, y });
+            }
+            return path.reverse();
+        };
+        const drawRoute = (startPort, endPort) => {
+            const path = findPortPath(startPort, endPort);
+            for (const cell of path) {
+                setCell(cell.x, cell.y, ID.Tubing);
+                routeCells.add(coordinateKey(cell.x, cell.y));
+            }
+            return path.length > 0;
+        };
+        const builtRoutes = !!sourceOut && !!splitterIn && splitterOuts.length === 2 &&
+            sinkInputs.every(Boolean) &&
+            drawRoute(sourceOut, splitterIn) &&
+            drawRoute(splitterOuts[0], sinkInputs[0]) &&
+            drawRoute(splitterOuts[1], sinkInputs[1]);
+        check('Splitter fixture connects one input route to both separate outputs', builtRoutes,
+            JSON.stringify({ sourceOut, splitterIn, splitterOuts, sinkInputs }));
+        if (builtRoutes) {
+        const sourceIndex = index(source.x, source.y);
+        const splitterIndex = index(splitter.x, splitter.y);
+        getWorld().storageType[sourceIndex] = ID.Water;
+        getWorld().storageCount[sourceIndex] = 600;
+        getWorld().storageType[splitterIndex] = ID.Water;
+        getWorld().storageCount[splitterIndex] = 300;
+        run(600);
+        const allSplitterFlows = getTubingFlows();
+        const incoming = allSplitterFlows.find(flow =>
+            flow.source === sourceIndex && flow.destination === splitterIndex);
+        const outgoing = allSplitterFlows.filter(flow => flow.source === splitterIndex)
+            .sort((a, b) => a.rate - b.rate);
+        check('Splitter accepts a 10 water units/s input route',
+            incoming?.rate === 10, JSON.stringify(allSplitterFlows));
+        check('Splitter divides 10 water units/s into two 5 units/s outputs',
+            outgoing.length === 2 && outgoing.every(flow => Math.abs(flow.rate - 5) < 0.0001),
+            JSON.stringify(allSplitterFlows.map(flow => ({
+                source: flow.source, destination: flow.destination, rate: flow.rate
+            }))));
+        const sourceInventory = getStorageInventory(source.x, source.y)?.count ?? 0;
+        const splitterInventory = getWorld().storageCount[splitterIndex];
+        const sinkInventoryA = getStorageInventory(sinkA.x, sinkA.y)?.count ?? 0;
+        const sinkInventoryB = getStorageInventory(sinkB.x, sinkB.y)?.count ?? 0;
+        check('Splitter preserves the combined input, buffer, and two output inventories',
+            sourceInventory + splitterInventory + sinkInventoryA + sinkInventoryB === 900 &&
+            Math.abs(sinkInventoryA - sinkInventoryB) <= 1,
+            `${sourceInventory}+${splitterInventory}+${sinkInventoryA}+${sinkInventoryB}`);
+
+        const fullSinkIndex = index(sinkA.x, sinkA.y);
+        getWorld().storageType[fullSinkIndex] = ID.Water;
+        getWorld().storageCount[fullSinkIndex] = getStorageInventory(sinkA.x, sinkA.y).capacity;
+        const blockedStart = {
+            source: getStorageInventory(source.x, source.y).count,
+            splitter: getWorld().storageCount[splitterIndex],
+            sinkA: getStorageInventory(sinkA.x, sinkA.y).count,
+            sinkB: getStorageInventory(sinkB.x, sinkB.y).count
+        };
+        run(60);
+        const blockedFlows = getTubingFlows();
+        const unblockedOutlets = blockedFlows.filter(flow => flow.source === splitterIndex);
+        const blockedEnd = {
+            source: getStorageInventory(source.x, source.y).count,
+            splitter: getWorld().storageCount[splitterIndex],
+            sinkA: getStorageInventory(sinkA.x, sinkA.y).count,
+            sinkB: getStorageInventory(sinkB.x, sinkB.y).count
+        };
+        check('one full Splitter destination leaves the other output at half the input rate',
+            unblockedOutlets.length === 1 && unblockedOutlets[0].destination === index(sinkB.x, sinkB.y) &&
+            Math.abs(unblockedOutlets[0].rate - 5) < 0.0001,
+            JSON.stringify(blockedFlows.map(flow => ({
+                source: flow.source, destination: flow.destination, rate: flow.rate
+            }))));
+        check('a blocked Splitter branch buffers its unserved share while conserving input',
+            blockedStart.source - blockedEnd.source === 10 &&
+            Math.abs(blockedEnd.splitter - blockedStart.splitter - 5) <= 1 &&
+            Math.abs(blockedEnd.sinkB - blockedStart.sinkB - 5) <= 1 &&
+            blockedEnd.sinkA === blockedStart.sinkA &&
+            blockedEnd.source + blockedEnd.splitter + blockedEnd.sinkA + blockedEnd.sinkB ===
+                blockedStart.source + blockedStart.splitter + blockedStart.sinkA + blockedStart.sinkB,
+            JSON.stringify({ blockedStart, blockedEnd }));
+        const state = captureSimulationState();
+        const inventorySnapshot = [blockedEnd.source, blockedEnd.splitter, blockedEnd.sinkA, blockedEnd.sinkB];
+        restoreSimulationState(state);
+        const restored = [
+            getStorageInventory(source.x, source.y)?.count ?? 0,
+            getWorld().storageCount[splitterIndex],
+            getStorageInventory(sinkA.x, sinkA.y)?.count ?? 0,
+            getStorageInventory(sinkB.x, sinkB.y)?.count ?? 0
+        ];
+        check('Splitter buffer and branch inventories survive save and restore',
+            restored.every((count, i) => count === inventorySnapshot[i]), JSON.stringify(restored));
+        }
+    }
+}
+
 if (process.argv.includes('--focus=fan-wind-scale-alignment')) {
     runFanWindScaleAlignmentRegression();
+    console.log(`\n${passed} passed, ${failed} failed\n`);
+    process.exit(failed > 0 ? 1 : 0);
+}
+
+if (process.argv.includes('--focus=machine-ports-flow')) {
+    runMachinePortsFlowRegressions();
     console.log(`\n${passed} passed, ${failed} failed\n`);
     process.exit(failed > 0 ? 1 : 0);
 }
@@ -2236,30 +3115,43 @@ check('an unpowered Heater launches no Heat Ray', countOf(ID['Heat Ray']) === 0)
 
 // ---------------------------------------------------------------------------
 
-section('A sealed storage funnel fills the bin before retaining overflow');
+section('An up-facing Collector fills to 100 before retaining Water overflow');
 clearWorld();
 for (let x = 0; x < COLS; x++) setCell(x, ROWS - 2, ID.Glass);
-const storageX = Math.floor(COLS / 2);
-const storageY = ROWS - 3;
-setCell(storageX, storageY, ID['Liquid Storage Bin']);
-getWorld().data[index(storageX, storageY)] = 3; // entrance points upward
-for (let y = 0; y < storageY; y++) {
-    const progress = y / (storageY - 1);
-    const leftWing = Math.round(4 + (storageX - 1 - 4) * progress);
-    const rightWing = Math.round((COLS - 5) + ((storageX + 1) - (COLS - 5)) * progress);
+const collectorX = Math.floor(COLS / 2);
+const collectorY = ROWS - 3;
+setCell(collectorX, collectorY, ID.Collector);
+getWorld().data[index(collectorX, collectorY)] = 3; // Collector intake faces upward
+for (let y = 0; y < collectorY; y++) {
+    const progress = y / (collectorY - 1);
+    const leftWing = Math.round(4 + (collectorX - 1 - 4) * progress);
+    const rightWing = Math.round((COLS - 5) + ((collectorX + 1) - (COLS - 5)) * progress);
     setCell(leftWing, y, ID.Glass);
     setCell(rightWing, y, ID.Glass);
     for (let x = leftWing + 1; x < rightWing; x++) {
         if (y >= 6 && y < 30) setCell(x, y, ID.Water);
     }
 }
+const initialCollectorWater = countOf(ID.Water);
 run(1400);
-const storage = getStorageInventory(storageX, storageY);
-check('the funnel stores water as it reaches the entrance',
-    storage?.type === ID.Water && storage.count === storage.capacity,
-    `${storage?.count ?? 0}/${storage?.capacity ?? 0} stored`);
-check('water remains above a full storage bin', countOf(ID.Water) > 0,
-    `${countOf(ID.Water)} water remains above the full bin`);
+const collectorInventory = getStorageInventory(collectorX, collectorY);
+const collectorOverflowWater = countOf(ID.Water);
+let collectorWaterBelowIntake = 0;
+for (let y = collectorY - 1; y < ROWS; y++) {
+    for (let x = 0; x < COLS; x++) {
+        if (typeAt(x, y) === ID.Water) collectorWaterBelowIntake++;
+    }
+}
+check('the Collector stores Water up to its 100-particle capacity',
+    collectorInventory?.type === ID.Water && collectorInventory.count === 100 && collectorInventory.capacity === 100,
+    `${collectorInventory?.count ?? 0}/${collectorInventory?.capacity ?? 0} stored`);
+check('full-Collector overflow remains on the upstream side of its intake', collectorOverflowWater > 0,
+    `${collectorOverflowWater} loose Water remains above the up-facing intake`);
+check('Water does not pass behind the full Collector intake barrier', collectorWaterBelowIntake === 0,
+    `${collectorWaterBelowIntake} loose Water cells at or below row ${collectorY - 1}`);
+check('Collector storage and loose overflow conserve Water',
+    collectorInventory.count + collectorOverflowWater === initialCollectorWater,
+    `${collectorInventory.count} stored + ${collectorOverflowWater} loose of ${initialCollectorWater} initial`);
 
 // ---------------------------------------------------------------------------
 
@@ -2693,8 +3585,6 @@ for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
 // ate the bank underneath it, which says nothing about whether the breeze can
 // pick it up.
 fillRect(26, ROWS - 3, 8, 2, ID.Sand);
-fillRect(44, ROWS - 3, 8, 2, ID['Wet Mud']);
-const breezeMudStart = centreOf(ID['Wet Mud']);
 
 // Gusts come from either side as the mood takes them, so over a long enough
 // stretch the middle of a sand bank ends up roughly where it started. What
@@ -2721,9 +3611,47 @@ check('gusts came and went rather than blowing without a break',
 check('the breeze carried dry sand off its bank',
     spilledOutside(ID.Sand, 26, 33) > 0,
     `${spilledOutside(ID.Sand, 26, 33)} grains ended up outside the bank`);
-check('the breeze left the wet mud where it was',
-    Math.abs(centreOf(ID['Wet Mud']) - breezeMudStart) < 0.5,
-    `wet mud moved from ${breezeMudStart.toFixed(1)} to ${centreOf(ID['Wet Mud']).toFixed(1)}`);
+
+function wetMudBreezeDisplacement(windEnabled) {
+    clearWorld();
+    setRandomSeed(9054);
+    for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
+    fillRect(44, ROWS - 3, 8, 2, ID['Wet Mud']);
+    const start = centreOf(ID['Wet Mud']);
+    const startingTop = (() => {
+        let top = ROWS;
+        for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) {
+            if (typeAt(x, y) === ID['Wet Mud']) top = Math.min(top, y);
+        }
+        return top;
+    })();
+    let highestReached = startingTop;
+    setAmbientWindOn(windEnabled);
+    for (let frame = 0; frame < 5000; frame++) {
+        stepSimulation();
+        for (let y = 0; y < highestReached; y++) for (let x = 0; x < COLS; x++) {
+            if (typeAt(x, y) === ID['Wet Mud']) highestReached = y;
+        }
+    }
+    const result = {
+        displacement: centreOf(ID['Wet Mud']) - start,
+        peakLift: startingTop - highestReached,
+        remaining: countOf(ID['Wet Mud'])
+    };
+    setAmbientWindOn(false);
+    return result;
+}
+
+const wetMudStillAir = wetMudBreezeDisplacement(false);
+const wetMudWithBreeze = wetMudBreezeDisplacement(true);
+check('natural wind adds no Wet Mud lift beyond ordinary powder sliding',
+    Math.abs(wetMudWithBreeze.displacement - wetMudStillAir.displacement) < 0.5 &&
+    wetMudWithBreeze.peakLift <= wetMudStillAir.peakLift &&
+    wetMudWithBreeze.remaining === wetMudStillAir.remaining,
+    `wet mud displacement ${wetMudWithBreeze.displacement.toFixed(2)} with wind vs ` +
+        `${wetMudStillAir.displacement.toFixed(2)} in still air, peak lift ` +
+        `${wetMudWithBreeze.peakLift} vs ${wetMudStillAir.peakLift}; ` +
+        `${wetMudWithBreeze.remaining}/${wetMudStillAir.remaining} particles remain`);
 check('and switching it off stops it', !isBreezeBlowing());
 
 function runWindOverhaulRegressions() {
@@ -2743,6 +3671,10 @@ function runWindOverhaulRegressions() {
         const previousWindSeed = getRandomSeed();
         const setWindTestSettings = (general, gust, enabled, seed = 8402) => {
             setAmbientWindOn(false);
+            const cycleReset = captureSimulationState();
+            cycleReset.prevailingWindDirection = 1;
+            cycleReset.prevailingWindTicksRemaining = 108_000;
+            restoreSimulationState(cycleReset);
             physics.resetRandomSource();
             setRandomSeed(seed);
             physics.setGeneralWindStrength(general);
@@ -3835,11 +4767,11 @@ check('grass does not transform into a different generic Plant material',
 
 // ---------------------------------------------------------------------------
 
-section('A lower-left Fan feeds Ash into a diagonal Powder Storage Bin');
+section('A lower-left Fan feeds Ash into a diagonal Collector');
 const fedBinX = 36;
 const fedBinY = 12;
 const fedDirection = 4; // up-right
-setCell(fedBinX, fedBinY, ID['Powder Storage Bin']);
+setCell(fedBinX, fedBinY, ID.Collector);
 getWorld().data[index(fedBinX, fedBinY)] = fedDirection;
 const fedFanX = 18;
 const fedFanY = 30;
@@ -3852,7 +4784,7 @@ getWorld().machineSetting[index(fedFanX, fedFanY)] = 20;
 // that a particle placed beside the machine cannot exercise.
 for (const [x, y] of [[24, 24], [26, 22], [28, 20]]) setCell(x, y, ID.Ash);
 run(20);
-check('all Ash fired up-right at 45 degrees crosses the intake and is stored',
+check('the rotating Collector gathers Ash fired up-right at 45 degrees',
     getStorageInventory(fedBinX, fedBinY)?.type === ID.Ash &&
     getStorageInventory(fedBinX, fedBinY)?.count === 3,
     `${getStorageInventory(fedBinX, fedBinY)?.count ?? 0}/3 Ash stored`);
@@ -3871,17 +4803,13 @@ clearWorld();
 const suctionBinX = 30;
 const suctionBinY = 22;
 setCell(suctionBinX, suctionBinY, ID['Liquid Storage Bin']);
-getWorld().data[index(suctionBinX, suctionBinY)] = 3; // intake is above the bin
-// The virtual barrier is one row above the bin. These two packed Water cells
-// are in its two-cell suction zone and have no movement history or free row to
-// drop into before the storage pass runs.
+getWorld().data[index(suctionBinX, suctionBinY)] = 3;
 setCell(suctionBinX, suctionBinY - 2, ID.Water);
 setCell(suctionBinX, suctionBinY - 3, ID.Water);
 stepSimulation();
-check('a storage intake pulls two rows of stationary packed Water into the bin',
-    getStorageInventory(suctionBinX, suctionBinY)?.type === ID.Water &&
-    getStorageInventory(suctionBinX, suctionBinY)?.count === 2,
-    `${getStorageInventory(suctionBinX, suctionBinY)?.count ?? 0}/2 Water stored`);
+check('loose Water in a Liquid Storage Bin opening is not collected from the world',
+    getStorageInventory(suctionBinX, suctionBinY)?.count === 0,
+    `${getStorageInventory(suctionBinX, suctionBinY)?.count ?? 0} Water stored`);
 
 clearWorld();
 setCell(suctionBinX, suctionBinY, ID['Powder Storage Bin']);
@@ -3898,23 +4826,23 @@ section('Tubing transfers stored material through a measured bottleneck');
 clearWorld();
 const tubeSourceX = 10;
 const tubeY = 20;
-const ventX = 30;
+const sprinklerX = 30;
+const sprinklerY = tubeY + 6;
 setCell(tubeSourceX, tubeY, ID['Powder Storage Bin']);
-setCell(ventX, tubeY, ID.Vent);
-setVentReleaseEnabled(ventX, tubeY, false);
-for (let x = tubeSourceX + 1; x < ventX; x++) {
-    for (let y = tubeY - 1; y <= tubeY + 1; y++) setCell(x, y, ID.Tubing);
-}
+setCell(sprinklerX, sprinklerY, SPRINKLER_ID);
+setSprinklerReleaseEnabled(sprinklerX, sprinklerY, false);
+const wideTubePath = connectMachinePorts(
+    { x: tubeSourceX, y: tubeY }, { x: sprinklerX, y: sprinklerY }, { width: 3 });
 const tubeSource = index(tubeSourceX, tubeY);
 getWorld().storageType[tubeSource] = ID.Ash;
 getWorld().storageCount[tubeSource] = 120;
 run(60);
 check('three-cell-wide Tubing transfers 30 particles per second',
     getStorageInventory(tubeSourceX, tubeY)?.count === 90 &&
-    getVentInventory(ventX, tubeY)?.type === ID.Ash &&
-    getVentInventory(ventX, tubeY)?.count === 30 &&
+    getSprinklerInventory(sprinklerX, sprinklerY)?.type === ID.Ash &&
+    getSprinklerInventory(sprinklerX, sprinklerY)?.count === 30 &&
     getTubingFlows()[0]?.rate === 30,
-    `${getStorageInventory(tubeSourceX, tubeY)?.count ?? 0} source, ${getVentInventory(ventX, tubeY)?.count ?? 0} vent, ${getTubingFlows()[0]?.rate ?? 0}/s`);
+    `${getStorageInventory(tubeSourceX, tubeY)?.count ?? 0} source, ${getSprinklerInventory(sprinklerX, sprinklerY)?.count ?? 0} Sprinkler, ${getTubingFlows()[0]?.rate ?? 0}/s`);
 check('Tubing flow bands are restricted to actual Tubing cells',
     getTubingFlows()[0]?.cells.length > 0 &&
     getTubingFlows()[0]?.path.length > 0 &&
@@ -3924,13 +4852,13 @@ check('Tubing flow bands are restricted to actual Tubing cells',
 // Pinch the lower row out of the three-cell-wide run. The remaining channel
 // is still continuous but only two cells wide at that point, so it must cap
 // the whole route at 20/s rather than using the wide end measurement.
-getWorld().type[index(20, tubeY + 1)] = EMPTY;
+getWorld().type[index(20, tubeY + 4)] = EMPTY;
 run(60);
 check('the narrowest two-cell Tubing section limits flow to 20 particles per second',
     getStorageInventory(tubeSourceX, tubeY)?.count === 70 &&
-    getVentInventory(ventX, tubeY)?.count === 50 &&
+    getSprinklerInventory(sprinklerX, sprinklerY)?.count === 50 &&
     getTubingFlows()[0]?.rate === 20,
-    `${getStorageInventory(tubeSourceX, tubeY)?.count ?? 0} source, ${getVentInventory(ventX, tubeY)?.count ?? 0} vent, ${getTubingFlows()[0]?.rate ?? 0}/s`);
+    `${getStorageInventory(tubeSourceX, tubeY)?.count ?? 0} source, ${getSprinklerInventory(sprinklerX, sprinklerY)?.count ?? 0} Sprinkler, ${getTubingFlows()[0]?.rate ?? 0}/s`);
 check('Tubing flow bands update after a bottleneck changes',
     getTubingFlows()[0]?.path.every(cell => getWorld().type[cell] === ID.Tubing),
     JSON.stringify(getTubingFlows()[0]?.path ?? []));
@@ -3941,16 +4869,12 @@ clearWorld();
 const bendSourceX = 10;
 const bendSourceY = 19;
 const bendTubeEndX = 20;
-const bendVentY = 35;
+const bendSprinklerY = 35;
 setCell(bendSourceX, bendSourceY, ID['Powder Storage Bin']);
-setCell(bendTubeEndX, bendVentY, ID.Vent);
-setVentReleaseEnabled(bendTubeEndX, bendVentY, false);
-for (let x = bendSourceX + 1; x <= bendTubeEndX; x++) {
-    for (let y = bendSourceY; y <= bendSourceY + 2; y++) setCell(x, y, ID.Tubing);
-}
-for (let x = bendTubeEndX - 1; x <= bendTubeEndX + 1; x++) {
-    for (let y = bendSourceY + 2; y < bendVentY; y++) setCell(x, y, ID.Tubing);
-}
+setCell(bendTubeEndX, bendSprinklerY, SPRINKLER_ID);
+setSprinklerReleaseEnabled(bendTubeEndX, bendSprinklerY, false);
+connectMachinePorts({ x: bendSourceX, y: bendSourceY },
+    { x: bendTubeEndX, y: bendSprinklerY });
 const bendSource = index(bendSourceX, bendSourceY);
 getWorld().storageType[bendSource] = ID.Ash;
 getWorld().storageCount[bendSource] = 60;
@@ -3961,58 +4885,58 @@ check('Tubing bands travel from source to destination through real bend cells',
     JSON.stringify(bendFlowPath));
 
 clearWorld();
-setCell(40, 20, ID.Vent);
-const releasingVent = index(40, 20);
-getWorld().storageType[releasingVent] = ID.Water;
-getWorld().storageCount[releasingVent] = 20;
-check('an unconnected Vent reports no Tubing rate', getVentTubingRate(40, 20) === 0,
-    `${getVentTubingRate(40, 20)}/s`);
-check('new Vents default to a release rate of 10 particles per second',
-    getVentReleaseRate(40, 20) === 10 && getVentInventory(40, 20)?.releaseRate === 10);
+setCell(40, 20, SPRINKLER_ID);
+const releasingSprinkler = index(40, 20);
+getWorld().storageType[releasingSprinkler] = ID.Water;
+getWorld().storageCount[releasingSprinkler] = 20;
+check('an unconnected Sprinkler reports no Tubing rate', getSprinklerTubingRate(40, 20) === 0,
+    `${getSprinklerTubingRate(40, 20)}/s`);
+check('new Sprinklers default to a release rate of 10 particles per second',
+    getSprinklerReleaseRate(40, 20) === 10 && getSprinklerInventory(40, 20)?.releaseRate === 10);
 run(60);
-check('an enabled Vent releases at its configured rate',
-    getVentInventory(40, 20)?.releaseEnabled && getVentInventory(40, 20)?.count === 10 &&
+check('an enabled Sprinkler releases at its configured rate',
+    getSprinklerInventory(40, 20)?.releaseEnabled && getSprinklerInventory(40, 20)?.count === 10 &&
     countOf(ID.Water) === 10,
-    `${getVentInventory(40, 20)?.count ?? 0} stored, ${countOf(ID.Water)} released`);
+    `${getSprinklerInventory(40, 20)?.count ?? 0} stored, ${countOf(ID.Water)} released`);
 
 clearWorld();
 const throttledSourceX = 10;
-const throttledVentX = 30;
+const throttledSprinklerX = 30;
 const throttledY = 20;
+const throttledSprinklerY = throttledY + 6;
 setCell(throttledSourceX, throttledY, ID['Powder Storage Bin']);
-setCell(throttledVentX, throttledY, ID.Vent);
-for (let x = throttledSourceX + 1; x < throttledVentX; x++) {
-    for (let y = throttledY - 1; y <= throttledY + 1; y++) setCell(x, y, ID.Tubing);
-}
-check('a connected Vent reports its Tubing capacity', getVentTubingRate(throttledVentX, throttledY) === 30,
-    `${getVentTubingRate(throttledVentX, throttledY)}/s`);
+setCell(throttledSprinklerX, throttledSprinklerY, SPRINKLER_ID);
+connectMachinePorts({ x: throttledSourceX, y: throttledY },
+    { x: throttledSprinklerX, y: throttledSprinklerY }, { width: 3 });
+check('a connected Sprinkler reports its Tubing capacity', getSprinklerTubingRate(throttledSprinklerX, throttledSprinklerY) === 30,
+    `${getSprinklerTubingRate(throttledSprinklerX, throttledSprinklerY)}/s`);
 const throttledSource = index(throttledSourceX, throttledY);
 getWorld().storageType[throttledSource] = ID.Ash;
 getWorld().storageCount[throttledSource] = 400;
 run(600);
-check('a faster Tubing path fills an active Vent before its release rate throttles flow',
-    getVentInventory(throttledVentX, throttledY)?.count >= 99 &&
+check('a faster Tubing path fills an active Sprinkler before its release rate throttles flow',
+    getSprinklerInventory(throttledSprinklerX, throttledSprinklerY)?.count >= 99 &&
     getTubingFlows()[0]?.rate === 10,
-    `${getVentInventory(throttledVentX, throttledY)?.count ?? 0} stored, ${getTubingFlows()[0]?.rate ?? 0}/s`);
+    `${getSprinklerInventory(throttledSprinklerX, throttledSprinklerY)?.count ?? 0} stored, ${getTubingFlows()[0]?.rate ?? 0}/s`);
 
-setVentReleaseRate(throttledVentX, throttledY, 40);
+setSprinklerReleaseRate(throttledSprinklerX, throttledSprinklerY, 40);
 run(120);
-check('a faster Vent release setting does not exceed the connected Tubing rate',
-    getVentReleaseRate(throttledVentX, throttledY) === 40 &&
+check('a faster Sprinkler release setting does not exceed the connected Tubing rate',
+    getSprinklerReleaseRate(throttledSprinklerX, throttledSprinklerY) === 40 &&
     getTubingFlows()[0]?.rate === 30,
-    `${getVentReleaseRate(throttledVentX, throttledY)}/s setting, ${getTubingFlows()[0]?.rate ?? 0}/s tube`);
+    `${getSprinklerReleaseRate(throttledSprinklerX, throttledSprinklerY)}/s setting, ${getTubingFlows()[0]?.rate ?? 0}/s tube`);
 
 clearWorld();
 setCell(tubeSourceX, tubeY, ID['Powder Storage Bin']);
-setCell(ventX, tubeY, ID.Vent);
-setVentReleaseEnabled(ventX, tubeY, false);
-for (let x = tubeSourceX + 1; x < ventX; x++) setCell(x, tubeY, ID.Tubing);
+setCell(sprinklerX, sprinklerY, SPRINKLER_ID);
+setSprinklerReleaseEnabled(sprinklerX, sprinklerY, false);
+connectMachinePorts({ x: tubeSourceX, y: tubeY }, { x: sprinklerX, y: sprinklerY });
 getWorld().storageType[index(tubeSourceX, tubeY)] = ID.Ash;
 getWorld().storageCount[index(tubeSourceX, tubeY)] = 10;
-getWorld().storageType[index(ventX, tubeY)] = ID.Ash;
-getWorld().storageCount[index(ventX, tubeY)] = 100;
+getWorld().storageType[index(sprinklerX, sprinklerY)] = ID.Ash;
+getWorld().storageCount[index(sprinklerX, sprinklerY)] = 100;
 stepSimulation();
-check('a full switched-off Vent cuts connected Tubing flow to 0',
+check('a full switched-off Sprinkler cuts connected Tubing flow to 0',
     getStorageInventory(tubeSourceX, tubeY)?.count === 10 && getTubingFlows().length === 0);
 
 section('A Mixer accepts two independent Tubing inputs and alternates its output');
@@ -4023,11 +4947,13 @@ const mixerIndex = index(mixerX, mixerY);
 const leftSourceX = 20;
 const rightSourceX = 40;
 setCell(leftSourceX, mixerY, ID['Powder Storage Bin']);
-    setCell(rightSourceX, mixerY, ID['Powder Storage Bin']);
+setCell(rightSourceX, mixerY, ID['Powder Storage Bin']);
 setCell(mixerX, mixerY, ID.Mixer);
 setMixerReleaseEnabled(mixerX, mixerY, false);
-for (let x = leftSourceX + 1; x < mixerX; x++) setCell(x, mixerY, ID.Tubing);
-for (let x = mixerX + 1; x < rightSourceX; x++) setCell(x, mixerY, ID.Tubing);
+connectMachinePorts({ x: leftSourceX, y: mixerY }, { x: mixerX, y: mixerY },
+    { destinationPortId: 'input-a' });
+connectMachinePorts({ x: rightSourceX, y: mixerY }, { x: mixerX, y: mixerY },
+    { destinationPortId: 'input-b' });
 const leftSource = index(leftSourceX, mixerY);
 const rightSource = index(rightSourceX, mixerY);
 getWorld().storageType[leftSource] = ID.Sand;

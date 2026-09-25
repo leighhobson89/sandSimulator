@@ -3,7 +3,7 @@ import { GamePage } from '../helpers/gamePage.mjs';
 import { clickCanvasCell } from '../helpers/canvas.mjs';
 import { attachGameDiagnostics } from '../helpers/diagnostics.mjs';
 
-async function openMixer(page, inputs, release = false) {
+async function openMixer(page, game, inputs, release = false) {
     await page.evaluate(async ({ inputs, release }) => {
         const physics = await import('/physics.js');
         const defs = physics.getDefinitions();
@@ -19,6 +19,7 @@ async function openMixer(page, inputs, release = false) {
         physics.setMixerReleaseEnabled(30, 30, release);
         for (let frame = 0; frame < 60; frame++) physics.stepSimulation();
     }, { inputs, release });
+    await game.step(0);
     await clickCanvasCell(page, { x: 30, y: 30 });
     await expect(page.locator('#mixerDialog')).toBeVisible();
 }
@@ -33,7 +34,7 @@ test('Mixer UI reports recipe output and preserves it when release is disabled',
     await game.newGame();
     await game.seed(424);
 
-    await openMixer(page, [['A', 'Water', 20], ['B', 'Dry Mud', 20]]);
+    await openMixer(page, game, [['A', 'Water', 20], ['B', 'Dry Mud', 20]]);
     await expect(page.locator('#mixerDialogOutputLabel')).toHaveText('output: Wet Mud');
     await expect(page.locator('#mixerDialogBinSummary2')).toContainText('Wet Mud');
     await expect(page.locator('#mixerDialogBinFill2 .mixer-bin-segment')).toHaveAttribute('style', /width: 100%/);
@@ -54,7 +55,7 @@ test('Mixer keeps non-mixing inputs as separate output streams and supports inde
     await game.newGame();
     await game.seed(5150);
 
-    await openMixer(page, [['A', 'Sand', 12], ['B', 'Ash', 12]]);
+    await openMixer(page, game, [['A', 'Sand', 12], ['B', 'Ash', 12]]);
     await expect(page.locator('#mixerDialogOutputLabel')).toHaveText('output: Sand + Ash');
     await expect(page.locator('#mixerDialogBinSummary0')).toContainText('Sand');
     await expect(page.locator('#mixerDialogBinSummary1')).toContainText('Ash');
@@ -74,7 +75,7 @@ test('Mixer releases retained output and alternates non-mixing materials into th
     await game.newGame();
     await game.seed(6161);
 
-    await openMixer(page, [['A', 'Sand', 12], ['B', 'Ash', 12]]);
+    await openMixer(page, game, [['A', 'Sand', 12], ['B', 'Ash', 12]]);
     await page.locator('#mixerDialogToggle').check();
     await page.locator('#mixerDialogCancel').click();
     await game.step(180);
@@ -105,7 +106,7 @@ test('Mixer exposes every documented recipe in either input order', async ({ pag
         ['Ash', 'Water', 'Wet Ash'],
         ['Water', 'Sand', 'Wet Sand']
     ]) {
-        await openMixer(page, [['A', a, 20], ['B', b, 20]]);
+        await openMixer(page, game, [['A', a, 20], ['B', b, 20]]);
         await expect(page.locator('#mixerDialogOutputLabel')).toHaveText(`output: ${output}`);
         await page.locator('#mixerDialogCancel').click();
     }

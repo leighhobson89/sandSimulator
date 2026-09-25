@@ -131,12 +131,14 @@ rule based on the surface of connected liquid, not a Navier–Stokes solution.
   matching centreline Heat Ray/Cold Ray projectiles.
 - The simulator is testable outside the browser. The physics core has no DOM
   dependency, and deterministic simulation, startup smoke, scale-profile, and
-  browser-visible regressions use the documented npm harness. The preceding
-  full suite passed 306/306 before the fast-metal-network update. For the latest
-  focused network and glow update, `thermal-contracts` passed 9/9,
-  `thermal-chamber` passed 16/16, and `thermal-air-faces` passed 7/7. The
-  focused rendering wrapper did not reach assertions; cleanup stalled and was
-  interrupted. No full suite was run for this update.
+  browser-visible regressions use the documented npm harness. On 25 September
+  2026, `npm.cmd test` passed 371 checks, the smoke harness passed 59 checks,
+  and scale-profile plus world-allocation checks passed. The focused machine
+  browser suite passed 23 tests. A full browser run passed 191 tests and had
+  one 30-second timeout in the v1 Sprinkler migration test; after its timeout
+  was raised to 60 seconds, the focused migration test passed in 35.5 seconds.
+  The full browser suite was not rerun after that timeout adjustment. The later
+  palette catalog regression passed 8/8.
 - `npm run profile:scale` is a fixed, no-CLI-option, headless physics-only
   synthetic profile of 260×150, 520×300, and 1040×600. The 1040×600 case is
   profiler-only; the two selectable worlds are 260×150 and 520×300. Profiling
@@ -167,10 +169,10 @@ rule based on the surface of connected liquid, not a Navier–Stokes solution.
 - It favours readable, game-like rules over physical accuracy. There is no
   continuous pressure field, momentum-conserving liquid solver, real chemical
   stoichiometry, voltage/current/resistance calculation, or rigid-body physics.
-- It is currently a focused 54-entry material set with three powered machines,
-  three storage bins, an always-active Vent and a two-input Mixer.
-  That makes it approachable, but limits complex construction compared with
-  mature sandboxes.
+- The picker has 81 entries across materials, machines, and tools. The ten
+  machine types are three powered machines, three storage bins, Sprinkler,
+  Mixer, Splitter, and Collector. That keeps the game approachable while
+  allowing Tubing-based material routes and world-facing collection/release.
 - Saves are browser-local or copy/paste strings rather than an online gallery,
   replay system, or modding API.
 - It is CPU JavaScript and updates the grid serially. It performs well at the
@@ -181,7 +183,7 @@ rule based on the surface of connected liquid, not a Navier–Stokes solution.
 
 | Program | Where Elemental Foundry is stronger or distinctive | Where the comparator is stronger |
 |---|---|---|
-| [The Powder Toy](https://powdertoy.co.uk/) | More focused presentation; a clear material-to-ecosystem loop; a bespoke Battery, Tubing, Vent and Fan system that is easy to understand. | A much broader long-running sandbox: its official description includes air pressure/velocity, heat, gravity, many interactions, complex electronics, community saves and Lua custom elements. |
+| [The Powder Toy](https://powdertoy.co.uk/) | More focused presentation; a clear material-to-ecosystem loop; a bespoke Battery, Tubing, Sprinkler, Collector and Fan system that is easy to understand. | A much broader long-running sandbox: its official description includes air pressure/velocity, heat, gravity, many interactions, complex electronics, community saves and Lua custom elements. |
 | [Sandspiel](https://github.com/MaxBittker/sandspiel) | More explicit thermal insulation, ground-water lifecycle, electrical charge model, machine power consumption and environmental controls. | Rust/WASM + WebGL implementation, a sharing/forking-oriented platform, and a stated ambition for programmable user elements. |
 | [DAN-BALL Powder Game](https://dan-ball.jp/en/m/dustviewer/) | Stronger current emphasis on temperature transitions, material-defined properties, battery-style charge and test coverage. | A long-established toybox with a large interaction catalogue including pumps, copy/paste, clouds, gears, controllable characters, upload/view modes and more. |
 
@@ -192,13 +194,13 @@ community content, modding, advanced circuitry, or broader toybox variety.
 
 ## Verification basis
 
-The preceding full validation passed 306/306 assertions before the fast-metal-
-network update. For the latest focused network and glow update,
-`npm test -- --focus=thermal-contracts` passed 9/9,
-`npm test -- --focus=thermal-chamber` passed 16/16, and
-`npm test -- --focus=thermal-air-faces` passed 7/7. The focused rendering
-wrapper did not reach assertions; cleanup stalled and was interrupted. No full
-suite was run for this update.
+On 25 September 2026, `npm.cmd test` passed 371 checks, the smoke harness passed
+59 checks, scale-profile and world-allocation checks passed, and the focused
+machine browser suite passed 23 tests. A full browser run passed 191 tests and
+had one 30-second timeout in the v1 Sprinkler migration test. Raising that
+test's timeout to 60 seconds made the focused migration rerun pass in 35.5
+seconds; the full browser suite was not rerun after this adjustment. The later
+QMODE palette catalog regression passed 8/8.
 
 Use the npm harness commands in [`E2E_TEST_PLAN.md`](E2E_TEST_PLAN.md). Focused
 browser coverage is run by functional area or spec through

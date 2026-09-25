@@ -17,7 +17,7 @@ a special heat network without ordinary heat conductivity.
 | Iron | Transfers heat; joins the fast thermal network. | Conducts power and can draw charge from a touching Battery. | A lower-load wire for powered devices and mixed Copper/Iron/Stainless Steel networks. |
 | Stainless Steel | Transfers heat more slowly than Iron through ordinary contact. | Carries power pulses more slowly than Iron and can draw from a touching Battery. | A slower, rust-resistant wire with Iron's per-cell load. |
 | Battery | Transfers heat; joins the fast thermal network. | Stores charge shared across connected Battery cells. | Apply Sparks to charge it, then connect it to Copper, Iron, or Stainless Steel to feed the power network. |
-| Tubing | Has zero ordinary conductivity, but its `thermalNetworkRate` lets it move heat through the fast thermal network. | Does not conduct electrical power. | Carries stored materials between compatible storage, Mixer, and Vent connections; it is not a wire. |
+| Tubing | Has zero ordinary conductivity, but its `thermalNetworkRate` lets it move heat through the fast thermal network. | Does not conduct electrical power. | Carries stored materials between compatible storage, Mixer, Sprinkler, Collector, and Splitter ports; it is not a wire. |
 
 The Copper, Iron, Stainless Steel, and Battery heat and electrical values are
 independent; neither property can be inferred from the other. Stainless Steel
@@ -53,11 +53,12 @@ behavior where applicable. Stainless Steel also does not rust from Water or
 humid air, while still carrying heat and electrical pulses more slowly than
 Iron.
 
-Tubing has a different job. Join its cells edge to edge between a compatible
-storage bin or Mixer and a Vent to transport stored materials. Tubing does not
-carry electrical pulses, so it cannot replace Copper, Iron, or Stainless Steel
-in a power grid. It does conduct heat along the fast thermal network despite
-its zero ordinary conductivity.
+Tubing has a different job. Join its cells edge to edge between compatible
+machine ports to transport stored materials. Storage bins, Mixer, Sprinkler,
+Collector, and Splitter use Tubing for their declared inputs and outputs.
+Tubing does not carry electrical pulses, so it cannot replace Copper, Iron, or
+Stainless Steel in a power grid. It does conduct heat along the fast thermal
+network despite its zero ordinary conductivity.
 
 ## Melting and cooling back to solids
 

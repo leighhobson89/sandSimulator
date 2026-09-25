@@ -67,6 +67,82 @@ export async function clickCanvasCell(page, cell, options) {
     await page.mouse.click(point.x, point.y, options);
 }
 
+export async function machineArtworkCellPoint(page, machineCell) {
+    return page.evaluate(async machine => {
+        const canvas = document.querySelector('#canvas');
+        const rect = canvas.getBoundingClientRect();
+        const icon = document.querySelector(`#machineOverlay .machine-overlay-icon[data-machine-x="${machine.x}"][data-machine-y="${machine.y}"]`);
+        const frame = icon?.querySelector(':scope > svg');
+        if (!frame) throw new Error(`No machine artwork frame at ${machine.x},${machine.y}.`);
+
+        const image = frame.querySelector('image');
+        let pixels = null;
+        let imageWidth = 0;
+        let imageHeight = 0;
+        if (image) {
+            const response = await fetch('/resources/icons.png');
+            const bitmap = await createImageBitmap(await response.blob());
+            const sample = document.createElement('canvas');
+            sample.width = bitmap.width;
+            sample.height = bitmap.height;
+            const context = sample.getContext('2d', { willReadFrequently: true });
+            context.drawImage(bitmap, 0, 0);
+            pixels = context.getImageData(0, 0, bitmap.width, bitmap.height).data;
+            imageWidth = bitmap.width;
+            imageHeight = bitmap.height;
+            bitmap.close();
+        }
+
+        const inverse = frame.getScreenCTM().inverse();
+        const viewBox = frame.viewBox.baseVal;
+        const iconRect = icon.getBoundingClientRect();
+        const cellWidth = rect.width / canvas.width;
+        const cellHeight = rect.height / canvas.height;
+        const left = Math.max(0, Math.floor((iconRect.left - rect.left) / cellWidth));
+        const right = Math.min(canvas.width - 1, Math.ceil((iconRect.right - rect.left) / cellWidth));
+        const top = Math.max(0, Math.floor((iconRect.top - rect.top) / cellHeight));
+        const bottom = Math.min(canvas.height - 1, Math.ceil((iconRect.bottom - rect.top) / cellHeight));
+        const shapes = [...frame.querySelectorAll('*')];
+        const isOpaque = (screenX, screenY) => {
+            const local = new DOMPoint(screenX, screenY).matrixTransform(inverse);
+            if (local.x < viewBox.x || local.y < viewBox.y ||
+                local.x >= viewBox.x + viewBox.width || local.y >= viewBox.y + viewBox.height) return false;
+            if (image) {
+                const x = Math.floor(local.x);
+                const y = Math.floor(local.y);
+                return x >= 0 && y >= 0 && x < imageWidth && y < imageHeight &&
+                    pixels[(y * imageWidth + x) * 4 + 3] > 0;
+            }
+            return shapes.some(shape => {
+                const style = getComputedStyle(shape);
+                if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) <= 0) return false;
+                const matrix = shape.getScreenCTM();
+                if (!matrix) return false;
+                const point = new DOMPoint(screenX, screenY).matrixTransform(matrix.inverse());
+                const fill = style.fill !== 'none' && style.fill !== 'transparent' &&
+                    Number(style.fillOpacity) > 0 && shape.isPointInFill?.(point);
+                const stroke = style.stroke !== 'none' && style.stroke !== 'transparent' &&
+                    Number(style.strokeOpacity) > 0 && shape.isPointInStroke?.(point);
+                return !!(fill || stroke);
+            });
+        };
+
+        const candidates = [];
+        for (let y = top; y <= bottom; y++) for (let x = left; x <= right; x++) {
+            const screenX = rect.left + (x + 0.5) * cellWidth;
+            const screenY = rect.top + (y + 0.5) * cellHeight;
+            if (isOpaque(screenX, screenY)) candidates.push({
+                x: screenX, y: screenY, cellX: x, cellY: y,
+                distance: (x - machine.x) ** 2 + (y - machine.y) ** 2
+            });
+        }
+        candidates.sort((a, b) => a.distance - b.distance || a.cellY - b.cellY || a.cellX - b.cellX);
+        if (!candidates.length) throw new Error(`No opaque artwork cell found for machine at ${machine.x},${machine.y}.`);
+        const { distance, ...point } = candidates[0];
+        return point;
+    }, machineCell);
+}
+
 export async function dragCanvasCells(page, from, to, steps = 5) {
     const start = await canvasPoint(page, from);
     const end = await canvasPoint(page, to);

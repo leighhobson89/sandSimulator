@@ -1,7 +1,8 @@
 # Game mechanics
 
 This is the current reference for material definitions, machine behavior,
-storage intake, mixer recipes, tubing, vents, and their maintenance contracts.
+machine ports, Collector intake, Mixer recipes, Tubing, Sprinkler release, and
+their maintenance contracts.
 The broad simulation model remains in [`PROGRAM_OVERVIEW.md`](PROGRAM_OVERVIEW.md).
 Use [`E2E_TEST_PLAN.md`](E2E_TEST_PLAN.md) for test ownership and browser-test
 commands; active follow-ups and proposed changes remain in [`ISSUES.md`](ISSUES.md)
@@ -32,17 +33,18 @@ actually run.
 
 ### Current catalogue
 
-The 79 entries are grouped in the same order as the picker:
+The 81 entries are grouped in the same order as the picker:
 
 | Group | Materials |
 | --- | --- |
 | Powders | Sand, Wet Mud, Ash, Wet Sand, Dry Mud, Gunpowder, Snow, Scoria, Wet Ash, Spark Dust, Corrosion |
-| Seeds | Grass Seeds, Moss Spores, Daffodil Seeds, Red Tulip Seeds, Geranium Seeds, Blue Flower Seeds, Banana Seeds, Water Grass / Lily Seeds |
 | Liquids | Water, Oil, Lava, Acid |
 | Gases | Fire, Steam, Smoke, Toxic Gas, Cloud |
-| Solids | Ice, Stone, Wood, Glass, Plant, Wall, Flower, Grass, Lily Stem, Lily Pad, Lily Flower, Ash Grass, Clay, Ceramic, Spark Block, Insulation, Moss, Daffodil, Red Tulip, Geranium, Blue Flower, Banana Plant, Water Grass, Daffodil Bloom, Tulip Bloom, Geranium Bloom, Blue Flower Bloom, Banana Bunch, Water Grass Bloom, Water Grass Pad, Banana Leaf |
+| Solids | Ice, Stone, Wood, Glass, Wall, Clay, Ceramic, Spark Block, Insulation |
+| Seeds | Grass Seeds, Moss Spores, Daffodil Seeds, Red Tulip Seeds, Geranium Seeds, Blue Flower Seeds, Banana Seeds, Water Grass / Lily Seeds |
+| Vegetation | Plant, Grass, Flower, Lily Stem, Lily Pad, Lily Flower, Ash Grass, Moss, Daffodil, Red Tulip, Geranium, Blue Flower, Banana Plant, Water Grass, Daffodil Bloom, Tulip Bloom, Geranium Bloom, Blue Flower Bloom, Banana Bunch, Water Grass Bloom, Water Grass Pad, Banana Leaf |
 | Metals | Spark, Copper, Molten Copper, Battery, Molten Aluminum, Iron, Molten Iron, Stainless Steel, Tubing |
-| Machines | Fan, Heater, Cooler, Vent, Mixer |
+| Machines | Fan, Heater, Cooler, Sprinkler, Mixer, Splitter, Collector |
 | Storage | Powder Storage Bin, Liquid Storage Bin, Gas Storage Bin |
 | Tools | Heat Ray, Cold Ray, Wind |
 
@@ -83,10 +85,11 @@ simulation description in [`PROGRAM_OVERVIEW.md`](PROGRAM_OVERVIEW.md).
 | Category | Quick reference |
 | --- | --- |
 | Powders | Loose materials fall and slide diagonally. Water wets Sand, Dry Mud, and Ash into Wet Sand, Wet Mud, and Wet Ash. Corrosion falls as a powder and melts into Lava at high heat. Powders do not sort themselves by density against other powders. |
-| Seeds | Eight viable powder seed types wait for suitable local temperature, humidity, and substrate moisture before germinating. Species rules in `particles.json` set their substrate, aquatic depth, and germination requirements. |
 | Liquids | Water, Oil, Lava, and Acid flow and seek a level. Liquid storage also accepts molten metals. Water changes phase at its configured thresholds; Lava and Acid have their own material-defined heat and reaction rules. |
 | Gases | Fire, Steam, Smoke, Toxic Gas, and Cloud rise and spread. Steam and Cloud use humidity and dewpoint condensation. Gas storage accepts non-flaming gases, so Fire is not accepted by a Gas Storage Bin. |
-| Solids | Solids provide the fixed, structural, growing, or phase-change behavior declared by their definitions. Plants use species-specific environmental viability and growth; Ice, Glass, Clay, Ceramic, and plant materials also follow the heat and reaction rules defined in `particles.json`. |
+| Solids | Ice, Stone, Wood, Glass, Wall, Clay, Ceramic, Spark Block, and Insulation provide the fixed, structural, or phase-change behavior declared by their definitions. |
+| Seeds | Eight viable powder seed types wait for suitable local temperature, humidity, and substrate moisture before germinating. Species rules in `particles.json` set their substrate, aquatic depth, and germination requirements. |
+| Vegetation | Plant, grass, moss, aquatic plants, and flowering species use the environmental viability, growth, flowering, and seed-setting rules declared in `particles.json`; their leaves, pads, blooms, and fruit appear in this group too. |
 | Metals | Spark, Copper and Molten Copper, Battery and Molten Aluminum, Iron and Molten Iron, Tubing, and Stainless Steel are listed here. Copper, Iron, Battery, and Stainless Steel carry electrical pulses; Stainless Steel transfers heat and electricity more slowly than Iron, draws Battery charge as a wire, and does not rust from Water or humid air. Battery stores charge; Tubing has no electrical conductivity despite being in the Metals picker group. |
 | Tools | Heat Ray and Cold Ray are short-lived directional brushes. A left-button stroke starts Heat Ray upward or Cold Ray downward; its first non-zero drag selects the nearest cardinal direction, which persists while stationary and changes only when the drag heading changes. Painted ray cells travel as projectiles using that stored heading. Wind moves light materials and stirs air; it stops at solid barriers but passes through plants. |
 
@@ -186,11 +189,43 @@ simulation description in [`PROGRAM_OVERVIEW.md`](PROGRAM_OVERVIEW.md).
 
 ### Placement, controls, and persistence
 
-Directional machines are aimed by dragging during placement. The preview shows
-the facing direction and effects; releasing the pointer commits one machine
-cell, regardless of brush size or drawing mode. Clicking a machine opens its
-settings or inventory dialog. Machine state persists in local Resume Game saves
-and portable LZString saves. The shared air temperature control ranges from
+Machine port roles use stable per-port `connectionCell` anchors. The machine
+face or paint footprint does not define tubing topology. Powered Fan, Heater,
+and Cooler machines each have a Copper input; their environmental cone is the
+output, in the opposite direction. Powder, Liquid, and Gas Storage Bins each
+have family-compatible Tubing input and output ports. The Sprinkler has one
+Tubing input and releases into the world. The Mixer has two Tubing inputs and
+releases its output into the world, with no Tubing output. The Splitter has one
+Tubing input and two Tubing outputs. The Collector has one world-facing funnel
+intake and one Tubing output.
+
+Machine placement uses two stages. During `poseSelecting`, the first pointer
+gesture moves and faces a ghost without changing the world or saved state. On
+pointer-up, `extensionPreview` freezes the pose and previews a size-3 connector
+from the first input port in definition order; the output-only Collector
+previews from its Tubing output. A second click preflights and commits the
+machine and connector together. Invalid placement remains available to retry;
+Escape or right-click cancels, and touch follows the same stages. Saves and
+blueprints capture committed machines only.
+
+Machine artwork uses a 64px reference face and scales and repositions with the
+simulation cell zoom. Placed art, ghosts, port markers, 2px stubs, pointer
+hit/snap, connector gestures, and placement previews use the same rotated
+`connectionCell` projection with runtime cell dimensions. The pointer hit
+distance remains 20 CSS pixels as zoom changes; hit proximity does not create a
+physical route. A route requires compatible material at the declared anchor.
+A port becomes connected only through compatible external Tubing or Copper
+contact; its own tagged lead alone does not activate it. Focused port coverage
+passes 8/8; see the machine E2E README for coverage.
+
+Clicking a placed machine opens its settings or inventory dialog. Machine state
+persists in local Resume Game saves and portable LZString saves. Portable save
+format version `2` is written and versions `1` and `2` are accepted on load.
+Version-1 Sprinkler mode is migrated to the current Drain Mode semantics.
+Current snapshots and blueprints record `sprinklerModeVersion: 2` and
+`machinePortLayoutVersion: 2`; missing legacy port-layout markers trigger a
+one-time migration of stored endpoints to current declared anchors, using the
+machine's live world type. The shared air temperature control ranges from
 `-60 C` to `4000 C`.
 
 The environmental controls also include **Base Humidity**, a `0-100%` slider
@@ -250,40 +285,43 @@ target and launches Cold Rays along the centreline.
 
 ### Storage machines
 
-All storage bins are always active, hold one material type, accept material
-through their rear intake, and hold up to `500` particles. Purge clears a bin so
-it can accept another material. Intake collision, suction, and ordering rules
-are specified in [Section 5](#5-storage-bin-intake-collision-geometry-and-regression-maintenance).
+All storage bins hold one material type up to `500` particles. They accept
+material only through a family-compatible Tubing input; loose world particles
+do not enter a bin. Purge clears a bin so it can accept another material.
 
 - **Powder Storage Bin:** accepts powder-category materials and feeds compatible
-  connected Tubing.
+  connected Tubing. It has a Powder-family Tubing input and output.
 - **Liquid Storage Bin:** accepts liquid-category materials, including molten
-  metals, and feeds Tubing.
-- **Gas Storage Bin:** accepts non-flaming gases and feeds Tubing.
+  metals, through its Liquid-family Tubing input and output.
+- **Gas Storage Bin:** accepts non-flaming gases through its Gas-family Tubing
+  input and output.
 
-### Transfer machine: Vent
+### Sprinkler
 
-Vent is always active. It receives one material through connected Tubing and
-releases it below into the canvas.
+The Sprinkler keeps one material type, up to `100` particles, delivered through
+its Tubing input. Its payload is generic: the release mode preserves the exact
+material ID and category received by Tubing.
 
-- Placement creates one vertical Tubing stub directly above the Vent. Tubing
-  connected to that stub is guaranteed to connect to the Vent.
-- The outlet is two grid cells below the logical anchor, outside the drawn icon
-  footprint, so normal output is visible below the housing.
-- Release rate: `1-100` particles/second, default `10` particles/second.
-- Release is enabled by default. With Release disabled, the Vent retains one
-  material type up to `100` particles.
-- Tubing limits the effective release rate. A full disabled Vent stops its
-  connected Tubing at `0/s`.
+- Release remains independently switchable and defaults on. Drain Mode defaults
+  **ON**, preserving the normal single outlet directly downward. Release rate
+  is `1-100` particles/second, default `10` particles/second.
+- Drain Mode **OFF** sprays simultaneously at clock positions 9, 8, 7, 6, 5,
+  4, and 3. Each direction receives an unrounded `releaseRate / 7` share, so
+  all seven streams together preserve the configured total. This normalizes
+  the specification's `/6` nominal share across all seven requested directions.
+- Sprinkler spray renders as raindrops but carries the stored material
+  unchanged. Tubing limits the effective feed/release rate. When Release is
+  disabled or its buffer is full, it retains material and throttles its Tubing
+  route according to the established storage rules.
 
 ### Connection material: Tubing
 
 Tubing is a dense, electrically non-conductive, static material that carries
-stored contents between compatible bins, Vents, and Mixer inputs. It has zero
+stored contents between compatible machines. It has zero
 ordinary thermal conductivity, but its `thermalNetworkRate: 0.12` lets it
 exchange heat with other fast-network conductors and enclosed air. Its
-edge-sharing connection, capacity, bottleneck, and persistence rules are in
-[Section 6](#6-tubing-and-vent-connections-bottlenecks-and-regression-maintenance).
+edge-sharing connection and capacity rules are in
+[Section 6](#6-tubing-and-machine-port-connections-bottlenecks-and-regression-maintenance).
 
 ## 4. Mixer recipes and lifecycle rules
 
@@ -332,11 +370,12 @@ These recipes mirror the material definitions' existing `wetsInto` physics.
 
 ### Mixer connections and persistence
 
-Tubing anywhere touching the invisible `64px` Mixer icon footprint is accepted.
-Left contacts map to input A and right contacts map to input B. The icon is
-symmetric, includes matching Tubing connections, and is rotated 90 degrees
-counterclockwise. Mixer settings and inventories are machine state and persist
-through the supported local Resume Game and portable LZString save paths.
+The Mixer has two separately declared Tubing input anchors, input A and input
+B. Tubing must reach the relevant anchor; the broader icon footprint does not
+accept connections. The Mixer has no Tubing output port: its result continues
+to release into the world under the existing output rules. Mixer settings and
+inventories persist through the supported local Resume Game and portable
+LZString save paths.
 
 The browser regression workflows cover Water-only input, Dry Mud-only input,
 Water + Dry Mud -> Wet Mud, non-mixing Water + Oil, and a late Water + Ash ->
@@ -344,77 +383,87 @@ Wet Ash transition while Water is already being processed. Keep those workflows
 aligned with the owning machine specs and the maintenance contract in
 [`E2E_TEST_PLAN.md`](E2E_TEST_PLAN.md).
 
-## 5. Storage-bin intake collision geometry and regression maintenance
+## 5. Collector intake and machine sealing geometry
 
-The storage-bin intake is an invisible collision barrier at the outside edge of
-the funnel drawn in the 32px machine icon. It is not the machine's one-cell
-centre and is not a solid 32px square.
+Storage Bins do not collect loose particles from the world. Powder, Liquid, and
+Gas bins receive only their compatible material through their Tubing input;
+they retain their one-type, `500`-particle inventory, purge, and Tubing output
+behavior.
 
-### Geometry and ordering
+The Collector is the machine for collecting particles from the world. Its
+directional funnel accepts Powder, Liquid, or Gas. It holds one exact material
+ID at a time, up to `100` particles; a different material remains in the world
+until the Collector is empty. With no compatible output route, buffered
+material remains in the Collector. Its single Tubing output sends material to
+a compatible receiver at `min(30 particles/s, route capacity)`. A one-cell
+Tubing route is therefore limited to `10/s`. Its buffer and direction are
+machine state and are included in saves, blueprints, and grab/drop.
 
-- `physics.js` rebuilds the barrier for every storage bin at the start of each
-  simulation step.
-- `STORAGE_OPENING_HALF_WIDTH` gives the intake its approximately 32px span.
-- Barriers sit one grid step behind the machine centre, at the funnel-to-bin
-  join. This keeps material against the icon without a visible air gap in any
-  orientation.
-- Diagonal barriers use the same one-step depth and a one-cell staircase
-  supercover. Connector cells prevent a particle travelling at 45 degrees from
-  passing through corner-to-corner gaps.
-- `storageBarrierMask` contains the resulting cells. Powder, liquid, gas,
-  ambient-wind, and Fan movement checks all see those cells as
-  `STORAGE_VIRTUAL_WALL`.
-- `buildStorageBarrierCells()` is the single source of barrier geometry.
-  `updateStorageBins()` iterates those same cells when looking for particles to
-  store, so collision and collection cannot use different entrance positions.
-- The storage pass runs immediately after powered Fan movement. A particle
-  delivered to the barrier during that frame can be collected before normal
-  gravity runs.
+Collector front direction index `3` points down, placing its rear suction mouth
+upward by default. Its rotatable two-cell intake accepts an exact material ID
+only when the buffer is empty or already holds that ID and has room below its
+`100`-particle capacity. Accepted particles at the funnel edge enter the
+buffer until it is full. A different material or any particle arriving at a
+full buffer remains upstream; it cannot pass behind the Collector housing and
+spill out below. Intake resumes when an inventory slot opens. Storage Bins no
+longer use the legacy funnel suction.
 
-### Acceptance and suction
+The Collector's physical boundary is aligned with the visible funnel. In the
+default down-facing direction, the first opaque row at the top of the funnel is
+`y = machine.y - 7`; that row blocks rejected particles and full-buffer
+overflow. The collision is part of particle movement and diagonal collision
+handling, independent of UI paint hit testing. The suction barrier and the
+housing/side-rail seal remain separate from each other and are never suction
+targets. Their rotated geometry stays aligned across all eight facings: the
+cardinal barrier uses depth 7 and half-width 5 cells; diagonal geometry uses
+5/3 paired-axis steps. Keep the upstream intake lane open and the Tubing output
+anchor outside the seal.
 
-A two-cell suction zone extends directly outward from every barrier cell. The
-zone is scanned nearest to farthest, so packed liquid can enter even when it has
-no free row to move into and has not moved during that frame.
+Machine-face painting uses rendered alpha across all 64px reference overlays:
+transparent pixels allow ordinary material painting, while non-transparent
+artwork blocks it. This lets Glass or Wood guardrails be painted through
+transparent Collector pixels without changing the physics collision rule;
+opaque Collector artwork remains protected. The alpha-aware rule applies to
+all machines and is independent of the Collector's physical seal.
 
-A particle is accepted only when all of these are true:
+Focused browser coverage verifies Collector intake, visible-edge blocking at
+full capacity, transparent-pixel guardrails, and resumed intake when space
+opens. The focused storage browser suite passes 7/7, including the zoom-2
+full-buffer containment case. See the
+[archived implementation plan](archive/plans/2026-09-25-machine-ports-sprinkler-collector-splitter.md)
+for the complete QA record.
 
-- Its category is accepted by the bin.
-- It matches the type already stored in the bin, or the bin is empty.
-- The bin has capacity remaining.
-
-An accepted particle is removed from the world and increments the stored count.
-Empty suction cells are skipped. A wrong particle, a different stored type, or a
-full bin stops that suction ray; the intake never pulls a valid particle through
-an invalid one. The barrier remains solid, so refused matter falls, flows, or
-continues responding to wind without crossing it.
-
-### Regression maintenance
-
-`tools/simTest.mjs` covers these storage checks:
-
-- A sealed upright liquid funnel fills its bin and retains overflow.
-- A Fan below and left of a diagonal powder bin fires three Ash particles
-  up-right at 45 degrees, and all three enter the bin.
-- A particle arriving from the front of an upside-down bin is refused.
-- Two stationary packed Water cells are pulled into a liquid bin.
-- A wrong particle blocks suction from reaching valid material behind it.
-
-Run `npm test` after changing the machine icon size, direction mapping, barrier
-distance, movement order, or Fan physics. If the SVG funnel moves, update the
-barrier constants and these regressions together.
-
-## 6. Tubing and Vent connections, bottlenecks, and regression maintenance
+## 6. Tubing and machine-port connections, bottlenecks, and regression maintenance
 
 Tubing is non-conductive and static. It connects only through shared cell edges;
-diagonal corner contact is not a connection.
+diagonal corner contact is not a connection. Machine connections use declared
+port roles and stable `connectionCell` anchors, not a broad machine icon
+footprint. A route attaches only when compatible Tubing reaches its exact
+anchor. Storage inputs enforce Powder, Liquid, or Gas family compatibility;
+the Sprinkler and Mixer accept the materials allowed by their existing
+inventory rules. Copper is the connector for powered-machine inputs and is
+separate from Tubing routes.
 
-### Connecting a run
+### Declared material ports
 
-Paint one continuous tube between a storage bin and either a compatible storage
-bin or a Vent. A working run has exactly two attached machines. The source bin
-must contain material, and the destination must have room and accept that
-material. Only then does the source empty and moving dots appear in the tube.
+| Machine | Material ports | Other input/output |
+| --- | --- | --- |
+| Fan, Heater, Cooler | One Copper input | Directional world-effect cone output, opposite the input |
+| Powder Storage Bin | Powder Tubing input and output | No world-particle intake |
+| Liquid Storage Bin | Liquid Tubing input and output | No world-particle intake |
+| Gas Storage Bin | Gas Tubing input and output | No world-particle intake |
+| Sprinkler | One Tubing input | World release/spray output |
+| Mixer | Two Tubing inputs; no Tubing output | World release output |
+| Splitter | One Tubing input and two Tubing outputs | Splits flow evenly across available outlets |
+| Collector | One Tubing output | Rotatable world-facing funnel intake |
+
+### Connecting a run and flow limits
+
+Tubing routes connect a source machine's output anchor to a compatible
+destination machine's input anchor. The source must have buffered material, and
+the destination must have room and accept that material. Connected flow appears
+in the route; it stops when the route is incomplete, material is incompatible,
+the source is empty, or the receiving buffer is full.
 
 The transfer rate is controlled by the narrowest painted cross-section anywhere
 along the route:
@@ -425,42 +474,34 @@ along the route:
 | 2 cells | 20 particles/second |
 | 1 cell | 10 particles/second |
 
-Ordinary storage Tubing therefore carries `10` particles/second per cell of
-narrowest cross-section. Mixer inputs are separately capped at `5` particles/s
-each. A configured Vent release rate is also limited by the Tubing cap.
+Storage output is limited by its route. Mixer inputs are separately capped at
+`5` particles/s each. Sprinkler feed/release remains limited by its configured
+rate and available Tubing. Collector output is limited to `30/s` and the route
+capacity. Splitter divides its incoming rate equally between its two outputs:
+an input of `10/s` produces `5/s` on each available branch. It preserves the
+combined flow and buffers an unavailable branch's share rather than losing or
+redirecting it.
 
-Dots and flow stop immediately when the source is empty, the route is
-incomplete, the destination rejects the material, or the destination is full.
+### Port visuals and persistence status
 
-### Vent connection and release
+Machine artwork uses a `64px` reference overlay that scales and repositions
+with the cell zoom. Each material port has its declared marker, connector
+material, role, and stable anchor. Its visible marker and 2px stub project from
+the rotated world `connectionCell`; hit targets remain 20 CSS pixels and
+topology still requires exact compatible contact at the anchor. The Mixer has
+two distinct inputs and no Tubing output; the Splitter has one input and two
+outputs. A missing `machinePortLayoutVersion` identifies legacy connection
+geometry in saves and blueprints; current snapshots use the explicit port
+layout marker. Legacy compatible endpoints migrate to the current declared
+`connectionCell` anchors. Sprinkler's former Vent identity is retained only for
+load migration; its particle ID remains `52`. Focused port coverage passes
+8/8.
 
-A Vent's guaranteed connection is the vertical Tubing stub directly above it.
-The Vent releases stored material into the canvas cell directly below its body.
-Release is enabled by default; disabling it buffers one material type up to
-`100` particles. A full Vent cuts the connected flow off at `0/s`. Hovering a
-Vent shows its stored amount and current switch state.
-
-### Persistence and regression commands
-
-Worlds and Blueprints save the source inventory, Vent inventory, Release switch,
-and fractional flow remainder. Portable Save and Load also preserve machine
-settings, inventories, Tubing, and Mixer inputs through the supported save path.
-
-The headless regression coverage in `tools/simTest.mjs` checks the `30/s` and
-`20/s` bottlenecks, material transfer, non-conductive Tubing, Vent release, and
-full-Vent flow cutoff. For browser-visible changes, run the owning machine area
-headlessly:
-
-```text
-npm run test:browser -- e2e/machines --workers=1 --trace=off
-```
-
-Headed runs are optional visual or input diagnostics only and are never an
-acceptance or release prerequisite.
-
-Keep focused machine regressions beside their owning specs, and use the
-regression policy in [`E2E_TEST_PLAN.md`](E2E_TEST_PLAN.md) when no functional
-area owns a repaired defect.
+For user-visible changes, use the focused owning-machine specs through the
+documented npm wrapper. See [`E2E_TEST_PLAN.md`](E2E_TEST_PLAN.md) and
+[`e2e/machines/README.md`](../e2e/machines/README.md) for test ownership and
+commands. Final implementation and verification outcomes are recorded in the
+[archived machine plan](archive/plans/2026-09-25-machine-ports-sprinkler-collector-splitter.md).
 
 ## 7. Seeds, plants, humidity, dewpoint, weather, and corrosion
 
@@ -541,7 +582,7 @@ metal cell's cardinal sides, or when the cell has adjacent air and local
 humidity is at least `98%`; diagonal Water does not count. Each eligible metal
 cell is checked once every four simulation frames. A qualifying check adds `1`
 to its persisted exposure counter; a check without either condition removes
-`2`. At `120` exposure, the original metal cell becomes Corrosion powder. The
+`2`. At `360` exposure, the original metal cell becomes Corrosion powder. The
 powder can fall away and leave a gap in a wire or metal structure. Molten forms
 do not accumulate this exposure. Corrosion powder melts into Lava at `1000 C`.
 

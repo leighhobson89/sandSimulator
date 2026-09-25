@@ -19,15 +19,23 @@ import { BLUEPRINT_FIELDS, BLUEPRINT_SLOT_COUNT } from './game.js';
 import { compressToEncodedURIComponent, decompressFromEncodedURIComponent } from './lzString.js';
 
 export const AUTOSAVE_STORAGE_KEY = 'elemental-foundry.autosave.v1';
-const SAVE_VERSION = 1;
+const SAVE_VERSION = 2;
 const AUTOSAVE_INTERVAL_MS = 5 * 60_000;
 const MAX_WORLD_CELLS = 2_000_000;
-const ARRAY_TYPES = { Uint8Array, Uint16Array, Int16Array, Float32Array };
+const ARRAY_TYPES = { Uint8Array, Uint16Array, Uint32Array, Int16Array, Float32Array };
 const BLUEPRINT_FIELD_TYPES = {
     type: Uint8Array, temp: Float32Array, life: Int16Array, lifeMax: Int16Array,
     residue: Uint8Array, shade: Uint8Array, heat: Float32Array, surface: Int16Array,
     data: Uint8Array, machineSetting: Float32Array, storageType: Uint8Array, storageCount: Uint16Array,
     storageFlowRemainder: Float32Array,
+    machinePortEndpointRemap: Uint8Array, machinePortEndpointSlot: Uint8Array,
+    machinePortLeadRemap: Uint32Array, machinePortLeadSlot: Uint8Array,
+    sprinklerLaunchDirection: Uint8Array, sprinklerLaunchAge: Uint8Array,
+    splitterOutputFlowA: Float32Array, splitterOutputFlowB: Float32Array,
+    sprinklerSprayFlow9: Float32Array, sprinklerSprayFlow8: Float32Array,
+    sprinklerSprayFlow7: Float32Array, sprinklerSprayFlow6: Float32Array,
+    sprinklerSprayFlow5: Float32Array, sprinklerSprayFlow4: Float32Array,
+    sprinklerSprayFlow3: Float32Array,
     mixerInputTypeA: Uint8Array, mixerInputCountA: Uint16Array, mixerInputFlowA: Float32Array,
     mixerInputTypeB: Uint8Array, mixerInputCountB: Uint16Array, mixerInputFlowB: Float32Array,
     mixerOutputCountA: Uint16Array, mixerOutputCountB: Uint16Array,
@@ -95,19 +103,22 @@ export function parseSaveString(compressed) {
         if (!json) throw new Error('Cannot decompress');
         payload = JSON.parse(json);
     } catch { throw new Error('That is not a valid Elemental Foundry save string.'); }
-    if (payload?.format !== 'elemental-foundry' || payload.version !== SAVE_VERSION) {
+    if (payload?.format !== 'elemental-foundry' ||
+        ![1, SAVE_VERSION].includes(payload.version)) {
         throw new Error('This save was made by an unsupported version of Elemental Foundry.');
     }
     // Validate the simulation now, while no live state has been changed.
     decodeSimulation(payload.simulation);
-    decodeBlueprintState(payload.blueprints);
+    decodeBlueprintState(payload.blueprints, payload.version);
     return payload;
 }
 
 export function restoreSavePayload(payload) {
-    restoreSimulationState(decodeSimulation(payload.simulation));
+    const simulation = decodeSimulation(payload.simulation);
+    if (payload.version === 1) simulation.sprinklerModeVersion = 1;
+    restoreSimulationState(simulation);
     restoreTools(payload.tools);
-    blueprintStateRestorer(decodeBlueprintState(payload.blueprints));
+    blueprintStateRestorer(decodeBlueprintState(payload.blueprints, payload.version));
     return payload;
 }
 
@@ -243,9 +254,12 @@ function encodeBlueprintState(state) {
             }
             cells[field] = { type: array.constructor.name, data: arrayToBase64(array) };
         }
-        return { width: blueprint.width, height: blueprint.height, cells };
+        return { width: blueprint.width, height: blueprint.height, sprinklerModeVersion: 2,
+            machinePortLayoutVersion: 2, cells };
     });
     return {
+        sprinklerModeVersion: 2,
+        machinePortLayoutVersion: 2,
         fanWindScale: state.fanWindScale,
         nextSlot: Number.isInteger(state.nextSlot) ? state.nextSlot : 0,
         slots
@@ -254,9 +268,15 @@ function encodeBlueprintState(state) {
 
 // Blueprint data was added as an optional part of version 1 saves, so older
 // strings restore to an empty library rather than becoming incompatible.
-function decodeBlueprintState(state) {
+function decodeBlueprintState(state, saveVersion = SAVE_VERSION) {
     if (state === undefined || state === null) {
-        return { fanWindScale: undefined, nextSlot: 0, slots: Array(BLUEPRINT_SLOT_COUNT).fill(null) };
+        return {
+            sprinklerModeVersion: 2,
+            machinePortLayoutVersion: 2,
+            fanWindScale: undefined,
+            nextSlot: 0,
+            slots: Array(BLUEPRINT_SLOT_COUNT).fill(null)
+        };
     }
     if (!Array.isArray(state.slots) || state.slots.length > BLUEPRINT_SLOT_COUNT ||
         !Number.isInteger(state.nextSlot) || state.nextSlot < 0 || state.nextSlot >= BLUEPRINT_SLOT_COUNT) {
@@ -271,14 +291,25 @@ function decodeBlueprintState(state) {
             throw new Error('This save has invalid blueprint dimensions.');
         }
         const cells = {};
+        const hasMachineSettings = !!blueprint.cells?.machineSetting;
         for (const field of BLUEPRINT_FIELDS) {
-            const encoded = blueprint.cells?.[field];
+            const oldField = field.startsWith('sprinklerSprayFlow')
+                ? field.replace('sprinklerSprayFlow', 'ventSprayFlow') : null;
+            const encoded = blueprint.cells?.[field] ||
+                (oldField ? blueprint.cells?.[oldField] : null);
             const Type = BLUEPRINT_FIELD_TYPES[field];
-            // Blueprints made before configurable machines and storage existed
-            // have no corresponding planes; zero means defaults and empty bins.
+            // New machine state planes did not exist in older blueprint saves;
+            // their zero-filled defaults preserve the prior machine behavior.
             if ((field === 'machineSetting' || field === 'storageType' || field === 'storageCount' ||
-                field === 'storageFlowRemainder' || field.startsWith('mixer')) && !encoded) {
+                field === 'storageFlowRemainder' || field.startsWith('machinePortEndpoint') ||
+                field.startsWith('machinePortLead') || field.startsWith('mixer') ||
+                field.startsWith('splitter') || field.startsWith('sprinkler')) && !encoded) {
                 cells[field] = new Type(blueprint.width * blueprint.height);
+                if (field === 'machineSetting') {
+                    for (let cell = 0; cell < cells.type.length; cell++) {
+                        if (cells.type[cell] === 52) cells.machineSetting[cell] = 3;
+                    }
+                }
                 continue;
             }
             if (encoded?.type !== Type.name || typeof encoded.data !== 'string') {
@@ -290,9 +321,32 @@ function decodeBlueprintState(state) {
             }
             cells[field] = array;
         }
-        slots[slot] = { width: blueprint.width, height: blueprint.height, cells };
+        const blueprintModeVersion = saveVersion === 1 ? 1
+            : (blueprint.sprinklerModeVersion ?? state.sprinklerModeVersion);
+        if (hasMachineSettings && blueprintModeVersion !== 2) {
+            migrateLegacySprinklerSettings(cells.type, cells.machineSetting);
+        }
+        const blueprintLayoutVersion = saveVersion === 1 ? 1
+            : (blueprint.machinePortLayoutVersion ?? 1);
+        slots[slot] = { width: blueprint.width, height: blueprint.height,
+            sprinklerModeVersion: 2, machinePortLayoutVersion: blueprintLayoutVersion, cells };
     }
-    return { fanWindScale: state.fanWindScale, nextSlot: state.nextSlot, slots };
+    return {
+        sprinklerModeVersion: 2,
+        machinePortLayoutVersion: 2,
+        fanWindScale: state.fanWindScale,
+        nextSlot: state.nextSlot,
+        slots
+    };
+}
+
+function migrateLegacySprinklerSettings(typeIds, machineSettings) {
+    if (!typeIds || !machineSettings || typeIds.length !== machineSettings.length) return;
+    for (let i = 0; i < typeIds.length; i++) {
+        if (typeIds[i] !== 52) continue;
+        const oldSetting = Math.round(machineSettings[i]);
+        machineSettings[i] = (oldSetting & 1) | ((oldSetting & 2) ? 0 : 2);
+    }
 }
 
 function arrayToBase64(array) {

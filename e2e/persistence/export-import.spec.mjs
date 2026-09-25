@@ -139,7 +139,7 @@ test('portable simulation state restores Base Humidity, Dewpoint and local humid
     });
 });
 
-test('a selected 520 × 300 world keeps its dimensions in version 1 Save/Load', async ({ page }) => {
+test('a selected 520 × 300 world keeps its dimensions in version 2 Save/Load', async ({ page }) => {
     const game = new GamePage(page);
     await game.openMenu();
     await game.newGame({ worldSize: '520 × 300' });
@@ -155,7 +155,7 @@ test('a selected 520 × 300 world keeps its dimensions in version 1 Save/Load', 
             rows: payload.simulation.rows
         };
     }, save);
-    expect(wireFormat).toEqual({ format: 'elemental-foundry', version: 1, cols: 520, rows: 300 });
+    expect(wireFormat).toEqual({ format: 'elemental-foundry', version: 2, cols: 520, rows: 300 });
     await page.getByRole('button', { name: 'Close', exact: true }).click();
 
     await page.getByRole('button', { name: 'Clear', exact: true }).click();

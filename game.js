@@ -22,7 +22,9 @@ import {
     setCell, inBounds, index, getDefinitions, getAmbientTemp, getAirTempAt,
     getAmbientTarget, getTemperature, getHumidityAt, getFrameCount, applyWind, decayWindTrails,
     windStrengthToLegacyScale,
-    getConnectedBatteryCharge, getTubingFlows, isMachinePoweredAt, EMPTY
+    getConnectedBatteryCharge, getTubingFlows, isMachinePoweredAt,
+    getMachinePorts, getMachinePortTemplates, registerMachinePortLead, getMachinePortLeadOwner,
+    getMachineArtworkLayout, isMachinePortMaterialCompatible, EMPTY
 } from './physics.js';
 
 let context = null;
@@ -38,6 +40,7 @@ let grabbedPixels = null;
 let linePreview = null;
 let shapePreview = null;
 let machinePlacementPreview = null;
+let machinePortConnectorPreview = null;
 const STANDARD_ZOOM_FACTORS = [1, 1.5, 2, 3];
 const LARGE_WORLD_ZOOM_FACTORS = [1, 2, 3, 4, 6];
 const WORLD_BOUNDARY_DEPTH = 12;
@@ -58,11 +61,17 @@ export const BLUEPRINT_SLOT_COUNT = 24;
 export const BLUEPRINT_FIELDS = [
     'type', 'temp', 'life', 'lifeMax', 'residue', 'shade', 'heat', 'surface',
     'data', 'machineSetting', 'storageType', 'storageCount', 'storageFlowRemainder',
+    'machinePortEndpointRemap', 'machinePortEndpointSlot',
+    'machinePortLeadRemap', 'machinePortLeadSlot',
+    'sprinklerLaunchDirection', 'sprinklerLaunchAge',
+    'splitterOutputFlowA', 'splitterOutputFlowB',
     'mixerInputTypeA', 'mixerInputCountA', 'mixerInputFlowA',
     'mixerInputTypeB', 'mixerInputCountB', 'mixerInputFlowB',
     'mixerOutputCountA', 'mixerOutputCountB', 'mixerOutputTypeA', 'mixerOutputTypeB', 'mixerOutputMixed',
     'mixerOutputFlow', 'mixerNextInput',
     'mixerOutputNext',
+    'sprinklerSprayFlow9', 'sprinklerSprayFlow8', 'sprinklerSprayFlow7', 'sprinklerSprayFlow6',
+    'sprinklerSprayFlow5', 'sprinklerSprayFlow4', 'sprinklerSprayFlow3',
     'power', 'powerDelay', 'charge', 'wind', 'airflowX', 'airflowY',
     'airflowNextX', 'airflowNextY'
 ];
@@ -605,7 +614,7 @@ function drawWorld() {
 
 // A pending machine is only a visual preview. It is deliberately kept outside
 // the physics world until mouse-up commits the final facing direction.
-export function setMachinePlacementPreview(x, y, machine, direction = 0) {
+export function setMachinePlacementPreview(x, y, machine, direction = machine === 'collector' ? 3 : 0) {
     machinePlacementPreview = { x, y, machine, direction: direction & 7 };
 }
 
@@ -613,38 +622,388 @@ export function clearMachinePlacementPreview() {
     machinePlacementPreview = null;
 }
 
-const MACHINE_ICON_SVG_NS = 'http://www.w3.org/2000/svg';
+export function getMachinePlacementLeadPort() {
+    const preview = machinePlacementPreview;
+    if (!preview) return null;
+    const templates = getMachinePortTemplates(preview.machine, preview.direction);
+    const port = templates.find(candidate => candidate.role === 'input') ||
+        templates.find(candidate => candidate.role === 'output');
+    if (!port) return null;
+    const icon = getElements().machineOverlay?.querySelector('.machine-placement-preview');
+    const circle = [...(icon?.querySelectorAll('.machine-port') || [])]
+        .find(candidate => candidate.getAttribute('data-port-id') === port.id);
+    const marker = circle?.getBoundingClientRect();
+    const canvas = getElements().canvas;
+    const rect = canvas.getBoundingClientRect();
+    const world = getWorld();
+    const radians = (port.rotationDegrees || 0) * Math.PI / 180;
+    const localX = (port.x ?? 32) - 32;
+    const localY = (port.y ?? 32) - 32;
+    const projectedMarkerX = rect.left + (preview.x + 0.5) * rect.width / world.cols +
+        localX * Math.cos(radians) - localY * Math.sin(radians);
+    const projectedMarkerY = rect.top + (preview.y + 0.5) * rect.height / world.rows +
+        localX * Math.sin(radians) + localY * Math.cos(radians);
+    return {
+        ...port,
+        machineX: preview.x,
+        machineY: preview.y,
+        markerClientX: marker ? marker.left + marker.width / 2 : projectedMarkerX,
+        markerClientY: marker ? marker.top + marker.height / 2 : projectedMarkerY,
+        connectionCell: {
+            x: preview.x + Math.round(port.worldOffsetX),
+            y: preview.y + Math.round(port.worldOffsetY)
+        }
+    };
+}
 
-// Machines are still one simulation cell, but their face is a fixed-size
-// screen icon so it remains readable when the pixel canvas is scaled up. Every
-// face includes a small right-pointing arrow in its base artwork; rotating the
-// whole SVG makes the output direction obvious even for symmetric symbols such
-// as the Cooler snowflake.
+const MACHINE_ICON_SVG_NS = 'http://www.w3.org/2000/svg';
+let machineArtworkAlpha = null;
+let machineArtworkAlphaPromise = null;
+let machineArtworkIcons = [];
+
+export function preloadMachineArtworkAlpha() {
+    if (machineArtworkAlphaPromise) return machineArtworkAlphaPromise;
+    if (typeof Image === 'undefined' || typeof document === 'undefined') {
+        machineArtworkAlphaPromise = Promise.resolve(null);
+        return machineArtworkAlphaPromise;
+    }
+    machineArtworkAlphaPromise = new Promise(resolve => {
+        const image = new Image();
+        const readPixels = () => {
+            try {
+                const source = document.createElement('canvas');
+                source.width = image.naturalWidth;
+                source.height = image.naturalHeight;
+                const sourceContext = source.getContext('2d', { willReadFrequently: true });
+                sourceContext.drawImage(image, 0, 0);
+                machineArtworkAlpha = sourceContext.getImageData(0, 0, source.width, source.height);
+            } catch (error) {
+                console.warn('Could not read machine artwork alpha mask.', error);
+            }
+            resolve(machineArtworkAlpha);
+        };
+        image.onload = readPixels;
+        image.onerror = () => resolve(null);
+        image.src = new URL('./resources/icons.png', import.meta.url).href;
+        if (image.complete && image.naturalWidth > 0) readPixels();
+    });
+    return machineArtworkAlphaPromise;
+}
+
+function machineIconContainsArtworkAt(icon, clientX, clientY) {
+    const frame = icon?.querySelector(':scope > svg');
+    if (!frame) return false;
+    let containsArtwork = false;
+    const image = frame.querySelector('image');
+    if (image) {
+        const matrix = frame.getScreenCTM();
+        if (!matrix) return false;
+        const local = new DOMPoint(clientX, clientY).matrixTransform(matrix.inverse());
+        const viewBox = frame.viewBox.baseVal;
+        if (local.x < viewBox.x || local.y < viewBox.y ||
+            local.x >= viewBox.x + viewBox.width || local.y >= viewBox.y + viewBox.height) return false;
+        if (!machineArtworkAlpha) {
+            containsArtwork = true;
+        } else {
+            const x = Math.floor(local.x);
+            const y = Math.floor(local.y);
+            containsArtwork = x >= 0 && y >= 0 && x < machineArtworkAlpha.width &&
+                y < machineArtworkAlpha.height &&
+                machineArtworkAlpha.data[(y * machineArtworkAlpha.width + x) * 4 + 3] > 0;
+        }
+    } else {
+        for (const shape of frame.querySelectorAll('*')) {
+            const style = getComputedStyle(shape);
+            if (style.display === 'none' || style.visibility === 'hidden') continue;
+            let effectiveOpacity = 1;
+            for (let ancestor = shape; ancestor && ancestor !== icon; ancestor = ancestor.parentElement) {
+                const ancestorStyle = getComputedStyle(ancestor);
+                effectiveOpacity *= Number(ancestorStyle.opacity || 1);
+                if (ancestorStyle.display === 'none' || ancestorStyle.visibility === 'hidden') {
+                    effectiveOpacity = 0;
+                    break;
+                }
+            }
+            if (effectiveOpacity <= 0) continue;
+            const matrix = shape.getScreenCTM();
+            if (!matrix) continue;
+            const local = new DOMPoint(clientX, clientY).matrixTransform(matrix.inverse());
+            const fill = style.fill !== 'none' && style.fill !== 'transparent' &&
+                Number(style.fillOpacity || 1) > 0;
+            const stroke = style.stroke !== 'none' && style.stroke !== 'transparent' &&
+                Number(style.strokeOpacity || 1) > 0;
+            if ((fill && shape.isPointInFill?.(local)) ||
+                (stroke && shape.isPointInStroke?.(local))) {
+                containsArtwork = true;
+                break;
+            }
+        }
+    }
+    if (containsArtwork) return true;
+
+    // Port markers and stubs are visible parts of the machine overlay too.
+    // The larger transparent hit circles remain interaction affordances only.
+    for (const shape of icon.querySelectorAll(':scope > .machine-port, :scope > .machine-port-stub')) {
+        const style = getComputedStyle(shape);
+        if (style.display === 'none' || style.visibility === 'hidden') continue;
+        const matrix = shape.getScreenCTM();
+        if (!matrix) continue;
+        const local = new DOMPoint(clientX, clientY).matrixTransform(matrix.inverse());
+        const fill = style.fill !== 'none' && style.fill !== 'transparent' &&
+            Number(style.fillOpacity || 1) > 0;
+        const stroke = style.stroke !== 'none' && style.stroke !== 'transparent' &&
+            Number(style.strokeOpacity || 1) > 0;
+        if ((fill && shape.isPointInFill?.(local)) ||
+            (stroke && shape.isPointInStroke?.(local))) return true;
+    }
+    return false;
+}
+
+export function getMachineArtworkAtClientPoint(clientX, clientY) {
+    const world = getWorld();
+    if (!world) return null;
+    for (let i = machineArtworkIcons.length - 1; i >= 0; i--) {
+        const icon = machineArtworkIcons[i];
+        if (!machineIconContainsArtworkAt(icon, clientX, clientY)) continue;
+        const x = Number(icon.getAttribute('data-machine-x'));
+        const y = Number(icon.getAttribute('data-machine-y'));
+        const id = world.type[index(x, y)];
+        const def = getDefinitions()[id];
+        if (def?.machine) return { id, def, x, y, tubing: false };
+    }
+    return null;
+}
+
+function appendMachineSprite(icon, machineType) {
+    const layout = getMachineArtworkLayout(machineType);
+    if (!layout) return;
+    const frame = document.createElementNS(MACHINE_ICON_SVG_NS, 'svg');
+    frame.setAttribute('x', String(layout.x));
+    frame.setAttribute('y', String(layout.y));
+    frame.setAttribute('width', String(layout.width));
+    frame.setAttribute('height', String(layout.height));
+    if (machineType === 'collector') {
+        frame.setAttribute('viewBox', '0 0 64 64');
+        frame.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+        const art = [
+            ['path', { d: 'M7 12 Q5 12 5 16 V48 Q5 52 7 52 L27 43 V21 Z', fill: '#364f69', stroke: '#15253b', 'stroke-width': 3, 'stroke-linejoin': 'round' }],
+            ['path', { d: 'M8 15 L24 22 V42 L8 49 Z', fill: '#2f97c4', stroke: '#78dbf2', 'stroke-width': 1.8, 'stroke-linejoin': 'round' }],
+            ['path', { d: 'M9 17 L22 23 V28 L9 22 Z', fill: '#72dcf1', stroke: '#b7f4ff', 'stroke-width': 1 }],
+            ['path', { d: 'M26 21 L35 17 L51 21 V44 L35 48 L26 43 Z', fill: '#647f96', stroke: '#15253b', 'stroke-width': 3, 'stroke-linejoin': 'round' }],
+            ['path', { d: 'M30 23 L36 21 L47 24 V41 L36 44 L30 41 Z', fill: '#376d91', stroke: '#263e58', 'stroke-width': 1.5, 'stroke-linejoin': 'round' }],
+            ['path', { d: 'M33 25 L43 25 L43 29 L33 29 Z', fill: '#54c8e5' }],
+            ['path', { d: 'M34 33 H44 M34 37 H44', fill: 'none', stroke: '#b5d9e8', 'stroke-width': 1.8, 'stroke-linecap': 'round' }],
+            ['path', { d: 'M50 23 H59 V28 H50', fill: '#bf7742', stroke: '#15253b', 'stroke-width': 2, 'stroke-linejoin': 'round' }],
+            ['circle', { cx: 10, cy: 27, r: 1.8, fill: '#b7f4ff' }],
+            ['circle', { cx: 13, cy: 33, r: 1.5, fill: '#67d9f0' }],
+            ['circle', { cx: 10, cy: 40, r: 1.8, fill: '#9a8fe5' }]
+        ];
+        for (const [tag, attrs] of art) {
+            const shape = document.createElementNS(MACHINE_ICON_SVG_NS, tag);
+            for (const [name, value] of Object.entries(attrs)) shape.setAttribute(name, String(value));
+            frame.appendChild(shape);
+        }
+        icon.appendChild(frame);
+        return;
+    }
+    frame.setAttribute('viewBox', `${layout.sourceX} ${layout.sourceY} ${layout.trimWidth} ${layout.trimHeight}`);
+    frame.setAttribute('preserveAspectRatio', 'none');
+    const sheet = document.createElementNS(MACHINE_ICON_SVG_NS, 'image');
+    sheet.setAttribute('href', './resources/icons.png');
+    sheet.setAttribute('x', '0');
+    sheet.setAttribute('y', '0');
+    sheet.setAttribute('width', '1536');
+    sheet.setAttribute('height', '1024');
+    frame.appendChild(sheet);
+    icon.appendChild(frame);
+}
+
+export function getMachinePortAtClientPoint(clientX, clientY, materialId = null, maxDistanceCss = 20) {
+    const overlay = getElements().machineOverlay;
+    if (!overlay) return null;
+    const candidates = [];
+    for (const hitTarget of overlay.querySelectorAll('[data-port-hit-target]')) {
+        const rect = hitTarget.getBoundingClientRect();
+        const centerX = rect.left + rect.width / 2;
+        const centerY = rect.top + rect.height / 2;
+        const distance = Math.hypot(clientX - centerX, clientY - centerY);
+        if (distance > maxDistanceCss) continue;
+        const icon = hitTarget.closest('.machine-overlay-icon');
+        if (!icon) continue;
+        const machineX = Number(icon.getAttribute('data-machine-x'));
+        const machineY = Number(icon.getAttribute('data-machine-y'));
+        const portId = hitTarget.getAttribute('data-port-hit-target');
+        const port = getMachinePorts(machineX, machineY).find(candidate => candidate.id === portId);
+        if (!port || (materialId !== null &&
+            !isMachinePortMaterialCompatible(machineX, machineY, portId, materialId))) continue;
+        candidates.push({ ...port, machineX, machineY, markerClientX: centerX,
+            markerClientY: centerY, pointerDistanceCss: distance });
+    }
+    candidates.sort((a, b) => a.pointerDistanceCss - b.pointerDistanceCss ||
+        a.machineY - b.machineY || a.machineX - b.machineX || a.order - b.order);
+    if (candidates.length > 1 && Math.abs(candidates[0].pointerDistanceCss -
+        candidates[1].pointerDistanceCss) < 0.25) return null;
+    return candidates[0] || null;
+}
+
+export function paintMachinePortConnector(port, endClientX, endClientY) {
+    if (!port?.connectionCell || !Number.isFinite(endClientX) || !Number.isFinite(endClientY)) return false;
+    const materialId = getDefinitions().findIndex(def => def?.name === port.connectorMaterial);
+    if (materialId <= 0 || !isMachinePortMaterialCompatible(
+        port.machineX, port.machineY, port.id, materialId)) return false;
+
+    const world = getWorld();
+    const cells = machineConnectorCells(port, endClientX, endClientY, !!port.connected);
+    if (!cells) return false;
+    const targetPort = getMachinePortAtClientPoint(endClientX, endClientY, materialId, 20);
+    // Preflight the entire stroke before writing any cell. Existing matching
+    // connector material may be joined; any blocker cancels the operation.
+    for (const cell of cells) {
+        const current = world.type[cell];
+        const x = cell % world.cols;
+        const y = Math.floor(cell / world.cols);
+        if ((current !== EMPTY && current !== materialId) ||
+            machineFaceCoversCell(x, y, index(port.machineX, port.machineY),
+                targetPort ? index(targetPort.machineX, targetPort.machineY) : -1)) return false;
+    }
+    const newCells = [];
+    for (const cell of cells) {
+        if (world.type[cell] === EMPTY) {
+            setCell(cell % world.cols, Math.floor(cell / world.cols), materialId);
+            newCells.push(cell);
+        }
+    }
+    const targetCell = targetPort &&
+        index(targetPort.connectionCell.x, targetPort.connectionCell.y);
+    if (targetPort && (targetPort.machineX !== port.machineX ||
+        targetPort.machineY !== port.machineY) && newCells.includes(targetCell)) {
+        registerMachinePortLead(targetPort.machineX, targetPort.machineY,
+            targetPort.slot, [targetCell]);
+        registerMachinePortLead(port.machineX, port.machineY, port.slot,
+            newCells.filter(cell => cell !== targetCell));
+    } else {
+        registerMachinePortLead(port.machineX, port.machineY, port.slot, newCells);
+    }
+    return true;
+}
+
+function machineConnectorCells(port, endClientX, endClientY, allowConnectedBranch = false) {
+    const canvas = getElements().canvas;
+    const world = getWorld();
+    const rect = canvas.getBoundingClientRect();
+    let dxCss = endClientX - port.markerClientX;
+    let dyCss = endClientY - port.markerClientY;
+    const lengthCss = Math.hypot(dxCss, dyCss);
+    if (lengthCss > 20) {
+        dxCss *= 20 / lengthCss;
+        dyCss *= 20 / lengthCss;
+    }
+    const cappedEndX = port.markerClientX + dxCss;
+    const cappedEndY = port.markerClientY + dyCss;
+    let endX = (cappedEndX - rect.left) / rect.width * world.cols - 0.5;
+    let endY = (cappedEndY - rect.top) / rect.height * world.rows - 0.5;
+    const startX = port.connectionCell.x;
+    const startY = port.connectionCell.y;
+    const outwardX = startX - port.machineX;
+    const outwardY = startY - port.machineY;
+    if (!allowConnectedBranch &&
+        (endX - startX) * outwardX + (endY - startY) * outwardY < 0) {
+        endX = startX;
+        endY = startY;
+    }
+    const steps = Math.max(1, Math.ceil(Math.max(Math.abs(endX - startX), Math.abs(endY - startY))));
+    const cells = new Set();
+    for (let step = 0; step <= steps; step++) {
+        const t = step / steps;
+        const centerX = Math.round(startX + (endX - startX) * t);
+        const centerY = Math.round(startY + (endY - startY) * t);
+        // The forced brush is exactly size 3 in simulation cells: center and
+        // its four orthogonal neighbours, matching the regular brush raster.
+        for (const [ox, oy] of [[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1]]) {
+            const x = centerX + ox;
+            const y = centerY + oy;
+            if (!inBounds(x, y)) return null;
+            cells.add(index(x, y));
+        }
+    }
+    return cells;
+}
+
+export function placeMachineWithLead(x, y, machine, direction, endClientX, endClientY) {
+    if (!machinePlacementPreview || machinePlacementPreview.x !== x ||
+        machinePlacementPreview.y !== y || machinePlacementPreview.machine !== machine ||
+        !canPlaceMachine(x, y, machine)) return false;
+    const port = getMachinePlacementLeadPort();
+    if (!port || !inBounds(port.connectionCell.x, port.connectionCell.y)) return false;
+    const materialId = getDefinitions().findIndex(def => def?.name === port.connectorMaterial);
+    if (materialId <= 0) return false;
+    const cells = machineConnectorCells(port, endClientX, endClientY);
+    if (!cells) return false;
+    const world = getWorld();
+    const machineIndex = index(x, y);
+    const targetPort = getMachinePortAtClientPoint(endClientX, endClientY, materialId, 20);
+    for (const cell of cells) {
+        if (cell === machineIndex ||
+            (world.type[cell] !== EMPTY && world.type[cell] !== materialId)) return false;
+        const cx = cell % world.cols;
+        const cy = Math.floor(cell / world.cols);
+        if (machineFaceCoversCell(cx, cy,
+            targetPort ? index(targetPort.machineX, targetPort.machineY) : -1)) return false;
+    }
+    if (!placeMachine(x, y, machine, direction)) return false;
+    const newCells = [];
+    for (const cell of cells) {
+        if (world.type[cell] !== EMPTY) continue;
+        setCell(cell % world.cols, Math.floor(cell / world.cols), materialId);
+        newCells.push(cell);
+    }
+    const targetCell = targetPort &&
+        index(targetPort.connectionCell.x, targetPort.connectionCell.y);
+    if (targetPort && newCells.includes(targetCell)) {
+        registerMachinePortLead(targetPort.machineX, targetPort.machineY,
+            targetPort.slot, [targetCell]);
+        registerMachinePortLead(x, y, port.slot,
+            newCells.filter(cell => cell !== targetCell));
+    } else {
+        registerMachinePortLead(x, y, port.slot, newCells);
+    }
+    return true;
+}
+
+// Machines remain one simulation cell. Their base 64px face scales with the
+// canvas zoom while its center and port anchors track the actual grid cells.
+// Every face includes a small right-pointing arrow in its base artwork;
+// rotating the whole SVG makes the output direction obvious even for symmetric
+// symbols such as the Cooler snowflake.
 function drawMachineOverlays() {
     const overlay = getElements().machineOverlay;
     if (!overlay) return;
+    machineArtworkIcons = [];
     if (typeof overlay.replaceChildren === 'function') overlay.replaceChildren();
     else overlay.innerHTML = '';
 
     const world = getWorld();
     const canvas = getElements().canvas;
-    const cellWidth = canvas.clientWidth / world.cols;
-    const cellHeight = canvas.clientHeight / world.rows;
-    const iconMargin = Math.ceil(32 / Math.max(0.25, Math.min(cellWidth, cellHeight)));
+    const canvasBounds = canvas.getBoundingClientRect();
+    const cellWidth = canvasBounds.width / world.cols;
+    const cellHeight = canvasBounds.height / world.rows;
+    const artworkScale = zoomFactors()[canvasZoomLevel - 1] || 1;
+    const iconSize = 64 * artworkScale;
+    const iconMargin = Math.ceil(iconSize / 2 / Math.max(0.25, Math.min(cellWidth, cellHeight)));
     const viewport = visibleCellBounds();
     const visible = visibleCellBounds(Math.max(34, iconMargin) + 1);
     const defs = getDefinitions();
     const rotations = [0, 180, -90, 90, -45, -135, 135, 45];
     const coneLayer = document.createElementNS(MACHINE_ICON_SVG_NS, 'svg');
     coneLayer.setAttribute('class', 'machine-cone-overlay');
-    coneLayer.setAttribute('viewBox', `0 0 ${canvas.clientWidth} ${canvas.clientHeight}`);
+    coneLayer.setAttribute('viewBox', `0 0 ${canvasBounds.width} ${canvasBounds.height}`);
     coneLayer.setAttribute('width', '100%');
     coneLayer.setAttribute('height', '100%');
     coneLayer.setAttribute('aria-hidden', 'true');
     overlay.appendChild(coneLayer);
     const flowLayer = document.createElementNS(MACHINE_ICON_SVG_NS, 'svg');
     flowLayer.setAttribute('class', 'tubing-flow-overlay');
-    flowLayer.setAttribute('viewBox', `0 0 ${canvas.clientWidth} ${canvas.clientHeight}`);
+    flowLayer.setAttribute('viewBox', `0 0 ${canvasBounds.width} ${canvasBounds.height}`);
     flowLayer.setAttribute('width', '100%');
     flowLayer.setAttribute('height', '100%');
     flowLayer.setAttribute('aria-hidden', 'true');
@@ -674,14 +1033,80 @@ function drawMachineOverlays() {
             '<path d="M11 13 2 3M11 17 2 27" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="round" stroke-linejoin="round" stroke-opacity="0.78"/>' +
             '<path d="M3 15h7m0 0-3-3m3 3-3 3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>' +
             '<circle cx="16" cy="12" r="1.2" fill="currentColor"/><circle cx="21" cy="16" r="1.2" fill="currentColor"/><circle cx="16" cy="20" r="1.2" fill="currentColor"/>',
-        vent: '<path d="M5 8h20l-2.2 4H7.2L5 8Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>' +
+        sprinkler: '<path d="M5 8h20l-2.2 4H7.2L5 8Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>' +
             '<path d="M15 8V2M15 2l-2 2M15 2l2 2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>' +
             '<path d="M8 14h14v8H8zM11 16v4M15 16v4M19 16v4M5 25h20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>',
         mixer: '<rect x="7" y="7" width="16" height="18" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.6"/>' +
             '<path d="M0 9h7M30 9h-7M4 9l3 3M26 9l-3 3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>' +
             '<circle cx="15" cy="16" r="4.5" fill="none" stroke="currentColor" stroke-width="1.3"/>' +
             '<path d="M15 11.5v9M10.5 16h9M11.8 12.8l6.4 6.4M18.2 12.8l-6.4 6.4" fill="none" stroke="currentColor" stroke-width="1.15" stroke-linecap="round"/>' +
-            '<path d="M7 23h16M11 25v2M19 25v2" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>'
+            '<path d="M7 23h16M11 25v2M19 25v2" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>',
+        splitter: '<rect x="8" y="7" width="14" height="16" rx="2.4" fill="none" stroke="currentColor" stroke-width="1.8"/>' +
+            '<path d="M11 12h8M11 18h8M15 12v3m0 0-4 3m4-3 4 3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>',
+        collector: true
+    };
+
+    const appendPortArtwork = (icon, ports, cellWidth, cellHeight, machineX, machineY) => {
+        for (const port of ports) {
+            const cx = port.visualX;
+            const cy = port.visualY;
+            const angle = (port.rotationDegrees || 0) * Math.PI / 180;
+            const anchorOffsetX = port.connectionCell
+                ? port.connectionCell.x - machineX
+                : Math.round(port.worldOffsetX ?? port.localX ?? port.connectionOffset?.x ?? 0);
+            const anchorOffsetY = port.connectionCell
+                ? port.connectionCell.y - machineY
+                : Math.round(port.worldOffsetY ?? port.localY ?? port.connectionOffset?.y ?? 0);
+            // The icon's viewBox scales with zoom; convert the desired screen
+            // offset back into that local coordinate system before applying
+            // the inverse machine rotation.
+            const projectedX = anchorOffsetX * cellWidth / artworkScale;
+            const projectedY = anchorOffsetY * cellHeight / artworkScale;
+            const anchorX = 32 + projectedX * Math.cos(angle) + projectedY * Math.sin(angle);
+            const anchorY = 32 - projectedX * Math.sin(angle) + projectedY * Math.cos(angle);
+            const deltaX = anchorX - cx;
+            const deltaY = anchorY - cy;
+            const distance = Math.hypot(deltaX, deltaY) || 1;
+            const ux = deltaX / distance;
+            const uy = deltaY / distance;
+            const startX = cx + ux * (port.visualRadius || 2.5);
+            const startY = cy + uy * (port.visualRadius || 2.5);
+            const colour = port.connected ? '#31d979' : '#f04444';
+            const stub = document.createElementNS(MACHINE_ICON_SVG_NS, 'path');
+            stub.setAttribute('class', 'machine-port-stub');
+            stub.setAttribute('d', `M ${startX.toFixed(2)} ${startY.toFixed(2)} L ${anchorX.toFixed(2)} ${anchorY.toFixed(2)}`);
+            stub.setAttribute('stroke', port.connectorMaterial === 'Copper' ? '#d88742' : '#a9b5bf');
+            stub.setAttribute('fill', 'none');
+            stub.setAttribute('stroke-width', '2');
+            stub.setAttribute('stroke-linecap', 'round');
+            stub.setAttribute('data-port-stub', port.id);
+            icon.appendChild(stub);
+
+            const circle = document.createElementNS(MACHINE_ICON_SVG_NS, 'circle');
+            circle.setAttribute('class', `machine-port machine-port-${port.role}`);
+            circle.setAttribute('cx', String(cx));
+            circle.setAttribute('cy', String(cy));
+            circle.setAttribute('r', String(port.visualRadius || 2.5));
+            circle.setAttribute('fill', colour);
+            circle.setAttribute('stroke', '#171717');
+            circle.setAttribute('stroke-width', '0.8');
+            circle.setAttribute('data-port-id', port.id);
+            circle.setAttribute('data-port-role', port.role);
+            circle.setAttribute('data-port-family', port.family);
+            circle.setAttribute('data-connected', String(!!port.connected));
+            icon.appendChild(circle);
+
+            const hitTarget = document.createElementNS(MACHINE_ICON_SVG_NS, 'circle');
+            hitTarget.setAttribute('class', 'machine-port-hit-target');
+            hitTarget.setAttribute('cx', String(cx));
+            hitTarget.setAttribute('cy', String(cy));
+            hitTarget.setAttribute('r', String((port.hitRadiusCss || 20) / artworkScale));
+            hitTarget.setAttribute('fill', 'transparent');
+            hitTarget.setAttribute('data-port-hit-target', port.id);
+            hitTarget.setAttribute('data-port-role', port.role);
+            hitTarget.setAttribute('data-port-family', port.family);
+            icon.appendChild(hitTarget);
+        }
     };
 
     drawTubingFlowOverlay(flowLayer, getTubingFlows(), cellWidth, cellHeight, viewport);
@@ -692,7 +1117,8 @@ function drawMachineOverlays() {
         const def = defs[world.type[i]];
         const machine = def?.machine;
         if (!machine || !icons[machine]) continue;
-        if ((machine === 'heater' || machine === 'cooler') && isMachinePoweredAt(x, y)) {
+        if ((machine === 'fan' || machine === 'heater' || machine === 'cooler') &&
+            isMachinePoweredAt(x, y)) {
             const cone = document.createElementNS(MACHINE_ICON_SVG_NS, 'path');
             cone.setAttribute('class', `machine-cone machine-cone-${machine}`);
             cone.setAttribute('d', machineConePath(x, y, world.data[i] & 7,
@@ -701,18 +1127,22 @@ function drawMachineOverlays() {
         }
         const icon = document.createElementNS(MACHINE_ICON_SVG_NS, 'svg');
         icon.setAttribute('class', `machine-overlay-icon machine-${machine}`);
-        icon.setAttribute('viewBox', '0 0 30 30');
-        const iconSize = machine === 'mixer' ? 64 : (machine.startsWith('storage') ? 32 : 30);
+        icon.setAttribute('viewBox', '0 0 64 64');
         icon.setAttribute('width', String(iconSize));
         icon.setAttribute('height', String(iconSize));
         icon.setAttribute('aria-hidden', 'true');
+        icon.setAttribute('data-machine-x', String(x));
+        icon.setAttribute('data-machine-y', String(y));
+        icon.style.width = `${iconSize}px`;
+        icon.style.height = `${iconSize}px`;
         icon.style.left = `${(x + 0.5) * cellWidth - iconSize / 2}px`;
         icon.style.top = `${(y + 0.5) * cellHeight - iconSize / 2}px`;
-        const mixerRotation = machine === 'mixer' ? -90 : 0;
-        icon.style.transform = `rotate(${machine === 'vent'
-            ? 0 : rotations[world.data[i] & 7] + mixerRotation}deg)`;
-        icon.innerHTML = icons[machine];
+        icon.style.transform = `rotate(${machine === 'sprinkler'
+            ? 0 : rotations[world.data[i] & 7]}deg)`;
+        appendMachineSprite(icon, machine);
+        appendPortArtwork(icon, getMachinePorts(x, y), cellWidth, cellHeight, x, y);
         overlay.appendChild(icon);
+        machineArtworkIcons.push(icon);
       }
     }
 
@@ -720,7 +1150,7 @@ function drawMachineOverlays() {
         const preview = machinePlacementPreview;
         const def = getDefinitions().find(candidate => candidate?.machine === preview.machine);
         if (def && icons[preview.machine] && inBounds(preview.x, preview.y)) {
-            if (preview.machine === 'heater' || preview.machine === 'cooler') {
+            if (preview.machine === 'fan' || preview.machine === 'heater' || preview.machine === 'cooler') {
                 const cone = document.createElementNS(MACHINE_ICON_SVG_NS, 'path');
                 cone.setAttribute('class', `machine-cone machine-cone-${preview.machine} machine-cone-preview`);
                 cone.setAttribute('d', machineConePath(preview.x, preview.y, preview.direction,
@@ -729,26 +1159,75 @@ function drawMachineOverlays() {
             }
             const icon = document.createElementNS(MACHINE_ICON_SVG_NS, 'svg');
             icon.setAttribute('class', `machine-overlay-icon machine-${preview.machine} machine-placement-preview`);
-            icon.setAttribute('viewBox', '0 0 30 30');
-            const iconSize = preview.machine === 'mixer'
-                ? 64 : (preview.machine.startsWith('storage') ? 32 : 30);
+            icon.setAttribute('viewBox', '0 0 64 64');
             icon.setAttribute('width', String(iconSize));
             icon.setAttribute('height', String(iconSize));
             icon.setAttribute('aria-hidden', 'true');
+            icon.setAttribute('data-machine-x', String(preview.x));
+            icon.setAttribute('data-machine-y', String(preview.y));
+            icon.style.width = `${iconSize}px`;
+            icon.style.height = `${iconSize}px`;
             icon.style.left = `${(preview.x + 0.5) * cellWidth - iconSize / 2}px`;
             icon.style.top = `${(preview.y + 0.5) * cellHeight - iconSize / 2}px`;
-            const mixerRotation = preview.machine === 'mixer' ? -90 : 0;
-            icon.style.transform = `rotate(${preview.machine === 'vent'
-                ? 0 : rotations[preview.direction] + mixerRotation}deg)`;
-            icon.innerHTML = icons[preview.machine];
+            icon.style.transform = `rotate(${preview.machine === 'sprinkler'
+                ? 0 : rotations[preview.direction]}deg)`;
+            appendMachineSprite(icon, preview.machine);
+            appendPortArtwork(icon, getMachinePortTemplates(preview.machine, preview.direction),
+                cellWidth, cellHeight, preview.x, preview.y);
             overlay.appendChild(icon);
         }
     }
+
+    if (machinePortConnectorPreview) {
+        const preview = machinePortConnectorPreview;
+        const canvasRect = canvas.getBoundingClientRect();
+        const layer = document.createElementNS(MACHINE_ICON_SVG_NS, 'svg');
+        layer.setAttribute('class', 'machine-port-connector-preview-layer');
+        layer.setAttribute('viewBox', `0 0 ${canvasBounds.width} ${canvasBounds.height}`);
+        layer.setAttribute('width', '100%');
+        layer.setAttribute('height', '100%');
+        layer.setAttribute('aria-hidden', 'true');
+        const line = document.createElementNS(MACHINE_ICON_SVG_NS, 'line');
+        line.setAttribute('x1', String(preview.startClientX - canvasRect.left));
+        line.setAttribute('y1', String(preview.startClientY - canvasRect.top));
+        line.setAttribute('x2', String(preview.endClientX - canvasRect.left));
+        line.setAttribute('y2', String(preview.endClientY - canvasRect.top));
+        line.setAttribute('stroke', preview.material === 'Copper' ? '#d88742' : '#60b4e8');
+        line.setAttribute('stroke-width', String(Math.max(cellWidth, cellHeight) * 3));
+        line.setAttribute('stroke-linecap', 'round');
+        line.setAttribute('data-port-connector-preview', '');
+        line.setAttribute('data-start-client-x', String(preview.startClientX));
+        line.setAttribute('data-start-client-y', String(preview.startClientY));
+        line.setAttribute('data-end-client-x', String(preview.endClientX));
+        line.setAttribute('data-end-client-y', String(preview.endClientY));
+        layer.appendChild(line);
+        overlay.appendChild(layer);
+    }
+}
+
+export function setMachinePortConnectorPreview(preview = null) {
+    if (preview) {
+        let dx = preview.endClientX - preview.startClientX;
+        let dy = preview.endClientY - preview.startClientY;
+        const length = Math.hypot(dx, dy);
+        if (length > 20) {
+            dx *= 20 / length;
+            dy *= 20 / length;
+        }
+        machinePortConnectorPreview = {
+            ...preview,
+            endClientX: preview.startClientX + dx,
+            endClientY: preview.startClientY + dy
+        };
+    } else {
+        machinePortConnectorPreview = null;
+    }
+    drawMachineOverlays();
 }
 
 // Animate discrete bands along the same ordered tubing-cell route which moves
 // the material. Unlike an SVG centreline, the bands stay in real cells at a
-// bend, while their sequence makes the direction from Storage Bin to Vent (or
+// bend, while their sequence makes the direction from Storage Bin to Sprinkler (or
 // another compatible bin) unambiguous.
 function drawTubingFlowOverlay(layer, flows, cellWidth, cellHeight, visible) {
     const frame = getFrameCount();
@@ -1127,6 +1606,35 @@ function updateChargeIndicator(elements) {
     elements.chargeIndicatorValue.textContent = `${percent}%`;
 }
 
+function machineFaceCoversCell(cellX, cellY, exceptMachineIndex = -1, alsoExceptMachineIndex = -1) {
+    const world = getWorld();
+    const canvas = getElements().canvas;
+    if (!world || !canvas) return false;
+    const rect = canvas.getBoundingClientRect();
+    if (!(rect.width > 0 && rect.height > 0)) return false;
+    const cellWidth = rect.width / world.cols;
+    const cellHeight = rect.height / world.rows;
+    const clientX = rect.left + (cellX + 0.5) * cellWidth;
+    const clientY = rect.top + (cellY + 0.5) * cellHeight;
+    for (const icon of machineArtworkIcons) {
+        const machineX = Number(icon.getAttribute('data-machine-x'));
+        const machineY = Number(icon.getAttribute('data-machine-y'));
+        const machineIndex = index(machineX, machineY);
+        if (machineIndex === exceptMachineIndex || machineIndex === alsoExceptMachineIndex) continue;
+        const bounds = icon.getBoundingClientRect();
+        // Rotated 64px faces can extend to just over 45px along either screen
+        // axis. Skip unrelated icons before running the precise art hit test.
+        if (clientX < bounds.left - 1 || clientX > bounds.right + 1 ||
+            clientY < bounds.top - 1 || clientY > bounds.bottom + 1) continue;
+        if (machineIconContainsArtworkAt(icon, clientX, clientY)) return true;
+    }
+    return false;
+}
+
+function machineFaceBlocksPaint(cellX, cellY) {
+    return machineFaceCoversCell(cellX, cellY);
+}
+
 //---------------------------------------------------------------------- brush
 
 // Paints a blob of the selected particle. A material can only be added to air;
@@ -1136,8 +1644,21 @@ function updateChargeIndicator(elements) {
 // dragX and dragY are which way the mouse was moving, which only the wind tool
 // cares about. rayDirection is the hand-painted ray's stored cardinal heading;
 // machine-emitted ray markers are never created by this brush path.
-export function paintCell(centreX, centreY, dragX, dragY, rayDirection = null) {
+export function paintCell(centreX, centreY, dragX, dragY, rayDirection = null, portSnap = null) {
     const id = getEraserOn() ? EMPTY : getParticleTypeIdSelected();
+
+    // A CSS-space port snap is resolved by the UI and handed through this
+    // explicit override. Simulation topology never infers a route from nearby
+    // cells or a hit radius.
+    if (id !== EMPTY && portSnap?.connectionCell &&
+        isMachinePortMaterialCompatible(portSnap.machineX, portSnap.machineY, portSnap.id, id)) {
+        const cell = portSnap.connectionCell;
+        if (!machineFaceCoversCell(cell.x, cell.y, index(portSnap.machineX, portSnap.machineY)) &&
+            (getWorld().type[index(cell.x, cell.y)] === EMPTY || getWorld().type[index(cell.x, cell.y)] === id)) {
+            if (getWorld().type[index(cell.x, cell.y)] === EMPTY) setCell(cell.x, cell.y, id);
+        }
+        return;
+    }
 
     // The wind is a tool rather than a material: it is not put into the world,
     // it pushes what is already there. A gust covers twice the width the brush
@@ -1145,6 +1666,7 @@ export function paintCell(centreX, centreY, dragX, dragY, rayDirection = null) {
     // stopping dead at the edge of the brush - so the gust radius is the brush
     // size itself, the brush's own radius being half of that.
     if (id !== EMPTY && getDefinitions()[id].tool === 'wind') {
+        if (machineFaceCoversCell(centreX, centreY)) return;
         applyWind(centreX, centreY, dragX || 0, dragY || 0,
             Math.max(3, getBrushSize()), windStrengthToLegacyScale(getWindStrength()));
         return;
@@ -1160,6 +1682,7 @@ export function paintCell(centreX, centreY, dragX, dragY, rayDirection = null) {
             const y = centreY + dy;
             if (!inBounds(x, y)) continue;
             if (radius > 0.5 && dx * dx + dy * dy > radius * radius + 0.5) continue;
+            if (id !== EMPTY && machineFaceBlocksPaint(x, y)) continue;
 
             const i = index(x, y);
             if (id === EMPTY) {
@@ -1167,6 +1690,10 @@ export function paintCell(centreX, centreY, dragX, dragY, rayDirection = null) {
                 world.life[i] = 0;
                 world.lifeMax[i] = 0;
                 world.residue[i] = EMPTY;
+                world.machinePortEndpointRemap[i] = 0;
+                world.machinePortEndpointSlot[i] = 0;
+                world.sprinklerLaunchDirection[i] = 0;
+                world.sprinklerLaunchAge[i] = 0;
                 world.temp[i] = getAirTempAt(y);
                 world.power[i] = 0;
                 world.powerDelay[i] = 0;
@@ -1186,6 +1713,7 @@ export function paintCell(centreX, centreY, dragX, dragY, rayDirection = null) {
             setPaintedRayDirection(i, id, rayDirection);
         }
     }
+
 }
 
 function setPaintedRayDirection(i, id, direction) {
@@ -1212,25 +1740,13 @@ export function canPlaceMachine(x, y, machine) {
 // Machines are placed as one cell, independently of brush size. Their
 // orientation lives in the cell's data byte so it travels with the machine
 // when the grabber moves it and survives normal world-state operations.
-export function placeMachine(x, y, machine, direction = 0) {
+export function placeMachine(x, y, machine, direction = machine === 'collector' ? 3 : 0) {
     const id = machineId(machine);
     if (id <= 0 || !inBounds(x, y)) return false;
     const i = index(x, y);
     if (getWorld().type[i] !== EMPTY) return false;
     setCell(x, y, id);
     getWorld().data[i] = normaliseMachineDirection(direction);
-    if (machine === 'mixer') {
-        const stubId = getDefinitions().findIndex(def => def?.tubing);
-        for (const side of [-1, 1]) {
-            for (let distance = 1; distance <= 7; distance++) {
-                const stubX = x + side * distance;
-                const stubY = y - 3;
-                if (inBounds(stubX, stubY) && getWorld().type[index(stubX, stubY)] === EMPTY) {
-                    setCell(stubX, stubY, stubId);
-                }
-            }
-        }
-    }
     return true;
 }
 
@@ -1294,6 +1810,7 @@ export function paintShape(shape, x0, y0, x1, y1, rayDirection = null) {
                 if (dx * dx + dy * dy > 1) continue;
             }
             if (isWind) {
+                if (machineFaceCoversCell(x, y)) continue;
                 applyWind(x, y, 0, 0, Math.max(3, getBrushSize()),
                     windStrengthToLegacyScale(getWindStrength()));
             } else {
@@ -1305,6 +1822,7 @@ export function paintShape(shape, x0, y0, x1, y1, rayDirection = null) {
 
 function paintSingleCell(x, y, id, fillLooseMaterial = false, rayDirection = null) {
     if (!inBounds(x, y)) return;
+    if (id !== EMPTY && machineFaceBlocksPaint(x, y)) return;
     const world = getWorld();
     const i = index(x, y);
     if (id === EMPTY) {
@@ -1312,6 +1830,10 @@ function paintSingleCell(x, y, id, fillLooseMaterial = false, rayDirection = nul
         world.life[i] = 0;
         world.lifeMax[i] = 0;
         world.residue[i] = EMPTY;
+        world.machinePortEndpointRemap[i] = 0;
+        world.machinePortEndpointSlot[i] = 0;
+        world.sprinklerLaunchDirection[i] = 0;
+        world.sprinklerLaunchAge[i] = 0;
         world.temp[i] = getAirTempAt(y);
         world.power[i] = 0;
         world.powerDelay[i] = 0;
@@ -1352,7 +1874,8 @@ export function captureBlueprint(x0, y0, x1, y1) {
         }
         cells[field] = copy;
     }
-    return { left, top, width, height, cells };
+    return { left, top, width, height, sprinklerModeVersion: 2,
+        machinePortLayoutVersion: 2, cells };
 }
 
 // The copied area is centred on the click. Cells beyond an edge are clipped,
@@ -1380,7 +1903,11 @@ export function stampBlueprintAt(blueprint, startX, startY) {
             if (x < 0 || x >= world.cols) continue;
             const source = sy * blueprint.width + sx;
             const destination = index(x, y);
-            for (const field of BLUEPRINT_FIELDS) world[field][destination] = blueprint.cells[field][source];
+            for (const field of BLUEPRINT_FIELDS) {
+                // Blueprints captured before a new persistent field was added
+                // have no corresponding plane; restore its empty default.
+                world[field][destination] = blueprint.cells[field]?.[source] ?? 0;
+            }
             world.tempNext[destination] = world.temp[destination];
             world.moved[destination] = 0;
             stamped++;
@@ -1397,19 +1924,17 @@ export function beginGrab(centreX, centreY, size = getGrabberSize()) {
     const world = getWorld();
     const grabbedId = world.type[index(centreX, centreY)];
     if (grabbedId === EMPTY) return 0;
+    const machineIndex = getDefinitions()[grabbedId]?.machine ? index(centreX, centreY) : -1;
 
     const left = centreX - Math.floor(size / 2);
     const top = centreY - Math.floor(size / 2);
     const cells = [];
-    for (let oy = 0; oy < size; oy++) {
-        for (let ox = 0; ox < size; ox++) {
-            const x = left + ox;
-            const y = top + oy;
-            if (!inBounds(x, y)) continue;
+    const captureAt = (x, y) => {
+            if (!inBounds(x, y)) return;
             const i = index(x, y);
-            if (world.type[i] !== grabbedId) continue;
+            if (world.type[i] === EMPTY || cells.some(cell => cell.x === x && cell.y === y)) return;
             const p = i * 4;
-            const def = getDefinitions()[grabbedId];
+            const def = getDefinitions()[world.type[i]];
             cells.push({
                 dx: x - centreX, dy: y - centreY,
                 x, y,
@@ -1419,6 +1944,18 @@ export function beginGrab(centreX, centreY, size = getGrabberSize()) {
                 machineSetting: world.machineSetting[i],
                 storageType: world.storageType[i], storageCount: world.storageCount[i],
                 storageFlowRemainder: world.storageFlowRemainder[i],
+                machinePortEndpointRemap: world.machinePortEndpointRemap[i],
+                machinePortEndpointSlot: world.machinePortEndpointSlot[i],
+                machinePortLeadRemap: world.machinePortLeadRemap[i],
+                machinePortLeadSlot: world.machinePortLeadSlot[i],
+                sprinklerLaunchDirection: world.sprinklerLaunchDirection[i],
+                sprinklerLaunchAge: world.sprinklerLaunchAge[i],
+                splitterOutputFlowA: world.splitterOutputFlowA[i],
+                splitterOutputFlowB: world.splitterOutputFlowB[i],
+                sprinklerSprayFlow9: world.sprinklerSprayFlow9[i], sprinklerSprayFlow8: world.sprinklerSprayFlow8[i],
+                sprinklerSprayFlow7: world.sprinklerSprayFlow7[i], sprinklerSprayFlow6: world.sprinklerSprayFlow6[i],
+                sprinklerSprayFlow5: world.sprinklerSprayFlow5[i], sprinklerSprayFlow4: world.sprinklerSprayFlow4[i],
+                sprinklerSprayFlow3: world.sprinklerSprayFlow3[i],
                 mixerInputTypeA: world.mixerInputTypeA[i], mixerInputCountA: world.mixerInputCountA[i],
                 mixerInputFlowA: world.mixerInputFlowA[i], mixerInputTypeB: world.mixerInputTypeB[i],
                 mixerInputCountB: world.mixerInputCountB[i], mixerInputFlowB: world.mixerInputFlowB[i],
@@ -1433,6 +1970,20 @@ export function beginGrab(centreX, centreY, size = getGrabberSize()) {
                 previewA: Math.round(255 * (def.alpha === undefined ? 1 : def.alpha))
             });
             clearGrabbedCell(world, i, y);
+    };
+    for (let oy = 0; oy < size; oy++) {
+        for (let ox = 0; ox < size; ox++) {
+            const x = left + ox;
+            const y = top + oy;
+            if (!inBounds(x, y) || world.type[index(x, y)] !== grabbedId) continue;
+            captureAt(x, y);
+        }
+    }
+    if (machineIndex >= 0) {
+        for (let i = 0; i < world.type.length; i++) {
+            const x = i % world.cols;
+            const y = Math.floor(i / world.cols);
+            if (getMachinePortLeadOwner(x, y) === machineIndex) captureAt(x, y);
         }
     }
     grabbedPixels = { centreX, centreY, cells };
@@ -1489,6 +2040,18 @@ function clearGrabbedCell(world, i, y) {
     world.storageType[i] = 0;
     world.storageCount[i] = 0;
     world.storageFlowRemainder[i] = 0;
+    world.machinePortEndpointRemap[i] = 0;
+    world.machinePortEndpointSlot[i] = 0;
+    world.machinePortLeadRemap[i] = 0;
+    world.machinePortLeadSlot[i] = 0;
+    world.sprinklerLaunchDirection[i] = 0;
+    world.sprinklerLaunchAge[i] = 0;
+    world.splitterOutputFlowA[i] = 0;
+    world.splitterOutputFlowB[i] = 0;
+    world.sprinklerSprayFlow9[i] = 0; world.sprinklerSprayFlow8[i] = 0;
+    world.sprinklerSprayFlow7[i] = 0; world.sprinklerSprayFlow6[i] = 0;
+    world.sprinklerSprayFlow5[i] = 0; world.sprinklerSprayFlow4[i] = 0;
+    world.sprinklerSprayFlow3[i] = 0;
     world.mixerInputTypeA[i] = 0; world.mixerInputCountA[i] = 0; world.mixerInputFlowA[i] = 0;
     world.mixerInputTypeB[i] = 0; world.mixerInputCountB[i] = 0; world.mixerInputFlowB[i] = 0;
         world.mixerOutputCountA[i] = 0; world.mixerOutputCountB[i] = 0;
@@ -1515,6 +2078,18 @@ function restoreGrabbedCell(world, i, cell) {
     world.storageType[i] = cell.storageType || 0;
     world.storageCount[i] = cell.storageCount || 0;
     world.storageFlowRemainder[i] = cell.storageFlowRemainder || 0;
+    world.machinePortEndpointRemap[i] = cell.machinePortEndpointRemap || 0;
+    world.machinePortEndpointSlot[i] = cell.machinePortEndpointSlot || 0;
+    world.machinePortLeadRemap[i] = cell.machinePortLeadRemap || 0;
+    world.machinePortLeadSlot[i] = cell.machinePortLeadSlot || 0;
+    world.sprinklerLaunchDirection[i] = cell.sprinklerLaunchDirection || 0;
+    world.sprinklerLaunchAge[i] = cell.sprinklerLaunchAge || 0;
+    world.splitterOutputFlowA[i] = cell.splitterOutputFlowA || 0;
+    world.splitterOutputFlowB[i] = cell.splitterOutputFlowB || 0;
+    world.sprinklerSprayFlow9[i] = cell.sprinklerSprayFlow9 || 0; world.sprinklerSprayFlow8[i] = cell.sprinklerSprayFlow8 || 0;
+    world.sprinklerSprayFlow7[i] = cell.sprinklerSprayFlow7 || 0; world.sprinklerSprayFlow6[i] = cell.sprinklerSprayFlow6 || 0;
+    world.sprinklerSprayFlow5[i] = cell.sprinklerSprayFlow5 || 0; world.sprinklerSprayFlow4[i] = cell.sprinklerSprayFlow4 || 0;
+    world.sprinklerSprayFlow3[i] = cell.sprinklerSprayFlow3 || 0;
     world.mixerInputTypeA[i] = cell.mixerInputTypeA || 0; world.mixerInputCountA[i] = cell.mixerInputCountA || 0;
     world.mixerInputFlowA[i] = cell.mixerInputFlowA || 0; world.mixerInputTypeB[i] = cell.mixerInputTypeB || 0;
     world.mixerInputCountB[i] = cell.mixerInputCountB || 0; world.mixerInputFlowB[i] = cell.mixerInputFlowB || 0;

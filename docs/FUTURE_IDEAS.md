@@ -15,10 +15,11 @@ are preserved in the [archive](archive/) index.
   Battery networks. Battery stores charge, and powered Fans, Heaters, and
   Coolers consume it. This is an intentionally readable game rule, not a
   voltage/current simulation.
-- Tubing moves discrete stored particles between compatible bins, Vents, and
-  Mixer inputs. Connections use touching edges; transfer is limited by the
-  narrowest section. Its iron body conducts heat through connected metal and
-  enclosed air, but does not conduct electricity or model fluid pressure.
+- Tubing moves discrete stored particles through declared machine ports,
+  including storage, Mixer, Sprinkler, Collector, and Splitter connections.
+  Connections use touching edges; transfer is limited by the narrowest
+  section. Its iron body conducts heat through connected metal and enclosed
+  air, but does not conduct electricity or model fluid pressure.
 - The local resume game autosaves on a five-minute interval when autosave is
   enabled. Large saves can pause play while they are written, so additional
   world sizes and save-heavy features need measured browser performance.
@@ -57,8 +58,7 @@ introduce isolated effects.
 | --- | --- | --- |
 | **Pump** | Draw Water or another supported liquid from the canvas or a storage bin and push it into a connected route. A direction and rate setting would make the output legible. | Tubing, liquid flow, storage, power. Decide whether it needs a world-facing intake, a tube input, or two variants. |
 | **Valve** | Manually or electrically open and close a Tubing connection; a diverter could select one of two destinations. | Tubing routes and Power Switch / Sensor. Begin with a single on/off valve before branching. |
-| **Manifold** | Split one source route into two or more outputs, with a visible rule for which branch receives the next particle. | Existing bin transfer and Mixer input handling. Needs explicit fairness and bottleneck rules. |
-| **Sprinkler** | Release small bursts of stored Water over a short area instead of one continuous Vent outlet. | Watering, plants, Fan airflow, cooling, storage and Tubing. |
+| **Manifold** | Extend the existing balanced two-output Splitter to three or more branches or another explicit routing rule. | Existing bin transfer, Splitter, and Mixer input handling. Needs explicit fairness and bottleneck rules. |
 | **Conveyor** | Carry powders or selected solids horizontally, with a powered direction and speed. | Material movement and machine power. Needs careful interaction with falling particles and world boundaries. |
 | **Sorter** | Send a supported material type to one of two outputs, leaving unmatched particles on a return path or in a buffer. | Bins, Tubing, manifolds and Mixer recipes. This could turn the current transfer tools into a small production puzzle. |
 
@@ -99,8 +99,9 @@ larger, are:
 1. **Manual shutoff:** a Valve stops a route without erasing its contents.
 2. **Branching:** a Manifold connects several routes with a documented
    round-robin or priority rule.
-3. **World intake and output:** Pumps or Sprinklers move selected materials
-   between the canvas and the network.
+3. **World intake and output:** Extend the existing Collector intake and
+   Sprinkler release paths with Pumps that move selected materials between the
+   canvas and the network.
 4. **Filtering or buffering:** an inline Filter rejects or consumes selected
    material; a Reservoir buffers a larger amount and exposes its fill level.
 5. **Pressure, only if needed:** richer flow or pressure behavior could make
@@ -136,7 +137,7 @@ cross-system coupling would make layouts harder to reason about.
 | Prototype | Player-facing loop | Prerequisites / open questions |
 | --- | --- | --- |
 | **Thermostat** | A temperature Sensor pulses a Heater or Cooler to keep a chamber in a chosen range. | Define sustained activation versus pulse activation; expose the threshold and machine status. |
-| **Irrigation** | A Pump feeds a Valve and Sprinkler; a sensor or timer controls watering for plants. | Choose world intake geometry, route rules, and whether a timer is a new component. |
+| **Irrigation** | A Pump feeds a Valve and the existing Sprinkler; a sensor or timer controls watering for plants. | Choose pump intake geometry, route rules, and whether a timer is a new component. |
 | **Wind-powered workshop** | Ambient airflow charges a Battery through a Wind Turbine, then runs a Fan or Heater. | Prevent self-power loops; show generation and consumption clearly. |
 | **Material line** | A bin supplies a Manifold or Sorter, then two destinations or a Mixer. | Define branch fairness, buffering, and what happens to rejected material. |
 | **Rain garden scenario** | A not-yet-implemented optional challenge asks players to use the existing humidity, rain, and plant systems to grow a thriving patch. | Define the scenario, target, and success conditions; it can build on current weather without adding another humidity or rain mechanic. |
