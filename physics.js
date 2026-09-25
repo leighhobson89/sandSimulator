@@ -129,31 +129,16 @@ const AIR_VARIANCE = 4;
 const airOffset = new Float32Array(256);
 for (let s = 0; s < 256; s++) airOffset[s] = (s / 255 - 0.5) * AIR_VARIANCE;
 
-// The air also comes in layers. The world is split into five bands by height
-// and each one up is colder than the one below it by layerLapse degrees, the
-// way real air is colder the higher you go. The middle band sits exactly on
-// whatever the air temperature is set to, so the dial still reads true, and the
-// top and bottom bands are two steps either side of it.
-const AIR_BANDS = 5;
-let layerLapse = 2;
+// Open-air temperature follows a smooth, fixed atmospheric profile centered on
+// the Air Temperature setting: the surface is 7.5 C warmer and the top is
+// 7.5 C cooler. Enclosed air keeps its own temperature as before.
+const ATMOSPHERE_HALF_RANGE = 7.5;
 
-// Layering can be switched off altogether, which makes the air one even
-// temperature from the floor to the ceiling. It is a different thing from
-// turning the lapse rate down to zero: this leaves whatever the slider was set
-// to untouched, so switching it back on picks up where it left off.
-let airLayersOn = true;
-
-export function setLayerLapse(value) { layerLapse = value; }
-export function getLayerLapse() { return layerLapse; }
-
-export function setAirLayersOn(value) { airLayersOn = !!value; }
-export function getAirLayersOn() { return airLayersOn; }
-
-// The air temperature at a given row, before the per-particle variance.
+// The outside-air temperature at a given row, before per-particle variance.
 export function getAirTempAt(y) {
-    if (!airLayersOn) return AMBIENT;
-    const band = Math.floor((y * AIR_BANDS) / ROWS);
-    return AMBIENT + (band - (AIR_BANDS - 1) / 2) * layerLapse;
+    if (ROWS <= 1) return AMBIENT;
+    const heightFraction = Math.max(0, Math.min(1, y / (ROWS - 1)));
+    return AMBIENT + (heightFraction - 0.5) * ATMOSPHERE_HALF_RANGE * 2;
 }
 
 // ---------------------------------------------------------------- definitions
@@ -796,6 +781,12 @@ function hasAirNeighbour(x, y) {
     return false;
 }
 
+function hasCardinalWaterNeighbour(x, y) {
+    const water = idOf('Water');
+    return typeAt(x, y - 1) === water || typeAt(x + 1, y) === water ||
+        typeAt(x, y + 1) === water || typeAt(x - 1, y) === water;
+}
+
 const HUMIDITY_NEIGHBOURS = [[0, -1], [1, 0], [0, 1], [-1, 0]];
 
 function humidityNearCell(x, y) {
@@ -832,20 +823,40 @@ const PERSISTED_WORLD_FIELDS = [
 ];
 const TUBING_NEIGHBOURS = [[0, -1], [1, 0], [0, 1], [-1, 0]];
 
+// Fan settings share Breeze's current 0-50 scale. Fan output formulas retain
+// their original 0-15 calibration internally.
+export const FAN_WIND_SCALE = 50;
+
+export function migrateLegacyFanWindSettings(typeIds, machineSettings) {
+    if (!typeIds || !machineSettings || typeIds.length !== machineSettings.length) return;
+    for (let i = 0; i < typeIds.length; i++) {
+        const definition = DEFS[typeIds[i]];
+        if (definition?.machine !== 'fan') continue;
+        const legacyStrength = Number(machineSettings[i]);
+        if (!Number.isFinite(legacyStrength) || legacyStrength <= 0) {
+            // Blueprints created before configurable machine settings have an
+            // empty plane; restore the Fan's current definition default.
+            machineSettings[i] = definition.machineWindSpeed ?? 7;
+            continue;
+        }
+        const clampedLegacyStrength = Math.max(0, Math.min(15, legacyStrength));
+        machineSettings[i] = Math.round(clampedLegacyStrength * FAN_WIND_SCALE / 15);
+    }
+}
+
 export function captureSimulationState() {
     if (!world) throw new Error('There is no world to save.');
     const arrays = {};
     for (const field of PERSISTED_WORLD_FIELDS) arrays[field] = world[field];
     return {
         version: 1,
+        fanWindScale: FAN_WIND_SCALE,
         cols: COLS,
         rows: ROWS,
         ambient: AMBIENT,
         ambientTarget,
         ambientHumidity: ambientHumidityTarget,
         dewpointTarget,
-        layerLapse,
-        airLayersOn,
         ambientWindOn,
         windDial: windStrengthToLegacyScale(gustWindStrength),
         generalWindStrength,
@@ -865,6 +876,7 @@ export function restoreSimulationState(state) {
 
     const cells = state.cols * state.rows;
     createWorld(state.cols, state.rows);
+    const hasSavedMachineSettings = !!state.arrays.machineSetting;
     for (const field of PERSISTED_WORLD_FIELDS) {
         const source = state.arrays[field];
         // Environment and plant fields were added after the first save format.
@@ -898,6 +910,12 @@ export function restoreSimulationState(state) {
         world[field].set(source);
     }
 
+    // Saves without this marker stored Fan speeds on the old 1-20 scale,
+    // whose physical formulas used 15 as the Breeze-equivalent maximum.
+    if (hasSavedMachineSettings && state.fanWindScale !== FAN_WIND_SCALE) {
+        migrateLegacyFanWindSettings(world.type, world.machineSetting);
+    }
+
     // Mixer state is restored by copying typed arrays directly, so rebuild
     // this derived fast-path flag that normally gets set by setCell().
     hasMixerMachine = false;
@@ -915,8 +933,8 @@ export function restoreSimulationState(state) {
     dewpointTarget = Number.isFinite(state.dewpointTarget)
         ? Math.max(0, Math.min(100, state.dewpointTarget)) : 10;
     if (!state.arrays.humidity) world.humidity.fill(ambientHumidityTarget);
-    layerLapse = Number.isFinite(state.layerLapse) ? state.layerLapse : layerLapse;
-    airLayersOn = state.airLayersOn !== false;
+    // Legacy layer settings are intentionally ignored. Outside air now always
+    // follows the natural height profile, including saves that disabled it.
     frameCount = Number.isSafeInteger(state.frameCount) ? state.frameCount : 0;
     const legacyWind = Number.isFinite(state.windDial)
         ? Math.round(Math.max(0, Math.min(15, state.windDial)) * (50 / 15)) : null;
@@ -1036,7 +1054,7 @@ function defaultMachineSetting(def) {
 }
 
 function machineSettingBounds(def) {
-    if (def?.machine === 'fan') return { min: 1, max: 20 };
+    if (def?.machine === 'fan') return { min: 1, max: FAN_WIND_SCALE };
     if (def?.machine === 'heater') return { min: 0, max: 4000 };
     if (def?.machine === 'cooler') return { min: -60, max: 20 };
     return null;
@@ -2094,10 +2112,10 @@ function thermalContactRate(first, second, firstOpenAir, secondOpenAir) {
     // Eligible conductor and enclosed-air pairs use the dedicated local
     // network below so their configured rate is not double-counted here.
     if (thermalNetworkPairRate(first, second, firstOpenAir, secondOpenAir) > 0) return 0;
-    // Open air cells remain coupled to each other so the ambient dial and its
-    // layers settle at the existing pace. A material exchanging heat with open
-    // air uses the weaker air-to-material interface; enclosed air keeps the
-    // full contact rate and can hold or receive chamber heat.
+    // Open air cells remain coupled to each other so the ambient profile
+    // settles at the existing pace. A material exchanging heat with open air
+    // uses the weaker air-to-material interface; enclosed air keeps the full
+    // contact rate and can hold or receive chamber heat.
     let firstConductivity = first.conductivity;
     let secondConductivity = second.conductivity;
     if (first.id === EMPTY && firstOpenAir && second.id !== EMPTY) {
@@ -2177,7 +2195,7 @@ function diffuseHeat() {
             }
             result = t + (result - t) * conductionScale;
 
-            // Open air keeps following the ambient dial and its height layers.
+            // Open air keeps following the ambient dial and height profile.
             // Enclosed airspace has its own temperature and changes only via
             // contact conduction, radiant heat, or explicit source forces.
             // Other contents exchange their slow ambient response with the
@@ -2589,13 +2607,14 @@ function applyReactions(x, y, i, def) {
         }
     }
 
-    // Metal needs sustained saturation before the exposed source cell rusts.
-    // Replacing that pixel lets the new powder fall and leaves gaps in a
-    // structure instead of coating intact metal with cosmetic rust.
-    if (def.metal && ((frameCount + i) & 3) === 0) {
+    // Non-machine metal needs sustained water or humidity exposure before
+    // the source cell rusts. Machines and storage bins are not part of this
+    // weathering mechanic. Replacing the source lets corrosion powder fall
+    // away and leave gaps instead of coating intact metal with cosmetic rust.
+    if (def.metal && !def.machine && ((frameCount + i) & 3) === 0) {
         const humidity = humidityNearCell(x, y);
         const exposedToAir = hasAirNeighbour(x, y);
-        if (exposedToAir && humidity >= 98) {
+        if (hasCardinalWaterNeighbour(x, y) || (exposedToAir && humidity >= 98)) {
             world.corrosionExposure[i] = Math.min(65535, world.corrosionExposure[i] + 1);
         } else {
             world.corrosionExposure[i] = Math.max(0, world.corrosionExposure[i] - 2);
@@ -3962,8 +3981,8 @@ function windCanEnter(def, target) {
 
 const FAN_WIND_STRENGTH = 7;
 const FAN_WIND_RANGE = 28;
-// Fan speed uses the same numeric scale as the breeze dial up to 8. Values
-// above 8 are intentionally stronger than a maximum natural breeze.
+// This is the legacy physical reference strength. New Fan settings are mapped
+// to this scale before calculating the trail, airflow, and particle forces.
 const FAN_REFERENCE_STRENGTH = 8;
 const FAN_AIR_DECAY = 0.84;
 const FAN_AIR_ADVECT = 0.76;
@@ -4802,7 +4821,8 @@ function applyFanWind(x, y, direction, strength = FAN_WIND_STRENGTH) {
     const tangentX = -dirY;
     const tangentY = dirX;
     const range = Math.max(1, Math.round(FAN_WIND_RANGE));
-    const powerScale = strength / FAN_REFERENCE_STRENGTH;
+    const legacyStrength = windStrengthToLegacyScale(strength);
+    const powerScale = legacyStrength / FAN_REFERENCE_STRENGTH;
     const intensity = Math.min(1, powerScale);
     const blocked = new Set();
 
@@ -4978,8 +4998,8 @@ function shelterGust(centreX, centreY, dirX, dirY, radius) {
 //
 // The stirring is the interesting half: every cell in the gust is pulled part
 // way towards the average temperature of the gust, so dragging up and down
-// through the layered air mixes the cold at the top into the warm at the
-// bottom, exactly as a real draught would.
+// through the atmosphere mixes cold upper air into warmer lower air, exactly
+// as a real draught would.
 export function applyWind(centreX, centreY, dirX, dirY, radius, strength) {
     if (!world) return;
     if (strength <= 0) return;

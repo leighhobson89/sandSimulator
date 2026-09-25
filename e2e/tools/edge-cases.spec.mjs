@@ -79,7 +79,7 @@ test('shape previews never commit when cancelled and occupied cells remain prote
     expect(state.arrays.type[20 * state.cols + 42]).toBe(sand);
 });
 
-test('environment bounds, keyboard heat toggle, and layer dependencies remain synchronized', async ({ page }) => {
+test('environment bounds, keyboard heat toggle, and natural-atmosphere controls remain available', async ({ page }) => {
     const game = await start(page);
     const airTemp = page.locator('#airTemp');
     const airTempValue = page.locator('#airTempValue');
@@ -90,12 +90,9 @@ test('environment bounds, keyboard heat toggle, and layer dependencies remain sy
     await airTemp.fill('4000');
     await expect(airTempValue).toHaveValue('4000');
 
-    const layers = page.locator('#airLayers');
-    const lapse = page.locator('#layerLapse');
-    await page.locator('label:has(#airLayers)').click();
-    await expect(lapse).toBeDisabled();
-    await page.locator('label:has(#airLayers)').click();
-    await expect(lapse).toBeEnabled();
+    await expect(page.locator('#airLayers')).toHaveCount(0);
+    await expect(page.locator('#layerLapse')).toHaveCount(0);
+    await expect(page.locator('#ambientWind')).toBeVisible();
 
     await page.locator('#visualizationsOptionsButton').click();
     await page.keyboard.press('h');

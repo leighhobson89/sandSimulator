@@ -246,6 +246,7 @@ function encodeBlueprintState(state) {
         return { width: blueprint.width, height: blueprint.height, cells };
     });
     return {
+        fanWindScale: state.fanWindScale,
         nextSlot: Number.isInteger(state.nextSlot) ? state.nextSlot : 0,
         slots
     };
@@ -255,7 +256,7 @@ function encodeBlueprintState(state) {
 // strings restore to an empty library rather than becoming incompatible.
 function decodeBlueprintState(state) {
     if (state === undefined || state === null) {
-        return { nextSlot: 0, slots: Array(BLUEPRINT_SLOT_COUNT).fill(null) };
+        return { fanWindScale: undefined, nextSlot: 0, slots: Array(BLUEPRINT_SLOT_COUNT).fill(null) };
     }
     if (!Array.isArray(state.slots) || state.slots.length > BLUEPRINT_SLOT_COUNT ||
         !Number.isInteger(state.nextSlot) || state.nextSlot < 0 || state.nextSlot >= BLUEPRINT_SLOT_COUNT) {
@@ -291,7 +292,7 @@ function decodeBlueprintState(state) {
         }
         slots[slot] = { width: blueprint.width, height: blueprint.height, cells };
     }
-    return { nextSlot: state.nextSlot, slots };
+    return { fanWindScale: state.fanWindScale, nextSlot: state.nextSlot, slots };
 }
 
 function arrayToBase64(array) {

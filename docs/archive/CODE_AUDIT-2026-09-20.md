@@ -73,7 +73,7 @@ All commands below were run from the repository root on the audit date.
 |---|---|
 | `npm test` | **250 passed, 0 failed** with the default seed |
 | `npm run test:smoke` | **Passed**: startup, 47 material buttons, seven groups, canvas rendering, Fan/Heater/Cooler placement, orientation, previews, icons and active cones, drawing tools, themes, charge rendering, temperature, Clear confirmation, breeze and autosave Cancel behavior |
-| `npm run test:browser` | Playwright suite available for real-browser visual and interaction checks; install Chromium first with `npx playwright install chromium` |
+| `npm run test:browser` | Playwright suite available for real-browser visual and interaction checksr |
 | `node --check physics.js` | Passed |
 | `node --check tools/simTest.mjs` | Passed |
 | JSON parse of `particles.json` | Passed |

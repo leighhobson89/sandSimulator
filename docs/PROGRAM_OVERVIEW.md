@@ -95,11 +95,12 @@ rule based on the surface of connected liquid, not a Navier–Stokes solution.
   eight-way radiation, latent-heat accumulation, and bulk insulation remain
   distinct effects that make thick material and heat sources feel different.
   Each frame, an eight-way perimeter flood fill separates open air from
-  enclosed air spaces. Open air still follows the shared ambient setting and
-  altitude lapse. Enclosed empty air and gases hold a local temperature, respond
-  to surrounding materials, Heat Ray, Cold Ray, and other direct sources, and
-  stop following global ambient until an air route opens. Steam can remain hot
-  in a sealed chamber.
+  enclosed air spaces. Open air follows the shared Air Temperature setting
+  with a smooth, fixed `15 C` vertical gradient: the top is `7.5 C` below the
+  setting and the surface is `7.5 C` above it. Enclosed empty air and gases hold
+  a local temperature, respond to surrounding materials, Heat Ray, Cold Ray,
+  and other direct sources, and stop following global ambient until an air
+  route opens. Steam can remain hot in a sealed chamber.
   Solid walls consider each adjacent air face independently, so a Wall touching
   both chamber air and open air exchanges heat toward both. Ordinary pairwise
   contact conductivity still runs each frame for pairs outside the fast

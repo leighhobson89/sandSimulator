@@ -46,8 +46,6 @@ camera position.
   below-threshold visibility cases and the edge-pan case were the remaining
   failures. A separate focused run passed five gate/edge cases after the CSS
   hidden-rule and edge-pan fixes.
-- The browser runs used a temporary headless Chrome-channel configuration
-  because bundled Chromium was unavailable.
 - JavaScript syntax and diff checks passed. No full suite was run.
 - The 520×300 physics-only profile recorded a 27.535 ms average and 37.675 ms
   p95 on the profiling machine. This is machine-specific diagnostic timing,

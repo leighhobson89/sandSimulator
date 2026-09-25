@@ -32,7 +32,7 @@ actually run.
 
 ### Current catalogue
 
-The 78 entries are grouped in the same order as the picker:
+The 79 entries are grouped in the same order as the picker:
 
 | Group | Materials |
 | --- | --- |
@@ -41,7 +41,7 @@ The 78 entries are grouped in the same order as the picker:
 | Liquids | Water, Oil, Lava, Acid |
 | Gases | Fire, Steam, Smoke, Toxic Gas, Cloud |
 | Solids | Ice, Stone, Wood, Glass, Plant, Wall, Flower, Grass, Lily Stem, Lily Pad, Lily Flower, Ash Grass, Clay, Ceramic, Spark Block, Insulation, Moss, Daffodil, Red Tulip, Geranium, Blue Flower, Banana Plant, Water Grass, Daffodil Bloom, Tulip Bloom, Geranium Bloom, Blue Flower Bloom, Banana Bunch, Water Grass Bloom, Water Grass Pad, Banana Leaf |
-| Metals | Spark, Copper, Molten Copper, Battery, Molten Aluminum, Iron, Molten Iron, Tubing |
+| Metals | Spark, Copper, Molten Copper, Battery, Molten Aluminum, Iron, Molten Iron, Stainless Steel, Tubing |
 | Machines | Fan, Heater, Cooler, Vent, Mixer |
 | Storage | Powder Storage Bin, Liquid Storage Bin, Gas Storage Bin |
 | Tools | Heat Ray, Cold Ray, Wind |
@@ -87,7 +87,7 @@ simulation description in [`PROGRAM_OVERVIEW.md`](PROGRAM_OVERVIEW.md).
 | Liquids | Water, Oil, Lava, and Acid flow and seek a level. Liquid storage also accepts molten metals. Water changes phase at its configured thresholds; Lava and Acid have their own material-defined heat and reaction rules. |
 | Gases | Fire, Steam, Smoke, Toxic Gas, and Cloud rise and spread. Steam and Cloud use humidity and dewpoint condensation. Gas storage accepts non-flaming gases, so Fire is not accepted by a Gas Storage Bin. |
 | Solids | Solids provide the fixed, structural, growing, or phase-change behavior declared by their definitions. Plants use species-specific environmental viability and growth; Ice, Glass, Clay, Ceramic, and plant materials also follow the heat and reaction rules defined in `particles.json`. |
-| Metals | Spark, Copper, Battery, Iron, their molten forms, Molten Aluminum, and Tubing are listed here. Copper, Iron, and Battery carry electrical pulses and Battery stores charge; Tubing has no electrical conductivity despite being in the Metals picker group. |
+| Metals | Spark, Copper and Molten Copper, Battery and Molten Aluminum, Iron and Molten Iron, Tubing, and Stainless Steel are listed here. Copper, Iron, Battery, and Stainless Steel carry electrical pulses; Stainless Steel transfers heat and electricity more slowly than Iron, draws Battery charge as a wire, and does not rust from Water or humid air. Battery stores charge; Tubing has no electrical conductivity despite being in the Metals picker group. |
 | Tools | Heat Ray and Cold Ray are short-lived directional brushes. A left-button stroke starts Heat Ray upward or Cold Ray downward; its first non-zero drag selects the nearest cardinal direction, which persists while stationary and changes only when the drag heading changes. Painted ray cells travel as projectiles using that stored heading. Wind moves light materials and stirs air; it stops at solid barriers but passes through plants. |
 
 ### Heat, electrical, and reaction anchors
@@ -116,7 +116,7 @@ simulation description in [`PROGRAM_OVERVIEW.md`](PROGRAM_OVERVIEW.md).
 - Air spaces are classified by an eight-way perimeter flood fill each frame.
   Empty cells and gas cells reachable from the world edge are open air; diagonal
   routes count as routes. Open air continues to follow the shared ambient
-  temperature and its height-dependent lapse as before. Air spaces with no
+  temperature and its height-dependent profile. Air spaces with no
   route to the perimeter are enclosed and keep a local temperature instead of
   being pulled toward global ambient. Enclosed empty air and gases still receive
   heat or cold from nearby matter, Heat Ray, Cold Ray, fire, Lava, and other
@@ -161,11 +161,16 @@ simulation description in [`PROGRAM_OVERVIEW.md`](PROGRAM_OVERVIEW.md).
   `meltPoint`. This changes only that cell's rendered color: it adds no halo,
   heat emission, or tint to neighboring pixels. Molten materials keep their
   existing color/color2 gradients unchanged.
-- Ordinary materials are non-conductive by default. Copper, Iron, and Battery
-  participate in the electrical network; Spark is absorbed by connected metal,
-  Battery stores charge, and Copper or Iron can discharge a charged Battery
-  through their connected length. Tubing has no electrical conductivity and
-  opts into fast thermal links while keeping zero ordinary conductivity.
+- Ordinary materials are non-conductive by default. Copper, Iron, Stainless
+  Steel, and Battery participate in the electrical network; Spark is absorbed
+  by connected metal, Battery stores charge, and Copper, Iron, or Stainless
+  Steel can discharge a charged Battery through their connected length. Tubing
+  has no electrical conductivity and opts into fast thermal links while keeping
+  zero ordinary conductivity.
+- Stainless Steel has nonzero ordinary heat conductivity and electrical
+  conductivity, both lower than Iron's. Its power draw is `0.5` per cell and it
+  reaches conductive machines across up to two empty cells, like Iron. It does
+  not join the fast thermal network or rust from Water or humid air.
 - Heat Ray and Cold Ray ramp their cells toward `2000 C`
   and `-120 C` over several frames rather than initializing an instant
   temperature source. Both burn out after a few frames instead of collecting as
@@ -204,8 +209,8 @@ calibrated so `50` corresponds to legacy strength `15` wherever an existing
 physical formula uses that reference scale. General Wind and the temporary Gust
 contribution have separate bounds, then their vectors add before the combined
 magnitude is converted for legacy physical formulas. Combined airflow may
-approach the sum of both settings before calibration. Fans retain their
-separate `1-20` speed scale.
+approach the sum of both settings before calibration. Fans use the same `1-50`
+speed scale, and Fan speed `50` produces the output of the old Fan speed `15`.
 
 ### Powered machines
 
@@ -213,7 +218,14 @@ separate `1-20` speed scale.
 
 Fan is an eight-direction powered airflow machine with a widening 28-cell cone.
 
-- Wind speed: `1-20`, default `7`.
+- Wind speed: `1-50`, default `7`, matching the default Breeze strength.
+- Speed `50` maps to the legacy physical strength `15`; the Fan's airflow trail,
+  carried air momentum, and particle push chance all use that converted value.
+- Older saves and blueprints without a Fan scale marker migrate their stored
+  speeds once. Legacy speeds are clamped to `0-15`, scaled to `0-50`, and
+  rounded; legacy speed `7` becomes `23`, while legacy speeds above `15` clamp
+  to `50`. Simulation saves and blueprint libraries record scale marker `50`
+  so already converted values are not migrated again.
 - Power load: `50`.
 - Airflow is produced only while powered; decaying residual air remains after a
   powered effect.
@@ -521,12 +533,17 @@ affects both Steam and Cloud.
 
 ### Corrosion and persistence
 
-Metal-flagged definitions corrode only while exposed to adjacent air at
-persistently saturated local humidity (`98%` or more). Exposure builds over
-time and recedes faster when the metal is no longer in saturated air. Once the
-exposure threshold is reached, the metal cell itself becomes a Corrosion powder
-particle, so the powder can fall away and leave a gap in the structure. The
-Corrosion powder is not itself corrodible and melts into Lava at `1000 C`.
+Eligible non-machine solid metal definitions build rust exposure. Stainless
+Steel does not rust from Water or humid air. All machines, including storage
+bins, are excluded from Water-contact and saturated-air rust even when their
+bodies are metal. Exposure advances when Water touches one of the eligible
+metal cell's cardinal sides, or when the cell has adjacent air and local
+humidity is at least `98%`; diagonal Water does not count. Each eligible metal
+cell is checked once every four simulation frames. A qualifying check adds `1`
+to its persisted exposure counter; a check without either condition removes
+`2`. At `120` exposure, the original metal cell becomes Corrosion powder. The
+powder can fall away and leave a gap in a wire or metal structure. Molten forms
+do not accumulate this exposure. Corrosion powder melts into Lava at `1000 C`.
 
 Local humidity, plant health, corrosion exposure, and plant reproduction
 cooldown are stored in per-cell arrays. Base Humidity and Dewpoint are saved as
@@ -539,15 +556,17 @@ particles load as Grass Seeds.
 
 The sidebar places **Visualizations** immediately above **Environment**. The
 Visualizations row has **Normal** and **Options**. Environment controls are
-ordered as **Layers** and **Breeze**, Layer Strength, the dual-handle Wind
-Strength control, Air Temperature, Humidity, and Dew Point. Layers and Breeze
-remain simulation controls: Layers enables the height-dependent air temperature
-lapse, while Breeze is the master switch for General Wind and Gusts. Turning
-Breeze off stops new generated airflow and gusts and clears their active fields;
-already drawn wind trails and other airflow momentum can decay naturally.
-Turning it on restores generation according to the two selected strengths. The
-Wind visualization is a separate display mode and does not enable or configure
-Breeze.
+**Breeze**, the dual-handle Wind Strength control, Air Temperature, Humidity,
+and Dew Point. Open-air temperature follows a smooth fixed profile centered on
+the Air Temperature setting: the top is `7.5 C` cooler and the surface is
+`7.5 C` warmer, a `15 C` top-to-surface difference. The natural gradient is
+always active as part of the whole open-air atmosphere. Enclosed air keeps its
+local temperature. Breeze is the master switch for General Wind and Gusts.
+Turning Breeze off stops new generated airflow and gusts and clears their
+active fields; already drawn wind trails and other airflow momentum can decay
+naturally. Turning it on restores generation according to the two selected
+strengths. The Wind visualization is a separate display mode and does not
+enable or configure Breeze.
 
 General Wind is a persistent background field with smooth spatial variation;
 the selected value is a local maximum, not a uniform speed. The field has calmer

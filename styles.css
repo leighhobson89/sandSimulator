@@ -102,8 +102,7 @@ body {
 .d-none { display: none !important; }
 .d-flex { display: flex !important; }
 
-/* Present for screen readers, invisible on the page. Used for the label on the
-   air layers checkbox, which reads from the slider beside it. */
+/* Present for screen readers, invisible on the page. */
 .sr-only {
     position: absolute;
     width: 1px;
@@ -189,8 +188,6 @@ button.disabled {
     pointer-events: none;
 }
 
-/* A control that is still on the page but has been switched out of use - the
-   layers slider with layering turned off. */
 .disabled-control {
     opacity: 0.35;
     cursor: not-allowed;
@@ -868,6 +865,18 @@ input[type="range"]::-moz-range-thumb {
 .environment-toggle-row .tool-icon-toggle,
 .environment-toggle-row .tool-icon-face {
     width: 100%;
+}
+
+.environment-toggle-row {
+    grid-template-columns: minmax(0, 1fr);
+}
+
+.environment-toggle-row .tool-icon-face {
+    height: 2.6rem;
+    flex-direction: row;
+    justify-content: flex-start;
+    gap: 0.6rem;
+    padding-inline: 0.75rem;
 }
 
 .tool-slider-row {
@@ -2013,6 +2022,12 @@ body[data-theme="terminal"] .menu-title {
         flex-basis: 160px;
     }
     .tool-slider-heading { flex-wrap: wrap; }
+    .wind-dual-heading {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.15rem;
+        font-size: 0.6rem;
+    }
     .particle-grid {
         grid-template-columns: 1fr;
     }

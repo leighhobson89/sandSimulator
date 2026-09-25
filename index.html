@@ -191,17 +191,6 @@
                     <h3>Environment</h3>
                     <div class="tool-icon-grid environment-toggle-row">
                         <label class="tool-icon-toggle tooltip-control"
-                               data-tooltip="Toggle colder air at higher levels">
-                            <input id="airLayers" type="checkbox" checked>
-                            <span class="tool-icon-face">
-                                <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true">
-                                    <path d="M4 6h16M6 12h12M8 18h8"/>
-                                    <path d="m17 15 3 3-3 3"/>
-                                </svg>
-                                <span>Layers</span>
-                            </span>
-                        </label>
-                        <label class="tool-icon-toggle tooltip-control"
                                data-tooltip="Let natural gusts cross the world">
                             <input id="ambientWind" type="checkbox">
                             <span class="tool-icon-face">
@@ -211,23 +200,6 @@
                                 <span>Breeze</span>
                             </span>
                         </label>
-                    </div>
-
-                    <div class="tool-slider-row">
-                        <label id="layerLapseLabel" class="tool-slider-icon tooltip-control" for="layerLapse"
-                               data-tooltip="Temperature drop between air layers">
-                            <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true">
-                                <path d="M5 5h14M7 10h10M9 15h6M11 20h2"/>
-                            </svg>
-                            <span class="sr-only">Layer strength</span>
-                        </label>
-                        <div class="tool-slider-block">
-                            <div class="tool-slider-heading">
-                                <span>Layer strength</span>
-                                <output id="layerLapseValue" for="layerLapse">2.0</output>
-                            </div>
-                            <input id="layerLapse" type="range" min="0" max="10" step="0.5" value="2">
-                        </div>
                     </div>
 
                     <div class="tool-slider-row">

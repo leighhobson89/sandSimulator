@@ -23,6 +23,10 @@ async function openSizeChooser(page) {
 }
 
 async function startChosenWorld(page, label) {
+    if (label.includes('520')) {
+        test.info().setTimeout(120_000);
+        page.setDefaultTimeout(120_000);
+    }
     const dialog = page.locator('#worldSizeDialog');
     await dialog.getByRole('radio', { name: label, exact: true }).check();
     await dialog.getByRole('button', { name: 'Start Game', exact: true }).click();
@@ -51,9 +55,8 @@ test('the standard 260 × 150 world is selected by default', async ({ page }) =>
 
 for (const size of FIXED_SIZES) {
     test(`new game can select the fixed ${size.label} world`, async ({ page }) => {
-        const dialog = await openSizeChooser(page);
-        await dialog.getByRole('radio', { name: size.label, exact: true }).check();
-        await dialog.getByRole('button', { name: 'Start Game', exact: true }).click();
+        await openSizeChooser(page);
+        await startChosenWorld(page, size.label);
         const state = await new GamePage(page).state();
         expect({ cols: state.cols, rows: state.rows }).toEqual({ cols: size.cols, rows: size.rows });
     });

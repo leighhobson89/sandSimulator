@@ -47,6 +47,7 @@ test('wind strengths round-trip and legacy saves migrate to an ordered calibrate
             gust: payload.tools.gustWindStrength
         };
         const physics = await import('/physics.js');
+        const codec = await import('/lzString.js');
         save.restoreSavePayload(payload);
         const restoredPair = {
             general: physics.getGeneralWindStrength(),
@@ -56,22 +57,31 @@ test('wind strengths round-trip and legacy saves migrate to an ordered calibrate
         payload.tools.windStrength = 15;
         delete payload.tools.generalWindStrength;
         delete payload.tools.gustWindStrength;
+        const legacyEncoded = codec.compressToEncodedURIComponent(JSON.stringify(payload));
         save.restoreSavePayload(payload);
         const migratedPair = {
             general: physics.getGeneralWindStrength(),
             gust: physics.getGustWindStrength()
         };
-        return { savedPair, restoredPair, migratedPair };
+        return { savedPair, restoredPair, migratedPair, legacyEncoded };
     });
 
     expect(windSave).toEqual({
         savedPair: { general: 12, gust: 37 },
         restoredPair: { general: 12, gust: 37 },
-        migratedPair: { general: 50, gust: 50 }
+        migratedPair: { general: 50, gust: 50 },
+        legacyEncoded: expect.any(String)
     });
+    await expect(game.state()).resolves.toMatchObject({ cols: expect.any(Number), rows: expect.any(Number) });
+
+    await page.getByRole('button', { name: 'Load', exact: true }).click();
+    await page.locator('#saveString').fill(windSave.legacyEncoded);
+    await page.getByRole('button', { name: 'Load Game', exact: true }).click();
+    if (await page.locator('#autosaveChoiceDialog').isVisible()) {
+        await page.getByRole('button', { name: 'Yes, replace it', exact: true }).click();
+    }
     await expect(page.locator('#generalWindStrength')).toHaveValue('50');
     await expect(page.locator('#windStrength')).toHaveValue('50');
-    await expect(game.state()).resolves.toMatchObject({ cols: expect.any(Number), rows: expect.any(Number) });
 });
 
 test('portable simulation state restores Base Humidity, Dewpoint and local humidity', async ({ page }) => {

@@ -16,22 +16,29 @@ test('places and aims a Fan, then edits its settings through the machine dialog'
     await page.getByRole('button', { name: 'Fan', exact: true }).click();
     await dragCanvasCells(page, { x: 25, y: 20 }, { x: 29, y: 20 });
     let state = await game.state();
+    let captured = await page.evaluate(() => window.__GAME_INSTANCE__.captureState());
     const fanId = state.definitions.find(definition => definition?.name === 'Fan').id;
     const fanIndex = 20 * state.cols + 25;
     expect(state.arrays.type[fanIndex]).toBe(fanId);
     expect(state.arrays.data[fanIndex]).toBe(0);
+    expect(captured.arrays.machineSetting[fanIndex]).toBe(7);
 
     const point = await canvasPoint(page, { x: 25, y: 20 });
     await page.mouse.click(point.x, point.y);
     const dialog = page.getByRole('dialog', { name: 'Fan settings' });
     await expect(dialog).toBeVisible();
     const input = page.locator('#machineDialogInput');
-    await input.fill('12');
+    await expect(input).toHaveAttribute('min', '1');
+    await expect(input).toHaveAttribute('max', '50');
+    await expect(input).toHaveValue('7');
+    await input.fill('50');
     await page.locator('#machineDialogOk').click();
     await expect(dialog).toBeHidden();
+    captured = await page.evaluate(() => window.__GAME_INSTANCE__.captureState());
+    expect(captured.arrays.machineSetting[fanIndex]).toBe(50);
 
     await page.mouse.click(point.x, point.y);
-    await expect(input).toHaveValue('12');
+    await expect(input).toHaveValue('50');
     await page.locator('#machineDialogCancel').click();
     state = await game.state();
     expect(state.arrays.type[fanIndex]).toBe(fanId);
@@ -151,10 +158,15 @@ test('Fan input clamps out-of-range values and rounds fractional speeds', async 
     });
     await clickCell(page, { x: 25, y: 20 });
     const input = page.locator('#machineDialogInput');
+    await expect(input).toHaveAttribute('min', '1');
+    await expect(input).toHaveAttribute('max', '50');
     await input.fill('999');
     await page.locator('#machineDialogOk').click();
     await clickCell(page, { x: 25, y: 20 });
-    await expect(input).toHaveValue('20');
+    await expect(input).toHaveValue('50');
+    const state = await game.state();
+    const captured = await page.evaluate(() => window.__GAME_INSTANCE__.captureState());
+    expect(captured.arrays.machineSetting[20 * state.cols + 25]).toBe(50);
     await input.fill('-4');
     await page.locator('#machineDialogOk').click();
     await clickCell(page, { x: 25, y: 20 });

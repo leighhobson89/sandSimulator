@@ -29,6 +29,47 @@ does not make dry Sand into Wet Sand or give a seed a wet substrate. Use the
 listed wet ground or water, then make sure the air around it reaches the
 humidity threshold. Water Grass / Lily Seeds also need nearby open water.
 
+## Clouds and rain
+
+Clouds form when humid air cools to or below the **Dewpoint** setting. In the
+simulation, Cloud gas nucleates sparsely in exposed upper air only when local
+humidity reaches `88%` and air temperature is at or below Dewpoint. Enclosed
+chambers do not spawn weather on their own, and each newly formed Cloud uses
+`12` local humidity points. Base Humidity is the
+slow return target for exposed air; actual humidity around a Cloud can be higher
+or lower as moisture diffuses and nearby Water above `0 C`, Steam, Clouds, and
+plants add humidity while exposed Sand and Dry Mud absorb it.
+
+A Cloud can precipitate when its surrounding air is at or below Dewpoint and
+local humidity is at least `88%`. Each eligible Cloud has a small `1.2%`
+chance on a reaction check, so precipitation develops gradually rather than
+every Cloud falling at once. The result is Water above `0 C` and Snow at or
+below `0 C`; precipitation uses `18` local humidity points. Steam follows a
+similar dewpoint rule but condenses at `82%` humidity, so Steam's lower
+threshold does not apply to Cloud formation or rain. Clouds placed from the
+material picker also rise and drift, and can precipitate when the Cloud
+conditions are met.
+
+For a **thick cloudy sky with rain**, raise Base Humidity to around `95-100%`
+and set Dewpoint a little above the temperature of the exposed upper air. This
+gives exposed air time to reach the Cloud formation threshold and keeps it at
+or below Dewpoint. Natural Cloud formation is sparse, so place several Clouds
+from the material picker to build visible coverage sooner; keep local humidity
+at or above `88%` and air at or below Dewpoint for precipitation. Use the
+Humidity visualization to check local conditions. If rain is slow, check that
+the upper air is cool enough for the chosen Dewpoint and that nearby Sand or Dry
+Mud is not pulling humidity down.
+
+For **clouds without rain**, place Clouds and keep their surrounding air warmer
+than Dewpoint, or keep local humidity below `88%`. Either condition pauses
+Cloud precipitation. To let natural Clouds form first and then pause the rain,
+raise Base Humidity and set Dewpoint above the upper-air temperature; after
+Clouds appear, raise the air temperature or lower Dewpoint so their surrounding
+air is warmer than Dewpoint. Because local humidity and temperature vary, check
+the Humidity visualization and adjust Dewpoint or moisture sources as needed.
+See the [Game Mechanics weather rules](GAME_MECHANICS.md#7-seeds-plants-humidity-dewpoint-weather-and-corrosion)
+for the full humidity, condensation, and precipitation behavior.
+
 ## Seed requirements
 
 Temperature is checked on the seed cell. The temperature and humidity values

@@ -980,7 +980,7 @@ airBox.value = '20';
 airBox.fire('keydown', { key: 'Enter' });
 
 // The breeze checkbox.
-const { getAmbientWindOn, getAirLayersOn, getAirTempAt } = await import('../physics.js');
+const { getAmbientWindOn } = await import('../physics.js');
 const breezeBox = byId('ambientWind');
 breezeBox.checked = true;
 breezeBox.fire('change');
@@ -991,23 +991,31 @@ breezeBox.fire('change');
 if (!getAmbientWindOn()) pass('and turns it off again');
 else fail('the breeze could not be turned off');
 
-// The air layers checkbox, which also greys out the slider beside it.
-const layersBox = byId('airLayers');
-const lapseSlider = byId('layerLapse');
-lapseSlider.fire('input', { target: { value: '6' } });
-layersBox.checked = false;
-layersBox.fire('change');
-if (!getAirLayersOn() && getAirTempAt(0) === getAirTempAt(149)) {
-    pass('unchecking air layers makes the air one even temperature');
+// Altitude cooling belongs to the natural atmosphere rather than an optional tool.
+const { getAirTempAt, getAmbientTemp } = await import('../physics.js');
+const atmosphereRows = getWorld().rows;
+const atmosphereTop = getAirTempAt(0);
+const atmosphereBottom = getAirTempAt(atmosphereRows - 1);
+const atmosphereMiddle = (getAirTempAt(Math.floor((atmosphereRows - 1) / 2)) +
+    getAirTempAt(Math.ceil((atmosphereRows - 1) / 2))) / 2;
+if (!indexMarkup.includes('id="airLayers"') && !indexMarkup.includes('id="layerLapse"')) {
+    pass('Environment has no explicit air-layer or lapse controls');
 } else {
-    fail(`air is still layered (${getAirTempAt(0)} at the top, ${getAirTempAt(149)} at the bottom)`);
+    fail('an explicit air-layer or lapse control remains in Environment');
 }
-if (lapseSlider.disabled) pass('and greys the layers slider out');
-else fail('the layers slider was left live with layering switched off');
-layersBox.checked = true;
-layersBox.fire('change');
-if (getAirLayersOn() && !lapseSlider.disabled) pass('and checking it puts both back');
-else fail('air layers could not be switched back on');
+if (indexMarkup.includes('id="ambientWind"') &&
+    styleMarkup.includes('.environment-toggle-row .tool-icon-toggle') &&
+    styleMarkup.includes('.environment-toggle-row .tool-icon-face')) {
+    pass('the Breeze toggle remains styled to fill its Environment row');
+} else {
+    fail('the full-row Breeze toggle styling is missing');
+}
+if (atmosphereRows > 1 && Math.abs(atmosphereBottom - atmosphereTop - 15) < 0.001 &&
+    Math.abs(atmosphereMiddle - getAmbientTemp()) < 0.001) {
+    pass('the natural atmosphere spans 15 degrees and keeps Air Temperature at mid-height');
+} else {
+    fail(`natural atmosphere profile is ${atmosphereBottom - atmosphereTop} degrees with midpoint ${atmosphereMiddle} C`);
+}
 
 // The theme controls, built from the list in themes.js.
 const { THEMES, getTheme } = await import('../themes.js');

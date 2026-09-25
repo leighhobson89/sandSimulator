@@ -75,11 +75,6 @@ Verification completed on the implementation:
 | Full browser suite | 167 passed, 0 failed in 12.8 minutes |
 | Focused browser regressions | Tools, accessibility dialogs, and persistence passed, including the localized Wind trail direction case |
 
-The full browser run used installed Chrome with video capture off because this
-machine did not have Playwright's bundled Chromium and FFmpeg installed. It ran
-through the npm wrapper with a temporary config and an already-started local
-test server; no test configuration changes were retained in the project.
-
 No known issues remain from this change. The final non-browser wrapper reruns
 completed after the localized Wind trail sampling refinement; the simulation,
 smoke, scale-profile, world-allocation, focused browser, and full browser

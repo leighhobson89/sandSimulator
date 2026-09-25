@@ -5,15 +5,122 @@ Playwright discovers specs only under `e2e/`. Browser tests cover user-visible
 workflows; exhaustive non-UI material and rule matrices remain in the headless
 integration suite.
 
+## Fresh checkout setup
+
+For a fresh setup, use a current Playwright-supported Node.js release: `22.x`,
+`24.x`, or `26.x` ([system requirements](https://playwright.dev/docs/intro#system-requirements)).
+The lockfile pins `@playwright/test`, `playwright`, and `playwright-core` to
+`1.63.0`; their declared engine floor is Node `20+`. The project does not pin
+npm separately; use the npm version shipped with your Node installation. From
+the repository root, install the locked packages and the Chromium binary
+selected by the test configuration:
+
+```text
+npm ci
+npx playwright install chromium
+```
+
+Only Chromium is configured (`browserName: 'chromium'`). Playwright browser
+downloads are version-specific. After changing the locked Playwright version,
+run `npm ci` and `npx playwright install chromium` again so the installed
+browser matches the package. See Playwright's
+[browser installation guide](https://playwright.dev/docs/browsers).
+
+On Linux, install Chromium's operating-system libraries when they are missing
+or on a fresh machine. The dependency installer may need administrator access:
+
+```text
+sudo npx playwright install-deps chromium
+```
+
+See Playwright's [Linux browser dependency instructions](https://playwright.dev/docs/browsers#install-system-dependencies).
+The browser binary and OS libraries are separate setup steps.
+
+In PowerShell, if script-execution policy blocks the `npm` or `npx` PowerShell
+shim, run the Windows command wrappers instead:
+
+```text
+npm.cmd ci
+npx.cmd playwright install chromium
+```
+
+When running the browser tests in the same PowerShell session, use
+`npm.cmd run test:browser` if the `npm` shim is blocked.
+
+The browser-test command starts `node tools/serve.mjs` automatically through
+`playwright.config.mjs`; do not start a second server. The default URL is
+`http://127.0.0.1:4173`. Set `PLAYWRIGHT_PORT` to change the port. The config
+does not reuse a server already listening there, so the selected port must be
+free before the test command starts.
+
+If Playwright reports that its Chromium executable is missing, first check
+whether the reported path is absent or inaccessible (see below). For a genuinely
+missing browser, run the install command above from the repository root after
+`npm ci`, then retry the same npm test wrapper. If Linux reports missing shared libraries, install them
+with `sudo npx playwright install-deps chromium`. Keep the configured Chromium
+and repository Playwright config when troubleshooting; do not switch browsers
+or override browser launch settings.
+
+## Windows agents: browser cache permissions
+
+On 25 September 2026, the agent shell ran as `codexsandboxoffline`, while
+`USERPROFILE` and `LOCALAPPDATA` still pointed to Leigh's profile. The installed
+Playwright Chromium was present under `%LOCALAPPDATA%\ms-playwright`, but its
+cache ACL allowed only Leigh, Administrators, and SYSTEM. The sandbox account
+received `EPERM`. Playwright's executable check catches access errors and can
+display "Executable doesn't exist" for this case.
+
+Use `whoami` to identify the actual process account. Inspect the exact executable
+path from the error using `Get-Item -LiteralPath '<reported path>' -ErrorAction Stop`.
+An access-denied error must be resolved before concluding the browser is absent;
+`Test-Path` or `existsSync()` alone cannot establish that distinction.
+
+For an authorized test run, the agent should use its execution tool's supported
+`sandbox_permissions: "require_escalated"` option with a justification explaining
+the browser-cache access, keeping the repository working directory and command:
+
+```text
+npm run test:browser -- e2e/navigation --workers=1 --trace=off
+```
+
+This ran as Leigh and passed **6/6 tests in 8.8 seconds** without reinstalling
+anything or changing browser configuration or ACLs. The existing Windows setting
+`sandbox = "elevated"` still creates a restricted sandbox account; command-level
+approval is a separate mechanism. If a future session cannot request access,
+check the Codex permissions control: **Ask for approval** or **Approve for me**,
+when available, can review such requests. A review rejection must be respected
+and reported. See [OpenAI's sandbox and approval documentation](https://learn.chatgpt.com/docs/sandboxing).
+
+No permanent allow rule was installed. Future agents should follow this
+documented approval path; a restart or Full Access setting is not required for
+the demonstrated fix. Full-suite test authorization still follows `AGENTS.md`.
+Do not repeatedly reinstall into a denied cache. If an installer is interrupted,
+record the interruption rather than treating its exit code as an independent
+installer failure.
+
+## Reports and failure artifacts
+
+Local runs print the list reporter to the terminal. Playwright writes the
+configured trace, screenshot, and video for failed tests under
+`test-results/playwright`. With `CI` set, the config uses line and HTML
+reporters; the HTML report is written to `playwright-report` and is not opened
+automatically. The failure artifacts remain under `test-results/playwright`.
+Both output directories are ignored by Git. This repository does not configure
+a CI artifact-upload step, so a CI runner only preserves these reports when its
+own workflow captures them. See the [Playwright HTML reporter guide](https://playwright.dev/docs/test-reporters#html-reporter).
+
 ## Current Architecture
 
-- `playwright.config.mjs` starts `tools/serve.mjs`, runs `e2e/**/*.spec.mjs`,
-  and retains traces, screenshots, videos, and the HTML report for failures.
+- `playwright.config.mjs` starts `tools/serve.mjs` and runs
+  `e2e/**/*.spec.mjs`. Local and CI reporters and failure-artifact locations
+  are described in [Reports and failure artifacts](#reports-and-failure-artifacts).
 - `e2e/helpers/canvas.mjs` maps pointer coordinates through the rendered canvas
   rectangle and provides `canvasViewportMetrics()` plus
   `scrollCanvasToCell()` for zoomed/scrollable viewports. `gamePage.mjs` owns
   startup, pause, deterministic stepping, and state inspection. `diagnostics.mjs`
-  attaches screenshots and semantic state.
+  attaches screenshots and semantic state. Starts that select the 520 x 300
+  world raise the test and page timeouts to 120 seconds, covering world startup
+  and subsequent save/load work in those cases.
 - `e2e/helpers/contract.spec.mjs` protects helper, mapping, rendering, stepping,
   and snapshot-restore contracts.
 - `e2e/navigation/` and `e2e/accessibility/` cover startup, themes, dialogs,
@@ -60,7 +167,9 @@ integration suite.
   isolation, Wall mixed-face cooling, and heat transfer through fast metal
   bridges between enclosed chambers without open-air leakage.
 - `e2e/machines/` covers placement, powered machines, storage, tubing, Vents,
-  Mixers, electrical behavior, and machine persistence.
+  Mixers, electrical behavior, and machine persistence. Fan placement coverage
+  checks the 1-50 speed range and default speed 7; machine persistence checks
+  one-time migration of legacy Fan speeds in both saved worlds and blueprints.
 - `e2e/blueprints/` covers capture, stamping, history, lifecycle, and portable
   persistence.
 - `e2e/scaling/default-world.spec.mjs` covers the two fixed New Game choices
@@ -84,7 +193,8 @@ integration suite.
   `e2e/regressions/` is available for defects without a more specific
   functional-area owner.
 
-Latest completed regression results for the visualization UI rework:
+Historical verification snapshot for the visualization UI rework
+(24 September 2026):
 
 - `npm.cmd test`: 336 passed, 0 failed.
 - `npm.cmd run test:smoke`: passed.
@@ -158,6 +268,14 @@ The wind slider behavior and independent save/load migration cases are owned by
 `e2e/persistence/export-import.spec.mjs`, respectively. Run either spec alone
 through the same npm wrapper when iterating on its focused area.
 
+Fan scale and legacy save migration coverage is owned by the machine placement
+and persistence specs:
+
+```text
+npm run test:browser -- e2e/machines/placement.spec.mjs e2e/machines/persistence.spec.mjs --workers=1 --trace=off
+npm test -- --focus=fan-wind-scale-alignment
+```
+
 The Insulation material catalog coverage is owned by
 `e2e/materials/catalog.spec.mjs`; run it through the same wrapper:
 
@@ -213,7 +331,9 @@ command.
   diagnostics, and avoid `waitForTimeout`. Use Playwright clock controls only
   for UI timer behavior such as autosave or repeated painting.
 - Use rendered canvas dimensions for coordinate mapping and retain state JSON,
-  screenshots, traces, videos, and the HTML report when failures occur.
+  screenshots, traces, and videos when failures occur. Preserve the HTML report
+  on CI runs when `CI` is set, as described in
+  [Reports and failure artifacts](#reports-and-failure-artifacts).
 - Run the focused area headlessly after changes. Use headed mode only as an
   optional diagnostic, never as an acceptance/release prerequisite. Update the
   owning area README when its scope, fixture boundary, or maintenance contract

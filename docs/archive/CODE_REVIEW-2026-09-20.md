@@ -45,7 +45,7 @@ assistive-technology matrix as the UI grows.
 - Headless physics test: 244 passed, 0 failed with the default seed on the
   latest run; `--seed=` reproduces alternate scenarios.
 - Real-browser checks: Playwright suite added under `tests/` and runnable with
-  `npm run test:browser` after installing Chromium.
+  `npm run test:browser`.
 - The performance assertion remained within the 8 ms/frame budget for the
   260x150 stress scene.
 

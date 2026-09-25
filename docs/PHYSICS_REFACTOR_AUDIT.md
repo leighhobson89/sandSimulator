@@ -27,7 +27,7 @@ module boundaries.
 
 | Lines | Subsystem | Important functions and boundary notes |
 |---|---|---|
-| 42–142 | Constants, core globals, RNG, environment | `setRandomSource`, `setRandomSeed`, `resetRandomSource` (71–96); layered-air settings and `getAirTempAt` (112–141). `random()` is the shared draw boundary. |
+| 42–142 | Constants, core globals, RNG, environment | `setRandomSource`, `setRandomSeed`, `resetRandomSource` (71–96); fixed atmospheric profile, per-particle air offsets, and `getAirTempAt` (119–140). `random()` is the shared draw boundary. |
 | 143–553 | Definition compilation | `prepareDefinitions` (148–512) resolves names, fills defaults, derives `hasStateChange`, `hasReaction`, `moves`, buoyancy and plant/wind metadata; `defaultWindLift`, `parseColor`, `rainbowPalette`, `channelFromHue` (514–550). Also mutates `AMBIENT`, `ambientTarget`, `DEFS`, `nameCache`, and `WET_MUD_PLANT`. |
 | 562–701 | Save-state contract and world lifecycle | `PERSISTED_WORLD_FIELDS` (565–575); `captureSimulationState` / `restoreSimulationState` (578–644); `createWorld` (648–701). Restore includes compatibility defaults for older machine/storage/mixer fields and rebuilds `hasMixerMachine`. |
 | 705–1014 | Machine and state queries | Default/range helpers (705–717); storage, Vent, Mixer inventory and controls (719–964); electrical queries and connected battery traversal (965–1014). |
@@ -57,7 +57,7 @@ module boundaries.
 | `DEFS`, `AMBIENT`, `ambientTarget`, `frameCount` (60–63) | Compiled material definitions, current and target air temperature, and simulation tick. | `prepareDefinitions` and `restoreSimulationState` update these; the step loop consumes them globally. |
 | `randomSource`, `randomSeed` (68–69) | Shared RNG function and requested seed metadata; seed installs a stateful closure. | `getRandomSeed()` reports the configured seed, not the closure's current PRNG position. Draw count/order is not serialized. |
 | `WET_MUD_PLANT` / `nameCache` (101; 2613–2622) | Definition-derived plant identity and lazily populated material-name lookup. Name cache is cleared after definition preparation. | Must be invalidated/rebuilt with the exact definition generation. |
-| `layerLapse`, `airLayersOn`, `airOffset` (112–128) | Layered air controls and a fixed 256-entry shade-to-temperature offset table. | Air settings are save-state fields; `airOffset` is immutable lookup data, not world state. |
+| `ATMOSPHERE_HALF_RANGE`, `airOffset` (119–140) | Fixed smooth open-air temperature profile, centered on Air Temperature with a `15 C` surface-to-top span, plus a 256-entry shade-to-temperature offset table. | The profile is derived from row and ambient temperature and is not saved as a separate setting; `ATMOSPHERE_HALF_RANGE` and `airOffset` are immutable model data. |
 | `rootStack`, `rootStamp`, `rootVisit` (2244–2246) | Reused graph-search work buffers, resized when the world cell count changes; stamp avoids clearing the full visited array per search. | Search limit is 512 cells. Keep buffers private to the same world dimensions and preserve traversal semantics. |
 | `storageFunnelMachines`, `storageBarrierMask` (2665–2666) | Derived from live storage-machine cells and orientation by `refreshStorageFunnelMachines`; reset on world creation/clear. | Shared by intake, movement collision, and Fan/wind obstruction. Any split must keep the collision map and visible geometry in sync. |
 | `tubingFlows`, `hasMixerMachine` (3273–3274) | `tubingFlows` is a per-update display/transfer summary; `hasMixerMachine` avoids scanning Mixer state when none exist. | The former is exposed to game/UI rendering; the latter is maintained on placement/restore. Both depend on cell mutations and transfers. |
@@ -138,11 +138,14 @@ also omitted from simulation saves. It is included in `game.js`'s separate
 Other caches/scratch buffers in the inventory above are derived or transient,
 not saved world arrays.
 
-`captureSimulationState()` includes `cols`, `rows`, ambient/target, layer lapse,
-layer enablement, ambient-wind enablement, wind dial, frame count, and the
-persisted arrays. It returns references to the live typed arrays rather than
-copies; `saveLoadGame.js` encodes them, while `e2eHooks.js` explicitly copies
-them for test snapshots. Preserve or deliberately version this aliasing contract
+`captureSimulationState()` includes `cols`, `rows`, ambient/target, humidity and
+dewpoint targets, ambient-wind enablement, wind settings, frame count, and the
+persisted arrays. The natural atmospheric profile is derived from the ambient
+temperature and row, so it is not saved as a setting. Restore ignores legacy
+version-1 `layerLapse` and `airLayersOn` fields and uses the natural profile
+without a save-version bump. Capture returns references to the live typed
+arrays rather than copies; `saveLoadGame.js` encodes them, while `e2eHooks.js`
+explicitly copies them for test snapshots. Preserve or deliberately version this aliasing contract
 before changing it. `restoreSimulationState()` validates shape, creates fresh
 arrays, copies persisted fields, applies backward-compatible machine-setting
 and storage/Mixer defaults, rebuilds `hasMixerMachine`, and restores environment
@@ -180,9 +183,10 @@ them for new cells merely as a refactoring convenience. `getRandomSeed()` is
 seed metadata, not the internal PRNG continuation state.
 
 The module must remain headless and free of UI/rendering imports. Game-visible
-contracts include getters and setters for ambient/layer/wind controls, machine
-state, inventory and flow overlays, wind trails, temperature, power, and frame
-count. `getWorld()` and `getDefinitions()` expose mutable references today;
+contracts include getters and setters for ambient, humidity, dewpoint, and wind
+controls, plus `getAirTempAt()` for the natural altitude profile, machine state,
+inventory and flow overlays, wind trails, temperature, power, and frame count.
+`getWorld()` and `getDefinitions()` expose mutable references today;
 encapsulation is a separate migration, not an incidental refactor benefit.
 
 ## Prioritized incremental extraction seams
@@ -199,7 +203,7 @@ or let an extracted module import its caller.
 | 1 — Pure definition helpers | Start with helpers such as `parseColor`, `rainbowPalette`/`channelFromHue`, and default category-property helpers (514–550, plus `defaultBulkInsulation` at 1152–1157). Consider a later definition-compilation boundary only after isolating pure property normalization from `prepareDefinitions`. | **Go** if prepared definitions for every `particles.json` ID are deeply equal, missing glossary descriptions still fail identically, and derived flags/plant lookup remain exact. **Stop** if extraction moves ambient/definition/cache mutation or changes name-to-ID defaults, iteration order, or random draws. |
 | 2 — World schema and state codec | First centralize a declarative typed-array schema corresponding exactly to `createWorld` and `PERSISTED_WORLD_FIELDS`; then separately consider moving world creation/capture/restore. Keep world ownership and save codec direction one-way. | **Go** if constructors, field names/order, zero/default initialization, all save fields, blueprint distinction, legacy defaults, array alias behavior, and round-trips match; invalid dimensions preserve prior globals and world identity. **Stop** on any changed save compatibility, buffer type, alias, or partial mutation. |
 | 3 — Electrical subsystem | Move the connected-conductor traversal, pulse scheduling, battery charge balancing/consumption, and electrical update as one coherent seam (1213–1431), then migrate query helpers only if their caller map remains clear. | **Go** if seeded Spark/wire/Battery traces match every frame for `power`, `powerDelay`, `charge`, material types and frame count, and electrical browser tests pass. **Stop** if phase placement changes or traversal/RNG semantics need alteration. |
-| 4 — Thermal transfer | Extract conduction and radiation as a phase pair first (1514–1694), leaving `applyStateChange`/`transform` in the core until a separate reaction boundary is designed. Preserve buffer swapping and in-place radiation order. | **Go** if exact seeded temperature arrays match after each tick for conduction, insulation, radiation, air layers, heat sources, and rays; phase transitions and total frame state remain unchanged. **Stop** if the extracted function requires an implicit reordered phase or changes boundary treatment. |
+| 4 — Thermal transfer | Extract conduction and radiation as a phase pair first (1514–1694), leaving `applyStateChange`/`transform` in the core until a separate reaction boundary is designed. Preserve buffer swapping and in-place radiation order. | **Go** if exact seeded temperature arrays match after each tick for conduction, insulation, radiation, the fixed continuous `15 C` atmospheric profile, heat sources, and rays; phase transitions and total frame state remain unchanged. **Stop** if the extracted function requires an implicit reordered phase or changes boundary treatment. |
 | 5 — State changes and reactions | Consider temperature-driven transitions (1712–1823) separately from interaction reactions (1861–2220), but keep common mutation helpers in a shared core. Plant traversal/growth and explosion helpers are sub-seams, not independent domain modules yet. | **Go** only with focused traces for latent thresholds, conversion outputs, lifetime/residue, quenching, water infiltration, acid, plants/lilies, seeds, and explosions, including exact RNG reseeding. **Stop** if a split duplicates `transform`, `idOf`, or world mutation ownership. |
 | 6 — Movement and liquid surface | Keep `computeLiquidSurfaces` (4556–4615) and pressure/flow (4436–4545, 2885–2944) together initially; powder/gas movement and shared collision rules are dependent sub-seams. Preserve virtual-wall geometry. | **Go** if exact frame snapshots, mass counts, density ordering, liquid surface/pressure, edge clipping and intake barriers match. **Stop** if helper boundaries require circular calls between liquid, generic movement, storage, or reactions. |
 | 7 — Machines, storage, tubing, and wind | Defer until earlier state/mutation boundaries exist. This is the broadest cross-cut: storage geometry affects collision, Fan wind, suction and renderer overlays; tubing transfers into storage/Vent/Mixer; machine work shares electricity and projectile/wind fields. | **Go** one machine family at a time only after state schema and movement ownership are stable and UI query/output contracts are covered. **Stop** rather than split interdependent arrays into duplicate caches or move rendering dependencies into physics. |

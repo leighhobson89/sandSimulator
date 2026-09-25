@@ -27,12 +27,13 @@ import {
     captureBlueprint, stampBlueprint, stampBlueprintAt, BLUEPRINT_SLOT_COUNT
 } from './game.js';
 import {
-    getDefinitions, setAmbientTarget, getAmbientTarget, setLayerLapse, getLayerLapse,
+    getDefinitions, setAmbientTarget, getAmbientTarget,
     setAmbientHumidityTarget, getAmbientHumidityTarget, setDewpointTarget, getDewpointTarget,
-    setAmbientWindOn, getAmbientWindOn, setAirLayersOn, getAirLayersOn,
+    setAmbientWindOn, getAmbientWindOn,
     setGeneralWindStrength as setPhysicsGeneralWindStrength,
     setGustWindStrength as setPhysicsGustWindStrength,
     getWorld, index, getMachineSetting, setMachineSetting,
+    FAN_WIND_SCALE, migrateLegacyFanWindSettings,
     getStorageInventory, purgeStorageBin, getVentInventory, getVentReleaseRate,
     setVentReleaseRate, isVentReleaseEnabled, setVentReleaseEnabled,
     getTubingFlows, getVentTubingRate, getMixerInventory, purgeMixerBin,
@@ -213,7 +214,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     setUpAirTemperature();
     setUpBaseHumidity();
     setUpDewpoint();
-    setUpAirLayers();
     setUpWindStrength();
     setUpAmbientWind();
     setUpTooltips();
@@ -371,12 +371,6 @@ function synchroniseRestoredControls() {
     elements.baseHumidityValue.textContent = `${Math.round(getAmbientHumidityTarget())}%`;
     elements.dewpointInput.value = String(Math.round(getDewpointTarget()));
     elements.dewpointValue.textContent = `${Math.round(getDewpointTarget())} °C`;
-    elements.layerLapseInput.value = String(getLayerLapse());
-    elements.layerLapseValue.textContent = getLayerLapse().toFixed(1);
-    elements.airLayersCheckbox.checked = getAirLayersOn();
-    elements.layerLapseInput.disabled = !getAirLayersOn();
-    elements.layerLapseInput.classList.toggle('disabled-control', !getAirLayersOn());
-    elements.layerLapseLabel.classList.toggle('disabled-control', !getAirLayersOn());
     elements.generalWindStrengthInput.value = String(getGeneralWindStrength());
     elements.generalWindStrengthValue.textContent = String(getGeneralWindStrength());
     elements.windStrengthInput.value = String(getWindStrength());
@@ -588,7 +582,7 @@ function confirmClearWorld() {
 }
 
 const MACHINE_CONTROL_SPECS = {
-    fan: { label: 'Wind speed', min: 1, max: 20, unit: '', defaultValue: 7 },
+    fan: { label: 'Wind speed', min: 1, max: FAN_WIND_SCALE, unit: '', defaultValue: 7 },
     heater: { label: 'Temperature', min: 0, max: 4000, unit: '°C' },
     cooler: { label: 'Temperature', min: -60, max: 20, unit: '°C' },
     vent: { label: 'Release rate', min: 1, max: 100, unit: 'particles/s', defaultValue: 10 }
@@ -677,7 +671,7 @@ function openMachineDialog(x, y, machine = machineAtCell({ x, y })) {
         : vent
             ? 'Always active. Set the release rate in particles per second. Turn release off to retain up to 100 particles.'
         : machine.def.machine === 'fan'
-            ? 'Set the airflow strength for this Fan. Speed 7 matches the default breeze scale; higher values are stronger.'
+            ? 'Fan speed uses the 1 to 50 Breeze scale. Speed 50 matches the old Fan speed 15.'
             : `${machine.def.name} will only ${machine.def.machine === 'heater' ? 'raise' : 'lower'} temperatures toward this target in its facing direction.`;
     const storageSummary = elements.machineDialogStorageSummary;
     if (storage) {
@@ -1282,42 +1276,6 @@ function setUpDewpoint() {
     slider.addEventListener('input', event => apply(event.target.value));
 }
 
-// How pronounced the layering of the air is: the number of degrees colder each
-// fifth of the height is than the one below it.
-//
-// The checkbox beside it turns layering off entirely, which makes the air one
-// even temperature everywhere and greys the slider out. Unlike dragging the
-// slider to zero it leaves the setting alone, so turning layers back on brings
-// back whatever was there before.
-function setUpAirLayers() {
-    const slider = getElements().layerLapseInput;
-    const label = getElements().layerLapseLabel;
-    const valueReadout = getElements().layerLapseValue;
-    const box = getElements().airLayersCheckbox;
-
-    const apply = value => {
-        setLayerLapse(value);
-        valueReadout.textContent = value.toFixed(1);
-    };
-
-    const showEnabled = on => {
-        slider.disabled = !on;
-        slider.classList.toggle('disabled-control', !on);
-        label.classList.toggle('disabled-control', !on);
-    };
-
-    slider.value = String(getLayerLapse());
-    apply(getLayerLapse());
-    slider.addEventListener('input', event => apply(parseFloat(event.target.value)));
-
-    box.checked = getAirLayersOn();
-    showEnabled(getAirLayersOn());
-    box.addEventListener('change', () => {
-        setAirLayersOn(box.checked);
-        showEnabled(box.checked);
-    });
-}
-
 // Two native range inputs share one track. General Wind is the lower handle;
 // pushing it through Gust Strength moves both values, while Gust Strength
 // cannot be moved below the background setting.
@@ -1676,11 +1634,18 @@ function copyMarqueeSelection() {
 }
 
 function captureBlueprintLibrary() {
-    return { slots: blueprints, nextSlot: nextBlueprintSlot };
+    return { fanWindScale: FAN_WIND_SCALE, slots: blueprints, nextSlot: nextBlueprintSlot };
 }
 
 function restoreBlueprintLibrary(state) {
     blueprints = Array.from({ length: BLUEPRINT_SLOT_COUNT }, (_, slot) => state.slots[slot] || null);
+    if (state.fanWindScale !== FAN_WIND_SCALE) {
+        for (const blueprint of blueprints) {
+            if (blueprint?.cells) {
+                migrateLegacyFanWindSettings(blueprint.cells.type, blueprint.cells.machineSetting);
+            }
+        }
+    }
     nextBlueprintSlot = state.nextSlot;
     marqueeMode = false;
     isMarqueeDrawing = false;
@@ -2395,6 +2360,9 @@ function setUpKeyboardShortcuts() {
         const target = event.target;
         const controlFocused = target &&
             (/^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(target.tagName) || target.isContentEditable);
+        // Let focused controls keep their native Space behavior instead of
+        // redirecting the key to the global play/pause shortcut.
+        if (event.key === ' ' && controlFocused) return;
         const area = getElements().canvasArea;
         const axisCanScroll = scrollDelta && (scrollDelta.left
             ? area.scrollWidth > area.clientWidth + 1

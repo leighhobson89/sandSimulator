@@ -1123,7 +1123,7 @@
     },
     "45": {
       "name": "Fan",
-      "description": "Powered one-cell machine that stores a direction and blows a widening cone of airflow through the world; its wind speed defaults to 7 and can be set from 1 to 20. Its pixel color brightens toward a configured glow as it heats toward melting.",
+      "description": "Powered one-cell machine that stores a direction and blows a widening cone of airflow through the world; its wind speed defaults to 7 on the 1-50 Breeze scale, where 50 matches the old Fan speed 15. Its pixel color brightens toward a configured glow as it heats toward melting.",
       "group": "Machines",
       "color": "rgb(74, 137, 171)",
       "category": "static",
@@ -1340,7 +1340,7 @@
     },
     "56": {
       "name": "Corrosion",
-      "description": "Powdery rust formed slowly on exposed metal in persistently saturated air; it falls under gravity, remains where supported and melts into Lava under intense heat.",
+      "description": "Powdery corrosion formed over time when metal touches Water or stays in saturated air; it falls away from the source metal and melts into Lava under intense heat.",
       "group": "Powders",
       "color": "rgb(164, 78, 42)",
       "category": "powder",
@@ -1925,6 +1925,21 @@
       "burnsInto": "Fire",
       "burnLife": 20,
       "corrodible": true
+    },
+    "79": {
+      "name": "Stainless Steel",
+      "description": "Rust-resistant alloy that conducts heat and carries electrical pulses more slowly than Iron.",
+      "group": "Metals",
+      "color": "rgb(190, 198, 207)",
+      "category": "static",
+      "density": 7.9,
+      "conductivity": 0.08,
+      "cooling": 0.002,
+      "conductive": true,
+      "electricalConductivity": 0.2,
+      "dischargeBattery": true,
+      "powerConsumption": 0.5,
+      "wireReach": 2
     }
   }
 }

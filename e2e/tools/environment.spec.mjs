@@ -52,7 +52,7 @@ test('visualizations precede Environment and environment controls follow the req
 
     const environment = page.locator('#environmentSection');
     const controlOrder = await environment.evaluate(section => {
-        const selectors = ['#airLayers', '#ambientWind', '#layerLapse', '#windStrength', '#airTemp', '#baseHumidity', '#dewpoint'];
+        const selectors = ['#ambientWind', '#generalWindStrength', '#windStrength', '#airTemp', '#baseHumidity', '#dewpoint'];
         return selectors.map(selector => {
             const control = section.querySelector(selector);
             return control ? [...section.querySelectorAll('*')].indexOf(control) : -1;
@@ -60,7 +60,9 @@ test('visualizations precede Environment and environment controls follow the req
     });
     expect(controlOrder.every(index => index >= 0)).toBe(true);
     expect(controlOrder).toEqual([...controlOrder].sort((left, right) => left - right));
-    await expect(environment.getByText('Layers', { exact: true })).toBeVisible();
+    await expect(environment.locator('#airLayers')).toHaveCount(0);
+    await expect(environment.locator('#layerLapse')).toHaveCount(0);
+    await expect(environment.getByText('Layers', { exact: true })).toHaveCount(0);
     await expect(environment.getByText('Breeze', { exact: true })).toBeVisible();
     await expect(environment.getByRole('button', { name: /heat/i })).toHaveCount(0);
 
@@ -70,21 +72,20 @@ test('visualizations precede Environment and environment controls follow the req
             return { top: rect.top, left: rect.left, width: rect.width, right: rect.right };
         };
         return {
-            layers: box(section.querySelector('#airLayers').closest('label')),
             breeze: box(section.querySelector('#ambientWind').closest('label')),
-            layerStrength: box(section.querySelector('#layerLapse').closest('.tool-slider-row')),
+            toggleRow: box(section.querySelector('.environment-toggle-row')),
             windStrength: box(section.querySelector('#windStrength').closest('.tool-slider-row')),
             airTemperature: box(section.querySelector('#airTemp').closest('.tool-slider-row')),
             humidity: box(section.querySelector('#baseHumidity').closest('.tool-slider-row')),
             dewpoint: box(section.querySelector('#dewpoint').closest('.tool-slider-row'))
         };
     });
-    expect(Math.abs(rowLayout.layers.top - rowLayout.breeze.top)).toBeLessThan(1);
-    expect(Math.abs(rowLayout.layers.width - rowLayout.breeze.width)).toBeLessThan(2);
-    const orderedRows = ['layerStrength', 'windStrength', 'airTemperature', 'humidity', 'dewpoint']
+    expect(Math.abs(rowLayout.toggleRow.width - rowLayout.breeze.width)).toBeLessThan(2);
+    expect(Math.abs(rowLayout.toggleRow.left - rowLayout.breeze.left)).toBeLessThan(1);
+    const orderedRows = ['windStrength', 'airTemperature', 'humidity', 'dewpoint']
         .map(name => rowLayout[name].top);
     expect(orderedRows).toEqual([...orderedRows].sort((left, right) => left - right));
-    expect(rowLayout.layers.top).toBeLessThan(orderedRows[0]);
+    expect(rowLayout.breeze.top).toBeLessThan(orderedRows[0]);
 
     const visualizationButtons = await Promise.all([
         page.locator('#visualizationsNormalButton').boundingBox(),
@@ -118,16 +119,12 @@ test('visualizations precede Environment and environment controls follow the req
     await expect(game.state()).resolves.toMatchObject({ cols: expect.any(Number), rows: expect.any(Number) });
 });
 
-test('environment controls update values, disable dependent controls, and toggle heat view', async ({ page }) => {
+test('environment controls update values and Breeze while natural atmosphere stays active', async ({ page }) => {
     const game = new GamePage(page); await game.openMenu(); await game.newGame();
     await page.locator('#airTemp').fill('120');
     await expect(page.locator('#airTempValue')).toHaveValue('120');
-    await page.locator('label.tool-icon-toggle').filter({ hasText: 'Layers' }).click({ force: true });
-    await expect(page.locator('#layerLapse')).toBeDisabled();
     await page.locator('label.tool-icon-toggle').filter({ hasText: 'Breeze' }).click({ force: true });
-    await page.locator('label.tool-icon-toggle').filter({ hasText: 'Layers' }).click({ force: true });
-    await page.locator('#layerLapse').fill('4.5');
-    await expect(page.locator('#layerLapseValue')).toHaveText('4.5');
+    await expect(page.locator('#ambientWind')).toBeChecked();
     const visualizations = await openVisualizations(page);
     await visualizations.locator('#visualizationHeatButton').click();
     await expect(page.locator('#visualizationHeatButton')).toHaveAttribute('aria-pressed', 'true');
@@ -136,7 +133,7 @@ test('environment controls update values, disable dependent controls, and toggle
     await expect(page.locator('#readout')).toBeVisible();
 });
 
-test('temperature, lapse, wind, breeze, and heat controls cover bounds and reset state', async ({ page }) => {
+test('temperature, wind, Breeze, and heat controls cover bounds and reset state', async ({ page }) => {
     const game = new GamePage(page); await game.openMenu(); await game.newGame();
     await page.locator('#airTemp').fill('-60');
     await expect(page.locator('#airTempValue')).toHaveValue('-60');
@@ -148,16 +145,6 @@ test('temperature, lapse, wind, breeze, and heat controls cover bounds and reset
     await page.locator('#airTempValue').fill('-100');
     await page.locator('#airTempValue').press('Enter');
     await expect(page.locator('#airTempValue')).toHaveValue('-60');
-
-    await page.locator('#layerLapse').fill('0');
-    await expect(page.locator('#layerLapseValue')).toHaveText('0.0');
-    await page.locator('#layerLapse').fill('10');
-    await expect(page.locator('#layerLapseValue')).toHaveText('10.0');
-    await page.locator('label.tool-icon-toggle').filter({ hasText: 'Layers' }).click({ force: true });
-    await expect(page.locator('#layerLapse')).toBeDisabled();
-    await page.locator('label.tool-icon-toggle').filter({ hasText: 'Layers' }).click({ force: true });
-    await expect(page.locator('#layerLapse')).toBeEnabled();
-    await expect(page.locator('#layerLapseValue')).toHaveText('10.0');
 
     await page.locator('#generalWindStrength').fill('0');
     await page.locator('#windStrength').fill('1');

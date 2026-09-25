@@ -41,7 +41,6 @@ with no dependencies.
 npm test                   # physics checks, no browser needed
 npm run test:smoke         # UI and persistence checks against a stand-in browser
 npm run test:scale-profile # scale profile and world allocation checks
-npx playwright install chromium # one-time browser setup
 npm run test:browser -- --workers=1 --trace=off # all 167 browser tests
 ```
 
@@ -92,9 +91,10 @@ The top toolbar carries the play controls, readout and theme. Materials sit to
 the left of the canvas; the Tools panel to its right contains Brush/Line mode
 and size, Grabber, Visualizations, and Environment controls. Open Options for
 Heat, Humidity, and Wind views; Normal restores ordinary rendering. The
-Environment section keeps Layers and Breeze separate from the Wind
-visualization, followed by Layer Strength, Wind Strength, Air Temperature,
-Humidity, and Dew Point. Hover an icon for a short explanation;
+Environment section places the Breeze toggle above General Wind and Gust
+Strength, Air Temperature, Humidity, and Dew Point, separate from the Wind
+visualization. Open air follows the natural `15 C` vertical temperature
+gradient centered on Air Temperature. Hover an icon for a short explanation;
 hover or focus any material button for its glossary description, properties and
 implemented reactions. The material and machine mechanics reference, including
 the glossary maintenance contract, is in
@@ -131,18 +131,14 @@ snapping to it, and it is deliberately a weak effect next to a flame or a block
 of ice: turn it down to -40 and ponds ice over in the end, but a fire held
 against wood still lights it.
 
-The air is not perfectly even, in two ways. Each particle settles at a
-temperature a degree or two either side of the dial, up to four degrees apart
-from its neighbours, so a pond sitting right on freezing ices over in patches
-rather than all at once. On top of that the air comes in **layers**: the world
-is split into five bands by height and each one is colder than the one below it,
-by however many degrees the Layers slider says. The middle band sits exactly on
-the dial, so what it reads stays true. Turn Layers up and the top of the world
-becomes a different climate from the bottom; turn it to zero and the air is one
-even temperature throughout. The checkbox beside the slider switches layering
-off altogether, which greys the slider out and makes the air even everywhere.
-Unlike dragging the slider to zero it leaves the setting alone, so switching
-layers back on brings back whatever was there before.
+The open air is not perfectly even in two ways. Each particle settles at a
+temperature a degree or two either side of its local air target, up to four
+degrees apart from its neighbours, so a pond sitting right on freezing ices
+over in patches rather than all at once. The target also changes smoothly with
+height: Air Temperature is the mid-height reference, the surface is `7.5 C`
+warmer, and the top is `7.5 C` cooler. This fixed natural gradient spans `15 C`
+from surface to top and is always active. Enclosed air keeps its local
+temperature instead of following the outdoor profile.
 
 The empty air also takes a subtle colour from this overall setting: increasingly
 blue toward the cold end of the slider and increasingly orange-red toward the
@@ -161,8 +157,8 @@ changes.
 pick up - flame, steam, smoke, dry sand, dry mud, ash, snow, seeds - while wet
 ground, rock and anything growing stay where they are. It also stirs the air it
 passes through towards its own average temperature, so dragging up and down
-mixes the cold layers at the top into the warm ones at the bottom. The Wind
-slider sets how hard it blows.
+stirs the natural temperature gradient between cooler upper air and warmer
+surface air. The Wind slider sets how hard it blows.
 
 A gust covers twice the width the brush is set to: air spills out around
 whatever it is aimed at rather than stopping dead at the edge of the brush.
@@ -197,9 +193,9 @@ centreline. Their faint cone and directional icon preview the facing while
 dragging; the machine is committed, and starts affecting the world, only when
 the mouse is released. The Heater and Cooler each draw 100
 power load, twice the Fan's 50, and all three switch off when they are not
-powered. Copper and Iron wire can reach conductive machines through up to two
-empty cells beyond the physical wire end, making it possible to place a machine
-beside a wire without touching the drawn pixels.
+powered. Copper, Iron, and Stainless Steel wire can reach conductive machines
+through up to two empty cells beyond the physical wire end. This lets a machine
+sit beside a wire without touching the drawn pixels.
 
 **Vent** is an always-active machine. A Vent connected to a storage bin with
 painted **Tubing** accepts the bin's stored material and drops it into the
@@ -285,11 +281,18 @@ few seconds rather than vanishing, but melts almost at once against a flame.
 
 ### Metals and power
 
-The **Metals** section contains Copper, Battery, Iron and non-conductive Tubing,
-plus the matching molten metals and Spark. Battery melts at 660C into Molten
-Aluminum, which cools back into Battery; copper and iron retain their approximate
-1085C and 1538C melting points. Tubing is made with Iron's heat and melting
-behavior but has no electrical or thermal conductivity.
+For practical help using metals, heat, power, and corrosion, see the
+[Metals Guide](docs/METALS_GUIDE.md).
+
+The **Metals** section contains Copper, Battery, Iron, Stainless Steel, and
+non-conductive Tubing, plus Copper and Iron's molten forms, Molten Aluminum,
+and Spark. Stainless Steel conducts heat and carries electrical pulses more
+slowly than Iron, can draw charge from Battery as a wire, and does not rust
+from Water or humid air.
+Battery melts at 660C into Molten Aluminum, which cools back into Battery;
+copper and iron retain their approximate 1085C and 1538C melting points. Tubing
+has zero ordinary thermal conductivity and no electrical conductivity, but
+still transfers heat through the fast thermal network.
 
 Electrical conduction is separate from thermal `conductivity`. Every ordinary
 material defaults to non-conductive; the metals opt in with different electrical
@@ -309,17 +312,19 @@ those particles do not recharge it or spend any charge themselves. The stored
 value per cell is available through `getStoredCharge(x, y)` for powered metals
 and future electrical devices.
 
-Copper and Iron have `dischargeBattery: true`. When either metal touches charged
-Battery, it slowly drains the shared Battery reservoir and repeatedly carries
-yellow power pulses from the contact point through its connected length. It
-stops conducting once the Battery is empty. Battery itself and every ordinary
-material default to `dischargeBattery: false`; the same property can be enabled
-for future powered machines.
+Copper, Iron, and Stainless Steel have `dischargeBattery: true`. When any of
+these wires touches charged Battery, it slowly drains the shared Battery
+reservoir and repeatedly carries yellow power pulses from the contact point
+through its connected length. It stops conducting once the Battery is empty.
+Battery itself and every ordinary material default to `dischargeBattery: false`;
+the same property can be enabled for future powered machines.
 
 Each conductive cell can also declare `powerConsumption`, which is summed across
 the whole connected power grid and then drawn from the battery at one hundredth
-of that rate per simulation tick. Copper wire is rated 1 per cell and Iron 0.5;
-the Heater and Cooler use the same field for their larger 100-unit load.
+of that rate per simulation tick. Copper wire is rated 1 per cell; Iron and
+Stainless Steel are rated 0.5. Stainless Steel's `electricalConductivity` is
+lower than Iron's, so its pulses travel more slowly. The Heater and Cooler use
+the same field for their larger 100-unit load.
 **Spark Dust** is a purple powder whose half-opacity Sparks are emitted less frequently
 into empty neighboring cells while each pixel's finite lifetime runs down, making
 it useful as a disposable charger around Battery. **Spark Block** is the solid version and lasts

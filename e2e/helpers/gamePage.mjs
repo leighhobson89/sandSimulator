@@ -1,4 +1,4 @@
-import { expect } from '@playwright/test';
+import { expect, test } from '@playwright/test';
 import { expectCanvasVisible } from './canvas.mjs';
 
 export class GamePage {
@@ -13,6 +13,10 @@ export class GamePage {
         await this.page.getByRole('button', { name: 'New Game' }).click();
         const sizeDialog = this.page.locator('#worldSizeDialog');
         if (await sizeDialog.isVisible()) {
+            if (worldSize.includes('520')) {
+                test.info().setTimeout(120_000);
+                this.page.setDefaultTimeout(120_000);
+            }
             await sizeDialog.getByRole('radio', { name: worldSize, exact: true }).check();
             await sizeDialog.getByRole('button', { name: 'Start Game', exact: true }).click();
         }

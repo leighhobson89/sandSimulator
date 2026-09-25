@@ -7,10 +7,11 @@ Focused browser contracts for deterministic, user-visible physics outcomes.
 - `settling.spec.mjs`: six tests for brush settling, liquid flow and level,
   reset, density ordering, sealed boundaries, and gas movement.
 - `thermal.spec.mjs`: gradual temperature integration, phase changes, fire,
-  lava, material insulation, ambient easing, altitude layers, sealed and open
-  air, chamber breach, local rays/fire/Lava effects, Steam retention, mixed
-  Wall/open-air cooling, and metal bridges using Tubing that transfer heat at
-  configured rates between enclosed chambers while Insulation isolates them.
+  lava, material insulation, ambient easing, the smooth fixed `15 C` natural
+  altitude gradient, sealed and open air, chamber breach, local rays/fire/Lava
+  effects, Steam retention, mixed Wall/open-air cooling, and metal bridges
+  using Tubing that transfer heat at configured rates between enclosed
+  chambers while Insulation isolates them.
 - `reactions.spec.mjs`: eight tests for quenching, growth, residue, drying,
   corrosion, snow, gunpowder, cold decay, and wind behavior.
 

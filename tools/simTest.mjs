@@ -13,7 +13,7 @@ import { readFileSync } from 'fs';
 import {
     prepareDefinitions, createWorld, getWorld, clearWorld, stepSimulation,
     setCell, index, getDefinitions, setAmbientTarget, getAmbientTemp,
-    setLayerLapse, getLayerLapse, getAirTempAt, setAirLayersOn,
+    getAirTempAt,
     captureSimulationState, restoreSimulationState,
     applyWind, getWindTrails, decayWindTrails,
     setAmbientWindOn, isBreezeBlowing, isPowered, getStoredCharge,
@@ -96,8 +96,6 @@ function resetThermalContractFixture(ambient = 20) {
     const state = captureSimulationState();
     state.ambient = ambient;
     state.ambientTarget = ambient;
-    state.layerLapse = 0;
-    state.airLayersOn = false;
     state.ambientWindOn = false;
     state.ambientHumidity = 50;
     state.dewpointTarget = 10;
@@ -128,8 +126,6 @@ function setExactAirConditions(temperature) {
     const state = captureSimulationState();
     state.ambient = temperature;
     state.ambientTarget = temperature;
-    state.layerLapse = 0;
-    state.airLayersOn = false;
     state.ambientWindOn = false;
     state.arrays.temp.fill(temperature);
     restoreSimulationState(state);
@@ -184,6 +180,157 @@ function runCorrosionSourceConversionRegression() {
     physics.setAmbientTarget(20);
     physics.setAmbientHumidityTarget(50);
     physics.setDewpointTarget(10);
+}
+
+function createSealedMetalFixture(materialId, waterContact) {
+    createWorld(9, 8);
+    physics.setAmbientTarget(25);
+    physics.setAmbientHumidityTarget(0);
+    getWorld().humidity.fill(0);
+    getWorld().temp.fill(25);
+    getWorld().tempNext.fill(25);
+    const metalX = 4;
+    const metalY = 4;
+    // hasAirNeighbour includes diagonals, so block all eight neighbors too.
+    for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+            if (dx === 0 && dy === 0) continue;
+            if (waterContact && dx === 0 && dy === -1) continue;
+            setCell(metalX + dx, metalY + dy, ID.Wall);
+        }
+    }
+    if (waterContact) {
+        setCell(metalX, metalY - 1, ID.Water);
+        setCell(metalX, metalY - 2, ID.Wall);
+    }
+    setCell(metalX, metalY, materialId);
+}
+
+function runSealedWaterContactCorrosionRegression() {
+    console.log('\nSealed Water contact corrodes metal while a dry sealed control does not');
+    const corrosionId = ID.Corrosion;
+
+    if (![corrosionId, ID.Iron, ID.Water, ID.Wall].every(id => Number.isInteger(id) && id > 0)) {
+        check('sealed Water-contact corrosion materials are available', false,
+            'Corrosion, Iron, Water, or Wall is missing');
+        return;
+    }
+
+    physics.setRandomSource(() => 0);
+    createSealedMetalFixture(ID.Iron, true);
+    run(800);
+    const sealedWaterContactCorrosion = countOf(corrosionId);
+    createSealedMetalFixture(ID.Iron, false);
+    run(800);
+    const sealedDryControlCorrosion = countOf(corrosionId);
+    check('cardinal Water contact corrodes sealed metal in low-humidity air',
+        sealedWaterContactCorrosion > 0,
+        `${sealedWaterContactCorrosion} Corrosion cells after direct Water contact`);
+    check('sealed dry metal without Water contact does not corrode',
+        sealedDryControlCorrosion === 0,
+        `${sealedDryControlCorrosion} Corrosion cells in dry control`);
+    physics.setRandomSeed(TEST_SEED);
+}
+
+function runNaturalAtmosphereProfileRegression() {
+    console.log('\nNatural atmosphere has a fixed altitude temperature profile');
+    createWorld(COLS, ROWS);
+    setExactAirConditions(20);
+    const profile = Array.from({ length: ROWS }, (_, y) => getAirTempAt(y));
+    check('air cools monotonically toward the top',
+        profile.every((temperature, y) => y === 0 || temperature >= profile[y - 1]));
+    check('the top is 7.5 degrees below the Air Temperature reference',
+        Math.abs(profile[0] - 12.5) < 0.001,
+        `${profile[0].toFixed(2)} C at the top`);
+    check('the surface is 7.5 degrees above the Air Temperature reference',
+        Math.abs(profile[ROWS - 1] - 27.5) < 0.001,
+        `${profile[ROWS - 1].toFixed(2)} C at the surface`);
+    check('the top-to-surface temperature difference is 15 degrees',
+        Math.abs(profile[ROWS - 1] - profile[0] - 15) < 0.001,
+        `${(profile[ROWS - 1] - profile[0]).toFixed(2)} C top to surface`);
+    const profileMidpoint = (profile[Math.floor((ROWS - 1) / 2)] +
+        profile[Math.ceil((ROWS - 1) / 2)]) / 2;
+    check('mid-height remains the Air Temperature reference',
+        Math.abs(profileMidpoint - getAmbientTemp()) < 0.001,
+        `${profileMidpoint.toFixed(2)} C at mid-height, ${getAmbientTemp().toFixed(2)} C reference`);
+
+    const capturedAtmosphere = captureSimulationState();
+    check('new captures omit removed air-layer settings',
+        !Object.hasOwn(capturedAtmosphere, 'layerLapse') && !Object.hasOwn(capturedAtmosphere, 'airLayersOn'));
+    restoreSimulationState({ ...capturedAtmosphere, layerLapse: 0, airLayersOn: false });
+    const restoredAtmosphere = captureSimulationState();
+    check('legacy layer settings do not disable or flatten the natural profile',
+        Math.abs(getAirTempAt(0) - 12.5) < 0.001 &&
+        Math.abs(getAirTempAt(ROWS - 1) - 27.5) < 0.001 &&
+        Math.abs((getAirTempAt(Math.floor((ROWS - 1) / 2)) + getAirTempAt(Math.ceil((ROWS - 1) / 2))) / 2 -
+            getAmbientTemp()) < 0.001,
+        `${getAirTempAt(0).toFixed(2)} C top, ${getAirTempAt(ROWS - 1).toFixed(2)} C surface`);
+    check('recapturing a legacy save still omits removed layer settings',
+        !Object.hasOwn(restoredAtmosphere, 'layerLapse') && !Object.hasOwn(restoredAtmosphere, 'airLayersOn'));
+
+    createWorld(8, 1);
+    const oneRowAirTemp = getAirTempAt(0);
+    check('a one-row world has a finite air temperature at its only row',
+        Number.isFinite(oneRowAirTemp) && Math.abs(oneRowAirTemp - getAmbientTemp()) < 0.001,
+        `${oneRowAirTemp} C at one-row midpoint`);
+    createWorld(COLS, ROWS);
+}
+
+function runStainlessSteelRegression() {
+    console.log('\nStainless Steel conducts but resists water and humidity rust');
+    const stainlessId = ID['Stainless Steel'];
+    const stainless = defs[stainlessId];
+    const iron = defs[ID.Iron];
+    check('Stainless Steel is the next-ID static Metals material',
+        stainlessId === 79 && stainless?.category === 'static' && stainless?.group === 'Metals',
+        `id=${stainlessId}, category=${stainless?.category}, group=${stainless?.group}`);
+    check('Stainless Steel has slow heat conductivity and conducts electricity below Iron',
+        stainless?.conductivity > 0 && stainless.conductivity < iron?.conductivity &&
+        stainless?.conductive === true && stainless.electricalConductivity > 0 &&
+        stainless.electricalConductivity < iron?.electricalConductivity,
+        `heat=${stainless?.conductivity}/${iron?.conductivity}, electrical=${stainless?.electricalConductivity}/${iron?.electricalConductivity}, conductive=${stainless?.conductive}`);
+    check('Stainless Steel discharges Battery grids with Iron-matched load and reach',
+        stainless?.dischargeBattery === true && stainless.powerConsumption === 0.5 &&
+        stainless.powerConsumption === iron?.powerConsumption && stainless.wireReach === 2 &&
+        stainless.wireReach === iron?.wireReach,
+        `discharge=${stainless?.dischargeBattery}, load=${stainless?.powerConsumption}, reach=${stainless?.wireReach}`);
+    check('Stainless Steel is excluded from humidity and water rust eligibility',
+        stainless?.metal !== true,
+        `metal=${stainless?.metal}`);
+    if (!stainless || ID.Corrosion <= 0) return;
+
+    physics.setRandomSource(() => 0);
+    if (ID.Battery > 0 && ID.Fan > 0) {
+        createWorld(9, 8);
+        setCell(2, 4, ID.Battery);
+        setCell(3, 4, stainlessId);
+        setCell(5, 4, ID.Fan);
+        getWorld().charge[index(2, 4)] = defs[ID.Battery].chargeCapacity;
+        stepSimulation();
+        const fanIndex = index(5, 4);
+        check('Battery-grid Stainless Steel powers a Fan two cells beyond its wire end',
+            getWorld().powerDelay[fanIndex] > 0 || getWorld().power[fanIndex] > 0,
+            `wireReach=${stainless.wireReach}, power=${getWorld().power[fanIndex]}, delay=${getWorld().powerDelay[fanIndex]}`);
+    }
+
+    createSealedMetalFixture(stainlessId, true);
+    run(2000);
+    check('long sealed Water contact leaves Stainless Steel intact',
+        countOf(stainlessId) === 1 && countOf(ID.Corrosion) === 0,
+        `${countOf(stainlessId)} Stainless Steel, ${countOf(ID.Corrosion)} Corrosion`);
+
+    createWorld(9, 8);
+    physics.setAmbientTarget(25);
+    physics.setAmbientHumidityTarget(100);
+    getWorld().humidity.fill(100);
+    getWorld().temp.fill(25);
+    getWorld().tempNext.fill(25);
+    setCell(4, 4, stainlessId);
+    run(2000);
+    check('long saturated-air exposure leaves Stainless Steel intact',
+        countOf(stainlessId) === 1 && countOf(ID.Corrosion) === 0,
+        `${countOf(stainlessId)} Stainless Steel, ${countOf(ID.Corrosion)} Corrosion`);
+    physics.setRandomSeed(TEST_SEED);
 }
 
 function runThermalNetworkBridgeContract() {
@@ -543,7 +690,6 @@ function runThermalChamberRegressions() {
     }
 
     section('Enclosed air, heat sources and gas temperature');
-    setLayerLapse(0);
     setAmbientTarget(-40);
     run(1600);
     const ambient = getAmbientTemp();
@@ -700,11 +846,73 @@ function runThermalChamberRegressions() {
     check('sealed Steam stays warmer and lasts longer than exposed Steam',
         typeAt(steamX, steamY) === ID.Steam && tempAt(steamX, steamY) > 190 && openSteam < exposedSteamStart,
         `${typeAt(steamX, steamY) === ID.Steam ? tempAt(steamX, steamY).toFixed(1) + 'C' : 'condensed'} sealed; ${openSteam} of ${exposedSteamStart} exposed`);
-    setLayerLapse(2);
 }
 
 // Reuse the same legacy fixtures that run in the normal simulation suite, but
 // expose their thermal subset as a fast, focused regression target.
+function runFanWindScaleAlignmentRegression() {
+    const previousState = captureSimulationState();
+    const previousSeed = getRandomSeed();
+    section('Fan speed uses the calibrated breeze scale');
+    const outputAtSpeed = speed => {
+        clearWorld();
+        physics.resetRandomSource();
+        setRandomSeed(5137);
+        setAmbientWindOn(false);
+        const fanX = 24;
+        const fanY = 20;
+        setCell(fanX, fanY, ID.Fan);
+        setCell(fanX - 1, fanY, ID.Battery);
+        getWorld().charge[index(fanX - 1, fanY)] = defs[ID.Battery].chargeCapacity;
+        physics.setMachineSetting(fanX, fanY, speed);
+        const admittedSpeed = physics.getMachineSetting(fanX, fanY);
+        stepSimulation();
+        return {
+            admittedSpeed,
+            powered: isPowered(fanX, fanY),
+            airflowX: Array.from(getWorld().airflowX),
+            airflowY: Array.from(getWorld().airflowY)
+        };
+    };
+
+    try {
+        const atNewMaximum = outputAtSpeed(50);
+        const frontCellAirflow = atNewMaximum.airflowX[index(25, 20)];
+        const legacyMaximumAirflow = (15 / 8) * 3.5;
+        check('the Fan accepts its new maximum speed of 50', atNewMaximum.admittedSpeed === 50,
+            `stored setting ${atNewMaximum.admittedSpeed}`);
+        check('new speed 50 maps to legacy wind strength 15', physics.windStrengthToLegacyScale(50) === 15,
+            `mapped value ${physics.windStrengthToLegacyScale(50)}`);
+        check('a powered Fan at speed 50 produces the legacy maximum physical output',
+            atNewMaximum.powered && Math.abs(frontCellAirflow - legacyMaximumAirflow) < 0.000001,
+            `powered ${atNewMaximum.powered}, front airflow ${frontCellAirflow}, legacy maximum ${legacyMaximumAirflow}`);
+    } finally {
+        restoreSimulationState(previousState);
+        if (previousSeed !== null) setRandomSeed(previousSeed);
+    }
+}
+
+if (process.argv.includes('--focus=fan-wind-scale-alignment')) {
+    runFanWindScaleAlignmentRegression();
+    console.log(`\n${passed} passed, ${failed} failed\n`);
+    process.exit(failed > 0 ? 1 : 0);
+}
+
+if (process.argv.includes('--focus=atmosphere-corrosion')) {
+    const callerState = captureSimulationState();
+    const callerSeed = getRandomSeed();
+    try {
+        runNaturalAtmosphereProfileRegression();
+        runSealedWaterContactCorrosionRegression();
+        runStainlessSteelRegression();
+    } finally {
+        restoreSimulationState(callerState);
+        if (callerSeed !== null) setRandomSeed(callerSeed);
+    }
+    console.log(`\n${passed} passed, ${failed} failed\n`);
+    process.exit(failed > 0 ? 1 : 0);
+}
+
 if (process.argv.includes('--focus=ecology-climate')) {
     runEcologyClimateRegressions();
     console.log(`\n${passed} passed, ${failed} failed\n`);
@@ -732,7 +940,6 @@ if (process.argv.includes('--focus=thermal-air-faces')) {
 
 if (process.argv.includes('--focus=thermal-regressions')) {
     setAmbientTarget(20);
-    setLayerLapse(2);
     run(1400);
     runLavaContactAndCoolingRegressions();
     runLavaAmbientCoolingRegression();
@@ -1102,7 +1309,6 @@ function meanFlowTemperature() {
     return total / cells;
 }
 
-setLayerLapse(0);
 setAmbientTarget(20);
 run(1400);
 clearWorld();
@@ -1133,7 +1339,6 @@ run(1400);
 runLavaAmbientCoolingRegression();
 
 section('Stone reheats through scoria and back into lava');
-setLayerLapse(0);
 fillRect(0, 0, COLS, ROWS, ID.Stone);
 getWorld().temp.fill(200);
 run(100);
@@ -1147,10 +1352,7 @@ run(30);
 check('continued heating melts scoria into lava', countOf(ID.Lava) > 0,
     `${countOf(ID.Lava)} lava`);
 
-setLayerLapse(2);
-
 section('Thick insulating materials keep their interior temperature');
-setLayerLapse(0);
 fillRect(20, 14, 21, 17, ID.Glass);
 const insulatedWorld = getWorld();
 insulatedWorld.temp.fill(-40);
@@ -1183,8 +1385,6 @@ check('dense solids insulate more strongly than fluids and powders',
     defs[ID.Glass].bulkInsulation > defs[ID.Water].bulkInsulation &&
     defs[ID.Stone].bulkInsulation > defs[ID.Sand].bulkInsulation,
     `glass ${defs[ID.Glass].bulkInsulation}, water ${defs[ID.Water].bulkInsulation}`);
-setLayerLapse(2);
-
 // ---------------------------------------------------------------------------
 
 function runLavaSandMeltRegression() {
@@ -1263,7 +1463,9 @@ try {
         countOf(ID.Steam) === drySteamStart && countOf(ID.Water) === 0 && countOf(ID.Snow) === 0,
         `${drySteamStart} -> ${countOf(ID.Steam)} Steam`);
 
-    steamWeatherFixture({ airTemp: 12, humidity: 95, dewpoint: 10 });
+    // The fixed atmosphere is 7.5 degrees colder at the top, so use a warm
+    // enough reference to keep even the upper air above this dewpoint.
+    steamWeatherFixture({ airTemp: 20, humidity: 95, dewpoint: 10 });
     run(120);
     check('humid Steam above dewpoint remains uncondensed',
         countOf(ID.Steam) > 0 && countOf(ID.Water) === 0 && countOf(ID.Snow) === 0,
@@ -1289,7 +1491,6 @@ const steamEdgeState = snapshotSimulationState();
 const steamEdgeSeed = getRandomSeed();
 try {
 resetThermalContractFixture(20);
-setLayerLapse(0);
 setRandomSeed(0);
 fillRect(0, 0, COLS, ROWS, ID.Steam);
 getWorld().temp.fill(300);
@@ -1322,8 +1523,6 @@ try {
     const isolatedRoomState = captureSimulationState();
     isolatedRoomState.ambient = 20;
     isolatedRoomState.ambientTarget = 20;
-    isolatedRoomState.layerLapse = 0;
-    isolatedRoomState.airLayersOn = false;
     isolatedRoomState.ambientWindOn = false;
     restoreSimulationState(isolatedRoomState);
     setRandomSeed(0);
@@ -1576,7 +1775,6 @@ check('the pond froze over', countOf(ID.Ice) > 0, `${countOf(ID.Ice)} ice`);
 
 section('The air is not perfectly even from particle to particle');
 resetThermalContractFixture(20);
-setLayerLapse(0);       // layers off, so this measures the variance on its own
 setRandomSeed(0);
 for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
 for (let x = 2; x < COLS - 2; x += 2) setCell(x, ROWS - 2, ID.Sand);
@@ -1596,43 +1794,10 @@ check('particles settle at slightly different temperatures', warmest - coldest >
     `coldest ${coldest.toFixed(2)}C, warmest ${warmest.toFixed(2)}C`);
 check('but the spread stays small', warmest - coldest <= 4.01,
     `spread is ${(warmest - coldest).toFixed(2)} degrees`);
-check('and it stays centred on the air temperature',
-    Math.abs((warmest + coldest) / 2 - 20) < 1.5,
+check('and it stays centred on the local altitude air temperature',
+    Math.abs((warmest + coldest) / 2 - getAirTempAt(ROWS - 2)) < 1.5,
     `middle of the spread is ${((warmest + coldest) / 2).toFixed(2)}C`);
-setAirLayersOn(true);
 setRandomSeed(TEST_SEED);
-
-section('The air is colder the higher up you go');
-setLayerLapse(2);
-setAmbientTarget(20);
-// A column of stone from top to bottom, left to sit until it matches the air.
-for (let y = 2; y < ROWS - 2; y++) setCell(30, y, ID.Stone);
-run(2500);
-const highUp = tempAt(30, 3);
-const downLow = tempAt(30, ROWS - 3);
-check('the top of the world is colder than the bottom', highUp < downLow - 4,
-    `${highUp.toFixed(1)}C at the top, ${downLow.toFixed(1)}C at the bottom`);
-check('about two degrees per fifth of the height', Math.abs((downLow - highUp) - 8) < 3,
-    `${(downLow - highUp).toFixed(1)} degrees from top to bottom, expected about 8`);
-check('and the middle still reads what the dial says',
-    Math.abs(tempAt(30, Math.floor(ROWS / 2)) - 20) < 2.5,
-    `${tempAt(30, Math.floor(ROWS / 2)).toFixed(1)}C halfway up`);
-
-section('The layer slider makes the layering stronger or weaker');
-setLayerLapse(6);
-for (let y = 2; y < ROWS - 2; y++) setCell(30, y, ID.Stone);
-run(2500);
-const steepGap = tempAt(30, ROWS - 3) - tempAt(30, 3);
-check('turning it up spreads the layers further apart', steepGap > 18,
-    `${steepGap.toFixed(1)} degrees from top to bottom at 6 per fifth`);
-
-setLayerLapse(0);
-for (let y = 2; y < ROWS - 2; y++) setCell(30, y, ID.Stone);
-run(2500);
-const flatGap = Math.abs(tempAt(30, ROWS - 3) - tempAt(30, 3));
-check('turning it off makes the air one even temperature', flatGap < 3,
-    `${flatGap.toFixed(1)} degrees from top to bottom at 0 per fifth`);
-setLayerLapse(2);
 
 section('A flame still beats the weather');
 // The air is set to freezing, but a fire held against wood should win: a
@@ -1978,6 +2143,7 @@ const floorFanY = ROWS - 1;
 setCell(floorFanX, floorFanY, ID.Fan);
 setCell(floorFanX - 1, floorFanY, ID.Battery);
 getWorld().charge[index(floorFanX - 1, floorFanY)] = defs[ID.Battery].chargeCapacity;
+physics.setMachineSetting(floorFanX, floorFanY, 50);
 setCell(floorFanX + 28, floorFanY, ID.Ash);
 defs[ID.Ash].windLift = 100;
 stepSimulation();
@@ -2356,7 +2522,6 @@ check('the dry sand underneath stayed dry', countOf(ID.Sand) >= dryUnderneath - 
 // ---------------------------------------------------------------------------
 
 section('The wind blows loose things along and leaves fixed things alone');
-setLayerLapse(0);
 setAmbientTarget(20);
 for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
 fillRect(20, 20, 3, 3, ID.Sand);
@@ -2398,7 +2563,6 @@ check('stone did not budge', centreOf(ID.Stone) === before.stone,
     `stone moved from ${before.stone.toFixed(1)} to ${centreOf(ID.Stone).toFixed(1)}`);
 
 section('The wind mixes the warm air at the bottom with the cold at the top');
-setLayerLapse(6);
 setAmbientTarget(20);
 for (let y = 2; y < ROWS - 2; y++) setCell(30, y, ID.Stone);
 run(2500);
@@ -2411,10 +2575,8 @@ for (let sweep = 0; sweep < 60; sweep++) {
 const gapAfter = tempAt(30, ROWS - 4) - tempAt(30, 4);
 check('the layers were stirred together', gapAfter < gapBefore * 0.8,
     `${gapBefore.toFixed(1)} degrees top to bottom before, ${gapAfter.toFixed(1)} after`);
-setLayerLapse(2);
 
 section('A stronger wind blows things further');
-setLayerLapse(0);
 for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
 fillRect(20, ROWS - 6, 3, 3, ID.Sand);
 const gentleStart = centreOf(ID.Sand);
@@ -2435,10 +2597,8 @@ for (let gust = 0; gust < 20; gust++) {
 const strongMove = centreOf(ID.Sand) - strongStart;
 check('turning the wind up moves things further', strongMove > gentleMove * 1.15,
     `moved ${gentleMove.toFixed(1)} cells at strength 1, ${strongMove.toFixed(1)} at strength 8`);
-setLayerLapse(2);
 
 section('The wind tool blows seeds about and shows where it has been');
-setLayerLapse(0);
 for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
 for (let n = 0; n < 12; n++) setCell(18 + n, ROWS - 2, ID['Grass Seeds']);
 const seedStart = centreOf(ID['Grass Seeds']);
@@ -2474,7 +2634,6 @@ function blownSandMoves(putSomethingInTheWay) {
 }
 
 section('Solid things stop the wind; plants let it through');
-setLayerLapse(0);
 const inTheOpen = blownSandMoves(null);
 
 section('Solid things stop the wind (behind glass)');
@@ -2495,7 +2654,6 @@ check('a plant in the way let the wind straight through', behindPlant > inTheOpe
     `${behindPlant.toFixed(1)} cells behind the plant against ${inTheOpen.toFixed(1)} in the open`);
 
 section('A sealed box keeps the breeze out');
-setLayerLapse(0);
 for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
 // A glass box with loose sand inside it, and the same sand out in the open.
 for (let x = 24; x <= 34; x++) { setCell(x, ROWS - 9, ID.Glass); setCell(x, ROWS - 2, ID.Glass); }
@@ -2529,7 +2687,6 @@ check('while the sand in the open got blown about',
 check('and nothing escaped the box', spilledFrom(26, 32) - boxedBefore >= 0);
 
 section('The natural breeze carries the loose and leaves the wet alone');
-setLayerLapse(0);
 for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
 // Two banks side by side on the floor, so that each is only ever answering for
 // itself. Stacking one on the other would have the top bank slide as the breeze
@@ -3404,11 +3561,13 @@ if (hasHumidityApi && hasDewpointApi && ID.Cloud !== undefined) {
         }
         return { cloudPeak, rain: countOf(ID.Water), snow: countOf(ID.Snow) };
     }
-    const aboveDewpoint = weatherRun({ airTemp: 12, dewpoint: 10 });
+    // Cloud formation happens in the upper 42 percent of the world. Keep the
+    // whole natural profile above the dewpoint for this control case.
+    const aboveDewpoint = weatherRun({ airTemp: 20, dewpoint: 10 });
     const atDewpoint = weatherRun({ airTemp: 10, dewpoint: 10 });
     const dryAtDewpoint = weatherRun({ airTemp: 8, dewpoint: 10, humidity: 60 });
     const rainy = weatherRun({ airTemp: 8, dewpoint: 10 });
-    const freezingBoundary = weatherRun({ airTemp: 0, dewpoint: 10 });
+    const freezingBoundary = weatherRun({ airTemp: -7.5, dewpoint: 10 });
     const snowy = weatherRun({ airTemp: -4, dewpoint: 10 });
     check('air warmer than dewpoint does not form clouds', aboveDewpoint.cloudPeak === 0,
         `${aboveDewpoint.cloudPeak} clouds`);
@@ -3422,9 +3581,28 @@ if (hasHumidityApi && hasDewpointApi && ID.Cloud !== undefined) {
         `${rainy.rain} Water cells`);
     check('cloud precipitation is snow at/below freezing', snowy.snow > 0,
         `${snowy.snow} Snow cells`);
-    check('cloud precipitation at exactly zero degrees is Snow',
+    check('cloud precipitation in a freezing profile is Snow',
         freezingBoundary.snow > 0 && freezingBoundary.rain === 0,
         `${freezingBoundary.snow} Snow, ${freezingBoundary.rain} Water`);
+
+    const exactFreezeState = snapshotSimulationState();
+    const exactFreezeSeed = getRandomSeed();
+    try {
+        createWorld(1, 1);
+        setExactAirConditions(0);
+        physics.setAmbientHumidityTarget(95);
+        physics.setDewpointTarget(10);
+        getWorld().humidity.fill(95);
+        setCell(0, 0, ID.Cloud);
+        physics.setRandomSource(() => 0);
+        stepSimulation();
+        check('Cloud at exactly zero degrees precipitates as Snow',
+            countOf(ID.Snow) === 1 && countOf(ID.Water) === 0,
+            `${countOf(ID.Snow)} Snow, ${countOf(ID.Water)} Water`);
+    } finally {
+        physics.resetRandomSource();
+        restoreSimulationCheckpoint(exactFreezeState, exactFreezeSeed);
+    }
 
     createWorld(28, 18);
     setExactAirConditions(8);
@@ -3543,6 +3721,8 @@ if (corrosionId > 0 && hasHumidityApi) {
         `${ordinaryHumidityCorrosion} Corrosion cells`);
     check('persistent saturation can corrode exposed metal', countOf(corrosionId) > 0,
         `${countOf(corrosionId)} Corrosion cells`);
+    runSealedWaterContactCorrosionRegression();
+    runStainlessSteelRegression();
     physics.setRandomSeed(TEST_SEED);
     runCorrosionSourceConversionRegression();
 
@@ -3604,8 +3784,6 @@ if (hasHumidityApi && hasDewpointApi && getWorld().humidity) {
     physics.setAmbientTarget(20);
     physics.setAmbientHumidityTarget(50);
     physics.setDewpointTarget(10);
-    setLayerLapse(2);
-    setAirLayersOn(true);
     setAmbientWindOn(false);
     setRandomSeed(TEST_SEED);
 }
@@ -3616,14 +3794,11 @@ setExactAirConditions(20);
 physics.setAmbientTarget(20);
 physics.setAmbientHumidityTarget(50);
 physics.setDewpointTarget(10);
-setLayerLapse(2);
-setAirLayersOn(true);
 setAmbientWindOn(false);
 setRandomSeed(TEST_SEED);
 
 section('Lava has to land before it can set');
 setAmbientTarget(-60);
-setLayerLapse(0);
 for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);
 // A drip let go from high up in freezing air. It passes the temperature it
 // would set at long before it lands.
@@ -3644,25 +3819,8 @@ for (let x = 0; x < COLS; x++) if (typeAt(x, ROWS - 2) === ID.Stone) stoneOnFloo
 check('and it set once it had landed', stoneOnFloor > 0 && countOf(ID.Lava) === 0,
     `${stoneOnFloor} stone on the floor, ${countOf(ID.Lava)} lava left`);
 setAmbientTarget(20);
-setLayerLapse(2);
 
-section('Air layering can be switched off');
-setLayerLapse(6);
-setAmbientTarget(20);
-run(1200);
-const layeredGap = getAirTempAt(ROWS - 1) - getAirTempAt(0);
-check('layered air is warmer at the bottom than the top', layeredGap > 10,
-    `${layeredGap.toFixed(1)} degrees between floor and ceiling`);
-
-setAirLayersOn(false);
-check('switching layers off makes the air even everywhere',
-    getAirTempAt(0) === getAirTempAt(ROWS - 1),
-    `${getAirTempAt(0).toFixed(1)} at the top, ${getAirTempAt(ROWS - 1).toFixed(1)} at the bottom`);
-
-setAirLayersOn(true);
-check('and switching it back on leaves the slider setting where it was',
-    getLayerLapse() === 6 && getAirTempAt(ROWS - 1) - getAirTempAt(0) === layeredGap);
-setLayerLapse(2);
+runNaturalAtmosphereProfileRegression();
 
 section('Grass remains a distinct species on its wet sand substrate');
 for (let x = 0; x < COLS; x++) setCell(x, ROWS - 1, ID.Wall);

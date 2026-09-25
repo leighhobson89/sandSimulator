@@ -1,7 +1,8 @@
 Exhaustive browser workflows for machines and material transfer.
 
 - `placement.spec.mjs` checks every machine family, previews, blocked placement,
-  all Fan directions, hit testing, settings bounds, and tooltip behavior.
+  all Fan directions, hit testing, the Fan 1-50 setting range and default speed
+  7, settings bounds, and tooltip behavior.
 - `powered.spec.mjs` checks powered/unpowered Fan, Heater, and Cooler outcomes.
 - `storage.spec.mjs` checks all storage dialogs, categories, intake, capacity,
   type retention, and purge confirmation.
@@ -10,7 +11,8 @@ Exhaustive browser workflows for machines and material transfer.
 - `mixer.spec.mjs` checks all documented recipes, non-mixing output, purge, and
   release behavior.
 - `persistence.spec.mjs` checks machine settings, inventories, tubing, and
-  Mixer inputs through portable Save/Load.
+  Mixer inputs through portable Save/Load. It also verifies one-time migration
+  of legacy Fan speeds in saved worlds and blueprint cell settings.
 
 Run the 30 machine browser tests headlessly for required verification; headed
 runs are optional diagnostics only and are never an acceptance or release

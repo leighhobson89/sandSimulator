@@ -39,6 +39,20 @@ test('catalog groups materials, selects them accessibly, and describes their beh
     expect(state.definitions.some(definition => definition?.name === 'Water')).toBe(true);
 });
 
+test('Space on a focused catalog button selects it without toggling simulation pause', async ({ page }) => {
+    const game = new GamePage(page);
+    await game.openMenu();
+    await game.newGame();
+
+    const water = page.getByRole('button', { name: 'Water', exact: true });
+    await water.focus();
+    await expect(water).toBeFocused();
+    await water.press('Space');
+
+    await expect(water).toHaveClass(/selected/);
+    await expect(page.locator('#pauseButton')).toHaveText('Play');
+});
+
 test('Insulation catalog describes heat retention and exposes metal network rates', async ({ page }) => {
     const game = new GamePage(page);
     await game.openMenu();
@@ -100,6 +114,53 @@ test('Insulation catalog describes heat retention and exposes metal network rate
     await expect(tooltip).toContainText('Lava');
     await expect(tooltip).toContainText(/heat/i);
     await expect(tooltip).toContainText(/contact|conduct/i);
+});
+
+test('Stainless Steel is selectable in Metals and describes its conductive rust resistance', async ({ page }) => {
+    const game = new GamePage(page);
+    await game.openMenu();
+    await game.newGame();
+
+    const stainlessSteel = page.getByRole('button', { name: 'Stainless Steel', exact: true });
+    await expect(stainlessSteel).toBeVisible();
+    await expect(stainlessSteel).toHaveAttribute('data-particle-id', '79');
+    await expect(stainlessSteel).toHaveAttribute('aria-describedby', 'toolTooltip');
+    const metalsHeading = page.locator('#particleButtons .panel-heading').filter({ hasText: 'Metals' });
+    await expect(metalsHeading.locator('xpath=following-sibling::div[1]')
+        .getByRole('button', { name: 'Stainless Steel', exact: true })).toBeVisible();
+
+    const material = await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        const definitions = physics.getDefinitions();
+        return {
+            stainless: definitions.find(definition => definition?.name === 'Stainless Steel'),
+            iron: definitions.find(definition => definition?.name === 'Iron')
+        };
+    });
+    expect(material.stainless.id).toBe(79);
+    expect(material.stainless.category).toBe('static');
+    expect(material.stainless.group).toBe('Metals');
+    expect(material.stainless.conductivity).toBeGreaterThan(0);
+    expect(material.stainless.conductivity).toBeLessThan(material.iron.conductivity);
+    expect(material.stainless.conductive).toBe(true);
+    expect(material.stainless.electricalConductivity).toBeGreaterThan(0);
+    expect(material.stainless.electricalConductivity).toBeLessThan(material.iron.electricalConductivity);
+    expect(material.stainless.dischargeBattery).toBe(true);
+    expect(material.stainless.powerConsumption).toBe(0.5);
+    expect(material.stainless.powerConsumption).toBe(material.iron.powerConsumption);
+    expect(material.stainless.wireReach).toBe(2);
+    expect(material.stainless.wireReach).toBe(material.iron.wireReach);
+    expect(material.stainless.metal).not.toBe(true);
+    expect(material.stainless.description).toMatch(/rust|water|humidity/i);
+
+    await stainlessSteel.click();
+    await expect(stainlessSteel).toHaveClass(/selected/);
+    await stainlessSteel.hover();
+    const tooltip = page.locator('#toolTooltip');
+    await expect(tooltip).toBeVisible();
+    await expect(tooltip).toContainText('Stainless Steel');
+    await expect(tooltip).toContainText(/rust|water|humidity/i);
+    await expect(tooltip).toContainText(/conduct/i);
 });
 
 test('every prepared definition has a catalog button and generated glossary text', async ({ page }) => {

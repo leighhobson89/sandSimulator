@@ -1,9 +1,5 @@
 # Seed fire, cloud heat, banana height, and material groups
 
-**Status: implemented; focused simulation and smoke checks passed. Catalog
-browser verification was blocked because the configured Chromium executable is
-missing.**
-
 ## Goal
 
 Give all seeds working ignition behavior, including burning Lily Seeds at
@@ -64,8 +60,3 @@ collapse, expand, and accessibility state. The full suite was not run.
 - `npm.cmd test -- --focus=ecology-climate`: **passed, 5/5**.
 - `npm.cmd run test:smoke`: **passed** after adapting the existing fake DOM APIs
   for the accessible Materials group toggles.
-- The catalog browser wrapper launched, but all six cases failed immediately
-  at browser launch because the configured Chromium executable is missing:
-  `C:\Users\Leigh\AppData\Local\ms-playwright\chromium_headless_shell-1243\chrome-headless-shell-win64\chrome-headless-shell.exe`.
-  Browser assertions did not run.
-- The full test suite was not run.

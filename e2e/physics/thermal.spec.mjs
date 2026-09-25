@@ -109,7 +109,6 @@ test('sealed air retains heat until a breach reconnects it to ambient', async ({
         const p = await import('/physics.js');
         const insulation = p.getDefinitions().findIndex(definition => definition?.name === 'Insulation');
         if (insulation < 1) return null;
-        p.setLayerLapse(0);
         p.setAmbientTarget(-40);
         for (let frame = 0; frame < 1300; frame++) p.stepSimulation();
         p.clearWorld();
@@ -191,8 +190,6 @@ test('metal thermal bridges transfer at material rates while Insulation isolates
         const ids = Object.fromEntries(definitions.map((definition, id) => [definition?.name, id]).filter(([name]) => name));
         const baseline = p.getAmbientTemp();
         p.setAmbientTarget(baseline);
-        p.setLayerLapse(0);
-        p.setAirLayersOn(false);
         p.setAmbientWindOn(false);
         const rooms = [
             { left: 10, right: 16, top: 16, bottom: 24 },
@@ -265,7 +262,6 @@ test('Steam in a sealed warm gas cell stays hot while exposed Steam cools', asyn
         const insulation = definitions.findIndex(definition => definition?.name === 'Insulation');
         if (insulation < 1) return null;
         const steam = definitions.findIndex(definition => definition?.name === 'Steam');
-        p.setLayerLapse(0);
         p.setAmbientTarget(-40);
         for (let frame = 0; frame < 1300; frame++) p.stepSimulation();
         p.clearWorld();
@@ -314,14 +310,25 @@ async function countType(page, material) {
     return page.evaluate(async material => { const p = await import('/physics.js'); const id = p.getDefinitions().findIndex(d => d?.name === material); return [...p.getWorld().type].filter(value => value === id).length; }, material);
 }
 
-test('ambient target eases and altitude layers produce a colder upper world', async ({ page }) => {
+test('ambient target eases while the natural altitude profile spans 15 C around mid-height', async ({ page }) => {
     const game = new GamePage(page); await game.openMenu(); await game.newGame();
-    await setupPhysics(page, { cells: [{ x: 100, y: 4, material: 'Stone' }, { x: 100, y: 70, material: 'Stone' }] });
     const values = await page.evaluate(async () => {
-        const p = await import('/physics.js'); p.setLayerLapse(6); p.setAmbientTarget(20); return { top: p.getAirTempAt(4), bottom: p.getAirTempAt(70), ambient: p.getAmbientTemp() };
+        const p = await import('/physics.js');
+        p.setAmbientTarget(20);
+        const rows = p.getWorld().rows;
+        const profile = Array.from({ length: rows }, (_, y) => p.getAirTempAt(y));
+        return { profile, rows, ambient: p.getAmbientTemp() };
     });
-    expect(values.top).toBeLessThan(values.bottom);
     expect(values.ambient).not.toBe(20);
+    expect(values.profile.every((temperature, y) => y === 0 || temperature > values.profile[y - 1])).toBe(true);
+    expect(values.profile[values.rows - 1] - values.profile[0]).toBeCloseTo(15, 4);
+    expect(values.profile[0]).toBeCloseTo(values.ambient - 7.5, 4);
+    expect(values.profile[values.rows - 1]).toBeCloseTo(values.ambient + 7.5, 4);
+    const centerAverage = (values.profile[Math.floor((values.rows - 1) / 2)] +
+        values.profile[Math.ceil((values.rows - 1) / 2)]) / 2;
+    expect(centerAverage).toBeCloseTo(values.ambient, 4);
     await game.step(900);
-    expect(await page.evaluate(async () => (await import('/physics.js')).getAmbientTemp())).toBeGreaterThan(15);
+    const easedAmbient = await page.evaluate(async () => (await import('/physics.js')).getAmbientTemp());
+    expect(easedAmbient).toBeGreaterThan(values.ambient);
+    expect(easedAmbient).toBeGreaterThan(15);
 });
