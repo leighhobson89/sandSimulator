@@ -197,6 +197,12 @@ own workflow captures them. See the [Playwright HTML reporter guide](https://pla
   migration and one-time migration of Fan speeds. Fan placement coverage checks
   its 1-50 speed range and default speed 7. The Sprinkler browser coverage lives
   in `e2e/machines/sprinkler.spec.mjs`.
+- `e2e/machines/electrical.spec.mjs` also covers the `No wire sparks`
+  preference (`localStorage` key `sandSimulator.noWireSparks`), bright powered
+  wire bases with bounded moving Z bolts, Battery cells without bolts, the
+  centered green/red Battery charge glyph, and static machine artwork reuse.
+  Its cadence regression checks the expensive electrical refresh every 30
+  stable ticks while Battery drain and pulse countdown remain per tick.
 - `e2e/machines/logic-gates.spec.mjs` covers the five gate truth tables and
   absent-supply shutdown, declared signal/supply/output port roles, blue supply
   artwork, hover labels and directions, separated two-input geometry, exactly
@@ -347,6 +353,13 @@ The focused thermal physics and material catalog specs can be run together:
 
 ```text
 npm run test:browser -- e2e/physics/thermal.spec.mjs e2e/materials/catalog.spec.mjs --workers=1 --trace=off
+```
+
+The focused electrical rendering and refresh regressions run with the electrical
+and gate specs:
+
+```text
+npm run test:browser -- e2e/machines/electrical.spec.mjs e2e/machines/logic-gates.spec.mjs --workers=1 --trace=off
 ```
 
 The scale profile's allocation and pure math/CLI checks are headless Node tests

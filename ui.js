@@ -118,6 +118,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     elements.newGameMenuButton.addEventListener('click', () => { void startNewGame(); });
     elements.autosaveToggle.checked = isAutosaveEnabled();
     elements.autosaveToggle.addEventListener('change', handleAutosaveToggle);
+    const noWireSparksPreference = 'sandSimulator.noWireSparks';
+    if (elements.noWireSparksToggle) {
+        try {
+            elements.noWireSparksToggle.checked = localStorage.getItem(noWireSparksPreference) === 'true';
+        } catch { elements.noWireSparksToggle.checked = false; }
+        elements.noWireSparksToggle.addEventListener('change', () => {
+            try { localStorage.setItem(noWireSparksPreference, String(elements.noWireSparksToggle.checked)); }
+            catch { /* The display preference remains usable without storage. */ }
+        });
+    }
     elements.worldSizeStart.addEventListener('click', () => settleWorldSizeChoice(
         elements.worldSizeDialog.querySelector('input[name="worldSize"]:checked')?.value || null
     ));

@@ -31,3 +31,34 @@ The harness installs `window.__P0_PERF__` with `enabled`, `events`, `record(name
 | `illuminationLayer` | `game.js`, `drawIlluminationLayer()` | `cellsScanned`, `litCells` |
 
 The recorder is deliberately an optional hook rather than a permanent profiler. Hook duration distributions include only the instrumented measured pass; setup events are used only to confirm a hook can fire (for example, an SVG overlay rebuild may happen only once). `allocatedCells` is a scratch-array cell-slot proxy counting the world-sized distance buffer plus queue/touched indices; it is not bytes, total allocation volume, or garbage-collection data. The benchmark also requires positive numeric `touchedCells` for measured ordinary Spark propagation and positive `loadMachines` for measured Battery load traversal. Missing hooks or workload counters are listed in the artifacts and fail the benchmark after the JSON and CSV have been written. The harness does not patch or wrap production functions, so instrumentation overhead is not mixed into the external timing pass.
+
+## Electrical rendering and refresh comparison
+
+The run adds `ordinary-spark-no-wire-animation`, paired with the original
+`ordinary-spark` fixture at both world sizes. It has identical seeded particles,
+wire cells, Spark seed, and sample counts; only `#noWireSparksToggle` differs.
+The benchmark records the checkbox state and requires the normal-animation
+fixture to draw wire bolts while the checked fixture suppresses them for all 60
+measured draws. Existing fixtures remain the baseline for comparisons.
+
+`electricalTopologyRefresh` measures the expensive topology/load and logical
+power refresh, separate from per-tick battery charge application and pulse
+decay. For each stable 60-tick measured pass, the fixture expects exactly two
+scheduled refreshes and zero forced refreshes. Any forced refresh or additional
+refresh is reported as a cadence failure; circuit edits remain covered by the
+focused machine tests. A `batteryLoadTraversal` event can be sparse when the
+topology/load cache is reused, so positive `loadMachines` evidence may come
+from setup or `electricalTopologyRefresh`. The live Battery circuit must still
+report positive load and its Lamp must remain active.
+
+The JSON artifact retains hook counter summaries and raw events. The CSV also
+reports refresh counts, scheduled/forced refreshes, Spark touched/allocation
+proxies, Battery load-machine counters, overlay reuse and bolt counts, powered
+wire cells, animation bolt counts, and suppressed draws. Available overlay
+hooks are `machineOverlayReuse` (`machineCount`, `staticSvgReuse`, `boltCount`)
+and `electricalWireAnimation` (`poweredConductiveCells`, `boltCount`,
+`animationSuppressed`). `electricalTopologyRefresh` reports `worldCells`,
+`conductiveCells`, `batteryGroups`, `batteryCells`, `loadMachines`,
+`visitedCells`, `scheduledRefreshes`, `forcedRefreshes`, `topologyRebuilt`, and
+`loadCacheRebuilt` as numeric counters. These are workload and reuse indicators;
+timing comparisons still need the same host, browser, and commit context.

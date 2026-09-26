@@ -100,22 +100,30 @@ See [`performance/README.md`](../../performance/README.md).
 
 ### P1 — Low-risk candidates if measurements confirm the hotspots
 
-- [ ] Reuse scratch buffers for electrical graph traversal rather than
+- [x] Reuse scratch buffers for electrical graph traversal rather than
   allocating world-sized typed arrays for each call. A generation-stamp
   visited buffer can avoid a full clear, provided resize/restore lifecycle is
-  covered.
-- [ ] Avoid full electrical topology/load reconstruction when neither
+  covered. The follow-up measurements report zero newly allocated
+  world-sized Spark scratch slots; graph traversal CPU time remains similar to
+  baseline.
+- [x] Avoid full electrical topology/load reconstruction when neither
   electrical topology nor machine settings/ports changed. Introduce a clear
   invalidation version before caching; charge and live power still need to
-  update on their own schedule.
-- [ ] Keep static machine SVG artwork between frames. Update only dynamic
+  update on their own schedule. Stable networks use two scheduled refreshes
+  during 60 measured ticks; Battery charge and pulse countdown stay per tick.
+- [x] Keep static machine SVG artwork between frames. Update only dynamic
   signal marks/flow animations and rebuild static icons on world, viewport,
-  zoom, or machine changes. Verify pan/zoom, port activity, and placement
-  previews before adopting this.
-- [ ] In illumination drawing, consume the already-built illumination arrays
+  zoom, or machine changes. Focused browser regressions cover retained artwork
+  and live port state.
+- [x] In illumination drawing, consume the already-built illumination arrays
   directly instead of invoking the bounds/freshness getter once per cell.
   Preserve lazy field rebuild behavior and ensure the slider/source changes
-  invalidate it once, not once per sampled cell.
+  invalidate it once, not once per sampled cell. The combined-scene hook fell
+  from 2.60 / 2.80 to 1.50 / 1.60 ms at 260×150 and from 10.20 / 10.40 to
+  5.60 / 5.80 ms at 520×300.
+
+The implementation, focused regression results, and fixture-matched benchmark
+are recorded in the [electrical and rendering performance results report](2026-09-26-electrical-rendering-performance-results.md).
 
 ### P2 — Larger changes; require profiling and behavioral coverage first
 

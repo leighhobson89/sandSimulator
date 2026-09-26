@@ -14,6 +14,7 @@ const scenarios = [
     'empty-control',
     'particle-baseline',
     'ordinary-spark',
+    'ordinary-spark-no-wire-animation',
     'battery-lamp',
     'combined'
 ];
@@ -23,10 +24,13 @@ const seed = 0;
 const hookNames = [
     'stepSimulation',
     'updateElectricalPower',
+    'electricalTopologyRefresh',
     'ordinarySparkPropagation',
     'batteryLoadTraversal',
     'drawWorld',
     'machineOverlayRebuild',
+    'machineOverlayReuse',
+    'electricalWireAnimation',
     'illuminationLayer'
 ];
 
@@ -54,6 +58,26 @@ function summarizeHooks(events) {
         name,
         durations.length ? summarize(durations) : null
     ]));
+}
+
+function summarizeHookCounters(events) {
+    const grouped = {};
+    for (const event of events) {
+        for (const [name, value] of Object.entries(event.counters || {})) {
+            if (!Number.isFinite(value)) continue;
+            const values = grouped[event.name] ||= {};
+            (values[name] ||= []).push(value);
+        }
+    }
+    return Object.fromEntries(Object.entries(grouped).map(([hook, counters]) => [
+        hook,
+        Object.fromEntries(Object.entries(counters).map(([name, values]) => [name, summarize(values)]))
+    ]));
+}
+
+function sumHookCounter(events, hookName, counterName) {
+    return events.filter(event => event.name === hookName).reduce((sum, event) =>
+        sum + Number(event.counters?.[counterName] || 0), 0);
 }
 
 function csvCell(value) {
@@ -134,6 +158,10 @@ async function prepareFixture(page, scenario, size) {
             reset() { this.events.length = 0; },
             snapshot() { return this.events.slice(); }
         };
+        const noWireSparksToggle = document.querySelector('#noWireSparksToggle');
+        if (!noWireSparksToggle) throw new Error('Missing #noWireSparksToggle performance control.');
+        noWireSparksToggle.checked = scenario === 'ordinary-spark-no-wire-animation';
+        noWireSparksToggle.dispatchEvent(new Event('change', { bubbles: true }));
         physics.clearWorld();
         physics.setRandomSeed(seed);
 
@@ -156,7 +184,8 @@ async function prepareFixture(page, scenario, size) {
             }
         }
 
-        const wantsSpark = scenario === 'ordinary-spark' || scenario === 'combined';
+        const wantsSpark = scenario === 'ordinary-spark' ||
+            scenario === 'ordinary-spark-no-wire-animation' || scenario === 'combined';
         const wantsBattery = scenario === 'battery-lamp' || scenario === 'combined';
         let sparkSeed = null;
         let battery = null;
@@ -245,6 +274,7 @@ async function prepareFixture(page, scenario, size) {
         ]));
         const fixture = {
             scenario,
+            wireAnimationSuppressed: scenario === 'ordinary-spark-no-wire-animation',
             cols,
             rows,
             worldCells: cols * rows,
@@ -318,7 +348,8 @@ async function measurePass(page, fixture, { instrumented }) {
                 : null,
             finalBatteryLoad: fixture.battery
                 ? physics.getBatteryCircuitMetrics(fixture.battery.x, fixture.battery.y)?.load ?? null
-                : null
+                : null,
+            wireAnimationSuppressed: document.querySelector('#noWireSparksToggle')?.checked === true
         };
     }, { fixture, instrumented, warmupSamples, measuredSamples });
 }
@@ -415,9 +446,13 @@ test('opt-in P0 browser benchmark records deterministic scene and stage timings'
             const hookEvents = internal.events;
             const setupHookNames = [...new Set(fixture.setupEvents.map(event => event.name))];
             const hookSummary = summarizeHooks(hookEvents);
+            const hookCounterSummary = summarizeHookCounters(hookEvents);
+            const setupHookCounterSummary = summarizeHookCounters(fixture.setupEvents);
             const requiredForScenario = hookNames.filter(name => {
+                if (name === 'machineOverlayRebuild' || name === 'machineOverlayReuse') return false;
                 if (name === 'ordinarySparkPropagation') return Boolean(fixture.sparkSeed);
                 if (name === 'batteryLoadTraversal') return Boolean(fixture.battery);
+                if (name === 'electricalWireAnimation') return Boolean(fixture.sparkSeed || fixture.battery);
                 return true;
             });
             const missingHooks = requiredForScenario.filter(name =>
@@ -428,9 +463,56 @@ test('opt-in P0 browser benchmark records deterministic scene and stage timings'
                 if (!(touched > 0)) missingHooks.push('ordinarySparkPropagation.touchedCells counter');
             }
             if (fixture.battery) {
-                const traversedLoads = hookEvents.filter(event => event.name === 'batteryLoadTraversal')
-                    .reduce((sum, event) => sum + Number(event.counters?.loadMachines || 0), 0);
+                const allObservedEvents = [...fixture.setupEvents, ...hookEvents];
+                const traversedLoads = sumHookCounter(allObservedEvents, 'batteryLoadTraversal', 'loadMachines');
                 if (!(traversedLoads > 0)) missingHooks.push('batteryLoadTraversal.loadMachines counter');
+                const refreshedLoads = sumHookCounter(allObservedEvents, 'electricalTopologyRefresh', 'loadMachines');
+                if (!(refreshedLoads > 0)) missingHooks.push('electricalTopologyRefresh.loadMachines counter');
+            }
+
+            if (fixture.lamp) {
+                const overlayEvents = [...fixture.setupEvents, ...hookEvents].filter(event =>
+                    event.name === 'machineOverlayRebuild' || event.name === 'machineOverlayReuse');
+                if (overlayEvents.length === 0) {
+                    missingHooks.push('machineOverlayRebuild or machineOverlayReuse for a machine fixture');
+                }
+                const machineCountEvents = overlayEvents.filter(event =>
+                    Number.isFinite(event.counters?.machineCount));
+                if (machineCountEvents.length > 0 &&
+                    !machineCountEvents.some(event => event.counters.machineCount > 0)) {
+                    missingHooks.push('machineOverlay machineCount counter');
+                }
+                const reuseEvents = overlayEvents.filter(event =>
+                    event.name === 'machineOverlayReuse' &&
+                    Number.isFinite(event.counters?.staticSvgReuse));
+                if (reuseEvents.length > 0 &&
+                    !reuseEvents.some(event => event.counters.staticSvgReuse > 0)) {
+                    missingHooks.push('machineOverlayReuse.staticSvgReuse counter');
+                }
+            }
+
+            const topologyRefreshes = hookEvents.filter(event => event.name === 'electricalTopologyRefresh');
+            const scheduledRefreshes = sumHookCounter(hookEvents,
+                'electricalTopologyRefresh', 'scheduledRefreshes');
+            const forcedRefreshes = sumHookCounter(hookEvents,
+                'electricalTopologyRefresh', 'forcedRefreshes');
+            if (topologyRefreshes.length !== 2 || scheduledRefreshes !== 2 || forcedRefreshes !== 0) {
+                missingHooks.push(`electricalTopologyRefresh cadence (events=${topologyRefreshes.length}, scheduled=${scheduledRefreshes}, forced=${forcedRefreshes}; expected 2 scheduled over ${measuredSamples} steady ticks)`);
+            }
+
+            if (fixture.scenario === 'ordinary-spark' ||
+                fixture.scenario === 'ordinary-spark-no-wire-animation') {
+                const wireEvents = hookEvents.filter(event => event.name === 'electricalWireAnimation');
+                const totalBolts = sumHookCounter(hookEvents, 'electricalWireAnimation', 'boltCount');
+                const suppressedSamples = sumHookCounter(hookEvents,
+                    'electricalWireAnimation', 'animationSuppressed');
+                if (fixture.wireAnimationSuppressed) {
+                    if (totalBolts !== 0 || suppressedSamples !== measuredSamples) {
+                        missingHooks.push('electricalWireAnimation checked-toggle counters');
+                    }
+                } else if (!(wireEvents.length > 0 && totalBolts > 0)) {
+                    missingHooks.push('electricalWireAnimation powered-wire bolt counters');
+                }
             }
 
             results.push({
@@ -440,6 +522,11 @@ test('opt-in P0 browser benchmark records deterministic scene and stage timings'
                     ...fixture,
                     setupEvents: undefined,
                     setupHookNames,
+                    setupHookEventCounts: Object.fromEntries(hookNames.map(name => [
+                        name,
+                        fixture.setupEvents.filter(event => event.name === name).length
+                    ])),
+                    setupHookCounterSummary,
                     missingHooks,
                     hookEventCounts: Object.fromEntries(hookNames.map(name => [
                         name,
@@ -449,8 +536,21 @@ test('opt-in P0 browser benchmark records deterministic scene and stage timings'
                 externalSummary,
                 instrumentedSummary,
                 hookSummary,
+                hookCounterSummary,
                 hookEvents
             });
+
+            if (scenario === 'ordinary-spark-no-wire-animation') {
+                const baseline = results.find(result => result.size.cols === size.cols &&
+                    result.size.rows === size.rows && result.fixture.scenario === 'ordinary-spark');
+                expect(baseline, 'paired normal-animation Spark fixture exists').toBeTruthy();
+                expect(fixture.worldCells).toBe(baseline.fixture.worldCells);
+                expect(fixture.nonEmptyCells).toBe(baseline.fixture.nonEmptyCells);
+                expect(fixture.countsByName).toEqual(baseline.fixture.countsByName);
+                expect(fixture.sparkSeed).toEqual(baseline.fixture.sparkSeed);
+                expect(fixture.wireAnimationSuppressed).toBe(true);
+                expect(internal.wireAnimationSuppressed).toBe(true);
+            }
         }
     }
 
@@ -464,7 +564,13 @@ test('opt-in P0 browser benchmark records deterministic scene and stage timings'
 
     const csvColumns = [
         'cols', 'rows', 'scenario', 'worldCells', 'nonEmptyCells', 'sand', 'water', 'fire', 'elec',
-        'spark', 'battery', 'lamp', 'stepMedianMs', 'stepP95Ms', 'windMedianMs', 'windP95Ms',
+        'spark', 'battery', 'lamp', 'wireAnimationSuppressed',
+        'electricalTopologyRefreshEvents', 'electricalTopologyScheduledRefreshes',
+        'electricalTopologyForcedRefreshes', 'sparkTouchedCells', 'sparkAllocatedCells',
+        'batteryTraversalLoadMachines', 'batteryRefreshLoadMachines',
+        'overlayRebuilds', 'overlayStaticSvgReuse', 'overlayBolts',
+        'wireAnimationFramesSuppressed', 'wirePoweredCells', 'wireBolts',
+        'stepMedianMs', 'stepP95Ms', 'windMedianMs', 'windP95Ms',
         'renderMedianMs', 'renderP95Ms', 'missingHooks',
         ...hookNames.flatMap(name => [`${name}Count`, `${name}MedianMs`, `${name}P95Ms`])
     ];
@@ -475,7 +581,20 @@ test('opt-in P0 browser benchmark records deterministic scene and stage timings'
             size.cols, size.rows, fixture.scenario, fixture.worldCells, fixture.nonEmptyCells,
             fixture.countsByName.Sand, fixture.countsByName.Water, fixture.countsByName.Fire,
             fixture.countsByName.Elec, fixture.countsByName.Spark, fixture.countsByName.Battery,
-            fixture.countsByName.Lamp,
+            fixture.countsByName.Lamp, Number(fixture.wireAnimationSuppressed),
+            result.fixture.hookEventCounts.electricalTopologyRefresh,
+            sumHookCounter(result.hookEvents, 'electricalTopologyRefresh', 'scheduledRefreshes'),
+            sumHookCounter(result.hookEvents, 'electricalTopologyRefresh', 'forcedRefreshes'),
+            sumHookCounter(result.hookEvents, 'ordinarySparkPropagation', 'touchedCells'),
+            sumHookCounter(result.hookEvents, 'ordinarySparkPropagation', 'allocatedCells'),
+            sumHookCounter(result.hookEvents, 'batteryLoadTraversal', 'loadMachines'),
+            sumHookCounter(result.hookEvents, 'electricalTopologyRefresh', 'loadMachines'),
+            result.fixture.hookEventCounts.machineOverlayRebuild,
+            sumHookCounter(result.hookEvents, 'machineOverlayReuse', 'staticSvgReuse'),
+            sumHookCounter(result.hookEvents, 'machineOverlayReuse', 'boltCount'),
+            sumHookCounter(result.hookEvents, 'electricalWireAnimation', 'animationSuppressed'),
+            sumHookCounter(result.hookEvents, 'electricalWireAnimation', 'poweredConductiveCells'),
+            sumHookCounter(result.hookEvents, 'electricalWireAnimation', 'boltCount'),
             result.externalSummary.stepSimulation.medianMs,
             result.externalSummary.stepSimulation.p95Ms,
             result.externalSummary.decayWindTrails.medianMs,

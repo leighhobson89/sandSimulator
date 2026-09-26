@@ -66,6 +66,7 @@ export function setElements() {
         exportGameButton: document.getElementById('exportGame'),
         importGameButton: document.getElementById('importGame'),
         edgePanToggle: document.getElementById('edgePanToggle'),
+        noWireSparksToggle: document.getElementById('noWireSparksToggle'),
         autosaveToggle: document.getElementById('autosaveToggle'),
         zoomStatus: document.getElementById('zoomStatus'),
         worldSizeDialog: document.getElementById('worldSizeDialog'),

@@ -59,6 +59,23 @@ let COLS = 0;
 let ROWS = 0;
 let world = null;
 let logicalCurrentDirty = true;
+const ELECTRICAL_REFRESH_INTERVAL = 30;
+let electricalStateDirty = true;
+let electricalTopologyDirty = true;
+let electricalLoadsDirty = true;
+let lastElectricalRefreshFrame = -ELECTRICAL_REFRESH_INTERVAL;
+let electricalTopologyCache = null;
+let electricalLoadLogicSignature = null;
+let electricalVisitStamps = new Uint32Array(0);
+let electricalDistanceStamps = new Uint32Array(0);
+let electricalDistances = new Int32Array(0);
+let electricalQueueScratch = new Int32Array(0);
+let electricalVisitGeneration = 0;
+const electricalWeightedQueueScratch = [];
+const electricalTouchedScratch = [];
+const electricalStorageScratch = [];
+let activeElectricalPulseCells = [];
+let activeElectricalPulseMask = new Uint8Array(0);
 let illuminationDirty = true;
 let illuminationSourceSignature = null;
 let illuminationFieldFrame = -1;
@@ -101,6 +118,98 @@ let randomSeed = null;
 function activeP0PerformanceRecorder() {
     const recorder = typeof window !== 'undefined' ? window.__P0_PERF__ : null;
     return recorder?.enabled && typeof recorder.record === 'function' ? recorder : null;
+}
+
+function ensureElectricalScratch() {
+    const cells = world?.type.length || 0;
+    if (electricalVisitStamps.length === cells) return;
+    electricalVisitStamps = new Uint32Array(cells);
+    electricalDistanceStamps = new Uint32Array(cells);
+    electricalDistances = new Int32Array(cells);
+    electricalQueueScratch = new Int32Array(cells);
+    activeElectricalPulseMask = new Uint8Array(cells);
+    activeElectricalPulseCells = [];
+    electricalVisitGeneration = 0;
+    electricalTopologyCache = null;
+    electricalLoadLogicSignature = null;
+    electricalTopologyDirty = true;
+    electricalLoadsDirty = true;
+    electricalStateDirty = true;
+}
+
+function nextElectricalVisitGeneration() {
+    ensureElectricalScratch();
+    electricalVisitGeneration = (electricalVisitGeneration + 1) >>> 0;
+    if (electricalVisitGeneration === 0) {
+        electricalVisitStamps.fill(0);
+        electricalDistanceStamps.fill(0);
+        electricalVisitGeneration = 1;
+    }
+    return electricalVisitGeneration;
+}
+
+function queueElectricalPulseCell(cell) {
+    if (!world || cell < 0 || cell >= world.type.length) return;
+    ensureElectricalScratch();
+    if (activeElectricalPulseMask[cell] ||
+        (world.power[cell] === 0 && world.powerDelay[cell] === 0)) return;
+    activeElectricalPulseMask[cell] = 1;
+    activeElectricalPulseCells.push(cell);
+}
+
+function rebuildActiveElectricalPulseCells() {
+    if (!world) {
+        activeElectricalPulseCells = [];
+        activeElectricalPulseMask = new Uint8Array(0);
+        return;
+    }
+    ensureElectricalScratch();
+    activeElectricalPulseCells = [];
+    activeElectricalPulseMask.fill(0);
+    for (let cell = 0; cell < world.type.length; cell++) {
+        if (world.power[cell] === 0 && world.powerDelay[cell] === 0) continue;
+        activeElectricalPulseMask[cell] = 1;
+        activeElectricalPulseCells.push(cell);
+    }
+}
+
+function hasElectricalPorts(def) {
+    return !!def?.machine && !!MACHINE_PORT_DEFINITIONS[def.machine]?.some(port =>
+        port.family === 'electrical' || port.family === 'copper');
+}
+
+function participatesInElectricalNetwork(def) {
+    return !!(def?.conductive || def?.chargeCapacity > 0 || def?.powerConsumption > 0 ||
+        hasElectricalPorts(def));
+}
+
+function invalidateElectricalState({ topology = false, loads = false } = {}) {
+    electricalStateDirty = true;
+    logicalCurrentDirty = true;
+    if (topology) {
+        electricalTopologyDirty = true;
+        electricalLoadsDirty = true;
+        electricalTopologyCache = null;
+    } else if (loads) {
+        electricalLoadsDirty = true;
+    }
+    illuminationDirty = true;
+}
+
+function resetElectricalStateCache() {
+    electricalStateDirty = true;
+    electricalTopologyDirty = true;
+    electricalLoadsDirty = true;
+    lastElectricalRefreshFrame = -ELECTRICAL_REFRESH_INTERVAL;
+    electricalTopologyCache = null;
+    electricalLoadLogicSignature = null;
+    electricalVisitStamps = new Uint32Array(0);
+    electricalDistanceStamps = new Uint32Array(0);
+    electricalDistances = new Int32Array(0);
+    electricalQueueScratch = new Int32Array(0);
+    electricalVisitGeneration = 0;
+    activeElectricalPulseMask = new Uint8Array(0);
+    activeElectricalPulseCells = [];
 }
 
 export function setRandomSource(source) {
@@ -551,6 +660,7 @@ export function prepareDefinitions(json) {
     });
 
     DEFS = defs;
+    resetElectricalStateCache();
     ambientIlluminationDirty = true;
     AIR_SPACE_BY_TYPE.fill(0);
     AIR_SPACE_BY_TYPE[EMPTY] = 1;
@@ -1460,6 +1570,9 @@ export function restoreSimulationState(state) {
     ambientIlluminationFieldFrame = -1;
     illuminationFlashes = [];
     machineCollisionMaskDirty = true;
+    resetElectricalStateCache();
+    ensureElectricalScratch();
+    rebuildActiveElectricalPulseCells();
 }
 
 // --------------------------------------------------------------------- world
@@ -1561,6 +1674,8 @@ export function createWorld(cols, rows) {
         displayWindX: new Float32Array(n),
         displayWindY: new Float32Array(n)
     };
+    resetElectricalStateCache();
+    ensureElectricalScratch();
     tempFloodQueue = new Int32Array(world.temp.buffer);
     tempNextFloodQueue = new Int32Array(world.tempNext.buffer);
     world.temp.fill(AMBIENT);
@@ -1595,8 +1710,44 @@ export function getWorld() { return world; }
 // relay paths. Direct topology/settings edits invalidate the cached level;
 // visual power/powerDelay remain independent travelling-pulse fields.
 export function invalidateLogicalCurrent() {
+    // Spark charge and sensor rules affect logical signal levels, but do not
+    // inherently change the conductor graph or machine-load attribution.
+    // recomputeLogicalCurrent will dirty loads only if gate supply/output state
+    // actually changes.
+    electricalStateDirty = true;
     logicalCurrentDirty = true;
     illuminationDirty = true;
+}
+
+// The renderer calls this before sampling cached logicalPower so edits remain
+// visible immediately even while simulation stepping is paused.
+export function ensureElectricalStateCurrent() {
+    if (!world) return;
+    if (electricalStateDirty || electricalTopologyDirty || electricalLoadsDirty || logicalCurrentDirty) {
+        refreshElectricalState({ force: true });
+    }
+}
+
+// Canvas edit helpers sometimes write the type plane directly so they can
+// restore a whole grabbed/stamped patch in one pass. Keep their topology
+// invalidation selective, just like setCell(), without exposing the internal
+// cache implementation to the renderer.
+export function invalidateElectricalTopologyForTypes(previousType, nextType) {
+    if (participatesInElectricalNetwork(DEFS[previousType]) ||
+        participatesInElectricalNetwork(DEFS[nextType])) {
+        invalidateElectricalState({ topology: true });
+    }
+}
+
+// Direct patch/blueprint edits restore the pulse planes as well as the type
+// plane. Keep the sparse aging list synchronized without adding duplicate
+// entries when a cell already has an active pulse slot.
+export function syncElectricalPulseTrackingAt(cell) {
+    if (!world || !Number.isInteger(cell) || cell < 0 || cell >= world.type.length) return;
+    if (world.power[cell] === 0 && world.powerDelay[cell] === 0) {
+        return;
+    }
+    queueElectricalPulseCell(cell);
 }
 
 function invalidateAmbientIllumination() {
@@ -1959,7 +2110,7 @@ function portAcceptsMaterial(port, material) {
         : DEFS[material];
     if (!port || !particle) return false;
     if (port.family === 'tubing') return !!particle.tubing;
-    if (port.family === 'copper') return particle.name === 'Copper';
+    if (port.family === 'copper') return particle.name === 'Copper' || isElectricalWire(particle);
     if (port.family === 'electrical') return isElectricalWire(particle);
     if (port.family === 'sprinkler-output') return !particle.tool && !particle.machine && !particle.tubing;
     if (port.family === 'storage') {
@@ -2165,6 +2316,9 @@ export function getMachinePortLeadOwner(x, y) {
 
 export function registerMachinePortLead(machineX, machineY, slot, cells) {
     if (!inBounds(machineX, machineY)) return;
+    const machine = index(machineX, machineY);
+    const port = machinePortDescriptors(machine).find(candidate => candidate.slot === slot);
+    let changed = false;
     for (const cell of cells) {
         const x = cell % COLS;
         const y = Math.floor(cell / COLS);
@@ -2173,6 +2327,10 @@ export function registerMachinePortLead(machineX, machineY, slot, cells) {
         if (Math.abs(dx) >= 32768 || Math.abs(dy) >= 32768) continue;
         world.machinePortLeadRemap[cell] = (((dx + 32768) << 16) | (dy + 32768)) >>> 0;
         world.machinePortLeadSlot[cell] = slot + 1;
+        changed = true;
+    }
+    if (changed && (port?.family === 'electrical' || port?.family === 'copper')) {
+        invalidateElectricalState({ topology: true });
     }
 }
 
@@ -2451,7 +2609,7 @@ export function getMachinePortSnapTarget(x, y, material) {
                 const compatiblePortFamily = particle.tubing
                     ? (port.family === 'tubing' || port.family === 'storage')
                     : port.family === 'copper'
-                        ? particle.name === 'Copper'
+                        ? particle.name === 'Copper' || isElectricalWire(particle)
                         : port.family === 'electrical' && isElectricalWire(particle);
                 if (!compatiblePortFamily || !portAcceptsMaterial(port, particle.id) ||
                     machinePortHasConnection(port)) continue;
@@ -2662,8 +2820,11 @@ export function setMachineSetting(x, y, value) {
     const def = DEFS[world.type[i]];
     const bounds = machineSettingBounds(def);
     if (!bounds || !Number.isFinite(value)) return false;
+    const previous = world.machineSetting[i];
     world.machineSetting[i] = Math.max(bounds.min, Math.min(bounds.max, Math.round(value)));
-    if (def.machine === 'simpleSwitch') invalidateLogicalCurrent();
+    if (previous !== world.machineSetting[i] && participatesInElectricalNetwork(def)) {
+        invalidateElectricalState({ loads: true });
+    }
     if (def.machine === 'lamp') illuminationDirty = true;
     return true;
 }
@@ -2806,15 +2967,19 @@ function connectedBatteryComponent(start) {
     if (!world || start < 0 || start >= world.type.length) return null;
     const battery = DEFS[world.type[start]];
     if (!(battery?.chargeCapacity > 0)) return null;
-    const visited = new Uint8Array(world.type.length);
-    const queue = [start];
-    visited[start] = 1;
+    ensureElectricalScratch();
+    const generation = nextElectricalVisitGeneration();
+    const queue = electricalQueueScratch;
+    let tail = 1;
+    let head = 0;
+    queue[0] = start;
+    electricalVisitStamps[start] = generation;
     let totalCharge = 0;
     let totalCapacity = 0;
     let key = start;
     const cells = [];
 
-    for (let head = 0; head < queue.length; head++) {
+    for (; head < tail; head++) {
         const i = queue[head];
         const def = DEFS[world.type[i]];
         cells.push(i);
@@ -2829,9 +2994,9 @@ function connectedBatteryComponent(start) {
             const ny = cellY + dy;
             if (!inBounds(nx, ny)) continue;
             const ni = ny * COLS + nx;
-            if (visited[ni] || world.type[ni] !== world.type[start]) continue;
-            visited[ni] = 1;
-            queue.push(ni);
+            if (electricalVisitStamps[ni] === generation || world.type[ni] !== world.type[start]) continue;
+            electricalVisitStamps[ni] = generation;
+            queue[tail++] = ni;
         }
     }
 
@@ -2862,14 +3027,10 @@ export function getBatteryCircuitMetrics(x, y) {
     const charge = getConnectedBatteryCharge(x, y);
     if (!charge) return null;
     ensureLogicalCurrent();
-    const conductorSeeds = new Set();
-    for (const cell of charge.cells) {
-        forEachConductiveConnection(cell, contact => {
-            if (DEFS[world.type[contact]]?.chargeCapacity <= 0) conductorSeeds.add(contact);
-        });
-    }
-    const load = connectedGridConsumption([...conductorSeeds], buildElectricalMachineLoads()) /
-        BATTERY_DISCHARGE_SCALE;
+    if (!electricalTopologyCache || electricalTopologyDirty) rebuildElectricalTopologyCache();
+    if (electricalLoadsDirty || !electricalTopologyCache.loadsByWire) rebuildElectricalLoadCache();
+    const group = electricalTopologyCache.groups.find(candidate => candidate.cells[0] === charge.key);
+    const load = group?.consumption || 0;
     return { ...charge, load };
 }
 
@@ -2952,6 +3113,8 @@ export function clearWorld() {
     generalWindCacheFrame = -1;
     windShelterFrame = -1;
     gustFieldCells.length = 0;
+    resetElectricalStateCache();
+    ensureElectricalScratch();
 }
 
 // What a freshly placed particle starts with in its data slot. A plant gets a
@@ -3016,14 +3179,17 @@ export function setCell(x, y, id, keepTemp) {
     const i = y * COLS + x;
     const def = DEFS[id];
     const previousType = world.type[i];
+    const previousDef = DEFS[previousType];
     if (isCollectorMachine(DEFS[previousType]) || isCollectorMachine(def)) collectorMasksDirty = true;
     if (DEFS[previousType]?.machineCollisionWidth || def?.machineCollisionWidth) {
         machineCollisionMaskDirty = true;
     }
     const wasSameRay = previousType === id && def?.forceRate > 0;
     if (previousType !== id) invalidateAmbientIllumination();
+    if (participatesInElectricalNetwork(previousDef) || participatesInElectricalNetwork(def)) {
+        invalidateElectricalState({ topology: true });
+    }
     world.type[i] = id;
-    invalidateLogicalCurrent();
     if (def?.machine === 'mixer') hasMixerMachine = true;
     world.residue[i] = EMPTY;
     const lifetime = def.life > 0
@@ -3069,13 +3235,16 @@ export function setCell(x, y, id, keepTemp) {
 // changing state does not change how hot that spot is.
 function transform(i, id, life, residue) {
     const def = DEFS[id];
+    const previousDef = DEFS[world.type[i]];
     if (world.type[i] !== id) invalidateAmbientIllumination();
+    if (participatesInElectricalNetwork(previousDef) || participatesInElectricalNetwork(def)) {
+        invalidateElectricalState({ topology: true });
+    }
     if (isCollectorMachine(DEFS[world.type[i]]) || isCollectorMachine(def)) collectorMasksDirty = true;
     if (DEFS[world.type[i]]?.machineCollisionWidth || def?.machineCollisionWidth) {
         machineCollisionMaskDirty = true;
     }
     world.type[i] = id;
-    invalidateLogicalCurrent();
     const lifetime = life !== undefined ? life
         : (def.life > 0 ? def.life + Math.floor((random() - 0.5) * def.lifeVariance) : 0);
     world.life[i] = lifetime;
@@ -3114,11 +3283,12 @@ function defaultBulkInsulation(category) {
 }
 
 function removeParticle(i) {
+    const previousDef = DEFS[world.type[i]];
     if (world.type[i] !== EMPTY) invalidateAmbientIllumination();
+    if (participatesInElectricalNetwork(previousDef)) invalidateElectricalState({ topology: true });
     if (isCollectorMachine(DEFS[world.type[i]])) collectorMasksDirty = true;
     if (DEFS[world.type[i]]?.machineCollisionWidth) machineCollisionMaskDirty = true;
     world.type[i] = EMPTY;
-    invalidateLogicalCurrent();
     world.life[i] = 0;
     world.lifeMax[i] = 0;
     world.residue[i] = EMPTY;
@@ -3147,6 +3317,11 @@ function removeParticle(i) {
 }
 
 function swapCells(i1, i2) {
+    const previousA = DEFS[world.type[i1]];
+    const previousB = DEFS[world.type[i2]];
+    if (participatesInElectricalNetwork(previousA) || participatesInElectricalNetwork(previousB)) {
+        invalidateElectricalState({ topology: true });
+    }
     if (world.type[i1] !== world.type[i2]) invalidateAmbientIllumination();
     if (isCollectorMachine(DEFS[world.type[i1]]) || isCollectorMachine(DEFS[world.type[i2]])) {
         collectorMasksDirty = true;
@@ -3155,7 +3330,6 @@ function swapCells(i1, i2) {
         machineCollisionMaskDirty = true;
     }
     let t = world.type[i1]; world.type[i1] = world.type[i2]; world.type[i2] = t;
-    invalidateLogicalCurrent();
     let h = world.temp[i1]; world.temp[i1] = world.temp[i2]; world.temp[i2] = h;
     let l = world.life[i1]; world.life[i1] = world.life[i2]; world.life[i2] = l;
     let lm = world.lifeMax[i1]; world.lifeMax[i1] = world.lifeMax[i2]; world.lifeMax[i2] = lm;
@@ -3195,6 +3369,8 @@ function swapCells(i1, i2) {
     }
     let p = world.power[i1]; world.power[i1] = world.power[i2]; world.power[i2] = p;
     let pd = world.powerDelay[i1]; world.powerDelay[i1] = world.powerDelay[i2]; world.powerDelay[i2] = pd;
+    syncElectricalPulseTrackingAt(i1);
+    syncElectricalPulseTrackingAt(i2);
     let c = world.charge[i1]; world.charge[i1] = world.charge[i2]; world.charge[i2] = c;
     world.moved[i1] = 1;
     world.moved[i2] = 1;
@@ -3211,13 +3387,19 @@ function energizeConnectedMetal(seeds, chargeStorage = true, profileOrdinarySpar
     const startedAt = recorder ? performance.now() : 0;
     let connectionVisits = 0;
 
-    const distance = new Int32Array(world.type.length);
-    distance.fill(-1);
-    const queue = [];
-    const touched = [];
+    ensureElectricalScratch();
+    const distance = electricalDistances;
+    const distanceGeneration = nextElectricalVisitGeneration();
+    const queue = electricalWeightedQueueScratch;
+    const touched = electricalTouchedScratch;
+    const storageCells = electricalStorageScratch;
+    queue.length = 0;
+    touched.length = 0;
+    storageCells.length = 0;
 
     for (const seed of seeds) {
-        if (distance[seed] !== -1) continue;
+        if (electricalDistanceStamps[seed] === distanceGeneration) continue;
+        electricalDistanceStamps[seed] = distanceGeneration;
         distance[seed] = 0;
         queue.push(seed);
         touched.push(seed);
@@ -3233,14 +3415,17 @@ function energizeConnectedMetal(seeds, chargeStorage = true, profileOrdinarySpar
             const travelFrames = Math.max(1,
                 Math.ceil(1 / Math.max(0.01, nextDef.electricalConductivity)));
             const nextDistance = distance[i] + travelFrames;
-            if (distance[ni] !== -1 && distance[ni] <= nextDistance) return;
-            if (distance[ni] === -1) touched.push(ni);
+            const wasVisited = electricalDistanceStamps[ni] === distanceGeneration;
+            if (wasVisited && distance[ni] <= nextDistance) return;
+            if (!wasVisited) {
+                touched.push(ni);
+                electricalDistanceStamps[ni] = distanceGeneration;
+            }
             distance[ni] = nextDistance;
             queue.push(ni);
         });
     }
 
-    const storageCells = [];
     let stored = 0;
     let storageCapacity = 0;
     let chargePerSpark = 0;
@@ -3252,6 +3437,7 @@ function energizeConnectedMetal(seeds, chargeStorage = true, profileOrdinarySpar
         } else if (world.powerDelay[i] === 0 || delay < world.powerDelay[i]) {
             world.powerDelay[i] = delay;
         }
+        queueElectricalPulseCell(i);
 
         const def = DEFS[world.type[i]];
         if (def.chargeCapacity > 0 && def.chargePerSpark > 0) {
@@ -3267,22 +3453,27 @@ function energizeConnectedMetal(seeds, chargeStorage = true, profileOrdinarySpar
     // capacity, but needs proportionally more Sparks (or a Spark brush held on
     // it for longer) to reach the same yellow charge level.
     if (chargeStorage && storageCells.length > 0 && storageCapacity > 0) {
+        const sourceBecameAvailable = stored <= 0 && stored + chargePerSpark > 0;
         const fullness = Math.min(1, (stored + chargePerSpark) / storageCapacity);
         for (const i of storageCells) {
             world.charge[i] = DEFS[world.type[i]].chargeCapacity * fullness;
         }
-        invalidateLogicalCurrent();
+        if (sourceBecameAvailable) invalidateLogicalCurrent();
     }
 
     if (recorder) {
         recorder.record('ordinarySparkPropagation', performance.now() - startedAt, {
             touchedCells: touched.length,
             connectionVisits,
-            // The traversal allocates one full-world distance slot per cell and
-            // grows two index arrays to the number of reached conductors.
-            allocatedCells: distance.length + queue.length + touched.length
+            // World-sized distance, queue, and touched scratch is retained and
+            // reused; this per-Spark traversal creates no cell-slot arrays.
+            allocatedCells: 0,
+            scratchCells: queue.length + touched.length
         });
     }
+    queue.length = 0;
+    touched.length = 0;
+    storageCells.length = 0;
 }
 
 function conductiveNeighbours(x, y) {
@@ -3319,7 +3510,8 @@ function forEachConductiveConnection(i, callback) {
 // batteries may touch the same wire grid, but neither battery should become a
 // bridge into the other battery's reservoir.
 function electricalPortWireCells(port) {
-    if (!world || !port?.connectionCell || port.family !== 'electrical') return [];
+    if (!world || !port?.connectionCell ||
+        (port.family !== 'electrical' && port.family !== 'copper')) return [];
     const candidates = new Set();
     const add = cell => {
         if (!cell || !inBounds(cell.x, cell.y)) return;
@@ -3348,21 +3540,23 @@ function addElectricalMachineLoad(loadsByWire, wire, machine, load) {
 }
 
 function electricalNetworkCells(seeds) {
-    const visited = new Uint8Array(world.type.length);
-    const queue = [];
+    ensureElectricalScratch();
+    const generation = nextElectricalVisitGeneration();
+    const queue = electricalQueueScratch;
+    let tail = 0;
     for (const seed of seeds) {
-        if (visited[seed] || DEFS[world.type[seed]]?.chargeCapacity > 0) continue;
-        visited[seed] = 1;
-        queue.push(seed);
+        if (electricalVisitStamps[seed] === generation || DEFS[world.type[seed]]?.chargeCapacity > 0) continue;
+        electricalVisitStamps[seed] = generation;
+        queue[tail++] = seed;
     }
-    for (let head = 0; head < queue.length; head++) {
+    for (let head = 0; head < tail; head++) {
         forEachConductiveConnection(queue[head], next => {
-            if (visited[next] || DEFS[world.type[next]]?.chargeCapacity > 0) return;
-            visited[next] = 1;
-            queue.push(next);
+            if (electricalVisitStamps[next] === generation || DEFS[world.type[next]]?.chargeCapacity > 0) return;
+            electricalVisitStamps[next] = generation;
+            queue[tail++] = next;
         });
     }
-    return queue;
+    return queue.slice(0, tail);
 }
 
 function networkHasBatterySource(cells) {
@@ -3385,10 +3579,21 @@ function buildElectricalMachineLoads() {
     for (let machine = 0; machine < world.type.length; machine++) {
         const def = DEFS[world.type[machine]];
         if (!def?.machine || !(def.powerConsumption > 0)) continue;
-        const ports = machinePortDescriptors(machine).filter(port => port.family === 'electrical');
+        const ports = machinePortDescriptors(machine).filter(port =>
+            port.family === 'electrical' || port.family === 'copper');
         let loadPort = null;
-        if (def.machine === 'lamp' && (Math.round(world.machineSetting[machine]) & 1) !== 0) {
-            loadPort = ports.find(port => port.role === 'input');
+        if (def.machine === 'lamp') {
+            if ((Math.round(world.machineSetting[machine]) & 1) !== 0) {
+                loadPort = ports.find(port => port.role === 'input');
+            }
+            if (loadPort) {
+                for (const wire of electricalPortWireCells(loadPort)) {
+                    addElectricalMachineLoad(loadsByWire, wire, machine, def.powerConsumption);
+                }
+            }
+            // Lamp input current remains available to the rest of the circuit
+            // while the Lamp is off, but the device itself draws no load.
+            continue;
         } else if (isLogicGate(def)) {
             loadPort = ports.find(port => port.role === 'input' && /^(?:supply|power)$/i.test(port.id));
             if (!portHasLogicalSignal(loadPort)) {
@@ -3407,10 +3612,24 @@ function buildElectricalMachineLoads() {
                 }
             }
         }
-        if (!loadPort) continue;
+        if (loadPort && !isLogicGate(def)) {
+            for (const wire of electricalPortWireCells(loadPort)) {
+                addElectricalMachineLoad(loadsByWire, wire, machine, def.powerConsumption);
+            }
+            continue;
+        }
         if (isLogicGate(def)) continue;
-        for (const wire of electricalPortWireCells(loadPort)) {
-            addElectricalMachineLoad(loadsByWire, wire, machine, def.powerConsumption);
+
+        // Copper-fed machines such as Fans use the same Battery-backed
+        // logical current as Elec-fed devices. Bill their draw to the input
+        // route only while that declared port is powered; bare Copper stays
+        // passive and disconnected machines do not burden a Battery group.
+        for (const input of ports) {
+            if (input.role !== 'input' || !portHasLogicalSignal(input)) continue;
+            for (const wire of electricalPortWireCells(input)) {
+                addElectricalMachineLoad(loadsByWire, wire, machine, def.powerConsumption);
+            }
+            break;
         }
     }
 
@@ -3439,24 +3658,30 @@ function buildElectricalMachineLoads() {
 function connectedGridConsumption(seeds, electricalLoadsByWire = null, profileCounters = null) {
     if (seeds.length === 0) return 0;
 
-    const visited = new Uint8Array(world.type.length);
-    const queue = [];
+    ensureElectricalScratch();
+    const generation = nextElectricalVisitGeneration();
+    const queue = electricalQueueScratch;
+    let tail = 0;
     const countedMachineLoads = new Set();
     let consumption = 0;
 
     for (const seed of seeds) {
-        if (visited[seed]) continue;
-        visited[seed] = 1;
-        queue.push(seed);
+        if (electricalVisitStamps[seed] === generation) continue;
+        electricalVisitStamps[seed] = generation;
+        queue[tail++] = seed;
     }
 
-    for (let head = 0; head < queue.length; head++) {
+    for (let head = 0; head < tail; head++) {
         const i = queue[head];
         if (profileCounters) profileCounters.visitedCells++;
         const def = DEFS[world.type[i]];
         if (!def || !def.conductive) continue;
         if (profileCounters) profileCounters.conductiveCells++;
-        consumption += def.powerConsumption;
+        // Conductive machine bodies are part of the route, but their draw is
+        // accounted through the declared powered input port below. Counting
+        // the body's intrinsic draw here as well would charge devices such as
+        // Fans twice when their metal chassis touches the same grid.
+        if (!def.machine) consumption += def.powerConsumption;
         for (const entry of electricalLoadsByWire?.get(i) || []) {
             if (countedMachineLoads.has(entry.machine)) continue;
             countedMachineLoads.add(entry.machine);
@@ -3466,13 +3691,166 @@ function connectedGridConsumption(seeds, electricalLoadsByWire = null, profileCo
 
         forEachConductiveConnection(i, ni => {
             const nextDef = DEFS[world.type[ni]];
-            if (visited[ni] || nextDef.chargeCapacity > 0) return;
-            visited[ni] = 1;
-            queue.push(ni);
+            if (electricalVisitStamps[ni] === generation || nextDef.chargeCapacity > 0) return;
+            electricalVisitStamps[ni] = generation;
+            queue[tail++] = ni;
         });
     }
 
     return consumption;
+}
+
+function rebuildElectricalTopologyCache(profileCounters = null) {
+    ensureElectricalScratch();
+    const generation = nextElectricalVisitGeneration();
+    const groups = [];
+    let batteryCells = 0;
+    for (let start = 0; start < world.type.length; start++) {
+        const startDef = DEFS[world.type[start]];
+        if (!(startDef?.chargeCapacity > 0) || electricalVisitStamps[start] === generation) continue;
+
+        const queue = electricalQueueScratch;
+        let head = 0;
+        let tail = 1;
+        queue[0] = start;
+        electricalVisitStamps[start] = generation;
+        const cells = [];
+        const contacts = new Set();
+        let capacity = 0;
+        while (head < tail) {
+            const battery = queue[head++];
+            cells.push(battery);
+            capacity += DEFS[world.type[battery]].chargeCapacity;
+            const x = battery % COLS;
+            const y = Math.floor(battery / COLS);
+            for (const [dx, dy] of ELECTRICAL_NEIGHBOURS) {
+                const nx = x + dx;
+                const ny = y + dy;
+                if (!inBounds(nx, ny)) continue;
+                const neighbour = index(nx, ny);
+                const def = DEFS[world.type[neighbour]];
+                if (!def) continue;
+                if (def.chargeCapacity > 0) {
+                    if (electricalVisitStamps[neighbour] === generation) continue;
+                    electricalVisitStamps[neighbour] = generation;
+                    queue[tail++] = neighbour;
+                } else if (def.conductive) {
+                    contacts.add(neighbour);
+                }
+            }
+        }
+        cells.sort((a, b) => a - b);
+        const batteryCellsForGroup = Int32Array.from(cells);
+        const contactCells = Int32Array.from(contacts);
+        batteryCells += batteryCellsForGroup.length;
+        groups.push({ cells: batteryCellsForGroup, contacts: contactCells, capacity, consumption: 0 });
+    }
+    let conductiveCells = 0;
+    for (let cell = 0; cell < world.type.length; cell++) {
+        if (DEFS[world.type[cell]]?.conductive) conductiveCells++;
+    }
+    electricalTopologyCache = { groups, loadsByWire: null, conductiveCells, batteryCells };
+    electricalTopologyDirty = false;
+    electricalLoadsDirty = true;
+    if (profileCounters) {
+        profileCounters.batteryGroups = groups.length;
+        profileCounters.batteryCells = batteryCells;
+        profileCounters.conductiveCells = conductiveCells;
+        profileCounters.topologyRebuilt = 1;
+    }
+    return electricalTopologyCache;
+}
+
+function rebuildElectricalLoadCache(profileCounters = null) {
+    const recorder = activeP0PerformanceRecorder();
+    const startedAt = recorder ? performance.now() : 0;
+    const batteryCounters = recorder ? {
+        batteryGroups: electricalTopologyCache?.groups.length || 0,
+        batteryCells: electricalTopologyCache?.batteryCells || 0,
+        conductiveCells: 0,
+        loadMachines: 0,
+        visitedCells: 0
+    } : null;
+    if (!electricalTopologyCache || electricalTopologyDirty) rebuildElectricalTopologyCache(profileCounters);
+    const loadsByWire = buildElectricalMachineLoads();
+    let loadMachines = 0;
+    const seenMachines = new Set();
+    for (const entries of loadsByWire.values()) {
+        for (const entry of entries) seenMachines.add(entry.machine);
+    }
+    loadMachines = seenMachines.size;
+    let visitedCells = 0;
+    let traversedConductiveCells = 0;
+    for (const group of electricalTopologyCache.groups) {
+        const counters = batteryCounters ? {
+            visitedCells: 0,
+            conductiveCells: 0,
+            loadMachines: 0
+        } : null;
+        group.consumption = connectedGridConsumption(group.contacts, loadsByWire, counters) /
+            BATTERY_DISCHARGE_SCALE;
+        if (counters) {
+            visitedCells += counters.visitedCells;
+            traversedConductiveCells += counters.conductiveCells;
+        }
+    }
+    electricalTopologyCache.loadsByWire = loadsByWire;
+    electricalLoadsDirty = false;
+    if (profileCounters) {
+        profileCounters.loadMachines = loadMachines;
+        profileCounters.visitedCells += visitedCells;
+        profileCounters.conductiveCells = Math.max(profileCounters.conductiveCells,
+            traversedConductiveCells);
+        profileCounters.loadCacheRebuilt = 1;
+    }
+    if (recorder && electricalTopologyCache.groups.length) {
+        recorder.record('batteryLoadTraversal', performance.now() - startedAt, {
+            ...batteryCounters,
+            conductiveCells: traversedConductiveCells,
+            loadMachines,
+            visitedCells,
+            allocatedCells: 0
+        });
+    }
+    return loadsByWire;
+}
+
+function countCachedElectricalLoadMachines() {
+    const seen = new Set();
+    for (const entries of electricalTopologyCache?.loadsByWire?.values() || []) {
+        for (const entry of entries) seen.add(entry.machine);
+    }
+    return seen.size;
+}
+
+function refreshElectricalState({ scheduled = false, force = false } = {}) {
+    if (!world) return false;
+    const topologyRebuilt = electricalTopologyDirty || !electricalTopologyCache;
+    const needsRefresh = force || scheduled || electricalStateDirty || topologyRebuilt || logicalCurrentDirty;
+    if (!needsRefresh) return false;
+    const recorder = activeP0PerformanceRecorder();
+    const startedAt = recorder ? performance.now() : 0;
+    const counters = recorder ? {
+        worldCells: world.type.length,
+        conductiveCells: electricalTopologyCache?.conductiveCells || 0,
+        batteryGroups: electricalTopologyCache?.groups.length || 0,
+        batteryCells: electricalTopologyCache?.batteryCells || 0,
+        loadMachines: countCachedElectricalLoadMachines(),
+        visitedCells: 0,
+        scheduledRefreshes: scheduled && !force ? 1 : 0,
+        forcedRefreshes: force || (!scheduled && (electricalStateDirty || logicalCurrentDirty || topologyRebuilt)) ? 1 : 0,
+        topologyRebuilt: 0,
+        loadCacheRebuilt: 0
+    } : null;
+    if (topologyRebuilt) rebuildElectricalTopologyCache(counters);
+    // Sensor comparisons use ambient conditions at the scheduled cadence;
+    // explicit edits and Battery source transitions request an immediate pass.
+    recomputeLogicalCurrent();
+    if (electricalLoadsDirty || topologyRebuilt) rebuildElectricalLoadCache(counters);
+    electricalStateDirty = false;
+    lastElectricalRefreshFrame = frameCount;
+    if (recorder) recorder.record('electricalTopologyRefresh', performance.now() - startedAt, counters);
+    return true;
 }
 
 function machineHasLogicalInput(machine) {
@@ -3654,6 +4032,11 @@ function recomputeLogicalCurrent() {
 
     // Rebuild from the selected final state so the exposed logicalPower plane
     // always matches gateOutputState, including the iteration-limit path.
+    let gateOutputChanged = false;
+    for (let g = 0; g < gateMachines.length; g++) {
+        const machine = gateMachines[g].machine;
+        if (world.gateOutputState[machine] !== gateOutputState[g]) gateOutputChanged = true;
+    }
     world.logicalPower.fill(0);
     world.gateOutputState.fill(0);
     seedBatteryLogicalCurrent();
@@ -3665,6 +4048,14 @@ function recomputeLogicalCurrent() {
     }
     energizeEnabledRelayOutputs();
     logicalCurrentDirty = false;
+    if (gateOutputChanged) electricalLoadsDirty = true;
+    const loadStateSignature = gateMachines.map(gate => {
+        const machine = gate.machine;
+        const supplyOn = gate.supplyHasBattery && portHasLogicalSignal(gate.supply) ? 1 : 0;
+        return `${machine}:${world.gateOutputState[machine]}:${supplyOn}`;
+    }).join('|');
+    if (electricalLoadLogicSignature !== loadStateSignature) electricalLoadsDirty = true;
+    electricalLoadLogicSignature = loadStateSignature;
     const emitterSignature = [];
     for (let machine = 0; machine < world.type.length; machine++) {
         if (DEFS[world.type[machine]]?.machine !== 'lamp' ||
@@ -3685,123 +4076,75 @@ function recomputeLogicalCurrent() {
 // a charged piece draws charge from the old cells immediately on the next
 // simulation frame. Eight-way contact matches electrical wire connectivity.
 function balanceStoredCharge() {
-    const recorder = activeP0PerformanceRecorder();
-    const startedAt = recorder ? performance.now() : 0;
-    const profileCounters = recorder ? {
-        batteryGroups: 0,
-        batteryCells: 0,
-        conductiveCells: 0,
-        loadMachines: 0,
-        visitedCells: 0
-    } : null;
-    const visited = new Uint8Array(world.type.length);
-    let electricalLoadsByWire = null;
-
-    for (let start = 0; start < world.type.length; start++) {
-        const startDef = DEFS[world.type[start]];
-        if (visited[start] || !startDef || !(startDef.chargeCapacity > 0)) continue;
-
-        const cells = [start];
-        const queue = [start];
-        visited[start] = 1;
+    const groups = electricalTopologyCache?.groups || [];
+    let supplyAvailabilityChanged = false;
+    for (const group of groups) {
         let totalCharge = 0;
         let totalCapacity = 0;
-        const dischargeContacts = [];
-        const seenContacts = new Set();
-
-        for (let head = 0; head < queue.length; head++) {
-            const i = queue[head];
-            const def = DEFS[world.type[i]];
-            totalCharge += world.charge[i];
-            totalCapacity += def.chargeCapacity;
-
-            const x = i % COLS;
-            const y = Math.floor(i / COLS);
-            for (const [dx, dy] of ELECTRICAL_NEIGHBOURS) {
-                const nx = x + dx;
-                const ny = y + dy;
-                if (!inBounds(nx, ny)) continue;
-                const ni = ny * COLS + nx;
-                if (visited[ni]) continue;
-                const nextDef = DEFS[world.type[ni]];
-                if (nextDef && nextDef.conductive && nextDef.chargeCapacity <= 0 &&
-                    !seenContacts.has(ni)) {
-                    seenContacts.add(ni);
-                    dischargeContacts.push(ni);
-                }
-                if (!nextDef || !(nextDef.chargeCapacity > 0)) continue;
-                visited[ni] = 1;
-                cells.push(ni);
-                queue.push(ni);
-            }
+        for (const cell of group.cells) {
+            const capacity = DEFS[world.type[cell]]?.chargeCapacity || 0;
+            totalCharge += world.charge[cell];
+            totalCapacity += capacity;
         }
-
-        if (profileCounters) {
-            profileCounters.batteryGroups++;
-            profileCounters.batteryCells += cells.length;
+        const wasAvailable = totalCharge > 0;
+        if (wasAvailable && group.consumption > 0) {
+            totalCharge = Math.max(0, totalCharge - group.consumption);
         }
-
-        // Every conductive cell in the connected grid draws its configured
-        // amount on every simulation tick. A bare copper wire therefore drains
-        // very slowly, while powered machines can make the same grid consume
-        // hundreds of charge units per tick.
-        if (!electricalLoadsByWire) electricalLoadsByWire = buildElectricalMachineLoads();
-        const gridConsumption = connectedGridConsumption(dischargeContacts, electricalLoadsByWire, profileCounters) /
-            BATTERY_DISCHARGE_SCALE;
-        if (totalCharge > 0 && gridConsumption > 0) {
-            totalCharge = Math.max(0, totalCharge - gridConsumption);
-            energizeConnectedMetal(dischargeContacts, false);
-        }
-
+        const isAvailable = totalCharge > 0;
+        if (wasAvailable !== isAvailable) supplyAvailabilityChanged = true;
         const fullness = totalCapacity > 0 ? Math.min(1, totalCharge / totalCapacity) : 0;
-        for (const i of cells) {
-            world.charge[i] = DEFS[world.type[i]].chargeCapacity * fullness;
+        for (const cell of group.cells) {
+            const capacity = DEFS[world.type[cell]]?.chargeCapacity || 0;
+            world.charge[cell] = capacity * fullness;
         }
     }
+    return supplyAvailabilityChanged;
+}
 
-    if (recorder) {
-        recorder.record('batteryLoadTraversal', performance.now() - startedAt, profileCounters);
+function ageElectricalPulses() {
+    let write = 0;
+    for (let read = 0; read < activeElectricalPulseCells.length; read++) {
+        const cell = activeElectricalPulseCells[read];
+        if (!activeElectricalPulseMask[cell]) continue;
+        const def = DEFS[world.type[cell]];
+        // Cleared/replaced cells retain one sparse-list slot until this pass;
+        // if energized again before now, that slot ages the replacement pulse
+        // once instead of creating a duplicate entry.
+        if (!def?.conductive) {
+            world.power[cell] = 0;
+            world.powerDelay[cell] = 0;
+            activeElectricalPulseMask[cell] = 0;
+            continue;
+        }
+        if (world.power[cell] > 0) world.power[cell]--;
+        if (world.powerDelay[cell] > 0) {
+            world.powerDelay[cell]--;
+            if (world.powerDelay[cell] === 0) world.power[cell] = POWER_GLOW_FRAMES;
+        }
+        if (world.power[cell] > 0 || world.powerDelay[cell] > 0) {
+            activeElectricalPulseCells[write++] = cell;
+        } else {
+            activeElectricalPulseMask[cell] = 0;
+        }
     }
+    activeElectricalPulseCells.length = write;
 }
 
 function updateElectricalPower() {
     const recorder = activeP0PerformanceRecorder();
     const startedAt = recorder ? performance.now() : 0;
-    let conductiveCells = 0;
-    for (let i = 0; i < world.type.length; i++) {
-        const id = world.type[i];
-        if (id === EMPTY) {
-            world.power[i] = 0;
-            world.powerDelay[i] = 0;
-            world.charge[i] = 0;
-            continue;
-        }
-
-        const def = DEFS[id];
-        if (recorder && def.conductive) conductiveCells++;
-        if (!def.conductive) {
-            world.power[i] = 0;
-            world.powerDelay[i] = 0;
-        }
-        if (def.chargeCapacity <= 0) world.charge[i] = 0;
-
-        if (world.power[i] > 0) world.power[i]--;
-        if (world.powerDelay[i] > 0) {
-            world.powerDelay[i]--;
-            if (world.powerDelay[i] === 0) world.power[i] = POWER_GLOW_FRAMES;
-        }
+    ageElectricalPulses();
+    const scheduled = frameCount - lastElectricalRefreshFrame >= ELECTRICAL_REFRESH_INTERVAL;
+    refreshElectricalState({ scheduled });
+    const supplyAvailabilityChanged = balanceStoredCharge();
+    if (supplyAvailabilityChanged) {
+        invalidateElectricalState({ loads: true });
+        refreshElectricalState({ force: true });
     }
-
-    // Resolve a topology edit before collecting device loads for discharge,
-    // then rebuild once more because the discharge may change Battery supply.
-    ensureLogicalCurrent();
-    balanceStoredCharge();
-    recomputeLogicalCurrent();
-    relayElectricalSwitches();
     if (recorder) {
         recorder.record('updateElectricalPower', performance.now() - startedAt, {
             worldCells: world.type.length,
-            conductiveCells
+            conductiveCells: electricalTopologyCache?.conductiveCells || 0
         });
     }
 }
@@ -5497,9 +5840,11 @@ function explode(x, y, def) {
                 continue;
             }
 
+            if (participatesInElectricalNetwork(DEFS[id])) {
+                invalidateElectricalState({ topology: true });
+            }
             world.type[ni] = EMPTY;
             invalidateAmbientIllumination();
-            invalidateLogicalCurrent();
             world.life[ni] = 0;
             world.lifeMax[ni] = 0;
             world.residue[ni] = EMPTY;
@@ -6358,8 +6703,7 @@ function machineIsPowered(x, y, i) {
             .some(cell => {
                 if (!inBounds(cell.x, cell.y)) return false;
                 const contact = index(cell.x, cell.y);
-                const def = DEFS[world.type[contact]];
-                return def?.name === 'Copper' &&
+                return portAcceptsMaterial(port, world.type[contact]) &&
                     world.logicalPower[contact] > 0;
             }));
     if (poweredCopperPort) return true;

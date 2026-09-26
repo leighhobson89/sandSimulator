@@ -100,7 +100,7 @@ simulation description in [`PROGRAM_OVERVIEW.md`](PROGRAM_OVERVIEW.md).
 | Seeds | Eight viable powder seed types wait for suitable local temperature, humidity, and substrate moisture before germinating. Species rules in `particles.json` set their substrate, aquatic depth, and germination requirements. |
 | Vegetation | Plant, grass, moss, aquatic plants, and flowering species use the environmental viability, growth, flowering, and seed-setting rules declared in `particles.json`; their leaves, pads, blooms, and fruit appear in this group too. |
 | Metals | Copper and Molten Copper, Molten Aluminum, Iron and Molten Iron, Tubing, and Stainless Steel are listed here. Copper, Iron, Battery, and Stainless Steel conduct electrical routes; a charged Battery supplies logical current while connected. Stainless Steel transfers heat more slowly than Iron, draws Battery charge as a wire, and does not rust from Water or humid air. Battery remains a conductive storage metal even though it is listed in the Electricals picker group. Tubing has no electrical conductivity. |
-| Electricals | Battery stores charge; a connected charged Battery supplies logical DC current through conductive wire. Spark charges Battery, and traveling Sparks are a visual effect. Spark Dust and Spark Block emit Sparks. Elec is high-purity copper wire with higher heat and electrical conductivity than Copper. Simple Switch relays logical current while ON; OFF blocks it. Lamp glows only when ON and its logical input is on. Temperature Switch and Humidity Switch compare the mean of five exposed air probes to a configured threshold and relay input current only when the comparison is true. |
+| Electricals | Battery stores charge; a connected charged Battery supplies logical DC current through conductive wire. Spark charges Battery. Powered wire keeps a bright yellow base and may show bounded moving Z-shaped current bolts; the bolts are cosmetic, can be hidden with **No wire sparks**, and never appear on Battery cells. Spark Dust and Spark Block emit Sparks. Elec is high-purity copper wire with higher heat and electrical conductivity than Copper. Simple Switch relays logical current while ON; OFF blocks it. Lamp glows only when ON and its logical input is on. Temperature Switch and Humidity Switch compare the mean of five exposed air probes to a configured threshold and relay input current only when the comparison is true. |
 | LOGIC | NOT, AND, OR, NAND, and XOR evaluate sustained ON/OFF signal levels on existing conductive routes. Each gate also needs a separate charged-Battery supply input; this supply powers the gate and is distinct from signal inputs. |
 | Tools | Heat Ray and Cold Ray are short-lived directional brushes. A left-button stroke starts Heat Ray upward or Cold Ray downward; its first non-zero drag selects the nearest cardinal direction, which persists while stationary and changes only when the drag heading changes. Painted ray cells travel as projectiles using that stored heading. Wind moves light materials and stirs air; it stops at solid barriers but passes through plants. |
 
@@ -457,10 +457,21 @@ heading. Battery remains conductive storage metal. Spark charging and
 traveling-spark visuals do not alter the logical current rule; the picker
 grouping does not change their material physics.
 
-Traveling electrical Sparks display as moving yellow zig-zag marks over wire
-cells. That animation is visual only. Logical current follows the connected
-charged-Battery route and declared machine ports, independently of whether
-those sparks are currently visible.
+Powered conductive wire keeps a bright yellow base. A bounded overlay of
+moving, Z-shaped yellow current bolts follow powered conductor routes; they are
+cosmetic and do not determine logical ON/OFF state. The **No wire sparks**
+checkbox hides only those moving bolts, leaving the bright wire base visible.
+It is unchecked by default and saved as the `sandSimulator.noWireSparks`
+browser preference. The renderer caps the overlay at eight bolts per frame,
+and never draws bolts on Battery cells.
+
+Electrical topology and load accounting are refreshed every 30 simulation
+ticks while a circuit is stable. Relevant edits invalidate the cached network
+and promptly recompute power, so cutting a gate input or supply turns its
+output off without waiting for the next scheduled refresh. Battery charge and
+finite pulse countdowns continue to update each simulation tick; the 30-tick
+cadence does not batch their rates or expiry. Logical current, wire/device
+loads, and Battery accounting remain independent of bolt visibility.
 
 ### Storage machines
 
@@ -1068,6 +1079,11 @@ For a gate, its output-network wire and device loads are billed back to the
 gate's separate supply, not to either signal-source Battery. The routed AND
 regression verifies this distinction by comparing the supply and signal
 Battery grids.
+
+The Battery's charge glow remains visible without moving wire bolts. After a
+five-second charge-trend sample, a centered green `+` indicates charging and a
+centered red `−` indicates discharging; idle charge flow shows no sign. This
+direction indicator follows the same sampled trend as the text status and ETA.
 
 Charging direction and time estimate use the connected Battery reservoir's
 charge trend across five elapsed seconds. The panel initially says it is

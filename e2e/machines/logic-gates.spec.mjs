@@ -362,6 +362,36 @@ test('cutting supply, input A, or input B turns AND and its Lamp off despite vis
     }
 });
 
+test('removing a gate signal Battery immediately invalidates cached gate and Lamp power', async ({ page }) => {
+    const game = new GamePage(page);
+    await game.openMenu();
+    await game.newGame();
+
+    const powered = await runAndLampCircuit(page, [true, true]);
+    expect(powered.outputActive).toBe(true);
+    expect(powered.lampActive).toBe(true);
+
+    const afterEdit = await page.evaluate(async battery => {
+        const physics = await import('/physics.js');
+        const definitions = physics.getDefinitions();
+        const world = physics.getWorld();
+        physics.setCell(battery.x, battery.y, 0);
+        const gatePorts = physics.getMachinePorts(90, 45);
+        const output = gatePorts.find(port => port.role === 'output');
+        const gate = physics.getMachineLiveStatus(90, 45);
+        const lamp = physics.getMachineLiveStatus(130, 45);
+        return {
+            outputCurrent: world.logicalPower[physics.index(output.connectionCell.x, output.connectionCell.y)] > 0,
+            gateActive: gate.active,
+            lampActive: lamp.active
+        };
+    }, powered.signalABattery);
+
+    expect(afterEdit.outputCurrent, 'a port-route edit is observed before the next scheduled solve').toBe(false);
+    expect(afterEdit.gateActive).toBe(false);
+    expect(afterEdit.lampActive).toBe(false);
+});
+
 test('logic gate ports have stable anchors, correct input/output roles, Elec material, and two-cell leads', async ({ page }) => {
     const game = new GamePage(page);
     await game.openMenu();

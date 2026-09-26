@@ -58,6 +58,7 @@ async function electricalState(page, cells = []) {
                     powerDelay: world.powerDelay[i],
                     charge: world.charge[i],
                     powered: physics.isPowered(x, y),
+                    logicallyPowered: physics.isLogicallyPowered(x, y),
                     machinePowered: physics.isMachinePoweredAt(x, y)
                 };
             }),
@@ -182,7 +183,7 @@ test('Copper and Iron power a Fan through its protruding input contact', async (
             batteries: [[20, 35]],
             conductors: [[21, 35, material]],
             machine: [23, 35, 'Fan'],
-            batteryCharge: 1
+            batteryCharge: 2
         });
 
         const before = await page.evaluate(async () => {
@@ -206,9 +207,16 @@ test('Copper and Iron power a Fan through its protruding input contact', async (
         await game.step(1);
         const visiblePower = await page.evaluate(async () => {
             const physics = await import('/physics.js');
-            return physics.isPowered(23, 35);
+            return {
+                wireLogicalPower: physics.isLogicallyPowered(21, 35),
+                machinePowered: physics.isMachinePoweredAt(23, 35),
+                transientPulse: physics.isPowered(23, 35)
+            };
         });
-        expect(visiblePower).toBe(true);
+        expect(visiblePower.wireLogicalPower).toBe(true);
+        expect(visiblePower.machinePowered).toBe(true);
+        expect(visiblePower.transientPulse,
+            'Battery supply powers the machine without creating a Spark pulse').toBe(false);
 
         await game.step(8);
         const drained = await page.evaluate(async () => {
@@ -1056,18 +1064,17 @@ test('Battery-backed long Elec runs keep a Temperature Switch and Lamp active un
     });
     expect(fixture.startingCharge).toBe(fixture.batteryCapacity);
 
-    // Animation can still be waiting to glow on a distant cell even though
-    // the Battery has already established DC logical current along the route.
+    // A steady Battery supply is logical state, separate from transient Spark pulses.
     await game.step(1);
-    const startupDelay = await page.evaluate(async ({ inputCells, outputCells }) => {
+    const steadyPowerWithoutPulse = await page.evaluate(async ({ inputCells, outputCells }) => {
         const physics = await import('/physics.js');
         const world = physics.getWorld();
-        return [...inputCells, ...outputCells].some(cell =>
-            world.power[cell] === 0 && world.powerDelay[cell] > 0 &&
-            physics.isLogicallyPowered(cell % world.cols, Math.floor(cell / world.cols)));
+        return [...inputCells, ...outputCells].every(cell =>
+            physics.isLogicallyPowered(cell % world.cols, Math.floor(cell / world.cols)) &&
+            world.power[cell] === 0 && world.powerDelay[cell] === 0);
     }, fixture);
-    expect(startupDelay,
-        'a delay-only visual frame still has DC logical current ON').toBe(true);
+    expect(steadyPowerWithoutPulse,
+        'steady Battery current keeps the route logically powered without Spark pulse fields').toBe(true);
 
     await game.step(150);
     await game.step(0);
@@ -1122,7 +1129,7 @@ test('Battery-backed long Elec runs keep a Temperature Switch and Lamp active un
             passing: status.passing,
             outputRouteCurrent: fixture.outputCells.some(isCurrent),
             lampPowered: physics.isMachinePoweredAt(fixture.lamp.x, fixture.lamp.y),
-            visualOutputTail: fixture.outputCells.some(cell =>
+            outputSparkPulse: fixture.outputCells.some(cell =>
                 world.power[cell] > 0 || world.powerDelay[cell] > 0)
         };
     }, { fixture });
@@ -1130,8 +1137,8 @@ test('Battery-backed long Elec runs keep a Temperature Switch and Lamp active un
     expect(blockedTransition.passing).toBe(false);
     expect(blockedTransition.outputRouteCurrent).toBe(false);
     expect(blockedTransition.lampPowered).toBe(false);
-    expect(blockedTransition.visualOutputTail,
-        'visual output animation may remain after logical current is gated off').toBe(true);
+    expect(blockedTransition.outputSparkPulse,
+        'gating off Battery current does not create a transient Spark pulse').toBe(false);
 
     const blockedFrames = await page.evaluate(async ({ fixture, count }) => {
         const physics = await import('/physics.js');
@@ -1186,7 +1193,7 @@ test('Battery-backed long Elec runs keep a Temperature Switch and Lamp active un
 
     await page.evaluate(async ({ batteryIndex }) => {
         const world = (await import('/physics.js')).getWorld();
-        world.charge[batteryIndex] = 0;
+        world.charge[batteryIndex] = 0.001;
     }, { batteryIndex: fixture.batteryIndex });
     await game.step(1);
     const immediateDepletion = await page.evaluate(async ({ fixture }) => {
@@ -1201,7 +1208,7 @@ test('Battery-backed long Elec runs keep a Temperature Switch and Lamp active un
             inputRouteCurrent: fixture.inputCells.some(isCurrent),
             outputRouteCurrent: fixture.outputCells.some(isCurrent),
             lampPowered: physics.isMachinePoweredAt(fixture.lamp.x, fixture.lamp.y),
-            visualTail: [...fixture.inputCells, ...fixture.outputCells].some(cell =>
+            sparkPulse: [...fixture.inputCells, ...fixture.outputCells].some(cell =>
                 world.power[cell] > 0 || world.powerDelay[cell] > 0)
         };
     }, { fixture });
@@ -1211,7 +1218,7 @@ test('Battery-backed long Elec runs keep a Temperature Switch and Lamp active un
         inputRouteCurrent: false,
         outputRouteCurrent: false,
         lampPowered: false,
-        visualTail: true
+        sparkPulse: false
     });
 
     await game.step(179);
@@ -1310,21 +1317,50 @@ test('Fan power state is false without a source and true only on a charged Batte
 
     await installElectricalFixture(page, {
         batteries: [[29, 35]],
+        conductors: [[28, 35, 'Elec']],
         machine: [30, 35, 'Fan'],
         batteryCharge: 2
     });
     await game.step(1);
-    const poweredImmediately = await electricalState(page, [{ x: 30, y: 35 }]);
+    const poweredImmediately = await electricalState(page, [
+        { x: 30, y: 35 },
+        { x: 28, y: 35 }
+    ]);
     expect(poweredImmediately.cells[0].machinePowered).toBe(true);
-    expect(poweredImmediately.cells[0].powered).toBe(true);
-    expect(poweredImmediately.cells[0].powerDelay).toBe(0);
-    expect(poweredImmediately.cells[0].power).toBe(7);
+    expect(poweredImmediately.cells[0].powered).toBe(false);
+    expect(poweredImmediately.cells[1].logicallyPowered).toBe(true);
+    expect(poweredImmediately.cells[1].powered).toBe(false);
+    expect(poweredImmediately.cells[1].powerDelay).toBe(0);
+    expect(poweredImmediately.cells[1].power).toBe(0);
 
     await game.step(1);
-    const powered = await electricalState(page, [{ x: 30, y: 35 }]);
-    expect(powered.cells[0].machinePowered).toBe(true);
-    expect(powered.cells[0].powered).toBe(true);
-    expect(powered.cells[0].power).toBe(7);
+    const powered = await electricalState(page, [
+        { x: 30, y: 35 },
+        { x: 28, y: 35 }
+    ]);
+    powered.diagnostics = await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        const world = physics.getWorld();
+        const definitions = physics.getDefinitions();
+        const wireIndex = physics.index(28, 35);
+        return {
+            batteryCharge: physics.getStoredCharge(29, 35),
+            wireLogicalPower: physics.isLogicallyPowered(28, 35),
+            wireType: definitions[world.type[wireIndex]]?.name ?? world.type[wireIndex],
+            machineLiveStatus: physics.getMachineLiveStatus(30, 35),
+            fanInputPorts: physics.getMachinePorts(30, 35)
+                .filter(port => port.role === 'input')
+                .map(port => ({
+                    ...port,
+                    connectionCell: port.connectionCell ? { ...port.connectionCell } : null,
+                    contactCells: (port.contactCells || []).map(cell => ({ ...cell }))
+                }))
+        };
+    });
+    expect(powered.cells[0].machinePowered, JSON.stringify(powered)).toBe(true);
+    expect(powered.cells[1].logicallyPowered).toBe(true);
+    expect(powered.cells[1].powered).toBe(false);
+    expect(powered.cells[1].power).toBe(0);
 });
 
 test('a Copper lead outside the visible machine port rejects connection and invalid electrical queries stay inert', async ({ page }) => {
@@ -1370,14 +1406,24 @@ test('clearWorld resets electrical charge, pulse state, and machine power', asyn
     });
     await game.step(1);
 
-    const before = await electricalState(page, [
+    const steady = await electricalState(page, [
         { x: 20, y: 35 },
         { x: 21, y: 35 },
         { x: 23, y: 35 }
     ]);
-    expect(before.cells[0].charge).toBeGreaterThan(0);
-    expect(before.cells[1].power).toBeGreaterThan(0);
-    expect(before.cells[2].machinePowered).toBe(true);
+    expect(steady.cells[0].charge).toBeGreaterThan(0);
+    expect(steady.cells[1].logicallyPowered).toBe(true);
+    expect(steady.cells[1].power).toBe(0);
+    expect(steady.cells[1].powerDelay).toBe(0);
+    expect(steady.cells[2].machinePowered).toBe(true);
+
+    await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        physics.setCell(21, 34, physics.getDefinitions().find(definition => definition?.name === 'Spark').id);
+    });
+    await game.step(1);
+    const pulse = await electricalState(page, [{ x: 21, y: 35 }]);
+    expect(pulse.cells[0].power, 'a real Spark still creates a transient visual pulse').toBeGreaterThan(0);
 
     const after = await page.evaluate(async () => {
         const physics = await import('/physics.js');
@@ -1388,6 +1434,7 @@ test('clearWorld resets electrical charge, pulse state, and machine power', asyn
             chargesEmpty: world.charge.every(value => value === 0),
             powerEmpty: world.power.every(value => value === 0),
             delaysEmpty: world.powerDelay.every(value => value === 0),
+            logicalPowerEmpty: world.logicalPower.every(value => value === 0),
             battery: physics.getConnectedBatteryCharge(20, 35),
             charge: physics.getStoredCharge(20, 35),
             powered: physics.isPowered(21, 35),
@@ -1398,8 +1445,341 @@ test('clearWorld resets electrical charge, pulse state, and machine power', asyn
     expect(after.chargesEmpty).toBe(true);
     expect(after.powerEmpty).toBe(true);
     expect(after.delaysEmpty).toBe(true);
+    expect(after.logicalPowerEmpty).toBe(true);
     expect(after.battery).toBeNull();
     expect(after.charge).toBe(0);
     expect(after.powered).toBe(false);
     expect(after.machinePowered).toBe(false);
+});
+
+test('wire spark toggle sits beside Edge pan and hides bolts while powered wires stay bright yellow', async ({ page }) => {
+    const game = new GamePage(page);
+    await game.openMenu();
+    await game.newGame();
+
+    const toggle = page.getByRole('checkbox', { name: 'No wire spark animation' });
+    await expect(toggle).toHaveCount(1);
+    await expect(toggle).not.toBeChecked();
+    const adjacentToEdgePan = await page.evaluate(() => {
+        const edgeLabel = document.querySelector('#edgePanToggle')?.closest('label');
+        const sparkLabel = document.querySelector('#noWireSparksToggle')?.closest('label');
+        return !!edgeLabel && !!sparkLabel && edgeLabel.parentElement === sparkLabel.parentElement &&
+            edgeLabel.nextElementSibling === sparkLabel;
+    });
+    expect(adjacentToEdgePan, 'the opt-out checkbox immediately follows Edge pan').toBe(true);
+
+    const wireCell = { x: 50, y: 35 };
+    const steadyWire = await page.evaluate(async wireCell => {
+        const physics = await import('/physics.js');
+        const game = await import('/game.js');
+        const world = physics.getWorld();
+        const definitions = physics.getDefinitions();
+        const elec = definitions.find(definition => definition?.name === 'Elec').id;
+        const battery = definitions.find(definition => definition?.name === 'Battery');
+        physics.clearWorld();
+        physics.setCell(39, wireCell.y, battery.id);
+        world.charge[physics.index(39, wireCell.y)] = battery.chargeCapacity;
+        for (let x = 40; x <= 60; x++) {
+            physics.setCell(x, wireCell.y, elec);
+        }
+        physics.stepSimulation();
+        game.renderWorld();
+        const at = physics.index(wireCell.x, wireCell.y);
+        return {
+            logicalPower: physics.isLogicallyPowered(wireCell.x, wireCell.y),
+            pulsePower: world.power[at],
+            pulseDelay: world.powerDelay[at]
+        };
+    }, wireCell);
+    expect(steadyWire.logicalPower).toBe(true);
+    expect(steadyWire.pulsePower, 'Battery current is not represented as a transient Spark pulse').toBe(0);
+    expect(steadyWire.pulseDelay).toBe(0);
+    expect(await page.locator('#machineOverlay .electrical-z-bolt').count()).toBeGreaterThan(0);
+
+    const poweredWireView = await page.locator('#canvas').evaluate(({ width, height }, cell) => {
+        const ctx = document.querySelector('#canvas').getContext('2d');
+        const [red, green, blue] = ctx.getImageData(cell.x, cell.y, 1, 1).data;
+        return { red, green, blue };
+    }, wireCell);
+    expect(poweredWireView.red).toBeGreaterThan(200);
+    expect(poweredWireView.green).toBeGreaterThan(160);
+    expect(poweredWireView.blue).toBeLessThan(110);
+
+    await toggle.check();
+    await page.evaluate(async () => (await import('/game.js')).renderWorld());
+    await expect(page.locator('#noWireSparksToggle')).toBeChecked();
+    await expect(page.locator('#machineOverlay .electrical-z-bolt')).toHaveCount(0);
+});
+
+test('expensive electrical solve refreshes every 30 ticks while cached power and per-tick Battery drain continue', async ({ page }) => {
+    const game = new GamePage(page);
+    await game.openMenu();
+    await game.newGame();
+
+    const result = await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        const definitions = physics.getDefinitions();
+        const id = name => definitions.find(definition => definition?.name === name).id;
+        const world = physics.getWorld();
+        const battery = { x: 20, y: 35 };
+        const wire = { x: 21, y: 35 };
+        const fan = { x: 23, y: 35 };
+        physics.clearWorld();
+        physics.setCell(battery.x, battery.y, id('Battery'));
+        physics.setCell(wire.x, wire.y, id('Elec'));
+        physics.setCell(fan.x, fan.y, id('Fan'));
+        const batteryIndex = physics.index(battery.x, battery.y);
+        const capacity = definitions[id('Battery')].chargeCapacity;
+        world.charge[batteryIndex] = capacity;
+        physics.stepSimulation();
+        const initialCharge = world.charge[batteryIndex];
+        const expectedLoadPerTick = physics.getBatteryCircuitMetrics(battery.x, battery.y)?.load ?? 0;
+        const initialPower = physics.isMachinePoweredAt(fan.x, fan.y);
+
+        const recorder = {
+            enabled: true,
+            events: [],
+            record(name, durationMs, counters = {}) {
+                if (this.enabled) this.events.push({ name, durationMs, counters });
+            }
+        };
+        window.__P0_PERF__ = recorder;
+        for (let tick = 0; tick < 61; tick++) physics.stepSimulation();
+        recorder.enabled = false;
+        const refreshCount = recorder.events.filter(event => event.name === 'electricalTopologyRefresh').length;
+        return {
+            refreshCount,
+            initialPower,
+            powerAfterInterval: physics.isMachinePoweredAt(fan.x, fan.y),
+            expectedLoadPerTick,
+            actualDrain: initialCharge - world.charge[batteryIndex],
+            expectedDrain: expectedLoadPerTick * 61
+        };
+    });
+
+    expect(result.initialPower).toBe(true);
+    expect(result.powerAfterInterval, 'the last logical power result remains live between refreshes').toBe(true);
+    expect(result.refreshCount, '61 steady ticks contain only the two 30-tick refreshes').toBe(2);
+    expect(result.expectedLoadPerTick).toBeGreaterThan(0);
+    expect(result.actualDrain).toBeGreaterThan(0);
+    expect(result.actualDrain).toBeCloseTo(result.expectedDrain, 3);
+});
+
+test('moving Z bolts follow powered conductive cells and never appear on Battery cells', async ({ page }) => {
+    const game = new GamePage(page);
+    await game.openMenu();
+    await game.newGame();
+
+    const samples = await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        const game = await import('/game.js');
+        const definitions = physics.getDefinitions();
+        const id = name => definitions.find(definition => definition?.name === name).id;
+        const world = physics.getWorld();
+        const route = [
+            ...Array.from({ length: 9 }, (_, offset) => ({ x: 40 + offset, y: 35 })),
+            ...Array.from({ length: 6 }, (_, offset) => ({ x: 48, y: 36 + offset })),
+            ...Array.from({ length: 8 }, (_, offset) => ({ x: 47 - offset, y: 41 }))
+        ];
+        const battery = { x: 39, y: 41 };
+        physics.clearWorld();
+        for (const cell of route) physics.setCell(cell.x, cell.y, id('Elec'));
+        physics.setCell(battery.x, battery.y, id('Battery'));
+
+        const frames = [];
+        for (let sample = 0; sample < 4; sample++) {
+            for (const cell of route) world.power[physics.index(cell.x, cell.y)] = 7;
+            world.power[physics.index(battery.x, battery.y)] = 7;
+            physics.stepSimulation();
+            game.renderWorld();
+            frames.push([...document.querySelectorAll('#machineOverlay .electrical-z-bolt')].map(bolt => ({
+                x: Number(bolt.dataset.cellX),
+                y: Number(bolt.dataset.cellY),
+                path: bolt.getAttribute('d'),
+                tag: bolt.tagName
+            })));
+        }
+
+        const live = new Map([...route, battery].map(cell => {
+            const at = physics.index(cell.x, cell.y);
+            return [`${cell.x},${cell.y}`, {
+                type: world.type[at],
+                conductive: !!definitions[world.type[at]]?.conductive,
+                power: world.power[at]
+            }];
+        }));
+        return { frames, battery, live: Object.fromEntries(live), route };
+    });
+
+    const allBolts = samples.frames.flat();
+    expect(allBolts.length).toBeGreaterThan(0);
+    expect(new Set(samples.frames.map(frame => frame.map(bolt => `${bolt.x},${bolt.y}`).join('|'))).size)
+        .toBeGreaterThan(1);
+    const routeKeys = new Set(samples.route.map(cell => `${cell.x},${cell.y}`));
+    const rowMajorRoute = [...samples.route].sort((a, b) => a.y - b.y || a.x - b.x);
+    const rowMajorMaxJump = Math.max(...rowMajorRoute.slice(1).map((cell, position) => {
+        const previous = rowMajorRoute[position];
+        return Math.max(Math.abs(cell.x - previous.x), Math.abs(cell.y - previous.y));
+    }));
+    expect(rowMajorMaxJump).toBeGreaterThan(1);
+
+    for (const [frameIndex, frame] of samples.frames.entries()) {
+        expect(frame.length).toBeGreaterThanOrEqual(4);
+        for (const [boltIndex, bolt] of frame.entries()) {
+            expect(routeKeys.has(`${bolt.x},${bolt.y}`), 'each bolt occupies a cell on the U-shaped route')
+                .toBe(true);
+            if (boltIndex === 0) continue;
+            const previous = frame[boltIndex - 1];
+            const distance = Math.max(Math.abs(bolt.x - previous.x), Math.abs(bolt.y - previous.y));
+            expect(distance, 'successive bolts traverse neighboring route cells without row-major jumps')
+                .toBe(1);
+        }
+        if (frameIndex === 0) continue;
+        const previousFrame = samples.frames[frameIndex - 1];
+        expect(frame[0], 'the moving bolt train advances three connected route cells per frame')
+            .toEqual(previousFrame[3]);
+    }
+
+    for (const bolt of allBolts) {
+        expect(bolt.tag.toLowerCase()).toBe('path');
+        const lineSegments = bolt.path.match(/\bL\s*[-\d.]+[ ,]+[-\d.]+/g) || [];
+        expect(lineSegments.length, 'each bolt is a short Z-shaped polyline').toBeGreaterThanOrEqual(3);
+        const cell = samples.live[`${bolt.x},${bolt.y}`];
+        expect(cell?.conductive, 'each moving bolt is attached to a conductive cell').toBe(true);
+        expect(cell?.power, 'each moving bolt is attached to a powered cell').toBeGreaterThan(0);
+        expect(`${bolt.x},${bolt.y}`).not.toBe(`${samples.battery.x},${samples.battery.y}`);
+    }
+});
+
+test('Battery charge direction glyph is centered, colored, and tracks net charge flow without wire bolts', async ({ page }) => {
+    const game = new GamePage(page);
+    await page.clock.install({ time: new Date('2026-01-01T00:00:00Z') });
+    await game.openMenu();
+    await game.newGame();
+
+    const batteryCell = { x: 50, y: 35 };
+    await page.evaluate(async batteryCell => {
+        const physics = await import('/physics.js');
+        const definitions = physics.getDefinitions();
+        const id = name => definitions.find(definition => definition?.name === name).id;
+        const world = physics.getWorld();
+        physics.clearWorld();
+        physics.setCell(batteryCell.x, batteryCell.y, id('Battery'));
+        const battery = definitions[id('Battery')];
+        world.charge[physics.index(batteryCell.x, batteryCell.y)] = battery.chargeCapacity / 2;
+        physics.stepSimulation();
+    }, batteryCell);
+
+    const point = await canvasPoint(page, batteryCell);
+    await page.mouse.move(point.x, point.y);
+    await page.evaluate(async () => (await import('/game.js')).gameLoop(performance.now()));
+    await expect(page.locator('#machineOverlay .battery-charge-trend')).toHaveCount(0);
+    await page.clock.runFor(5000);
+    await page.evaluate(async () => (await import('/game.js')).gameLoop(performance.now()));
+    await expect(page.locator('#machineOverlay .battery-charge-trend'),
+        'an isolated Battery with unchanged charge stays directionless after the trend window').toHaveCount(0);
+
+    await page.mouse.move(5, 5);
+    await page.evaluate(async () => (await import('/game.js')).gameLoop(performance.now()));
+    await page.evaluate(async batteryCell => {
+        const physics = await import('/physics.js');
+        physics.setCell(batteryCell.x + 1, batteryCell.y,
+            physics.getDefinitions().find(definition => definition?.name === 'Fan').id);
+    }, batteryCell);
+    await page.mouse.move(point.x, point.y);
+    await page.evaluate(async () => (await import('/game.js')).gameLoop(performance.now()));
+    const lowChargeColor = await page.locator('#canvas').evaluate((canvas, cell) =>
+        [...canvas.getContext('2d').getImageData(cell.x, cell.y, 1, 1).data].slice(0, 3), batteryCell);
+
+    const startCharge = await page.evaluate(async batteryCell => {
+        const physics = await import('/physics.js');
+        const battery = physics.getDefinitions().find(definition => definition?.name === 'Battery');
+        return physics.getWorld().charge[physics.index(batteryCell.x, batteryCell.y)] + battery.chargeCapacity / 8;
+    }, batteryCell);
+    await page.clock.runFor(5000);
+    await page.evaluate(async ({ batteryCell, charge }) => {
+        const physics = await import('/physics.js');
+        const game = await import('/game.js');
+        physics.getWorld().charge[physics.index(batteryCell.x, batteryCell.y)] = charge;
+        game.gameLoop(performance.now());
+        game.renderWorld();
+    }, { batteryCell, charge: startCharge });
+
+    const charging = page.locator('#machineOverlay .battery-charge-trend');
+    await expect(charging).toHaveAttribute('data-state', 'charging');
+    await expect(charging).toHaveText('+');
+    const chargingVisual = await charging.evaluate(element => {
+        const rect = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        const canvasRect = document.querySelector('#canvas').getBoundingClientRect();
+        const cellWidth = canvasRect.width / 260;
+        const cellHeight = canvasRect.height / 150;
+        const centerX = canvasRect.left + (50.5 * cellWidth);
+        const centerY = canvasRect.top + (35.5 * cellHeight);
+        return {
+            color: style.fill || style.color,
+            centerX: rect.left + rect.width / 2,
+            centerY: rect.top + rect.height / 2,
+            expectedX: centerX,
+            expectedY: centerY
+        };
+    });
+    const chargingRgb = (chargingVisual.color.match(/[\d.]+/g) || []).map(Number);
+    expect(chargingRgb[1]).toBeGreaterThan(chargingRgb[0]);
+    expect(chargingVisual.centerX).toBeCloseTo(chargingVisual.expectedX, 0);
+    expect(chargingVisual.centerY).toBeCloseTo(chargingVisual.expectedY, 0);
+
+    const highChargeColor = await page.locator('#canvas').evaluate((canvas, cell) =>
+        [...canvas.getContext('2d').getImageData(cell.x, cell.y, 1, 1).data].slice(0, 3), batteryCell);
+    expect(highChargeColor[1] - highChargeColor[2]).toBeGreaterThan(lowChargeColor[1] - lowChargeColor[2]);
+
+    await page.mouse.move(5, 5);
+    await page.evaluate(async () => (await import('/game.js')).gameLoop(performance.now()));
+    await page.mouse.move(point.x, point.y);
+    const fullCharge = await page.evaluate(async batteryCell => {
+        const physics = await import('/physics.js');
+        const battery = physics.getDefinitions().find(definition => definition?.name === 'Battery');
+        return battery.chargeCapacity;
+    }, batteryCell);
+    await page.evaluate(async () => (await import('/game.js')).gameLoop(performance.now()));
+    await page.clock.runFor(5000);
+    await page.evaluate(async ({ batteryCell, charge }) => {
+        const physics = await import('/physics.js');
+        const game = await import('/game.js');
+        physics.getWorld().charge[physics.index(batteryCell.x, batteryCell.y)] = charge;
+        game.gameLoop(performance.now());
+        game.renderWorld();
+    }, { batteryCell, charge: fullCharge / 2 });
+    const discharging = page.locator('#machineOverlay .battery-charge-trend');
+    await expect(discharging).toHaveAttribute('data-state', 'discharging');
+    await expect(discharging).toHaveText('−');
+    const dischargeColor = await discharging.evaluate(element => getComputedStyle(element).fill || getComputedStyle(element).color);
+    const dischargeRgb = (dischargeColor.match(/[\d.]+/g) || []).map(Number);
+    expect(dischargeRgb[0]).toBeGreaterThan(dischargeRgb[1]);
+    await expect(page.locator('#machineOverlay .electrical-z-bolt[data-cell-x="50"][data-cell-y="35"]'))
+        .toHaveCount(0);
+});
+
+test('static machine artwork keeps its SVG node between rendered frames', async ({ page }) => {
+    const game = new GamePage(page);
+    await game.openMenu();
+    await game.newGame();
+
+    const lamp = { x: 50, y: 35 };
+    const sameNodes = await page.evaluate(async lamp => {
+        const physics = await import('/physics.js');
+        const game = await import('/game.js');
+        const id = physics.getDefinitions().find(definition => definition?.name === 'Lamp').id;
+        physics.clearWorld();
+        physics.setCell(lamp.x, lamp.y, id);
+        game.renderWorld();
+        const icon = document.querySelector(`#machineOverlay .machine-overlay-icon.machine-lamp[data-machine-x="${lamp.x}"][data-machine-y="${lamp.y}"]`);
+        const artwork = icon?.querySelector('.machine-lamp-body, .machine-lamp-bulb, path, circle');
+        game.renderWorld();
+        const nextIcon = document.querySelector(`#machineOverlay .machine-overlay-icon.machine-lamp[data-machine-x="${lamp.x}"][data-machine-y="${lamp.y}"]`);
+        const nextArtwork = nextIcon?.querySelector('.machine-lamp-body, .machine-lamp-bulb, path, circle');
+        return { icon: icon?.isSameNode(nextIcon), artwork: artwork?.isSameNode(nextArtwork) };
+    }, lamp);
+    expect(sameNodes.icon, 'the renderer retains each static machine SVG').toBe(true);
+    expect(sameNodes.artwork, 'the renderer retains static machine artwork children').toBe(true);
 });

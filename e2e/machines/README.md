@@ -5,8 +5,15 @@ Exhaustive browser workflows for machines and material transfer.
   preview, blocked placement, all Fan directions, hit testing, Fan speed
   bounds/default, settings bounds, and tooltip behavior.
 - `powered.spec.mjs` checks powered/unpowered Fan, Heater, and Cooler outcomes.
-- `electrical.spec.mjs` checks Battery charge sharing and traveling-Spark
-  rendering, electrical wire compatibility at Simple Switch and Lamp ports,
+- `electrical.spec.mjs` checks Battery charge sharing, bright powered-wire
+  bases, bounded moving Z-bolt rendering, and the **No wire sparks** preference
+  stored in `localStorage` as `sandSimulator.noWireSparks`. The preference hides
+  only moving bolts; Battery cells never receive bolts, and their own charge
+  glow remains visible. It also checks the centered green charging/red
+  discharging Battery glyph and static machine artwork reuse. The 30-tick
+  electrical-refresh regression verifies that Battery drain and finite pulse
+  countdown still advance each tick. The spec also checks electrical wire
+  compatibility at Simple Switch and Lamp ports,
   ON/OFF logical-current relay behavior, Lamp glow and its small Battery load,
   two-cell Elec leads, animation expiry, and electrical-state reset.
   Temperature Switch and Humidity
