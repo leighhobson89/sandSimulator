@@ -352,6 +352,92 @@ test('logic gate ports have stable anchors, correct input/output roles, Elec mat
     }
 });
 
+test('unrotated gate input leads stay attached and scale with zoom up to the 30px cap', async ({ page }) => {
+    const game = new GamePage(page);
+    await game.openMenu();
+    await game.newGame();
+
+    for (const gate of gates) {
+        await page.evaluate(async gateName => {
+            const physics = await import('/physics.js');
+            const game = await import('/game.js');
+            const definitions = physics.getDefinitions();
+            const definition = definitions.find(item => item?.name === gateName || item?.name === `${gateName} Gate`);
+            physics.clearWorld();
+            physics.setCell(90, 45, definition.id);
+            physics.getWorld().data[physics.index(90, 45)] = 0;
+            game.setCanvasZoomLevel(1);
+        }, gate.name);
+        await game.step(0);
+        const icon = page.locator('#machineOverlay .machine-overlay-icon[data-machine-x="90"][data-machine-y="45"]');
+        const measureLeads = async () => {
+            const paths = icon.locator('path.machine-port-protruding[data-port-protrusion^="signal-"]');
+            await expect(paths).toHaveCount(gate.signalInputs);
+            await expect(paths.first()).toBeVisible();
+            return paths.evaluateAll(paths => paths.map(path => {
+                const pathMatrix = path.getScreenCTM();
+                const pathLength = path.getTotalLength();
+                const pathStart = new DOMPoint(path.getPointAtLength(0).x, path.getPointAtLength(0).y)
+                    .matrixTransform(pathMatrix);
+                const pathEnd = new DOMPoint(path.getPointAtLength(pathLength).x,
+                    path.getPointAtLength(pathLength).y).matrixTransform(pathMatrix);
+                const marker = path.parentElement.querySelector(
+                    `circle.machine-port[data-port-id="${path.dataset.portProtrusion}"]`);
+                const markerMatrix = marker.getScreenCTM();
+                const cx = Number(marker.getAttribute('cx'));
+                const cy = Number(marker.getAttribute('cy'));
+                const center = new DOMPoint(cx, cy).matrixTransform(markerMatrix);
+                const radiusPoint = new DOMPoint(cx + Number(marker.getAttribute('r')), cy)
+                    .matrixTransform(markerMatrix);
+                const screenRadius = Math.hypot(radiusPoint.x - center.x, radiusPoint.y - center.y);
+                return {
+                    id: path.dataset.portProtrusion,
+                    length: Math.hypot(pathEnd.x - pathStart.x, pathEnd.y - pathStart.y),
+                    markerGap: Math.abs(Math.hypot(pathStart.x - center.x, pathStart.y - center.y) - screenRadius),
+                    horizontalError: Math.abs(pathEnd.y - pathStart.y),
+                    pointsLeft: pathEnd.x < pathStart.x
+                };
+            }));
+        };
+
+        const zoomOne = await measureLeads();
+        expect(zoomOne.map(lead => lead.id).sort(), `${gate.name} zoom 1 signal ports`)
+            .toEqual(Array.from({ length: gate.signalInputs }, (_, index) =>
+                `signal-${String.fromCharCode(97 + index)}`).sort());
+        await page.evaluate(async () => (await import('/game.js')).setCanvasZoomLevel(2));
+        await game.step(0);
+        const zoomTwo = await measureLeads();
+        expect(zoomTwo.map(lead => lead.id).sort(), `${gate.name} zoom 2 signal ports`)
+            .toEqual(Array.from({ length: gate.signalInputs }, (_, index) =>
+                `signal-${String.fromCharCode(97 + index)}`).sort());
+
+        for (const baseline of zoomOne) {
+            const zoomed = zoomTwo.find(lead => lead.id === baseline.id);
+            expect(baseline.markerGap, `${gate.name} ${baseline.id} zoom 1 lead touches marker edge`).toBeLessThan(1.5);
+            expect(zoomed.markerGap, `${gate.name} ${baseline.id} zoom 2 lead touches marker edge`).toBeLessThan(1.5);
+            expect(baseline.horizontalError, `${gate.name} ${baseline.id} zoom 1 remains horizontal`).toBeLessThan(0.5);
+            expect(zoomed.horizontalError, `${gate.name} ${baseline.id} zoom 2 remains horizontal`).toBeLessThan(0.5);
+            expect(baseline.pointsLeft && zoomed.pointsLeft, `${gate.name} ${baseline.id} points outward at both zooms`)
+                .toBe(true);
+            expect(baseline.length, `${gate.name} ${baseline.id} is visible at zoom 1`).toBeGreaterThan(0);
+            expect(zoomed.length, `${gate.name} ${baseline.id} is visible at zoom 2`).toBeGreaterThan(0);
+            expect(baseline.length, `${gate.name} ${baseline.id} does not exceed the 30px cap`).toBeLessThanOrEqual(30.5);
+            expect(zoomed.length, `${gate.name} ${baseline.id} does not exceed the 30px cap`).toBeLessThanOrEqual(30.5);
+            expect(zoomed.length, `${gate.name} ${baseline.id} length does not shrink with zoom`)
+                .toBeGreaterThanOrEqual(baseline.length - 0.5);
+            if (baseline.length < 29) {
+                expect(zoomed.length, `${gate.name} ${baseline.id} grows before reaching the cap`)
+                    .toBeGreaterThan(baseline.length + 0.5);
+            } else {
+                expect(baseline.length, `${gate.name} ${baseline.id} reached the cap at zoom 1`)
+                    .toBeGreaterThanOrEqual(29);
+                expect(zoomed.length, `${gate.name} ${baseline.id} remains at the cap at zoom 2`)
+                    .toBeGreaterThanOrEqual(29);
+            }
+        }
+    }
+});
+
 test('gate hover describes supply and each signal connector by role and direction', async ({ page }) => {
     const game = new GamePage(page);
     await game.openMenu();
