@@ -15,6 +15,15 @@ const gates = [
     { name: 'XOR', signalInputs: 2, evaluate: ([a, b]) => a !== b, vectors: [[false, false], [false, true], [true, false], [true, true]] }
 ];
 
+function rgbChannels(color) {
+    return (color.match(/[\d.]+/g) || []).slice(0, 3).map(Number);
+}
+
+function isActiveSupplyCyan(color) {
+    const [red, green, blue] = rgbChannels(color);
+    return green >= 185 && blue >= 220 && green > red;
+}
+
 async function runGateVector(page, { gate, values, supply = true }) {
     return page.evaluate(async ({ gate, values, supply }) => {
         const physics = await import('/physics.js');
@@ -141,6 +150,28 @@ async function runAndLampCircuit(page, signalValues) {
             physics.setCell(cell.x, cell.y, elecId);
             outputCells.push(cell);
         }
+
+        const routes = {
+            supply: [...supplyRoute.cells, supplyRoute.battery],
+            signalA: [...signalARoute.cells, ...(signalARoute.battery ? [signalARoute.battery] : [])],
+            signalB: [...signalBRoute.cells, ...(signalBRoute.battery ? [signalBRoute.battery] : [])],
+            output: outputCells
+        };
+        const routeTouches = [];
+        const routeEntries = Object.entries(routes);
+        for (let routeIndex = 0; routeIndex < routeEntries.length; routeIndex++) {
+            const [routeName, route] = routeEntries[routeIndex];
+            for (const [otherName, other] of routeEntries.slice(routeIndex + 1)) {
+                for (const cell of route) {
+                    for (const otherCell of other) {
+                        if (Math.abs(cell.x - otherCell.x) <= 1 &&
+                            Math.abs(cell.y - otherCell.y) <= 1) {
+                            routeTouches.push({ routeName, cell, otherName, otherCell });
+                        }
+                    }
+                }
+            }
+        }
         physics.stepSimulation();
 
         const cellCurrent = cell => world.logicalPower[physics.index(cell.x, cell.y)] > 0;
@@ -156,6 +187,8 @@ async function runAndLampCircuit(page, signalValues) {
             lamp,
             outputCell: output.connectionCell,
             supplyBattery: supplyRoute.battery,
+            signalABattery: signalARoute.battery,
+            signalBBattery: signalBRoute.battery,
             supplyActive: liveGate.ports.find(port => port.id === supply.id)?.active,
             signalAActive: liveGate.ports.find(port => port.id === signalA.id)?.active,
             signalBActive: liveGate.ports.find(port => port.id === signalB.id)?.active,
@@ -165,6 +198,7 @@ async function runAndLampCircuit(page, signalValues) {
             signalALoad: signalAMetrics?.load ?? null,
             signalBLoad: signalBMetrics?.load ?? null,
             outputCellCount: outputCells.length,
+            routeTouches,
             wireRouteOverlap: [supplyRoute.cells, signalARoute.cells, signalBRoute.cells]
                 .some((route, index, routes) => routes.slice(index + 1)
                     .some(other => route.some(cell => other.some(candidate =>
@@ -212,6 +246,8 @@ test('AND supply and independent signal Batteries drive a separate output wire t
     expect(supplyOnly.outputActive, 'the supply pin does not energize the distinct output route').toBe(false);
     expect(supplyOnly.lampActive).toBe(false);
     expect(supplyOnly.outputCellCount).toBeGreaterThan(10);
+    expect(supplyOnly.routeTouches, 'supply, inputs, and output are separate under 8-neighbor contact')
+        .toEqual([]);
     expect(supplyOnly.wireRouteOverlap, 'supply and input runs remain physically separate').toBe(false);
     expect(supplyOnly.supplyLoad).toBeGreaterThan(0);
 
@@ -223,6 +259,8 @@ test('AND supply and independent signal Batteries drive a separate output wire t
     expect(oneSignal.signalBActive).toBe(false);
     expect(oneSignal.outputActive).toBe(false);
     expect(oneSignal.lampActive).toBe(false);
+    expect(oneSignal.routeTouches, 'one-signal circuit routes remain separate under 8-neighbor contact')
+        .toEqual([]);
 
     const bothSignals = await runAndLampCircuit(page, [true, true]);
     await game.step(0);
@@ -231,6 +269,8 @@ test('AND supply and independent signal Batteries drive a separate output wire t
     expect(bothSignals.signalBActive).toBe(true);
     expect(bothSignals.outputActive).toBe(true);
     expect(bothSignals.lampActive).toBe(true);
+    expect(bothSignals.routeTouches, 'all powered route cells and Battery terminals remain 8-neighbor separate')
+        .toEqual([]);
     expect(bothSignals.supplyLoad, 'the gate supply accounts for the enabled output network and Lamp load')
         .toBeGreaterThan(oneSignal.supplyLoad);
     expect(bothSignals.signalALoad, 'the input-A Battery does not absorb output loads')
@@ -255,6 +295,71 @@ test('AND supply and independent signal Batteries drive a separate output wire t
     expect(depletedSupply.outputActive).toBe(false);
     expect(depletedSupply.lampActive).toBe(false);
     expect(depletedSupply.supplyLoad).toBeLessThan(bothSignals.supplyLoad);
+});
+
+test('cutting supply, input A, or input B turns AND and its Lamp off despite visual wire pulses', async ({ page }) => {
+    const game = new GamePage(page);
+    await game.openMenu();
+    await game.newGame();
+
+    const lampGlow = page.locator('#machineOverlay .machine-overlay-icon.machine-lamp[data-machine-x="130"][data-machine-y="45"] .machine-lamp-glow');
+    const supplyMarker = page.locator('#machineOverlay .machine-overlay-icon[data-machine-x="90"][data-machine-y="45"] circle.machine-port[data-port-id="supply"]');
+    const scenarios = [
+        { label: 'supply', batteryKey: 'supplyBattery', supplyShouldRemainActive: false },
+        { label: 'signal A', batteryKey: 'signalABattery', supplyShouldRemainActive: true },
+        { label: 'signal B', batteryKey: 'signalBBattery', supplyShouldRemainActive: true }
+    ];
+
+    for (const scenario of scenarios) {
+        const powered = await runAndLampCircuit(page, [true, true]);
+        await game.step(0);
+        await expect(lampGlow, `${scenario.label} baseline Lamp is lit`).toHaveAttribute('data-lit', 'true');
+        expect(powered.outputActive, `${scenario.label} baseline AND output is live`).toBe(true);
+        const activeSupplyColor = await supplyMarker.evaluate(node => getComputedStyle(node).fill);
+        expect(isActiveSupplyCyan(activeSupplyColor), 'active supply marker is cyan/light blue').toBe(true);
+
+        const interrupted = await page.evaluate(async ({ battery, scenario }) => {
+            const physics = await import('/physics.js');
+            const definitions = physics.getDefinitions();
+            const world = physics.getWorld();
+            const batteryIndex = physics.index(battery.x, battery.y);
+            world.charge[batteryIndex] = 0;
+            // Preserve visible pulse paths on conductors after the Battery route
+            // is cut; logical DC state must come only from the live circuit.
+            for (let cell = 0; cell < world.type.length; cell++) {
+                if (definitions[world.type[cell]]?.conductive) world.power[cell] = 8;
+            }
+            physics.invalidateLogicalCurrent();
+            const gatePorts = physics.getMachinePorts(90, 45);
+            const output = gatePorts.find(port => port.role === 'output');
+            const liveGate = physics.getMachineLiveStatus(90, 45);
+            const liveLamp = physics.getMachineLiveStatus(130, 45);
+            return {
+                scenario: scenario.label,
+                outputLogical: world.logicalPower[physics.index(output.connectionCell.x, output.connectionCell.y)] > 0,
+                lampActive: liveLamp.active,
+                supplyActive: liveGate.ports.find(port => port.id === 'supply')?.active,
+                visualPulseCells: world.power.reduce((count, value, i) =>
+                    count + (value > 0 && definitions[world.type[i]]?.conductive ? 1 : 0), 0)
+            };
+        }, { battery: powered[scenario.batteryKey], scenario });
+        await game.step(0);
+        await expect(lampGlow, `${scenario.label} Battery loss extinguishes the Lamp`).toHaveAttribute('data-lit', 'false');
+        expect(interrupted.outputLogical, `${scenario.label} cut clears logical gate output`).toBe(false);
+        expect(interrupted.lampActive, `${scenario.label} cut disables the Lamp`).toBe(false);
+        expect(interrupted.visualPulseCells, `${scenario.label} leaves decorative conductor pulses behind`)
+            .toBeGreaterThan(0);
+        expect(await page.locator('#machineOverlay .electrical-signal-spark').count(),
+            `${scenario.label} cut can still show residual pulse artwork`).toBeGreaterThan(0);
+
+        const supplyColorAfterCut = await supplyMarker.evaluate(node => getComputedStyle(node).fill);
+        if (scenario.supplyShouldRemainActive) {
+            expect(isActiveSupplyCyan(supplyColorAfterCut), `${scenario.label} cut leaves supply active cyan`).toBe(true);
+        } else {
+            expect(rgbChannels(supplyColorAfterCut), 'inactive supply marker returns to blue')
+                .toEqual([79, 166, 255]);
+        }
+    }
 });
 
 test('logic gate ports have stable anchors, correct input/output roles, Elec material, and two-cell leads', async ({ page }) => {
@@ -312,7 +417,19 @@ test('logic gate ports have stable anchors, correct input/output roles, Elec mat
             `signal-${String.fromCharCode(97 + index)}`)) {
             const signalLead = icon.locator(`path.machine-port-protruding[data-port-protrusion="${inputId}"]`);
             await expect(signalLead, `${gate.name} ${inputId} has exactly one terminal lead`).toHaveCount(1);
-            await expect(signalLead, `${gate.name} ${inputId} terminal lead is visible`).toBeVisible();
+            const signalStroke = await signalLead.evaluate(path => {
+                const style = getComputedStyle(path);
+                return {
+                    length: path.getTotalLength(),
+                    stroke: style.stroke,
+                    width: parseFloat(style.strokeWidth),
+                    opacity: Number(style.strokeOpacity) * Number(style.opacity)
+                };
+            });
+            expect(signalStroke.length, `${gate.name} ${inputId} terminal lead has geometry`).toBeGreaterThan(0);
+            expect(signalStroke.stroke, `${gate.name} ${inputId} terminal lead has a visible color`).not.toBe('none');
+            expect(signalStroke.width, `${gate.name} ${inputId} terminal lead has a visible width`).toBeGreaterThan(0);
+            expect(signalStroke.opacity, `${gate.name} ${inputId} terminal lead is not transparent`).toBeGreaterThan(0);
             await expect(icon.locator(`path.machine-port-anchor-link[data-port-stub="${inputId}"]`),
                 `${gate.name} ${inputId} has no extra diagonal anchor-link stroke`).toHaveCount(0);
             expect(stubById[inputId].directionX, `${gate.name} ${inputId} stub points left`).toBeLessThan(-0.95);
@@ -351,7 +468,7 @@ test('logic gate ports have stable anchors, correct input/output roles, Elec mat
     }
 });
 
-test('unrotated gate input leads stay attached and scale with zoom under the 30px local cap', async ({ page }) => {
+test('unrotated gate input leads stay attached and scale with zoom under the 15px local cap', async ({ page }) => {
     const game = new GamePage(page);
     await game.openMenu();
     await game.newGame();
@@ -372,7 +489,13 @@ test('unrotated gate input leads stay attached and scale with zoom under the 30p
         const measureLeads = async () => {
             const paths = icon.locator('path.machine-port-protruding[data-port-protrusion^="signal-"]');
             await expect(paths).toHaveCount(gate.signalInputs);
-            await expect(paths.first()).toBeVisible();
+            const firstLead = await paths.first().evaluate(path => {
+                const style = getComputedStyle(path);
+                return path.getTotalLength() > 0 && style.display !== 'none' &&
+                    style.visibility !== 'hidden' && style.stroke !== 'none' &&
+                    parseFloat(style.strokeWidth) > 0 && parseFloat(style.strokeOpacity) > 0;
+            });
+            expect(firstLead, `${gate.name} first input lead renders with a nonzero stroke`).toBe(true);
             return paths.evaluateAll(paths => paths.map(path => {
                 const pathMatrix = path.getScreenCTM();
                 const pathLength = path.getTotalLength();
@@ -423,17 +546,17 @@ test('unrotated gate input leads stay attached and scale with zoom under the 30p
             expect(baseline.length, `${gate.name} ${baseline.id} is visible at zoom 1`).toBeGreaterThan(0);
             expect(zoomed.length, `${gate.name} ${baseline.id} is visible at zoom 2`).toBeGreaterThan(0);
             expect(baseline.localLength, `${gate.name} ${baseline.id} local path respects the cap`)
-                .toBeLessThanOrEqual(30.5);
+                .toBeLessThanOrEqual(15.5);
             expect(zoomed.localLength, `${gate.name} ${baseline.id} local path respects the cap`)
-                .toBeLessThanOrEqual(30.5);
+                .toBeLessThanOrEqual(15.5);
             expect(zoomed.localLength, `${gate.name} ${baseline.id} viewBox length remains stable`)
                 .toBeCloseTo(baseline.localLength, 1);
             expect(baseline.length, `${gate.name} ${baseline.id} screen length respects the 1x cap`)
-                .toBeLessThanOrEqual(30.5);
+                .toBeLessThanOrEqual(15.5);
             expect(zoomed.length, `${gate.name} ${baseline.id} screen length grows with zoom`)
                 .toBeGreaterThan(baseline.length + 0.5);
             expect(zoomed.length, `${gate.name} ${baseline.id} stays under the 60px zoomed cap`)
-                .toBeLessThanOrEqual(60.5);
+                .toBeLessThanOrEqual(30.5);
             expect(zoomed.markerToEnd, `${gate.name} ${baseline.id} endpoint moves outward with zoom`)
                 .toBeGreaterThan(baseline.markerToEnd + 0.5);
         }

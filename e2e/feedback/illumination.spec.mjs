@@ -19,15 +19,23 @@ async function seedPoweredLamp(page, { lamp, target }) {
         const rayX = target.x - lamp.x;
         const rayY = target.y - lamp.y;
         let best = null;
+        const inBounds = (x, y) => x >= 0 && y >= 0 && x < world.cols && y < world.rows;
         for (let direction = 0; direction < 8; direction++) {
             world.data[lampIndex] = direction;
             const input = physics.getMachinePorts(lamp.x, lamp.y).find(port => port.role === 'input');
             const dx = input.connectionCell.x - lamp.x;
             const dy = input.connectionCell.y - lamp.y;
+            const routeX = Math.sign(dx) || Math.sign(input.directionX);
+            const routeY = Math.sign(dy) || Math.sign(input.directionY);
+            const routeIsInBounds = Array.from({ length: 6 }, (_, offset) =>
+                inBounds(input.connectionCell.x + routeX * offset, input.connectionCell.y + routeY * offset))
+                .every(Boolean);
+            if (!routeIsInBounds) continue;
             const score = Math.abs(dx * rayY - dy * rayX) /
                 (Math.hypot(dx, dy) * Math.hypot(rayX, rayY));
             if (!best || score > best.score) best = { direction, score };
         }
+        if (!best) throw new Error('No in-bounds Battery route is available for the Lamp fixture.');
         world.data[lampIndex] = best.direction;
         const input = physics.getMachinePorts(lamp.x, lamp.y).find(port => port.role === 'input');
         const directionX = Math.sign(input.connectionCell.x - lamp.x) || Math.sign(input.directionX);
@@ -68,20 +76,29 @@ test('powered Lamp light follows a 15-cell Euclidean falloff independent of canv
     const fixture = await seedPoweredLamp(page, { lamp, target });
     const readings = await page.evaluate(async ({ lamp }) => {
         const physics = await import('/physics.js');
+        const world = physics.getWorld();
+        const sample = physics.index(lamp.x + 3, lamp.y + 4);
         return {
             status: physics.getMachineLiveStatus(lamp.x, lamp.y).active,
             center: physics.getIlluminationAt(lamp.x, lamp.y),
+            worldGridAligned: world.illumination.length === world.type.length &&
+                world.illumination[sample] === physics.getIlluminationAt(lamp.x + 3, lamp.y + 4),
             distanceFive: physics.getIlluminationAt(lamp.x + 3, lamp.y + 4),
+            distanceFiveCardinal: physics.getIlluminationAt(lamp.x + 5, lamp.y),
             distanceFourteen: physics.getIlluminationAt(lamp.x + 14, lamp.y),
             radius: physics.getIlluminationAt(lamp.x + 15, lamp.y),
+            radiusDiagonal: physics.getIlluminationAt(lamp.x + 9, lamp.y + 12),
             outside: physics.getIlluminationAt(lamp.x + 16, lamp.y)
         };
     }, { lamp });
     expect(readings.status).toBe(true);
+    expect(readings.worldGridAligned).toBe(true);
     expect(readings.center).toBe(100);
-    expect(readings.distanceFive).toBeCloseTo(100 * (1 - 5 / 15), 1);
-    expect(readings.distanceFourteen).toBeCloseTo(100 * (1 - 14 / 15), 1);
+    expect(readings.distanceFive).toBeCloseTo(100 * (16 - 5) / 15, 1);
+    expect(readings.distanceFiveCardinal).toBeCloseTo(readings.distanceFive, 5);
+    expect(readings.distanceFourteen).toBeCloseTo(100 * (16 - 14) / 15, 1);
     expect(readings.radius).toBeCloseTo(100 / 15, 5);
+    expect(readings.radiusDiagonal).toBeCloseTo(readings.radius, 5);
     expect(readings.outside).toBe(0);
 
     await page.evaluate(async () => (await import('/game.js')).setCanvasZoomLevel(2));
@@ -116,6 +133,239 @@ test('powered Lamp light follows a 15-cell Euclidean falloff independent of canv
     expect(noInput.intensity).toBe(0);
 });
 
+test('Fire and Lava emit dim light at radius five and no light at distance six', async ({ page }) => {
+    const game = new GamePage(page);
+    await game.openMenu();
+    await game.newGame();
+
+    const readings = await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        const definitions = physics.getDefinitions();
+        const id = name => definitions.findIndex(definition => definition?.name === name);
+        const source = { x: 90, y: 60 };
+        const result = {};
+        for (const name of ['Fire', 'Lava']) {
+            physics.clearWorld();
+            physics.setCell(source.x, source.y, id(name));
+            result[name] = {
+                atSource: physics.getIlluminationAt(source.x, source.y),
+                atRadius: physics.getIlluminationAt(source.x + 5, source.y),
+                outsideRadius: physics.getIlluminationAt(source.x + 6, source.y)
+            };
+        }
+        return result;
+    });
+    for (const name of ['Fire', 'Lava']) {
+        expect(readings[name].atSource, `${name} is a dim emitter`).toBe(28);
+        expect(readings[name].atRadius, `${name} reaches distance five`).toBeGreaterThan(0);
+        expect(readings[name].atRadius).toBeLessThan(28);
+        expect(readings[name].outsideRadius, `${name} is dark at distance six`).toBe(0);
+    }
+});
+
+test('Fire produced by burning Oil and Wood keeps emitting its persistent dim light', async ({ page }) => {
+    const game = new GamePage(page);
+    await game.openMenu();
+    await game.newGame();
+
+    const fuels = await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        const definitions = physics.getDefinitions();
+        const id = name => definitions.findIndex(definition => definition?.name === name);
+        const source = { x: 80, y: 60 };
+        const results = {};
+        physics.setRandomSource(() => 0.99999);
+        for (const fuel of ['Oil', 'Wood']) {
+            physics.clearWorld();
+            physics.setCell(source.x, source.y, id(fuel));
+            physics.setCell(source.x - 1, source.y, id('Wall'));
+            physics.setCell(source.x + 1, source.y, id('Wall'));
+            physics.setCell(source.x, source.y + 1, id('Wall'));
+            const world = physics.getWorld();
+            const index = physics.index(source.x, source.y);
+            world.temp[index] = 1000;
+            world.heat[index] = definitions[id(fuel)].latent + 2000;
+            physics.stepSimulation();
+            const becameFire = world.type[index] === id('Fire') ||
+                world.type.some(type => type === id('Fire'));
+            for (let tick = 0; tick < 4; tick++) physics.stepSimulation();
+            const fireId = id('Fire');
+            let fireIndex = -1;
+            let closestDistance = Infinity;
+            for (let candidate = 0; candidate < world.type.length; candidate++) {
+                if (world.type[candidate] !== fireId || world.life[candidate] <= 0) continue;
+                const x = candidate % world.cols;
+                const y = Math.floor(candidate / world.cols);
+                const distance = Math.abs(x - source.x) + Math.abs(y - source.y);
+                if (distance < closestDistance) {
+                    fireIndex = candidate;
+                    closestDistance = distance;
+                }
+            }
+            if (fireIndex < 0) throw new Error(`${fuel} did not leave persistent Fire in the fixture.`);
+            const fire = { x: fireIndex % world.cols, y: Math.floor(fireIndex / world.cols) };
+            const directions = [{ x: 0, y: -1 }, { x: 1, y: 0 }, { x: 0, y: 1 }, { x: -1, y: 0 }];
+            const ray = directions.find(direction => {
+                for (let distance = 1; distance <= 6; distance++) {
+                    const x = fire.x + direction.x * distance;
+                    const y = fire.y + direction.y * distance;
+                    if (x < 0 || y < 0 || x >= world.cols || y >= world.rows) return false;
+                    const blocker = definitions[world.type[physics.index(x, y)]];
+                    if (blocker && (blocker.group === 'Solids' || blocker.category === 'powder' ||
+                        blocker.isPlant || blocker.machine)) return false;
+                }
+                return true;
+            });
+            if (!ray) throw new Error(`${fuel}-derived Fire has no unblocked radius-six sample ray.`);
+            results[fuel] = {
+                becameFire,
+                fire,
+                remainsFire: world.type[fireIndex] === fireId,
+                life: world.life[fireIndex],
+                sourceLight: physics.getIlluminationAt(fire.x, fire.y),
+                radiusFive: physics.getIlluminationAt(fire.x + ray.x * 5, fire.y + ray.y * 5),
+                distanceSix: physics.getIlluminationAt(fire.x + ray.x * 6, fire.y + ray.y * 6)
+            };
+        }
+        return results;
+    });
+
+    for (const fuel of ['Oil', 'Wood']) {
+        expect(fuels[fuel].becameFire, `${fuel} burns into Fire`).toBe(true);
+        expect(fuels[fuel].remainsFire, `${fuel}-derived Fire survives several ticks`).toBe(true);
+        expect(fuels[fuel].life).toBeGreaterThan(0);
+        expect(fuels[fuel].sourceLight).toBe(28);
+        expect(fuels[fuel].radiusFive).toBeGreaterThan(0);
+        expect(fuels[fuel].distanceSix).toBe(0);
+    }
+});
+
+test('Gunpowder stays dark during its fuse, then leaves a four-tick bright explosion flash', async ({ page }) => {
+    const game = new GamePage(page);
+    await game.openMenu();
+    await game.newGame();
+
+    const blast = await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        const definitions = physics.getDefinitions();
+        const id = name => definitions.findIndex(definition => definition?.name === name);
+        const center = { x: 90, y: 60 };
+        const world = physics.getWorld();
+        const centerIndex = physics.index(center.x, center.y);
+        physics.clearWorld();
+        physics.setRandomSource(() => 0.99999);
+        physics.setCell(center.x, center.y, id('Gunpowder'));
+        physics.setCell(center.x, center.y + 1, id('Wall'));
+        world.data[centerIndex] = 2;
+        const beforeFuse = physics.getIlluminationAt(center.x, center.y);
+        physics.stepSimulation();
+        const duringFuse = {
+            type: world.type[centerIndex],
+            fuse: world.data[centerIndex],
+            light: physics.getIlluminationAt(center.x, center.y)
+        };
+        physics.stepSimulation();
+        const flash = [];
+        for (let tick = 0; tick <= 4; tick++) {
+            if (tick > 0) physics.stepSimulation();
+            flash.push({
+                centerLight: physics.getIlluminationAt(center.x, center.y),
+                radiusTen: physics.getIlluminationAt(center.x + 10, center.y),
+                outsideRadius: physics.getIlluminationAt(center.x + 11, center.y),
+                centerType: world.type[centerIndex]
+            });
+        }
+        physics.setCell(center.x + 4, center.y, id('Fire'));
+        physics.stepSimulation();
+        const fireOnly = {
+            centerLight: physics.getIlluminationAt(center.x, center.y),
+            fireSourceLight: physics.getIlluminationAt(center.x + 4, center.y),
+            flashRadius: physics.getIlluminationAt(center.x + 10, center.y),
+            fireType: world.type[physics.index(center.x + 4, center.y)]
+        };
+        return { center, gunpowder: id('Gunpowder'), empty: 0, beforeFuse, duringFuse, flash, fireOnly };
+    });
+
+    expect(blast.beforeFuse).toBe(0);
+    expect(blast.duringFuse.type).toBe(blast.gunpowder);
+    expect(blast.duringFuse.fuse).toBeGreaterThan(0);
+    expect(blast.duringFuse.light).toBe(0);
+    expect(blast.flash[0].centerType).toBe(blast.empty);
+    expect(blast.flash[0].centerLight).toBe(100);
+    expect(blast.flash[0].radiusTen).toBeGreaterThan(0);
+    expect(blast.flash[0].outsideRadius).toBe(0);
+    for (const sample of blast.flash) expect(sample.centerType).toBe(blast.empty);
+    for (let tick = 1; tick < blast.flash.length; tick++) {
+        expect(blast.flash[tick].centerLight, `flash fades on tick ${tick}`)
+            .toBeLessThan(blast.flash[tick - 1].centerLight);
+        expect(blast.flash[tick].radiusTen, `radius-ten flash fades on tick ${tick}`)
+            .toBeLessThan(blast.flash[tick - 1].radiusTen);
+    }
+    expect(blast.flash.at(-1).centerLight).toBe(0);
+    expect(blast.flash.at(-1).radiusTen).toBe(0);
+    expect(blast.fireOnly.fireType).toBeGreaterThan(0);
+    expect(blast.fireOnly.fireSourceLight).toBe(28);
+    expect(blast.fireOnly.centerLight).toBeGreaterThan(0);
+    expect(blast.fireOnly.centerLight).toBeLessThanOrEqual(28);
+    expect(blast.fireOnly.flashRadius).toBe(0);
+});
+
+test('overlapping Fire and Lava light adds contributions and clamps to 100', async ({ page }) => {
+    const game = new GamePage(page);
+    await game.openMenu();
+    await game.newGame();
+
+    const overlap = await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        const definitions = physics.getDefinitions();
+        const id = name => definitions.findIndex(definition => definition?.name === name);
+        const target = { x: 90, y: 70 };
+        physics.clearWorld();
+        physics.setCell(target.x - 1, target.y, id('Fire'));
+        const oneSource = physics.getIlluminationAt(target.x, target.y);
+        physics.clearWorld();
+        const emitters = [
+            { x: target.x - 1, y: target.y, name: 'Fire' },
+            { x: target.x + 1, y: target.y, name: 'Lava' },
+            { x: target.x, y: target.y - 1, name: 'Fire' },
+            { x: target.x, y: target.y + 1, name: 'Lava' },
+            { x: target.x - 1, y: target.y - 1, name: 'Fire' }
+        ];
+        for (const emitter of emitters) physics.setCell(emitter.x, emitter.y, id(emitter.name));
+        return { oneSource, overlap: physics.getIlluminationAt(target.x, target.y) };
+    });
+    expect(overlap.oneSource).toBeGreaterThan(0);
+    expect(overlap.oneSource).toBeLessThan(100);
+    expect(overlap.overlap).toBe(100);
+});
+
+test('empty Normal-view illumination stays fully transparent', async ({ page }) => {
+    const game = new GamePage(page);
+    await game.openMenu();
+    await game.newGame();
+
+    const overlay = await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        const view = await import('/constantsAndGlobalVars.js');
+        const game = await import('/game.js');
+        physics.clearWorld();
+        view.setVisualizationMode('normal');
+        game.renderWorld();
+        const light = document.querySelector('#illuminationOverlay');
+        const pixels = light.getContext('2d').getImageData(0, 0, light.width, light.height).data;
+        let nonTransparent = 0;
+        for (let alpha = 3; alpha < pixels.length; alpha += 4) if (pixels[alpha] !== 0) nonTransparent++;
+        return {
+            nonTransparent,
+            cssBackground: getComputedStyle(light).backgroundColor,
+            litWorldCells: [...physics.getWorld().illumination].filter(value => value > 0).length
+        };
+    });
+    expect(overlay.nonTransparent).toBe(0);
+    expect(overlay.cssBackground).toBe('rgba(0, 0, 0, 0)');
+    expect(overlay.litWorldCells).toBe(0);
+});
+
 test('Lamp falloff stays bounded and its light layer aligns with the canvas at the world edge', async ({ page }) => {
     const game = new GamePage(page);
     await game.openMenu();
@@ -145,6 +395,7 @@ test('Lamp falloff stays bounded and its light layer aligns with the canvas at t
             const radiusPixel = light.getContext('2d').getImageData(lamp.x + 15, lamp.y, 1, 1).data;
             return {
                 layerOrder: follows(canvas, light) && follows(light, machine),
+                layerBackground: getComputedStyle(light).backgroundColor,
                 canvasBounds: { left: canvasRect.left, top: canvasRect.top, right: canvasRect.right, bottom: canvasRect.bottom },
                 lightBounds: { left: lightRect.left, top: lightRect.top, right: lightRect.right, bottom: lightRect.bottom },
                 cellWidth,
@@ -185,7 +436,7 @@ test('Lamp falloff stays bounded and its light layer aligns with the canvas at t
     expect(edge.routeInBounds).toBe(true);
     expect(edge.fieldsAtZoomOne.active).toBe(true);
     expect(edge.fieldsAtZoomOne.center).toBe(100);
-    expect(edge.fieldsAtZoomOne.edgeFalloff).toBeCloseTo(100 * (1 - 5 / 15), 1);
+    expect(edge.fieldsAtZoomOne.edgeFalloff).toBeCloseTo(100 * (16 - 5) / 15, 1);
     expect(edge.fieldsAtZoomOne.radius).toBeCloseTo(100 / 15, 5);
     expect(edge.fieldsAtZoomOne.outside).toBe(0);
     expect(edge.fieldsAtZoomOne.outsideWorld).toBe(0);
@@ -197,6 +448,7 @@ test('Lamp falloff stays bounded and its light layer aligns with the canvas at t
     });
     for (const zoom of [edge.zoomOne, edge.zoomTwo]) {
         expect(zoom.layerOrder).toBe(true);
+        expect(zoom.layerBackground).toBe('rgba(0, 0, 0, 0)');
         expect(Math.abs(zoom.lightBounds.left - zoom.canvasBounds.left)).toBeLessThan(1);
         expect(Math.abs(zoom.lightBounds.top - zoom.canvasBounds.top)).toBeLessThan(1);
         expect(Math.abs(zoom.lightBounds.right - zoom.canvasBounds.right)).toBeLessThan(1);
@@ -223,7 +475,7 @@ test('moving a Lamp or blocker invalidates the previous light field', async ({ p
         const definitions = physics.getDefinitions();
         const id = name => definitions.findIndex(definition => definition?.name === name);
         const world = physics.getWorld();
-        const expected = 100 * (1 - (target.x - lamp.x) / 15);
+        const expected = 100 * (16 - (target.x - lamp.x)) / 15;
 
         const blocker = { x: lamp.x + 5, y: lamp.y };
         const solid = definitions.find(definition => definition?.group === 'Solids' && !definition.isPlant);
@@ -238,8 +490,8 @@ test('moving a Lamp or blocker invalidates the previous light field', async ({ p
         physics.setCell(lamp.x, lamp.y, 0);
         const oldSourceAfterMove = physics.getIlluminationAt(target.x, target.y);
 
-        const newLamp = { x: lamp.x + 25, y: lamp.y };
-        const newTarget = { x: target.x + 25, y: target.y };
+        const newLamp = { x: lamp.x + 30, y: lamp.y };
+        const newTarget = { x: target.x + 30, y: target.y };
         physics.setCell(newLamp.x, newLamp.y, id('Lamp'));
         const newLampIndex = physics.index(newLamp.x, newLamp.y);
         let best = null;
@@ -338,9 +590,9 @@ test('overlapping Lamp fields add and clamp at 100', async ({ page }) => {
     });
     const nearDistance = Math.sqrt(5 ** 2 + 5 ** 2);
     const fartherDistance = Math.sqrt(5 ** 2 + 8 ** 2);
-    expect(result.oneNear).toBeCloseTo(100 * (1 - nearDistance / 15), 1);
+    expect(result.oneNear).toBeCloseTo(100 * (16 - nearDistance) / 15, 1);
     expect(result.bothNear).toBe(100);
-    expect(result.bothFarther).toBeCloseTo(2 * 100 * (1 - fartherDistance / 15), 1);
+    expect(result.bothFarther).toBeCloseTo(2 * 100 * (16 - fartherDistance) / 15, 1);
 });
 
 test('solids, plants, and machines block Lamp light while gas, Elec, and Tubing transmit it', async ({ page }) => {
@@ -354,7 +606,8 @@ test('solids, plants, and machines block Lamp light while gas, Elec, and Tubing 
         const id = name => definitions.findIndex(definition => definition?.name === name);
         const solid = definitions.find(definition => definition?.group === 'Solids' && !definition.isPlant);
         const plant = definitions.find(definition => definition?.isPlant);
-        const gas = definitions.find(definition => definition?.category === 'gas' && !definition.machine);
+        const gas = definitions.find(definition => definition?.name === 'Steam' &&
+            definition.category === 'gas' && !definition.machine);
         const cases = [
             { key: 'solid', id: solid?.id, kind: 'block' },
             { key: 'plant', id: plant?.id, kind: 'block' },
@@ -408,7 +661,7 @@ test('solids, plants, and machines block Lamp light while gas, Elec, and Tubing 
     });
     for (const key of ['solid', 'plant', 'machine']) expect(observations[key], key).toBe(0);
     for (const key of ['gas', 'Elec', 'Tubing']) {
-        expect(observations[key], key).toBeCloseTo(100 * (1 - 12 / 15), 1);
+        expect(observations[key], key).toBeCloseTo(100 * (16 - 12) / 15, 1);
     }
 });
 
@@ -419,7 +672,7 @@ test('normal view receives yellow Lamp tint while diagnostic palettes and world 
 
     const lamp = { x: 70, y: 55 };
     const target = { x: 80, y: 55 };
-    await seedPoweredLamp(page, { lamp, target });
+    const fixture = await seedPoweredLamp(page, { lamp, target });
     await page.evaluate(async ({ lamp, target }) => {
         const physics = await import('/physics.js');
         const world = physics.getWorld();
@@ -440,10 +693,13 @@ test('normal view receives yellow Lamp tint while diagnostic palettes and world 
     }, { lamp });
     const normalLit = await sampleOverlayPixel(page, target);
     expect(normalDark[3]).toBe(0);
-    expect(normalLit.slice(0, 3)).toEqual([255, 220, 64]);
+    expect(normalLit[0]).toBe(255);
+    expect(normalLit[1]).toBe(220);
+    expect(normalLit[2]).toBeGreaterThanOrEqual(64);
+    expect(normalLit[2]).toBeLessThanOrEqual(65);
     expect(normalLit[3]).toBeGreaterThan(normalDark[3]);
 
-    const paletteSamples = await page.evaluate(async ({ lamp, target }) => {
+    const paletteSamples = await page.evaluate(async ({ lamp, target, fixture }) => {
         const physics = await import('/physics.js');
         const view = await import('/constantsAndGlobalVars.js');
         const game = await import('/game.js');
@@ -466,7 +722,12 @@ test('normal view receives yellow Lamp tint while diagnostic palettes and world 
             humidity: world.humidity[targetIndex],
             illumination: physics.getIlluminationAt(target.x, target.y)
         };
-        const snapshot = physics.captureSimulationState();
+        const captured = physics.captureSimulationState();
+        const snapshot = {
+            ...captured,
+            arrays: Object.fromEntries(Object.entries(captured.arrays)
+                .map(([field, values]) => [field, values.slice()]))
+        };
         physics.setMachineSetting(lamp.x, lamp.y, 0);
         physics.restoreSimulationState(snapshot);
         const restoredWorld = physics.getWorld();
@@ -477,13 +738,16 @@ test('normal view receives yellow Lamp tint while diagnostic palettes and world 
             afterRestore: {
                 temperature: restoredWorld.temp[restoredIndex],
                 humidity: restoredWorld.humidity[restoredIndex],
-                illumination: physics.getIlluminationAt(target.x, target.y)
+                illumination: physics.getIlluminationAt(target.x, target.y),
+                lampStatus: physics.getMachineLiveStatus(lamp.x, lamp.y),
+                lampSetting: restoredWorld.machineSetting[physics.index(lamp.x, lamp.y)],
+                batteryCharge: physics.getStoredCharge(fixture.battery.x, fixture.battery.y)
             }
         };
         view.setVisualizationMode('normal');
         game.renderWorld();
         return samples;
-    }, { lamp, target });
+    }, { lamp, target, fixture });
 
     for (const mode of ['heat', 'humidity', 'wind']) {
         expect(paletteSamples[mode].lit, mode + ' palette ignores Lamp tint').toEqual(paletteSamples[mode].dark);
@@ -544,7 +808,7 @@ test('portable saves and stamped blueprints rebuild derived Lamp illumination', 
         };
     }, { lamp, target, fixture });
 
-    expect(persistence.illumination).toBeCloseTo(100 / 3, 5);
+    expect(persistence.illumination).toBeCloseTo(100 * (16 - 10) / 15, 5);
     expect(persistence.saveHasIlluminationArray).toBe(false);
     expect(persistence.blueprintHasIlluminationPlane).toBe(false);
     expect(persistence.loadedLampActive).toBe(true);
@@ -562,6 +826,7 @@ test('air and Lamp feedback report received light and emission state, range, and
     const lamp = { x: 55, y: 55 };
     const target = { x: 65, y: 55 };
     const fixture = await seedPoweredLamp(page, { lamp, target });
+    await game.step(0);
     const expected = await page.evaluate(async ({ target }) => {
         const physics = await import('/physics.js');
         return physics.getIlluminationAt(target.x, target.y);

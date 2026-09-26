@@ -62,86 +62,158 @@ function isGreen(fill) {
     return values.length >= 3 && values[1] > values[0] * 1.25 && values[1] > values[2] * 1.1;
 }
 
-test('a port lead stays idle until an external connector joins it, including after save and blueprint copy', async ({ page }) => {
+test('direct contact at compatible Elec, Copper, and Tubing port endpoints connects to that port', async ({ page }) => {
     const game = new GamePage(page);
     await game.openMenu();
     await game.newGame();
-    const machine = { x: 80, y: 60 };
-    await prepareMachines(page, [{ name: 'Fan', key: 'fan', ...machine }]);
-    await game.step(0);
-
-    const portCircle = page.locator('#machineOverlay .machine-fan circle.machine-port[data-port-id]');
-    const portBox = await portCircle.boundingBox();
-    expect(portBox).not.toBeNull();
-    const marker = { x: portBox.x + portBox.width / 2, y: portBox.y + portBox.height / 2 };
-    const port = await page.evaluate(async machine =>
-        (await import('/physics.js')).getMachinePorts(machine.x, machine.y)[0], machine);
-    const endpoint = { x: marker.x + port.directionX * 16, y: marker.y + port.directionY * 16 };
-    await page.mouse.move(marker.x, marker.y);
-    await page.mouse.down();
-    await page.mouse.move(endpoint.x, endpoint.y, { steps: 4 });
-    await page.mouse.up();
-    await game.step(0);
-
-    const lead = await page.evaluate(async ({ machine, port }) => {
+    const contacts = await page.evaluate(async () => {
         const physics = await import('/physics.js');
-        const world = physics.getWorld();
-        const copper = physics.getDefinitions().findIndex(definition => definition?.name === 'Copper');
-        const cells = [];
-        for (let y = machine.y - 12; y <= machine.y + 12; y++) {
-            for (let x = machine.x - 12; x <= machine.x + 12; x++) {
-                if (world.type[physics.index(x, y)] === copper) cells.push({ x, y });
+        const definitions = physics.getDefinitions();
+        const uniqueMachines = new Map();
+        for (const definition of definitions) {
+            if (definition?.machine && physics.getMachinePortTemplates(definition.machine).length &&
+                !uniqueMachines.has(definition.machine)) uniqueMachines.set(definition.machine, definition);
+        }
+        const fixtures = [...uniqueMachines.values()].flatMap(definition =>
+            physics.getMachinePortTemplates(definition.machine).map(port => ({
+                machine: definition.machine,
+                machineName: definition.name,
+                portId: port.id,
+                family: port.family,
+                material: port.material
+            })));
+        const results = [];
+        const directContacts = [];
+        let lifecycle = null;
+        for (const [fixtureIndex, fixture] of fixtures.entries()) {
+            physics.clearWorld();
+            const machineDefinition = definitions.find(definition => definition?.machine === fixture.machine);
+            const machine = { x: 90, y: 45 };
+            physics.setCell(machine.x, machine.y, machineDefinition.id);
+            const port = physics.getMachinePorts(machine.x, machine.y)
+                .find(candidate => candidate.id === fixture.portId);
+            if (!port) throw new Error(`Missing ${fixture.machine} port ${fixture.portId}`);
+            const material = definitions.findIndex(definition => definition?.name === fixture.material);
+            const machinePorts = physics.getMachinePorts(machine.x, machine.y);
+            const matchingAnchors = machinePorts
+                .filter(candidate => candidate.connectionCell.x === port.connectionCell.x &&
+                    candidate.connectionCell.y === port.connectionCell.y &&
+                    physics.isMachinePortMaterialCompatible(machine.x, machine.y, candidate.id, material))
+                .map(candidate => candidate.id);
+            const neighborCells = new Map();
+            for (const candidate of machinePorts) {
+                for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+                    const cell = { x: candidate.connectionCell.x + dx, y: candidate.connectionCell.y + dy };
+                    neighborCells.set(`${cell.x},${cell.y}`, cell);
+                }
+            }
+            const ambiguousNeighbors = [];
+            const snapMismatches = [];
+            for (const cell of neighborCells.values()) {
+                const candidates = machinePorts.filter(candidate =>
+                    physics.isMachinePortMaterialCompatible(machine.x, machine.y, candidate.id, material) &&
+                    (candidate.connectionCell.x - cell.x) ** 2 +
+                    (candidate.connectionCell.y - cell.y) ** 2 <= 2.25);
+                if (candidates.length > 1) {
+                    ambiguousNeighbors.push({ cell, ports: candidates.map(candidate => candidate.id) });
+                } else if (candidates.length === 1) {
+                    const snap = physics.getMachinePortSnapTarget(cell.x, cell.y, material);
+                    if (snap?.portId !== candidates[0].id) {
+                        snapMismatches.push({ cell, expected: candidates[0].id, actual: snap?.portId || null });
+                    }
+                }
+            }
+            physics.setCell(port.connectionCell.x, port.connectionCell.y, material);
+            const resolved = physics.getMachinePortAt(port.connectionCell.x, port.connectionCell.y, material);
+            const connected = physics.getMachinePorts(machine.x, machine.y)
+                .find(candidate => candidate.id === fixture.portId)?.connected;
+            const world = physics.getWorld();
+            const occupied = world.type.reduce((count, type) => count + (type !== 0 ? 1 : 0), 0);
+            results.push({
+                ...fixture,
+                resolvedPortId: resolved?.id || null,
+                matchingAnchors,
+                ambiguousNeighbors,
+                snapMismatches,
+                connected,
+                materialAtPort: definitions[world.type[physics.index(port.connectionCell.x, port.connectionCell.y)]]?.name,
+                occupiedCellCount: occupied
+            });
+
+            // Exercise a wire cell physically touching the stable terminal,
+            // without a user-drawn or tagged extension between it and the port.
+            physics.clearWorld();
+            physics.setCell(machine.x, machine.y, machineDefinition.id);
+            const freshPort = physics.getMachinePorts(machine.x, machine.y)
+                .find(candidate => candidate.id === fixture.portId);
+            const uniqueTouch = freshPort.contactCells.find(cell =>
+                (cell.x !== freshPort.connectionCell.x || cell.y !== freshPort.connectionCell.y) &&
+                (() => {
+                    const matches = physics.getMachinePorts(machine.x, machine.y).filter(candidate =>
+                        physics.isMachinePortMaterialCompatible(machine.x, machine.y,
+                            candidate.id, material) &&
+                        candidate.contactCells.some(contact => contact.x === cell.x && contact.y === cell.y));
+                    return matches.length === 1 && matches[0].id === fixture.portId;
+                })());
+            if (!uniqueTouch) throw new Error(`No unique direct contact cell for ${fixture.machine}.${fixture.portId}`);
+            physics.setCell(uniqueTouch.x, uniqueTouch.y, material);
+            const directResolved = physics.getMachinePortAt(uniqueTouch.x, uniqueTouch.y, material);
+            const directPortStates = physics.getMachinePorts(machine.x, machine.y);
+            directContacts.push({
+                ...fixture,
+                connected: directPortStates.find(candidate => candidate.id === fixture.portId)?.connected,
+                resolvedPortId: directResolved?.id || null,
+                owner: physics.getMachinePortLeadOwner(uniqueTouch.x, uniqueTouch.y),
+                occupiedCellCount: physics.getWorld().type.reduce((count, type) => count + (type !== 0 ? 1 : 0), 0)
+            });
+
+            if (fixtureIndex === fixtures.length - 1) {
+                const gameModule = await import('/game.js');
+                const saveModule = await import('/saveLoadGame.js');
+                const blueprint = gameModule.captureBlueprint(machine.x - 8, machine.y - 8,
+                    machine.x + 8, machine.y + 8);
+                const save = saveModule.createSaveString();
+                physics.clearWorld();
+                saveModule.loadSaveString(save);
+                const afterSave = physics.getMachinePorts(machine.x, machine.y)
+                    .find(candidate => candidate.id === fixture.portId)?.connected;
+                physics.clearWorld();
+                gameModule.stampBlueprintAt(blueprint, machine.x - 8, machine.y - 8);
+                const afterBlueprint = physics.getMachinePorts(machine.x, machine.y)
+                    .find(candidate => candidate.id === fixture.portId)?.connected;
+                lifecycle = { afterSave, afterBlueprint };
             }
         }
-        const farthest = cells.sort((a, b) =>
-            Math.hypot(b.x - port.connectionCell.x, b.y - port.connectionCell.y) -
-            Math.hypot(a.x - port.connectionCell.x, a.y - port.connectionCell.y))[0];
-        return { cells, farthest, copper };
-    }, { machine, port });
-    expect(lead.cells.length, 'the port drag paints a Copper lead').toBeGreaterThan(1);
-    expect(isRed(await portCircle.evaluate(node => getComputedStyle(node).fill)),
-        'the port does not count its own lead as external power').toBe(true);
+        return { results, directContacts, lifecycle };
+    });
 
-    const copied = await page.evaluate(async ({ machine }) => {
-        const gameModule = await import('/game.js');
-        const physics = await import('/physics.js');
-        const blueprint = gameModule.captureBlueprint(machine.x - 12, machine.y - 12,
-            machine.x + 12, machine.y + 12);
-        const saveModule = await import('/saveLoadGame.js');
-        const save = saveModule.createSaveString();
-        physics.clearWorld();
-        saveModule.loadSaveString(save);
-        const afterSave = physics.getMachinePorts(machine.x, machine.y)[0]?.connected;
-        physics.clearWorld();
-        gameModule.stampBlueprintAt(blueprint, machine.x - 12, machine.y - 12);
-        const afterBlueprint = physics.getMachinePorts(machine.x, machine.y)[0]?.connected;
-        return { afterSave, afterBlueprint };
-    }, { machine });
-    expect(copied.afterSave, 'a saved lead retains its ownership').toBe(false);
-    expect(copied.afterBlueprint, 'a copied lead retains its ownership').toBe(false);
-
-    const joined = await page.evaluate(async ({ machine, port, cells, copper }) => {
-        const physics = await import('/physics.js');
-        const world = physics.getWorld();
-        const farthest = cells.sort((a, b) =>
-            Math.hypot(b.x - port.connectionCell.x, b.y - port.connectionCell.y) -
-            Math.hypot(a.x - port.connectionCell.x, a.y - port.connectionCell.y))[0];
-        const dx = Math.sign(port.directionX);
-        const dy = Math.sign(port.directionY);
-        // Connector networks join by an edge, so extend the tip along one
-        // cardinal axis even when the artwork direction has a small tilt.
-        const external = Math.abs(port.directionX) >= Math.abs(port.directionY)
-            ? { x: farthest.x + dx, y: farthest.y }
-            : { x: farthest.x, y: farthest.y + dy };
-        if (world.type[physics.index(external.x, external.y)] !== 0) {
-            throw new Error('Expected an empty cell past the lead tip.');
-        }
-        physics.setCell(external.x, external.y, copper);
-        return { external, connected: physics.getMachinePorts(machine.x, machine.y)[0].connected };
-    }, { machine, port, cells: lead.cells, copper: lead.copper });
-    expect(joined.connected, 'external Copper joins the tagged lead').toBe(true);
-    await game.step(0);
-    expect(isGreen(await portCircle.evaluate(node => getComputedStyle(node).fill))).toBe(true);
+    expect(contacts.results.length, 'each declared machine port is covered').toBeGreaterThan(10);
+    expect([...new Set(contacts.results.map(result => result.material))].sort(),
+        'direct contact exercises electrical, Copper, and Tubing connector materials')
+        .toEqual(['Copper', 'Elec', 'Tubing'].sort());
+    for (const result of contacts.results) {
+        expect(result.connected, `${result.machineName} ${result.portId} connects by touching ${result.material}`)
+            .toBe(true);
+        expect(result.resolvedPortId, `${result.material} resolves to its touching port`).toBe(result.portId);
+        expect(result.matchingAnchors, `${result.machineName} ${result.portId} is the unique compatible anchor`)
+            .toEqual([result.portId]);
+        expect(result.ambiguousNeighbors, `${result.machineName} ${result.portId} has no ambiguous snap neighbor`)
+            .toEqual([]);
+        expect(result.snapMismatches, `${result.machineName} ${result.portId} has consistent neighboring snap targets`)
+            .toEqual([]);
+        expect(result.materialAtPort).toBe(result.material);
+        expect(result.occupiedCellCount, 'no player-painted lead is needed').toBe(2);
+    }
+    for (const result of contacts.directContacts) {
+        expect(result.connected, `${result.machineName} ${result.portId} connects from a touching cell`)
+            .toBe(true);
+        expect(result.resolvedPortId, `${result.material} touching cell maps to its originating port`)
+            .toBe(result.portId);
+        expect(result.owner, 'direct contact does not require tagged lead ownership').toBe(-1);
+        expect(result.occupiedCellCount, 'machine and directly touching connector are the only occupied cells')
+            .toBe(2);
+    }
+    expect(contacts.lifecycle).toEqual({ afterSave: true, afterBlueprint: true });
 });
 
 test('machine sprite sheet, 64px artwork, and visible ports match the declared layout', async ({ page }) => {
@@ -257,7 +329,8 @@ test('machine sprite sheet, 64px artwork, and visible ports match the declared l
             const stubLength = Math.hypot(circle.screenX - anchorScreen.x, circle.screenY - anchorScreen.y);
             expect(stubLength, `${expected.name} visible marker maps to its logical connection anchor`)
                 .toBeGreaterThan(0.5);
-            expect(stubLength, `${expected.name} marker-to-anchor stub is usable at screen scale`).toBeLessThanOrEqual(20);
+            expect(stubLength, `${expected.name} marker-to-anchor alignment remains within the existing 20px bound`)
+                .toBeLessThanOrEqual(20);
             const renderedStub = icon.stubs.find(stub => stub.id === descriptor.id);
             expect(renderedStub, `${expected.name} port stub is rendered`).toBeTruthy();
             expect(renderedStub.strokeWidth, `${expected.name} stub keeps the specified connector stroke`).toBe(2);
@@ -268,6 +341,60 @@ test('machine sprite sheet, 64px artwork, and visible ports match the declared l
             expect(circle.r, `${expected.name} visible circle radius`)
                 .toBeLessThanOrEqual(expected.customSvg ? 4.5 : 3.5);
             expect(isRed(circle.fill), `${expected.name} idle port is red`).toBe(true);
+        }
+    }
+});
+
+test('every machine port has a visible 15 CSS px protrusion at default zoom', async ({ page }) => {
+    const game = new GamePage(page);
+    await game.openMenu();
+    await game.newGame();
+
+    const machines = await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        const definitions = physics.getDefinitions();
+        const unique = new Map();
+        for (const definition of definitions) {
+            if (!definition?.machine || !physics.getMachinePortTemplates(definition.machine).length) continue;
+            if (!unique.has(definition.machine)) unique.set(definition.machine, {
+                id: definition.id,
+                name: definition.name,
+                machine: definition.machine,
+                portCount: physics.getMachinePortTemplates(definition.machine).length
+            });
+        }
+        return [...unique.values()];
+    });
+    expect(machines.length, 'all declared machine types with ports are included').toBeGreaterThan(10);
+
+    for (const entry of machines) {
+        const machine = { x: 90, y: 45 };
+        await page.evaluate(async ({ entry, machine }) => {
+            const physics = await import('/physics.js');
+            physics.clearWorld();
+            physics.setCell(machine.x, machine.y, entry.id);
+        }, { entry, machine });
+        await game.step(0);
+        const icon = page.locator(
+            `#machineOverlay .machine-overlay-icon[data-machine-x="${machine.x}"][data-machine-y="${machine.y}"]`);
+        const stubs = await icon.evaluate(node => [...node.querySelectorAll('[data-port-protrusion]')].map(stub => {
+            const length = stub.getTotalLength();
+            const matrix = stub.getScreenCTM();
+            const start = new DOMPoint(stub.getPointAtLength(0).x, stub.getPointAtLength(0).y)
+                .matrixTransform(matrix);
+            const end = new DOMPoint(stub.getPointAtLength(length).x, stub.getPointAtLength(length).y)
+                .matrixTransform(matrix);
+            return {
+                id: stub.getAttribute('data-port-protrusion'),
+                lengthCssPx: Math.hypot(end.x - start.x, end.y - start.y)
+            };
+        }));
+        expect(stubs, `${entry.name} renders each declared protrusion`).toHaveLength(entry.portCount);
+        for (const stub of stubs) {
+            expect(stub.lengthCssPx, `${entry.name} ${stub.id} reaches the 15px screen length`)
+                .toBeGreaterThanOrEqual(14);
+            expect(stub.lengthCssPx, `${entry.name} ${stub.id} stays within the 15px cap`)
+                .toBeLessThanOrEqual(15.5);
         }
     }
 });
@@ -352,14 +479,17 @@ test('port hit areas and snapping honor role, material, and physical contact', a
     expect(result.before).toBe(0);
     expect(result.after).toBe(result.before);
     expect(result.nearTubeResolves,
-        'a nearby compatible Tube does not resolve until it occupies the exact connection cell').toBeNull();
+        'a compatible Tube at the Mixer terminal neighbor resolves to its owning input port')
+        .toBe('input-a');
     await game.step(0);
     let circles = await page.locator('#machineOverlay .machine-overlay-icon.machine-mixer circle[data-port-id]')
         .evaluateAll(nodes => nodes.map(node => ({
             id: node.dataset.portId, fill: getComputedStyle(node).fill
         })));
-    expect(circles.every(port => isRed(port.fill)),
-        'a successful proximity suggestion does not connect or recolor an idle port').toBe(true);
+    expect(isGreen(circles.find(port => port.id === 'input-a')?.fill || ''),
+        'a Tubing cell touching the visible input-a protrusion connects directly').toBe(true);
+    expect(circles.filter(port => port.id !== 'input-a').every(port => isRed(port.fill)),
+        'touching input-a leaves the other Mixer ports idle').toBe(true);
 
     await page.evaluate(async ({ cell, tubeId }) => {
         const physics = await import('/physics.js');
@@ -748,7 +878,7 @@ test('a Copper port drag stays Copper at size 3 and activates its powered machin
     expect(state.arrays.type[machine.y * state.cols + machine.x]).toBe(endpoint.fanId);
 });
 
-test('blocked port drags are atomic, open drags clamp to 20 CSS px, and zoom preserves hit geometry', async ({ page }) => {
+test('blocked port drags are atomic, open drags clamp to 30 CSS px, and zoom preserves hit geometry', async ({ page }) => {
     const game = new GamePage(page);
     await game.openMenu();
     await game.newGame();
@@ -838,14 +968,6 @@ test('blocked port drags are atomic, open drags clamp to 20 CSS px, and zoom pre
         const port = physics.getMachinePorts(machine.x, machine.y).find(item => item.id === circle.dataset.portId);
         const allTargetCells = new Set(physics.getMachinePorts(machine.x, machine.y)
             .map(item => `${item.connectionCell.x},${item.connectionCell.y}`));
-        const cellWidth = canvasRect.width / canvas.width;
-        const cellHeight = canvasRect.height / canvas.height;
-        const anchorPoint = {
-            x: canvasRect.left + ((port.connectionCell.x + 0.5) / canvas.width) * canvasRect.width,
-            y: canvasRect.top + ((port.connectionCell.y + 0.5) / canvas.height) * canvasRect.height
-        };
-        const anchorOffset = Math.hypot(anchorPoint.x - center.x, anchorPoint.y - center.y);
-        const brushClearance = Math.max(cellWidth, cellHeight);
         const candidates = [];
         for (let distance = 1; distance <= 18; distance++) {
             const x = Math.round(port.connectionCell.x + port.directionX * distance);
@@ -856,19 +978,19 @@ test('blocked port drags are atomic, open drags clamp to 20 CSS px, and zoom pre
                 x: canvasRect.left + ((x + 0.5) / canvas.width) * canvasRect.width,
                 y: canvasRect.top + ((y + 0.5) / canvas.height) * canvasRect.height
             };
-            candidates.push({ x, y, point, distance: Math.hypot(point.x - center.x, point.y - center.y),
-                strokeClearance: brushClearance });
+            candidates.push({ x, y, point, distance: Math.hypot(point.x - center.x, point.y - center.y) });
         }
         return {
             portId: port.id,
-            near: candidates.find(candidate => candidate.distance >= 12 && candidate.distance <= 19),
-            far: candidates.find(candidate => candidate.distance > 20 + anchorOffset + candidate.strokeClearance &&
-                candidate.distance <= 80),
+            near: candidates.find(candidate => candidate.distance >= 14 && candidate.distance <= 26),
+            far: candidates.find(candidate => candidate.distance >= 45 && candidate.distance <= 55),
             tubingId: physics.getDefinitions().findIndex(definition => definition?.name === 'Tubing')
         };
     }, machine);
-    expect(zoomedEndpoints.near, 'zoomed fixture has a compatible point within 20 CSS px').toBeTruthy();
-    expect(zoomedEndpoints.far, 'zoomed fixture has a compatible point beyond the 20 CSS px limit').toBeTruthy();
+    expect(zoomedEndpoints.near, 'zoomed fixture has a compatible point clearly inside the 15-unit protrusion')
+        .toBeTruthy();
+    expect(zoomedEndpoints.far, 'zoomed fixture has a compatible point beyond the 15-unit protrusion and brush radius')
+        .toBeTruthy();
 
     await page.evaluate(async ({ cell, tubingId }) => {
         const physics = await import('/physics.js');
@@ -893,7 +1015,7 @@ test('blocked port drags are atomic, open drags clamp to 20 CSS px, and zoom pre
         width: Number(node.getAttribute('stroke-width'))
     }));
     expect(Math.hypot(previewGeometry.endX - previewGeometry.startX,
-        previewGeometry.endY - previewGeometry.startY)).toBeCloseTo(20, 0);
+        previewGeometry.endY - previewGeometry.startY)).toBeCloseTo(30, 0);
     const zoomCellWidth = await page.locator('#canvas').evaluate(element =>
         element.getBoundingClientRect().width / element.width);
     expect(previewGeometry.width).toBeCloseTo(zoomCellWidth * 3, 0);
@@ -921,10 +1043,12 @@ test('blocked port drags are atomic, open drags clamp to 20 CSS px, and zoom pre
     await game.step(0);
     const nearBox = await farPort.boundingBox();
     const nearStart = { x: nearBox.x + nearBox.width / 2, y: nearBox.y + nearBox.height / 2 };
-    expect(Math.hypot(zoomedEndpoints.near.point.x - nearStart.x,
-        zoomedEndpoints.near.point.y - nearStart.y)).toBeLessThanOrEqual(20);
-    const idleBeforeNear = await farPort.evaluate(node => getComputedStyle(node).fill);
-    expect(isRed(idleBeforeNear), 'nearby but unattached Tube does not connect through proximity alone').toBe(true);
+    const nearDistance = Math.hypot(zoomedEndpoints.near.point.x - nearStart.x,
+        zoomedEndpoints.near.point.y - nearStart.y);
+    expect(nearDistance).toBeGreaterThanOrEqual(14);
+    expect(nearDistance).toBeLessThanOrEqual(26);
+    const touchingProtrusion = await farPort.evaluate(node => getComputedStyle(node).fill);
+    expect(isGreen(touchingProtrusion), 'Tubing touching the zoomed 15-unit protrusion connects directly').toBe(true);
     const hitBoxZoomed = await page.locator(`#machineOverlay [data-port-hit-target="${zoomedEndpoints.portId}"]`).boundingBox();
     expect(hitBoxZoomed.width).toBeCloseTo(40, 0);
     expect(hitBoxZoomed.height).toBeCloseTo(40, 0);
@@ -952,14 +1076,14 @@ test('blocked port drags are atomic, open drags clamp to 20 CSS px, and zoom pre
         width: Number(node.getAttribute('stroke-width'))
     }));
     expect(Math.hypot(nearPreviewGeometry.endX - nearPreviewGeometry.startX,
-        nearPreviewGeometry.endY - nearPreviewGeometry.startY)).toBeCloseTo(20, 0);
+        nearPreviewGeometry.endY - nearPreviewGeometry.startY)).toBeCloseTo(30, 0);
     expect(nearPreviewGeometry.width).toBeCloseTo(zoomCellWidth * 3, 0);
     await page.mouse.up();
     await expect(page.locator('#brushSize')).toHaveValue('9');
     await expect(page.locator('#particleButtons .particle-button.selected')).toHaveText(selectionBeforeNearDrag);
     await game.step(0);
     const connectedFill = await farPort.evaluate(node => getComputedStyle(node).fill);
-    expect(isGreen(connectedFill), 'a size-3 connector within the zoomed 20px cap physically attaches').toBe(true);
+    expect(isGreen(connectedFill), 'a size-3 connector within the zoomed 15-unit cap physically attaches').toBe(true);
     const connectedState = await game.state();
     expect(connectedState.arrays.type[zoomedConnectionCell.y * connectedState.cols + zoomedConnectionCell.x])
         .toBe(zoomedEndpoints.tubingId);
@@ -990,13 +1114,13 @@ test('blocked port drags are atomic, open drags clamp to 20 CSS px, and zoom pre
     }));
     const brushRadius = 1.5 * Math.max(capMetrics.width / capMetrics.cols, capMetrics.height / capMetrics.rows);
     expect(maxStrokeProjection).toBeGreaterThan(10);
-    expect(maxStrokeProjection).toBeLessThanOrEqual(20 + brushRadius);
+    expect(maxStrokeProjection).toBeLessThanOrEqual(30 + brushRadius);
 
     await page.mouse.click(nearStart.x, nearStart.y);
     await expect(page.locator('#mixerDialog')).toBeVisible();
     await page.locator('#mixerDialogCancel').click();
     const connectedBeforeExtension = Array.from((await game.state()).arrays.type);
-    const extensionTarget = { x: nearStart.x - ray.y * 24, y: nearStart.y + ray.x * 24 };
+    const extensionTarget = { x: nearStart.x - ray.y * 50, y: nearStart.y + ray.x * 50 };
     await page.mouse.move(nearStart.x, nearStart.y);
     await page.mouse.down();
     await page.mouse.move(extensionTarget.x, extensionTarget.y, { steps: 3 });
@@ -1010,7 +1134,7 @@ test('blocked port drags are atomic, open drags clamp to 20 CSS px, and zoom pre
     }));
     const extensionPreviewLength = Math.hypot(extensionGeometry.endX - extensionGeometry.startX,
         extensionGeometry.endY - extensionGeometry.startY);
-    expect(extensionPreviewLength).toBeCloseTo(20, 0);
+    expect(extensionPreviewLength).toBeCloseTo(30, 0);
     expect(extensionGeometry.width).toBeCloseTo(zoomCellWidth * 3, 0);
     await page.mouse.up();
     const connectedExtension = await game.state();
@@ -1084,6 +1208,12 @@ test('rotated machine artwork, port projection, hit target, and painting follow 
                 .find(path => path.getAttribute('data-port-stub') === port.id);
             const end = stub.getPointAtLength(stub.getTotalLength())
                 .matrixTransform(stub.getScreenCTM());
+            const protrusion = [...icon.querySelectorAll('[data-port-protrusion]')]
+                .find(path => path.getAttribute('data-port-protrusion') === port.id);
+            const protrusionMatrix = protrusion.getScreenCTM();
+            const protrusionStart = protrusion.getPointAtLength(0).matrixTransform(protrusionMatrix);
+            const protrusionEnd = protrusion.getPointAtLength(protrusion.getTotalLength())
+                .matrixTransform(protrusionMatrix);
             const anchor = {
                 x: rect.left + (port.connectionCell.x + 0.5) / canvas.width * rect.width,
                 y: rect.top + (port.connectionCell.y + 0.5) / canvas.height * rect.height
@@ -1092,6 +1222,10 @@ test('rotated machine artwork, port projection, hit target, and painting follow 
                 id: port.id,
                 markerDelta: { x: marker.x - center.x, y: marker.y - center.y },
                 stubError: Math.hypot(end.x - anchor.x, end.y - anchor.y),
+                protrusionLength: Math.hypot(protrusionEnd.x - protrusionStart.x,
+                    protrusionEnd.y - protrusionStart.y),
+                protrusionTerminalPortId: game.getMachinePortAtClientPoint(
+                    protrusionEnd.x, protrusionEnd.y, tubingId)?.id || null,
                 hitId: game.getMachinePortAtClientPoint(marker.x + 1.5, marker.y, tubingId)?.id || null,
                 marker
             };
@@ -1158,6 +1292,16 @@ test('rotated machine artwork, port projection, hit target, and painting follow 
             .toBeCloseTo(before.markerDelta.y * zoomRatio, 0);
         expect(before.stubError, `${before.id} default stub meets its connection cell`).toBeLessThanOrEqual(0.75);
         expect(after.stubError, `${before.id} zoomed stub meets its connection cell`).toBeLessThanOrEqual(0.75);
+        expect(before.protrusionLength, `${before.id} protrusion remains 15 CSS px at default zoom`)
+            .toBeGreaterThanOrEqual(14);
+        expect(before.protrusionLength).toBeLessThanOrEqual(15.5);
+        expect(after.protrusionLength, `${before.id} protrusion scales with the world zoom`)
+            .toBeCloseTo(before.protrusionLength * zoomRatio, 0);
+        expect(after.protrusionLength).toBeLessThanOrEqual(15.5 * zoomRatio);
+        expect(before.protrusionTerminalPortId, `${before.id} default protrusion terminal maps to its port`)
+            .toBe(before.id);
+        expect(after.protrusionTerminalPortId, `${before.id} zoomed protrusion terminal maps to its port`)
+            .toBe(before.id);
         expect(before.hitId, `${before.id} default marker remains hittable`).toBe(before.id);
         expect(after.hitId, `${before.id} zoomed marker remains hittable`).toBe(before.id);
     }
