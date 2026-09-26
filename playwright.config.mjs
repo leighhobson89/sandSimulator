@@ -5,7 +5,7 @@ const localBaseURL = `http://127.0.0.1:${port}`;
 
 export default defineConfig({
     testDir: '.',
-    testMatch: ['e2e/**/*.spec.mjs'],
+    testMatch: ['e2e/**/*.spec.mjs', 'performance/**/*.spec.mjs'],
     testIgnore: ['.kilo/**', 'node_modules/**', 'test-results/**'],
     timeout: 30_000,
     expect: { timeout: 8_000 },
@@ -26,6 +26,10 @@ export default defineConfig({
         screenshot: 'only-on-failure',
         video: 'retain-on-failure'
     },
+    projects: [
+        { name: 'chromium', testMatch: ['e2e/**/*.spec.mjs'] },
+        { name: 'performance', testMatch: ['performance/**/*.spec.mjs'] }
+    ],
     webServer: {
         command: 'node tools/serve.mjs',
         url: localBaseURL,

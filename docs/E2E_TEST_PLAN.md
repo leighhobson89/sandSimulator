@@ -307,6 +307,13 @@ To run a focused functional area or spec, pass its path through the npm wrapper:
 npm run test:browser -- e2e/physics --workers=1 --trace=off
 ```
 
+The browser performance benchmark is a separate, strictly opt-in suite. Run it
+only when a performance-specific test is explicitly requested, using
+`npm run test:performance`. It is excluded from `npm test`, the ordinary
+`npm run test:browser` suite, and routine validation. See
+[`performance/README.md`](../performance/README.md) for fixture scope and
+measurement details; do not add this benchmark to normal test commands.
+
 The focused visualization and environment regressions can be run with the
 owning tools, accessibility, and persistence specs:
 

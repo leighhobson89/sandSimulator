@@ -260,6 +260,56 @@ test('material feedback reports illumination received from a powered Lamp', asyn
     expect(displayed).toBeCloseTo(fixture.illumination, 1);
 });
 
+test('plant feedback shows current and preferred temperature, humidity, and light', async ({ page }) => {
+    const game = new GamePage(page);
+    await game.openMenu();
+    await game.newGame();
+
+    const plant = { x: 40, y: 30 };
+    const readings = await page.evaluate(async plant => {
+        const physics = await import('/physics.js');
+        const definitions = physics.getDefinitions();
+        const id = name => definitions.findIndex(definition => definition?.name === name);
+        physics.clearWorld();
+        physics.setAmbientIlluminationTarget(10);
+        physics.setCell(plant.x, plant.y + 1, id('Wet Mud'));
+        physics.setCell(plant.x, plant.y + 2, id('Wall'));
+        physics.setCell(plant.x, plant.y, id('Daffodil'));
+        physics.setCell(plant.x + 2, plant.y, id('Fire'));
+        const world = physics.getWorld();
+        const index = physics.index(plant.x, plant.y);
+        world.temp[index] = 17;
+        world.humidity[index] = 60;
+        return physics.getPlantEnvironment(plant.x, plant.y);
+    }, plant);
+    expect(readings.illumination).toBeGreaterThan(10);
+    await game.step(0);
+    await hoverCell(page, plant);
+    const feedback = page.locator('#hoverFeedback');
+    const rows = await feedback.locator('div').allTextContents();
+    const number = value => Number.isInteger(value)
+        ? String(value) : Number(value).toFixed(1).replace(/\.0$/, '');
+    const rowHasCurrentAndIdeal = (label, current, ideal) => rows.some(row =>
+        label.test(row) && row.includes(number(current)) && row.includes(number(ideal)));
+    expect(rowHasCurrentAndIdeal(/temperature/i, readings.temperature, readings.idealTemperature),
+        'temperature feedback pairs the measured and preferred values').toBe(true);
+    expect(rowHasCurrentAndIdeal(/humidity/i, readings.humidity, readings.idealHumidity),
+        'humidity feedback pairs the measured and preferred values').toBe(true);
+    expect(rowHasCurrentAndIdeal(/illumination|light/i, readings.illumination, readings.idealIllumination),
+        'light feedback pairs the effective and preferred values').toBe(true);
+
+    await page.evaluate(async () => (await import('/physics.js')).setAmbientIlluminationTarget(80));
+    await game.step(0);
+    await hoverCell(page, plant);
+    const brighterEnvironment = await page.evaluate(async plant =>
+        (await import('/physics.js')).getPlantEnvironment(plant.x, plant.y), plant);
+    const brighterRows = await feedback.locator('div').allTextContents();
+    expect(brighterEnvironment.illumination).toBe(80);
+    expect(brighterEnvironment.idealIllumination).toBe(readings.idealIllumination);
+    expect(brighterRows.some(row => /illumination|light/i.test(row) &&
+        row.includes('80') && row.includes(number(brighterEnvironment.idealIllumination)))).toBe(true);
+});
+
 test('machine feedback shows temperature and live input/output signal changes', async ({ page }) => {
     const game = new GamePage(page);
     await game.openMenu();

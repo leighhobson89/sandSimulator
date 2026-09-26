@@ -76,16 +76,15 @@ model without requiring a continuous fluid solver.
 - **Plant nutrients and compost:** let Ash, Wet Ash, or a new Compost material
   improve growth or seed production. A soil-quality readout could make the
   effect observable without adding a hidden global fertility map.
-- **Light-responsive plants and additional emitters:** the derived local field
-  already combines powered Lamps, Fire, Lava, Scoria, and brief Gunpowder
-  explosion flashes. Fire, Lava, and Scoria use orange rendering tints with
-  their configured peak intensities; the tint does not change numeric light.
-  The field is separate from heat, thermal glow, and plant viability. Let
-  selected plants respond to light only after defining species ranges and
-  growth behavior; consider other emitters deliberately. The
-  [logic gates and lighting proposal](proposals/LOGIC_GATES_AND_LIGHTING.md)
-  records those remaining ideas. Ambient sunlight, Solar generation, and
-  day/night are later ideas.
+- **Additional emitters and day/night:** plants already use species-specific
+  temperature, humidity, and effective-light needs. The Ambient Light setting
+  supplies geometry-based world illumination, while the local field combines
+  powered Lamps, Fire, Lava, Scoria, and brief Gunpowder explosion flashes.
+  Fire, Lava, and Scoria use orange rendering tints that do not change their
+  numeric light. Solar generation, a day/night cycle, and new emitter types
+  remain future work. Current plant and illumination rules are in
+  [Game Mechanics](GAME_MECHANICS.md#7-seeds-plants-humidity-dewpoint-weather-and-corrosion)
+  and the archived [plant illumination plan](archive/plans/2026-09-26-plant-illumination-and-world-light.md).
 - **Wind Turbine element or machine:** use existing decaying airflow as an
   input to a generator. It would pair naturally with the Wind tool and Fan,
   though a powered Fan feeding its own generator must not create free energy.
@@ -159,8 +158,8 @@ cross-system coupling would make layouts harder to reason about.
    from the implemented combinational gates.
 3. Prototype a Pump or Valve and extend Tubing only as far as that use case
    needs; add a small scenario to explain the resulting loop.
-4. Consider light-responsive species and additional emitters as separate work;
-   profile field updates with dense sources before broadening illumination.
+4. Consider Solar, day/night, or additional emitters as separate work; profile
+   field updates with dense sources before broadening illumination.
 
 Keep simulations deterministic under the seeded test harness. New machine,
 route, or environmental state must be included in both local resume and

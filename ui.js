@@ -31,6 +31,7 @@ import {
 } from './game.js';
 import {
     getDefinitions, setAmbientTarget, getAmbientTarget,
+    setAmbientIlluminationTarget, getAmbientIlluminationTarget,
     setAmbientHumidityTarget, getAmbientHumidityTarget, setDewpointTarget, getDewpointTarget,
     setAmbientWindOn, getAmbientWindOn,
     setGeneralWindStrength as setPhysicsGeneralWindStrength,
@@ -225,6 +226,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     setGameState(getMenuState());
     setUpAirTemperature();
+    setUpAmbientIllumination();
     setUpBaseHumidity();
     setUpDewpoint();
     setUpWindStrength();
@@ -263,6 +265,7 @@ async function startNewGame() {
     setGridCols(cols);
     setGridRows(rows);
     startGame({ newWorld: true, alignAtGround: true });
+    synchroniseAmbientIlluminationControl();
     collapseVegetationCatalogGroup();
 
     if (useAsResumeGame) {
@@ -381,6 +384,7 @@ function synchroniseRestoredControls() {
     elements.grabberSizeValue.textContent = String(getGrabberSize());
     elements.airTempInput.value = String(Math.round(getAmbientTarget()));
     elements.airTempValue.value = String(Math.round(getAmbientTarget()));
+    synchroniseAmbientIlluminationControl();
     elements.baseHumidityInput.value = String(Math.round(getAmbientHumidityTarget()));
     elements.baseHumidityValue.textContent = `${Math.round(getAmbientHumidityTarget())}%`;
     elements.dewpointInput.value = String(Math.round(getDewpointTarget()));
@@ -1489,6 +1493,17 @@ function highlightSelectedParticle() {
 const MIN_AIR_TEMP = -60;
 const MAX_AIR_TEMP = 4000;
 
+function synchroniseAmbientIlluminationControl() {
+    const elements = getElements();
+    const value = Math.round(getAmbientIlluminationTarget());
+    if (elements.ambientIlluminationInput) {
+        elements.ambientIlluminationInput.value = String(value);
+    }
+    if (elements.ambientIlluminationValue) {
+        elements.ambientIlluminationValue.textContent = `${value}%`;
+    }
+}
+
 function setUpAirTemperature() {
     const slider = getElements().airTempInput;
     const box = getElements().airTempValue;
@@ -1534,6 +1549,23 @@ function setUpAirTemperature() {
         typing = false;
         commitAirTemperature(apply, box);
     });
+}
+
+function setUpAmbientIllumination() {
+    const elements = getElements();
+    const slider = elements.ambientIlluminationInput;
+    const output = elements.ambientIlluminationValue;
+    if (!slider || !output) return;
+    const apply = next => {
+        const numeric = Number(next);
+        if (!Number.isFinite(numeric)) return;
+        const value = Math.max(0, Math.min(100, Math.round(numeric)));
+        setAmbientIlluminationTarget(value);
+        slider.value = String(value);
+        output.textContent = `${value}%`;
+    };
+    apply(getAmbientIlluminationTarget());
+    slider.addEventListener('input', event => apply(event.target.value));
 }
 
 function setUpBaseHumidity() {

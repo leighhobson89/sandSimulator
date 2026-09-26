@@ -139,6 +139,44 @@ test('portable simulation state restores Base Humidity, Dewpoint and local humid
     });
 });
 
+test('ambient illumination round-trips through portable saves and old saves default to 50', async ({ page }) => {
+    const game = new GamePage(page); await game.openMenu(); await game.newGame();
+    const ambient = page.getByRole('slider', { name: /ambient (?:light|illumination)/i });
+    await ambient.fill('73');
+
+    const saved = await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        const saves = await import('/saveLoadGame.js');
+        const codec = await import('/lzString.js');
+        const encoded = saves.createSaveString();
+        const payload = saves.parseSaveString(encoded);
+        const field = Object.keys(payload.simulation).find(key => /ambient.*illumination/i.test(key));
+        physics.setAmbientIlluminationTarget(12);
+        saves.loadSaveString(encoded);
+        const restored = physics.getAmbientIlluminationTarget();
+        const legacy = { ...payload, simulation: { ...payload.simulation } };
+        if (field) delete legacy.simulation[field];
+        const legacyEncoded = codec.compressToEncodedURIComponent(JSON.stringify(legacy));
+        physics.setAmbientIlluminationTarget(12);
+        saves.loadSaveString(legacyEncoded);
+        return {
+            field,
+            persisted: payload.simulation[field],
+            restored,
+            oldSaveFallback: physics.getAmbientIlluminationTarget(),
+            legacyVersion: legacy.version
+        };
+    });
+    expect(saved).toEqual({
+        field: expect.stringMatching(/ambient.*illumination/i),
+        persisted: 73,
+        restored: 73,
+        oldSaveFallback: 50,
+        legacyVersion: expect.any(Number)
+    });
+    await expect(game.state()).resolves.toMatchObject({ cols: expect.any(Number), rows: expect.any(Number) });
+});
+
 test('a selected 520 × 300 world keeps its dimensions in version 2 Save/Load', async ({ page }) => {
     const game = new GamePage(page);
     await game.openMenu();

@@ -704,12 +704,13 @@ commands. Final implementation and verification outcomes are recorded in the
 The picker has a dedicated **Seeds** group with Grass Seeds, Moss Spores,
 Daffodil Seeds, Red Tulip Seeds, Geranium Seeds, Blue Flower Seeds, Banana
 Seeds, and Water Grass / Lily Seeds. They remain movable powder particles while
-dormant. A seed germinates only when its per-species minimum temperature and
-humidity are met and its configured substrate has enough moisture. Tooltips
-summarize each species, while `particles.json` contains the exact numeric
-thresholds and viable substrate rules. Dry ground or unsuitable air leaves the
-seed dormant. ID `19`, previously the generic Seed, is retained as Grass Seeds
-so existing worlds and saves preserve that particle as the grass species.
+dormant. A seed germinates only when its per-species minimum temperature,
+humidity, and effective illumination are met and its configured substrate has
+enough moisture. Tooltips summarize each species, while `particles.json`
+contains the exact numeric thresholds and viable substrate rules. Dry ground
+or unsuitable air or light leaves the seed dormant. ID `19`, previously the
+generic Seed, is retained as Grass Seeds so existing worlds and saves preserve
+that particle as the grass species.
 
 The species cover different habitats. Grass germinates on Wet Mud, Wet Sand, or
 Wet Ash; Wet Mud is richer, giving grass faster/taller growth and a higher health
@@ -745,29 +746,59 @@ probabilistic even when all conditions are met.
 | Water Grass / Lily Seeds | `8 C` | `65%` | Wet Mud and nearby open water; at a depth of three or more water cells it grows in submerged form. |
 
 Growing cells track health against their species' minimum/maximum and ideal
-temperature and humidity, plus the required root-zone moisture. In-range plants
-thrive and grow; plants within a wider survival band pause growth while health
-recovers or declines; plants outside that band wither into Dry Mud when health
-reaches zero. Plant color reflects its health. Only thriving, sufficiently
-healthy plants reproduce; a cooldown and nearby-seed limit prevent a mature
-patch from producing seeds every frame. Existing burn, freeze, and acid
-reactions still apply.
+temperature and humidity, effective light, and required root-zone moisture.
+Plants inside their thriving bounds grow; those inside a wider survival band
+pause growth while health recovers or declines; plants outside that band
+wither into Dry Mud when health reaches zero. Plant color reflects its health.
+Only thriving, sufficiently healthy plants reproduce; a cooldown and
+nearby-seed limit prevent a mature patch from producing seeds every frame.
+Existing burn, freeze, and acid reactions still apply.
 
 The thriving ranges below apply after germination. Plants may survive in a
 wider climate band but grow more slowly or stop; prolonged unsuitable
-temperature, humidity, or root moisture can reduce health until the plant
+temperature, humidity, light, or root moisture can reduce health until the plant
 withers into Dry Mud.
 
-| Established plant | Thriving temperature | Thriving humidity | Growing note |
-| --- | ---: | ---: | --- |
-| Grass | `5-34 C` | `25-95%` | Wet Mud is richer and improves growth and health. |
-| Moss | `0-30 C` | `68-100%` | Damp Wood, Stone, Wet Sand, Wet Mud, or Wet Ash supports it. |
-| Daffodil | `2-30 C` | `35-92%` | Grows on damp soil and flowers at maturity. |
-| Red Tulip | `4-28 C` | `38-92%` | Grows on damp soil and flowers at maturity. |
-| Geranium | `10-38 C` | `28-88%` | Grows on damp soil and branches into flower clusters. |
-| Blue Flower | `3-29 C` | `30-96%` | Grows on Wet Sand or Wet Ash. |
-| Banana Plant | `18-42 C` | `76-100%` | Needs wet roots; nearby Water can satisfy the root moisture check. Mature height is `14-32` cells. |
-| Water Grass | `8-36 C` | `65-100%` | Needs nearby open water and forms submerged stems, surface pads, and blooms. |
+| Established plant | Thriving temperature | Ideal temperature | Thriving humidity | Ideal humidity | Growing note |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Grass | `5-34 C` | `22 C` | `25-95%` | `65%` | Wet Mud is richer and improves growth and health. |
+| Moss | `0-30 C` | `16 C` | `68-100%` | `92%` | Damp Wood, Stone, Wet Sand, Wet Mud, or Wet Ash supports it. |
+| Daffodil | `2-30 C` | `14 C` | `35-92%` | `68%` | Grows on damp soil and flowers at maturity. |
+| Red Tulip | `4-28 C` | `15 C` | `38-92%` | `72%` | Grows on damp soil and flowers at maturity. |
+| Geranium | `10-38 C` | `23 C` | `28-88%` | `58%` | Grows on damp soil and branches into flower clusters. |
+| Blue Flower | `3-29 C` | `16 C` | `30-96%` | `72%` | Grows on Wet Sand or Wet Ash. |
+| Banana Plant | `18-42 C` | `30 C` | `76-100%` | `95%` | Needs wet roots; nearby Water can satisfy the root moisture check. Mature height is `14-32` cells. |
+| Water Grass | `8-36 C` | `24 C` | `65-100%` | `90%` | Needs nearby open water and forms submerged stems, surface pads, and blooms. |
+
+### Plant light needs and inspection
+
+Plants use effective illumination, the higher of their ambient-grid value and
+the summed local-emitter value. Each species has a minimum for germination and
+thriving, and an ideal value at which light fitness reaches its maximum:
+
+| Species | Minimum light | Ideal light |
+| --- | ---: | ---: |
+| Moss | `5` | `25` |
+| Grass | `15` | `70` |
+| Daffodil | `15` | `65` |
+| Red Tulip | `20` | `70` |
+| Geranium | `25` | `75` |
+| Blue Flower | `10` | `55` |
+| Banana Plant | `30` | `85` |
+| Water Grass | `10` | `60` |
+
+Light fitness rises linearly from each species' minimum to its ideal and stays
+at `1` above ideal. Established plants thrive at or above minimum illumination;
+they can survive down to `40%` of that minimum if other survival conditions
+and the substrate are suitable. Below this light floor, they are in the dying
+state. Light fitness contributes to vigor and scales the usual growth chance by
+`0.25 + 0.75 * fitness`, so growth can still occur at minimum light.
+
+Hovering any plant part reports its current temperature, humidity, and effective
+illumination alongside its species' ideal temperature and humidity, temperature
+and humidity bounds, and minimum/ideal illumination. This lets the player
+compare actual conditions with each species' needs while accounting for its
+local air, light sources, and substrate.
 
 ### Humidity and condensation
 
@@ -953,12 +984,30 @@ source-defined state transitions such as `> 100 C Water -> Steam`. Hover
 readings include numeric local illumination; heat glow remains a separate
 rendering effect and is not illumination.
 
-### Local illumination
+### Ambient and local illumination
 
-`world.illumination` stores one derived `0`-to-`100` value per world-grid cell,
-using the same flat indexing as `world.type`. `getIlluminationAt(x, y)` reads
-the field. It is rebuilt from emitters and blockers rather than serialized into
-world saves or blueprints.
+The Environment panel's Ambient Light slider ranges from `0` to `100`, starts
+at `50`, and is saved as world environment state. Older saves without the
+setting also restore `50`. The derived `world.ambientIllumination` grid uses
+the same cell indexing as `world.type` and is not serialized. At slider values
+of `10` or below, every cell receives that value uniformly. Above `10`, a cell
+with an unobstructed straight grid ray to any top-row cell receives the full
+slider value. Top visibility takes priority. A cell with no top visibility but
+an unobstructed ray to any bottom-row cell receives half the slider value. If
+neither boundary is visible, it receives fixed reflected ambient light of `10`.
+
+When there is more than one clear boundary ray, the selected ray is the one
+closest to vertical; equal offsets choose the smaller boundary-cell x. If the
+selected ray crosses one or more gas cells, its ambient value is reduced once
+by `25%`. The derived effective illumination used by plants and numeric
+readouts is `max(ambient value, summed local emitter contributions capped at
+100)`. It is not the sum of ambient and local light.
+
+`world.illumination` stores the derived `0`-to-`100` local-emitter field per
+world-grid cell. It is rebuilt from emitters and blockers rather than
+serialized into world saves or blueprints. The `getIlluminationAt(x, y)` query
+returns effective illumination, taking the higher of this field and the
+ambient grid.
 
 An ON Lamp emits only while its electrical input reaches a charged Battery.
 Its omnidirectional 360-degree field is measured in world cells by Euclidean
@@ -976,13 +1025,17 @@ before blast cells are cleared. The flash fades over four simulation ticks; the
 resulting Fire remains as a dim emitter after the flash expires. Sparks and
 fuses do not emit light. Contributions add and clamp at `100`.
 
-Solids, powders, plants, and machine bodies block light along a cell-center
-grid ray. Air, gases, Elec, and Tubing transmit it. Light does not affect
-temperature, reactions, or plant viability; light-responsive plants remain
-future work.
+Solids, powders, plants, and machine bodies block local light along a
+cell-center grid ray. Air, gases, Elec, and Tubing transmit it. Ambient
+visibility uses the same blockers and grid rays. Light does not affect
+temperature or phase-change reactions; effective illumination does affect seed
+germination, plant thriving, vigor, health, and growth as described in
+[Section 7](#7-seeds-plants-humidity-dewpoint-weather-and-corrosion).
 
-The renderer samples `world.illumination` into a separate one-pixel-per-cell
-canvas overlay above particles and below machine overlays. Yellow and orange
+The renderer samples only `world.illumination` into a separate
+one-pixel-per-cell canvas overlay above particles and below machine overlays.
+Ambient light is logical plant/readout data and does not tint or fill the
+canvas. Yellow and orange
 tints are at most 50% opaque at illumination 100, fade in proportion to
 intensity, and are fully transparent at zero. When emitter colors overlap, the
 strongest local contribution chooses the tint; total illumination still adds

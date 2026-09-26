@@ -9,7 +9,8 @@
     "test:smoke": "node tools/smokeTest.mjs",
     "profile:scale": "node tools/scaleProfile.mjs",
     "test:scale-profile": "node tools/scaleProfileTest.mjs && node tools/worldAllocationTest.mjs",
-    "test:browser": "playwright test"
+    "test:browser": "playwright test --project=chromium",
+    "test:performance": "playwright test --project=performance --workers=1 --trace=off"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0"

@@ -133,6 +133,86 @@ test('environment controls update values and Breeze while natural atmosphere sta
     await expect(page.locator('#readout')).toBeVisible();
 });
 
+test('Ambient Light sits after Air Temperature, updates plant light, and leaves ambient-only canvas pixels dark', async ({ page }) => {
+    const game = new GamePage(page); await game.openMenu(); await game.newGame();
+
+    const ambientLight = page.getByRole('slider', { name: /ambient (?:light|illumination)/i });
+    await expect(ambientLight).toHaveAttribute('min', '0');
+    await expect(ambientLight).toHaveAttribute('max', '100');
+    await expect(ambientLight).toHaveValue('50');
+    const rowOrder = await Promise.all([
+        page.locator('#airTemp').evaluate(input => input.closest('.tool-slider-row').getBoundingClientRect().top),
+        ambientLight.evaluate(input => input.closest('.tool-slider-row').getBoundingClientRect().top),
+        page.locator('#baseHumidity').evaluate(input => input.closest('.tool-slider-row').getBoundingClientRect().top)
+    ]);
+    expect(rowOrder[0]).toBeLessThan(rowOrder[1]);
+    expect(rowOrder[1]).toBeLessThan(rowOrder[2]);
+
+    const plant = { x: 40, y: 30 };
+    const ambientOnly = { x: 20, y: 20 };
+    await page.evaluate(async ({ plant }) => {
+        const physics = await import('/physics.js');
+        const id = name => physics.getDefinitions().findIndex(definition => definition?.name === name);
+        physics.clearWorld();
+        physics.setCell(plant.x, plant.y + 1, id('Wet Mud'));
+        physics.setCell(plant.x, plant.y + 2, id('Wall'));
+        physics.setCell(plant.x, plant.y, id('Daffodil'));
+        physics.setCell(plant.x + 2, plant.y, id('Fire'));
+        const world = physics.getWorld();
+        for (const cell of [plant, { x: plant.x + 2, y: plant.y }]) {
+            const index = physics.index(cell.x, cell.y);
+            world.temp[index] = 14;
+            world.humidity[index] = 68;
+        }
+        const game = await import('/game.js');
+        game.renderWorld();
+    }, { plant });
+    await ambientLight.fill('10');
+    const withLocalSource = await page.evaluate(async ({ plant, ambientOnly }) => {
+        const physics = await import('/physics.js');
+        const game = await import('/game.js');
+        game.renderWorld();
+        const overlay = document.querySelector('#illuminationOverlay');
+        const pixel = cell => Array.from(overlay.getContext('2d')
+            .getImageData(cell.x, cell.y, 1, 1).data);
+        const local = physics.getWorld().illumination[physics.index(plant.x, plant.y)];
+        return {
+            targetLight: physics.getPlantEnvironment(plant.x, plant.y).illumination,
+            local,
+            plantPixel: pixel(plant),
+            ambientOnlyLight: physics.getIlluminationAt(ambientOnly.x, ambientOnly.y),
+            ambientOnlyPixel: pixel(ambientOnly)
+        };
+    }, { plant, ambientOnly });
+    expect(withLocalSource.targetLight).toBeGreaterThan(10);
+    expect(withLocalSource.targetLight).toBeCloseTo(withLocalSource.local, 2);
+    expect(withLocalSource.plantPixel[3]).toBeGreaterThan(0);
+    expect(withLocalSource.ambientOnlyLight).toBe(10);
+    expect(withLocalSource.ambientOnlyPixel[3]).toBe(0);
+
+    await ambientLight.fill('80');
+    const underBrighterAmbient = await page.evaluate(async ({ plant, ambientOnly }) => {
+        const physics = await import('/physics.js');
+        const game = await import('/game.js');
+        game.renderWorld();
+        const overlay = document.querySelector('#illuminationOverlay');
+        const pixel = cell => Array.from(overlay.getContext('2d')
+            .getImageData(cell.x, cell.y, 1, 1).data);
+        return {
+            targetLight: physics.getPlantEnvironment(plant.x, plant.y).illumination,
+            local: physics.getWorld().illumination[physics.index(plant.x, plant.y)],
+            plantPixel: pixel(plant),
+            ambientOnlyLight: physics.getIlluminationAt(ambientOnly.x, ambientOnly.y),
+            ambientOnlyPixel: pixel(ambientOnly)
+        };
+    }, { plant, ambientOnly });
+    expect(underBrighterAmbient.targetLight).toBe(80);
+    expect(underBrighterAmbient.local).toBeCloseTo(withLocalSource.local, 5);
+    expect(underBrighterAmbient.plantPixel).toEqual(withLocalSource.plantPixel);
+    expect(underBrighterAmbient.ambientOnlyLight).toBe(80);
+    expect(underBrighterAmbient.ambientOnlyPixel[3]).toBe(0);
+});
+
 test('temperature, wind, Breeze, and heat controls cover bounds and reset state', async ({ page }) => {
     const game = new GamePage(page); await game.openMenu(); await game.newGame();
     await page.locator('#airTemp').fill('-60');
@@ -284,13 +364,19 @@ test('wind gestures, heat rendering, and readouts expose deterministic environme
 
     await page.mouse.move(from.x, from.y);
     await refreshReadout(page);
-    await expect(page.locator('#readout')).toContainText(/air .*°C/);
-    await expect(page.locator('#readout')).toContainText('Brush Wind 3px');
+    await expect(page.locator('#readout')).toContainText(/fps\s+\d+ particles/);
+    const feedback = page.locator('#hoverFeedback');
+    await expect(feedback).toContainText('Stone');
+    await expect(feedback).toContainText(/Temperature: .*°C/);
+    await expect(feedback).not.toContainText('Brush Wind');
     const temperature = await page.evaluate(async () => {
         const physics = await import('/physics.js');
-        return Math.round(physics.getTemperature(50, 50));
+        return physics.getTemperature(50, 50);
     });
-    await expect(page.locator('#readout')).toContainText(`Stone ${temperature}°C`);
+    const displayedTemperature = Number((await feedback.textContent())
+        .match(/Temperature:\s*(-?\d+(?:\.\d+)?)/)?.[1]);
+    expect(Number.isFinite(displayedTemperature)).toBe(true);
+    expect(Math.abs(displayedTemperature - temperature)).toBeLessThan(1);
 });
 
 test('humidity visualization renders different local humidity values without changing the field', async ({ page }) => {

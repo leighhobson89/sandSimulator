@@ -5,8 +5,8 @@
 This is a read-only source review of the simulation, electrical paths, and
 renderer. No tests or benchmarks were run for this review. The code findings
 below are hypotheses about cost based on loop scope and allocation behavior;
-they are not profiler measurements. The historical measurements are labeled
-separately and predate this review.
+they are not profiler measurements. A separate, later P0 browser benchmark has
+since been run and is documented in the [P0 results report](2026-09-26-p0-performance-results.md).
 
 ## Findings
 
@@ -82,17 +82,21 @@ theory. These are machine-specific historical numbers, not current guarantees.
 
 ### P0 — Measure the reported FPS drop before changing simulation semantics
 
-- [ ] Add temporary timing around `stepSimulation()`, `drawWorld()`, and
-  `decayWindTrails()` in `gameLoop()`; capture median and p95 separately.
-- [ ] In a local diagnostic run, time `updateElectricalPower()`, Spark network
-  propagation, and Battery load traversal independently. Record Spark count,
-  connected conductor-cell count, Battery-cell count, and machine count with
-  each sample.
-- [ ] Compare the same small world in four cases: baseline; ordinary Spark
-  touching a conductor; a charged Battery and connected load; both together.
-  Keep a no-machine/no-electrical control. Repeat at 260×150 and 520×300.
-- [ ] Record browser, hardware, build, and whether the canvas is visible. The
-  current CLI profile cannot diagnose browser drawing or electrical workloads.
+- [x] Add timing around complete simulation steps, `drawWorld()`, wind decay,
+  electrical updates, Spark propagation, Battery load traversal, machine
+  overlay rebuilds, and illumination-layer drawing; capture median and p95.
+- [x] Compare empty and particle controls, ordinary Spark wiring, a charged
+  Battery/Lamp circuit, and the combined workload at 260×150 and 520×300.
+- [x] Record scene counts, browser, hardware, build, viewport, canvas
+  visibility, and renderer details. The headless browser reported SwiftShader,
+  so renderer measurements need hardware-accelerated follow-up.
+- [x] Publish methodology, tables, limits, and follow-up priorities in the
+  [P0 results report](2026-09-26-p0-performance-results.md).
+
+The benchmark is a separate opt-in suite. Run it only when a
+performance-specific test is explicitly requested; it is excluded from
+`npm test`, routine validation, and the regular `npm run test:browser` suite.
+See [`performance/README.md`](../../performance/README.md).
 
 ### P1 — Low-risk candidates if measurements confirm the hotspots
 

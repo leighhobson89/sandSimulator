@@ -253,6 +253,21 @@
                     </div>
 
                     <div class="tool-slider-row">
+                        <label id="ambientIlluminationLabel" class="tool-slider-icon tooltip-control" for="ambientIllumination"
+                               data-tooltip="Set the baseline ambient light used by plants. Local light emitters add to it; this setting does not create a visible light field.">
+                            <span aria-hidden="true">☼</span>
+                            <span class="sr-only">Ambient Light</span>
+                        </label>
+                        <div class="tool-slider-block">
+                            <div class="tool-slider-heading">
+                                <label for="ambientIllumination">Ambient Light</label>
+                                <output id="ambientIlluminationValue" for="ambientIllumination">50%</output>
+                            </div>
+                            <input id="ambientIllumination" type="range" min="0" max="100" step="1" value="50" aria-label="Ambient Light">
+                        </div>
+                    </div>
+
+                    <div class="tool-slider-row">
                         <label id="baseHumidityLabel" class="tool-slider-icon tooltip-control" for="baseHumidity"
                                data-tooltip="Set the outside air's baseline relative humidity. Water and plants add local moisture; dry ground removes it.">
                             <span aria-hidden="true">RH</span>

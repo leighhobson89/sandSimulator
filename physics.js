@@ -62,6 +62,11 @@ let logicalCurrentDirty = true;
 let illuminationDirty = true;
 let illuminationSourceSignature = null;
 let illuminationFieldFrame = -1;
+let ambientIlluminationDirty = true;
+let ambientIlluminationFieldFrame = -1;
+let ambientVisibilityScratch = null;
+let illuminationLookupCount = 0;
+let illuminationRebuildCount = 0;
 let illuminationFlashes = [];
 // The flood mask borrows the movement flags before they are cleared for the
 // current tick. Queue views borrow the two temperature buffers, which are
@@ -75,6 +80,7 @@ const AIR_SPACE_BY_TYPE = new Uint8Array(256);
 let AMBIENT = 8;
 let ambientTarget = 8;
 let ambientHumidityTarget = 50;
+let ambientIlluminationTarget = 50;
 let dewpointTarget = 10;
 let frameCount = 0;
 let humidityCursor = 0;
@@ -91,6 +97,11 @@ let gustWindStrength = 7;
 // custom source without patching global state.
 let randomSource = Math.random;
 let randomSeed = null;
+
+function activeP0PerformanceRecorder() {
+    const recorder = typeof window !== 'undefined' ? window.__P0_PERF__ : null;
+    return recorder?.enabled && typeof recorder.record === 'function' ? recorder : null;
+}
 
 export function setRandomSource(source) {
     if (typeof source !== 'function') throw new TypeError('Random source must be a function');
@@ -156,6 +167,7 @@ export function getAirTempAt(y) {
 // simulation never has to compare strings while it is running.
 export function prepareDefinitions(json) {
     const raw = json.particles;
+    const plantIlluminationProfiles = json.plantIlluminationProfiles || {};
     const nameToId = {};
     Object.keys(raw).forEach(id => { nameToId[raw[id].name.toLowerCase()] = parseInt(id); });
     // Particle ID 52 is now named Sprinkler. Keep the former display name as
@@ -211,6 +223,7 @@ export function prepareDefinitions(json) {
 
     Object.keys(raw).map(k => parseInt(k)).sort((a, b) => a - b).forEach(id => {
         const p = raw[id];
+        const illuminationProfile = plantIlluminationProfiles[p.plantSpecies] || {};
         if (typeof p.description !== 'string' || !p.description.trim()) {
             throw new Error(`Particle ${p.name || id} is missing its glossary description`);
         }
@@ -353,6 +366,12 @@ export function prepareDefinitions(json) {
             growStyle: p.growStyle || null,
             isSeed: !!p.isSeed,
             plantSpecies: p.plantSpecies || null,
+            plantMinIllumination: p.plantMinIllumination === undefined
+                ? (illuminationProfile.minimum === undefined ? 0 : illuminationProfile.minimum)
+                : p.plantMinIllumination,
+            plantIdealIllumination: p.plantIdealIllumination === undefined
+                ? (illuminationProfile.ideal === undefined ? 100 : illuminationProfile.ideal)
+                : p.plantIdealIllumination,
             plantMinTemp: p.plantMinTemp === undefined ? -273 : p.plantMinTemp,
             plantMaxTemp: p.plantMaxTemp === undefined ? 1000 : p.plantMaxTemp,
             plantIdealTemp: p.plantIdealTemp === undefined ? 20 : p.plantIdealTemp,
@@ -532,6 +551,7 @@ export function prepareDefinitions(json) {
     });
 
     DEFS = defs;
+    ambientIlluminationDirty = true;
     AIR_SPACE_BY_TYPE.fill(0);
     AIR_SPACE_BY_TYPE[EMPTY] = 1;
     for (let id = 1; id < defs.length; id++) {
@@ -633,6 +653,14 @@ export function setAmbientHumidityTarget(value) {
     ambientHumidityTarget = Math.max(0, Math.min(100, Number(value)));
 }
 export function getAmbientHumidityTarget() { return ambientHumidityTarget; }
+export function setAmbientIlluminationTarget(value) {
+    if (!Number.isFinite(Number(value))) return;
+    const next = Math.max(0, Math.min(100, Number(value)));
+    if (next === ambientIlluminationTarget) return;
+    ambientIlluminationTarget = next;
+    ambientIlluminationDirty = true;
+}
+export function getAmbientIlluminationTarget() { return ambientIlluminationTarget; }
 export function getHumidityAt(x, y) {
     if (!world || !inBounds(x, y)) return ambientHumidityTarget;
     return humidityNearCell(x, y);
@@ -641,6 +669,213 @@ export function getHumidityAt(x, y) {
 function isIlluminationOccluder(cellIndex) {
     const def = DEFS[world.type[cellIndex]];
     return !!def && (def.group === 'Solids' || def.category === 'powder' || def.isPlant || !!def.machine);
+}
+
+function ensureAmbientVisibilityScratch(cells) {
+    if (ambientVisibilityScratch?.cols === COLS &&
+        ambientVisibilityScratch?.cells === cells) return ambientVisibilityScratch;
+    ambientVisibilityScratch = {
+        cols: COLS,
+        cells,
+        topVerticalClear: new Uint8Array(cells),
+        topVerticalGas: new Uint8Array(cells),
+        bottomVerticalClear: new Uint8Array(cells),
+        bottomVerticalGas: new Uint8Array(cells),
+        skippedSources: new Int32Array(COLS),
+        generation: 0,
+        fullRows: new Uint8Array(ROWS),
+        fullRowPrefix: new Uint32Array(ROWS + 1),
+        fullRowSuffix: new Uint32Array(ROWS + 1)
+    };
+    return ambientVisibilityScratch;
+}
+
+function isAmbientGas(cellIndex) {
+    return DEFS[world.type[cellIndex]]?.category === 'gas';
+}
+
+function traceAmbientRay(sourceX, sourceY, targetX, targetY) {
+    let x = sourceX;
+    let y = sourceY;
+    const targetIndex = index(targetX, targetY);
+    let gasSeen = isAmbientGas(index(x, y));
+    if ((x !== targetX || y !== targetY) && isIlluminationOccluder(index(x, y))) {
+        return { clear: false, blockerX: x, blockerY: y };
+    }
+    const dx = Math.abs(targetX - sourceX);
+    const sx = sourceX < targetX ? 1 : -1;
+    const dy = -Math.abs(targetY - sourceY);
+    const sy = sourceY < targetY ? 1 : -1;
+    let error = dx + dy;
+    while (x !== targetX || y !== targetY) {
+        const twiceError = 2 * error;
+        if (twiceError >= dy) {
+            error += dy;
+            x += sx;
+        }
+        if (twiceError <= dx) {
+            error += dx;
+            y += sy;
+        }
+        const cellIndex = index(x, y);
+        if (isAmbientGas(cellIndex)) gasSeen = true;
+        if (cellIndex !== targetIndex && isIlluminationOccluder(cellIndex)) {
+            return { clear: false, blockerX: x, blockerY: y };
+        }
+    }
+    return { clear: true, gas: gasSeen };
+}
+
+function ambientRayXAtRow(sourceX, sourceY, targetX, targetY, targetRow) {
+    let x = sourceX;
+    let y = sourceY;
+    const dx = Math.abs(targetX - sourceX);
+    const sx = sourceX < targetX ? 1 : -1;
+    const dy = -Math.abs(targetY - sourceY);
+    const sy = sourceY < targetY ? 1 : -1;
+    let error = dx + dy;
+    while (y !== targetRow && (sy > 0 ? y < targetRow : y > targetRow)) {
+        const twiceError = 2 * error;
+        if (twiceError >= dy) {
+            error += dy;
+            x += sx;
+        }
+        if (twiceError <= dx) {
+            error += dx;
+            y += sy;
+        }
+    }
+    return x;
+}
+
+function markAmbientRaySourceInterval(scratch, generation, sourceY, targetX, targetY, blockerX, blockerY, fallbackX) {
+    if (blockerY === sourceY) {
+        scratch.skippedSources[fallbackX] = generation;
+        return;
+    }
+    let low = 0;
+    let high = COLS;
+    while (low < high) {
+        const middle = (low + high) >> 1;
+        if (ambientRayXAtRow(middle, sourceY, targetX, targetY, blockerY) < blockerX) low = middle + 1;
+        else high = middle;
+    }
+    const first = low;
+    if (first >= COLS || ambientRayXAtRow(first, sourceY, targetX, targetY, blockerY) !== blockerX) {
+        scratch.skippedSources[fallbackX] = generation;
+        return;
+    }
+    low = first;
+    high = COLS;
+    while (low < high) {
+        const middle = (low + high) >> 1;
+        if (ambientRayXAtRow(middle, sourceY, targetX, targetY, blockerY) <= blockerX) low = middle + 1;
+        else high = middle;
+    }
+    for (let sourceX = first; sourceX < low; sourceX++) {
+        scratch.skippedSources[sourceX] = generation;
+    }
+}
+
+function findAmbientWitness(x, y, fromTop, scratch) {
+    const targetIndex = index(x, y);
+    const sourceY = fromTop ? 0 : ROWS - 1;
+    const verticalClear = fromTop
+        ? scratch.topVerticalClear[targetIndex] !== 0
+        : scratch.bottomVerticalClear[targetIndex] !== 0;
+    if (verticalClear) {
+        return {
+            gas: (fromTop ? scratch.topVerticalGas[targetIndex]
+                : scratch.bottomVerticalGas[targetIndex]) !== 0
+        };
+    }
+    if (fromTop ? scratch.fullRowPrefix[y] > 0 : scratch.fullRowSuffix[y + 1] > 0) return null;
+
+    scratch.generation++;
+    if (scratch.generation >= 2_000_000_000) {
+        scratch.skippedSources.fill(0);
+        scratch.generation = 1;
+    }
+    const generation = scratch.generation;
+    const maxOffset = Math.max(x, COLS - 1 - x);
+    for (let offset = 1; offset <= maxOffset; offset++) {
+        // Equal-slope witnesses prefer the smaller boundary-cell x.
+        const left = x - offset;
+        const right = x + offset;
+        for (let side = 0; side < 2; side++) {
+            const sourceX = side === 0 ? left : right;
+            if (side === 0 && left < 0) continue;
+            if (sourceX < 0 || sourceX >= COLS || scratch.skippedSources[sourceX] === generation) continue;
+            const witness = traceAmbientRay(sourceX, sourceY, x, y);
+            if (witness.clear) return witness;
+            markAmbientRaySourceInterval(scratch, generation, sourceY, x, y,
+                witness.blockerX, witness.blockerY, sourceX);
+        }
+    }
+    return null;
+}
+
+function rebuildAmbientIlluminationField() {
+    if (!world) return;
+    const cells = world.type.length;
+    if (!world.ambientIllumination || world.ambientIllumination.length !== cells) {
+        world.ambientIllumination = new Float32Array(cells);
+    }
+    const target = ambientIlluminationTarget;
+    if (target <= 10) {
+        world.ambientIllumination.fill(target);
+    } else {
+        const scratch = ensureAmbientVisibilityScratch(cells);
+        scratch.fullRowPrefix.fill(0);
+        scratch.fullRowSuffix.fill(0);
+        for (let y = 0; y < ROWS; y++) {
+            let fullyOpaque = true;
+            for (let x = 0; x < COLS; x++) {
+                if (!isIlluminationOccluder(index(x, y))) {
+                    fullyOpaque = false;
+                    break;
+                }
+            }
+            scratch.fullRows[y] = fullyOpaque ? 1 : 0;
+            scratch.fullRowPrefix[y + 1] = scratch.fullRowPrefix[y] + scratch.fullRows[y];
+        }
+        for (let y = ROWS - 1; y >= 0; y--) {
+            scratch.fullRowSuffix[y] = scratch.fullRowSuffix[y + 1] + scratch.fullRows[y];
+        }
+
+        for (let x = 0; x < COLS; x++) {
+            let blocked = false;
+            let gasSeen = false;
+            for (let y = 0; y < ROWS; y++) {
+                const cellIndex = index(x, y);
+                scratch.topVerticalClear[cellIndex] = blocked ? 0 : 1;
+                scratch.topVerticalGas[cellIndex] = gasSeen || isAmbientGas(cellIndex) ? 1 : 0;
+                if (isIlluminationOccluder(cellIndex)) blocked = true;
+                if (isAmbientGas(cellIndex)) gasSeen = true;
+            }
+            blocked = false;
+            gasSeen = false;
+            for (let y = ROWS - 1; y >= 0; y--) {
+                const cellIndex = index(x, y);
+                scratch.bottomVerticalClear[cellIndex] = blocked ? 0 : 1;
+                scratch.bottomVerticalGas[cellIndex] = gasSeen || isAmbientGas(cellIndex) ? 1 : 0;
+                if (isIlluminationOccluder(cellIndex)) blocked = true;
+                if (isAmbientGas(cellIndex)) gasSeen = true;
+            }
+        }
+
+        for (let y = 0; y < ROWS; y++) {
+            for (let x = 0; x < COLS; x++) {
+                const i = index(x, y);
+                const top = findAmbientWitness(x, y, true, scratch);
+                const witness = top || findAmbientWitness(x, y, false, scratch);
+                const value = top ? target : witness ? target * 0.5 : 10;
+                world.ambientIllumination[i] = witness?.gas ? value * 0.75 : value;
+            }
+        }
+    }
+    ambientIlluminationDirty = false;
+    ambientIlluminationFieldFrame = frameCount;
 }
 
 function illuminationPathBlocked(sourceX, sourceY, targetX, targetY) {
@@ -733,11 +968,31 @@ function rebuildIlluminationField() {
     illuminationFieldFrame = frameCount;
 }
 
+export function ensureLocalIlluminationCurrent() {
+    if (!world) return false;
+    ensureLogicalCurrent();
+    let rebuilt = false;
+    if (illuminationDirty || illuminationFieldFrame !== frameCount) {
+        rebuildIlluminationField();
+        rebuilt = true;
+    }
+    return rebuilt;
+}
+
 export function getIlluminationAt(x, y) {
     if (!world || !inBounds(x, y)) return 0;
-    ensureLogicalCurrent();
-    if (illuminationDirty || illuminationFieldFrame !== frameCount) rebuildIlluminationField();
-    return world.illumination[index(x, y)] || 0;
+    illuminationLookupCount++;
+    let rebuilt = ensureLocalIlluminationCurrent();
+    if (ambientIlluminationDirty || ambientIlluminationFieldFrame !== frameCount) {
+        rebuildAmbientIlluminationField();
+        rebuilt = true;
+    }
+    if (rebuilt) illuminationRebuildCount++;
+    const i = index(x, y);
+    return Math.max(world.ambientIllumination[i] || 0, world.illumination[i] || 0);
+}
+export function getIlluminationCacheStats() {
+    return { lookups: illuminationLookupCount, rebuilds: illuminationRebuildCount };
 }
 export function setDewpointTarget(value) {
     if (!Number.isFinite(Number(value))) return;
@@ -753,18 +1008,41 @@ export function getPlantHealth(x, y) {
     return plantHealthStateAt(x, y, def);
 }
 
+export function getPlantEnvironment(x, y) {
+    if (!world || !inBounds(x, y)) return null;
+    const i = index(x, y);
+    const def = DEFS[world.type[i]];
+    if (!def?.isPlant || !def.plantSpecies) return null;
+    return {
+        temperature: world.temp[i],
+        minTemperature: def.plantMinTemp,
+        idealTemperature: def.plantIdealTemp,
+        maxTemperature: def.plantMaxTemp,
+        humidity: humidityNearCell(x, y),
+        minHumidity: def.plantMinHumidity,
+        idealHumidity: def.plantIdealHumidity,
+        maxHumidity: def.plantMaxHumidity,
+        illumination: getIlluminationAt(x, y),
+        minIllumination: def.plantMinIllumination,
+        idealIllumination: def.plantIdealIllumination
+    };
+}
+
 function plantHealthStateAt(x, y, def) {
     const i = index(x, y);
     const temperature = world.temp[i];
     const humidity = humidityNearCell(x, y);
+    const illumination = getIlluminationAt(x, y);
     const moisture = plantMoistureAt(x, y, def);
     const substrate = plantSubstrateNearby(x, y, def, moisture);
     const thrives = temperature >= def.plantMinTemp && temperature <= def.plantMaxTemp &&
-        humidity >= def.plantMinHumidity && humidity <= def.plantMaxHumidity && substrate;
+        humidity >= def.plantMinHumidity && humidity <= def.plantMaxHumidity &&
+        illumination >= def.plantMinIllumination && substrate;
     if (thrives) return 'thriving';
     const survives = temperature >= def.plantMinTemp - 12 && temperature <= def.plantMaxTemp + 12 &&
         humidity >= Math.max(0, def.plantMinHumidity - 28) &&
         humidity <= Math.min(100, def.plantMaxHumidity + 18) &&
+        illumination >= def.plantMinIllumination * 0.4 &&
         substrate;
     return survives ? 'surviving' : 'dying';
 }
@@ -817,6 +1095,19 @@ function plantIdealFitness(value, ideal, min, max) {
     return Math.max(0, Math.min(1, 1 - Math.abs(value - ideal) / span));
 }
 
+function plantLightFitnessAt(x, y, def) {
+    const minimum = def.plantMinIllumination;
+    const ideal = def.plantIdealIllumination;
+    if (ideal <= minimum) return getIlluminationAt(x, y) >= ideal ? 1 : 0;
+    return Math.max(0, Math.min(1,
+        (getIlluminationAt(x, y) - minimum) / (ideal - minimum)));
+}
+
+function plantGrowthChanceAt(x, y, def, baseChance = def.growChance) {
+    if (!def.plantSpecies) return baseChance;
+    return baseChance * (0.25 + 0.75 * plantLightFitnessAt(x, y, def));
+}
+
 function plantVigorAt(x, y, def) {
     const i = index(x, y);
     const temperatureFitness = plantIdealFitness(
@@ -827,7 +1118,8 @@ function plantVigorAt(x, y, def) {
     const moistureFitness = def.moistureNeed > 0
         ? Math.max(0, Math.min(1, moisture / (def.moistureNeed * 1.25)))
         : 1;
-    return Math.min(temperatureFitness, humidityFitness, moistureFitness);
+    return Math.min(temperatureFitness, humidityFitness, moistureFitness,
+        plantLightFitnessAt(x, y, def));
 }
 
 function mossSubstrateWithin(x, y, radius) {
@@ -862,7 +1154,7 @@ function updatePlantHealth(x, y, i, def) {
 
 function spreadMoss(x, y, i, def) {
     const budget = world.data[i];
-    if (budget <= 1 || random() >= def.growChance) return false;
+    if (budget <= 1 || random() >= plantGrowthChanceAt(x, y, def)) return false;
     const direction = random() < 0.5 ? -1 : 1;
     for (const dx of [direction, -direction]) {
         const nx = x + dx;
@@ -1001,6 +1293,7 @@ export function captureSimulationState() {
         ambient: AMBIENT,
         ambientTarget,
         ambientHumidity: ambientHumidityTarget,
+        ambientIllumination: ambientIlluminationTarget,
         dewpointTarget,
         ambientWindOn,
         windDial: windStrengthToLegacyScale(gustWindStrength),
@@ -1127,6 +1420,8 @@ export function restoreSimulationState(state) {
     ambientTarget = Number.isFinite(state.ambientTarget) ? state.ambientTarget : AMBIENT;
     ambientHumidityTarget = Number.isFinite(state.ambientHumidity)
         ? Math.max(0, Math.min(100, state.ambientHumidity)) : 50;
+    ambientIlluminationTarget = Number.isFinite(state.ambientIllumination)
+        ? Math.max(0, Math.min(100, state.ambientIllumination)) : 50;
     dewpointTarget = Number.isFinite(state.dewpointTarget)
         ? Math.max(0, Math.min(100, state.dewpointTarget)) : 10;
     if (!state.arrays.humidity) world.humidity.fill(ambientHumidityTarget);
@@ -1161,6 +1456,8 @@ export function restoreSimulationState(state) {
     illuminationDirty = true;
     illuminationSourceSignature = null;
     illuminationFieldFrame = -1;
+    ambientIlluminationDirty = true;
+    ambientIlluminationFieldFrame = -1;
     illuminationFlashes = [];
     machineCollisionMaskDirty = true;
 }
@@ -1171,7 +1468,11 @@ export function createWorld(cols, rows) {
     assertValidWorldDimensions(cols, rows);
     COLS = cols;
     ROWS = rows;
+    ambientIlluminationTarget = 50;
     const n = cols * rows;
+    ambientIlluminationDirty = true;
+    ambientIlluminationFieldFrame = -1;
+    ambientVisibilityScratch = null;
     illuminationDirty = true;
     illuminationSourceSignature = null;
     illuminationFieldFrame = -1;
@@ -1184,6 +1485,10 @@ export function createWorld(cols, rows) {
         // world grid. They are rebuilt from emitters and blockers and are
         // intentionally omitted from save/blueprint data.
         illumination: new Float32Array(n),
+        // Ambient visibility is separately derived from the boundary,
+        // occluders, and gas. Effective illumination combines this with the
+        // local-emitter plane at query time.
+        ambientIllumination: new Float32Array(n),
         illuminationTint: new Uint8Array(n),
         illuminationTintStrength: new Float32Array(n),
         temp: new Float32Array(n),
@@ -1292,6 +1597,10 @@ export function getWorld() { return world; }
 export function invalidateLogicalCurrent() {
     logicalCurrentDirty = true;
     illuminationDirty = true;
+}
+
+function invalidateAmbientIllumination() {
+    ambientIlluminationDirty = true;
 }
 
 function ensureLogicalCurrent() {
@@ -2566,6 +2875,8 @@ export function getBatteryCircuitMetrics(x, y) {
 
 export function clearWorld() {
     world.type.fill(EMPTY);
+    world.ambientIllumination.fill(0);
+    invalidateAmbientIllumination();
     world.life.fill(0);
     world.lifeMax.fill(0);
     world.residue.fill(0);
@@ -2710,6 +3021,7 @@ export function setCell(x, y, id, keepTemp) {
         machineCollisionMaskDirty = true;
     }
     const wasSameRay = previousType === id && def?.forceRate > 0;
+    if (previousType !== id) invalidateAmbientIllumination();
     world.type[i] = id;
     invalidateLogicalCurrent();
     if (def?.machine === 'mixer') hasMixerMachine = true;
@@ -2757,6 +3069,7 @@ export function setCell(x, y, id, keepTemp) {
 // changing state does not change how hot that spot is.
 function transform(i, id, life, residue) {
     const def = DEFS[id];
+    if (world.type[i] !== id) invalidateAmbientIllumination();
     if (isCollectorMachine(DEFS[world.type[i]]) || isCollectorMachine(def)) collectorMasksDirty = true;
     if (DEFS[world.type[i]]?.machineCollisionWidth || def?.machineCollisionWidth) {
         machineCollisionMaskDirty = true;
@@ -2801,6 +3114,7 @@ function defaultBulkInsulation(category) {
 }
 
 function removeParticle(i) {
+    if (world.type[i] !== EMPTY) invalidateAmbientIllumination();
     if (isCollectorMachine(DEFS[world.type[i]])) collectorMasksDirty = true;
     if (DEFS[world.type[i]]?.machineCollisionWidth) machineCollisionMaskDirty = true;
     world.type[i] = EMPTY;
@@ -2833,6 +3147,7 @@ function removeParticle(i) {
 }
 
 function swapCells(i1, i2) {
+    if (world.type[i1] !== world.type[i2]) invalidateAmbientIllumination();
     if (isCollectorMachine(DEFS[world.type[i1]]) || isCollectorMachine(DEFS[world.type[i2]])) {
         collectorMasksDirty = true;
     }
@@ -2889,8 +3204,12 @@ function swapCells(i1, i2) {
 // delay is the weighted distance from the contact point, so the visible yellow
 // front moves away in both directions and reaches every branch and endpoint.
 // Each cell is only visibly powered while the front passes over it.
-function energizeConnectedMetal(seeds, chargeStorage = true) {
+function energizeConnectedMetal(seeds, chargeStorage = true, profileOrdinarySpark = false) {
     if (seeds.length === 0) return;
+
+    const recorder = profileOrdinarySpark ? activeP0PerformanceRecorder() : null;
+    const startedAt = recorder ? performance.now() : 0;
+    let connectionVisits = 0;
 
     const distance = new Int32Array(world.type.length);
     distance.fill(-1);
@@ -2907,6 +3226,7 @@ function energizeConnectedMetal(seeds, chargeStorage = true) {
     for (let head = 0; head < queue.length; head++) {
         const i = queue[head];
         forEachConductiveConnection(i, ni => {
+            if (recorder) connectionVisits++;
             const nextDef = DEFS[world.type[ni]];
             if (!chargeStorage && nextDef.chargeCapacity > 0) return;
 
@@ -2952,6 +3272,16 @@ function energizeConnectedMetal(seeds, chargeStorage = true) {
             world.charge[i] = DEFS[world.type[i]].chargeCapacity * fullness;
         }
         invalidateLogicalCurrent();
+    }
+
+    if (recorder) {
+        recorder.record('ordinarySparkPropagation', performance.now() - startedAt, {
+            touchedCells: touched.length,
+            connectionVisits,
+            // The traversal allocates one full-world distance slot per cell and
+            // grows two index arrays to the number of reached conductors.
+            allocatedCells: distance.length + queue.length + touched.length
+        });
     }
 }
 
@@ -3106,7 +3436,7 @@ function buildElectricalMachineLoads() {
     return loadsByWire;
 }
 
-function connectedGridConsumption(seeds, electricalLoadsByWire = null) {
+function connectedGridConsumption(seeds, electricalLoadsByWire = null, profileCounters = null) {
     if (seeds.length === 0) return 0;
 
     const visited = new Uint8Array(world.type.length);
@@ -3122,12 +3452,15 @@ function connectedGridConsumption(seeds, electricalLoadsByWire = null) {
 
     for (let head = 0; head < queue.length; head++) {
         const i = queue[head];
+        if (profileCounters) profileCounters.visitedCells++;
         const def = DEFS[world.type[i]];
         if (!def || !def.conductive) continue;
+        if (profileCounters) profileCounters.conductiveCells++;
         consumption += def.powerConsumption;
         for (const entry of electricalLoadsByWire?.get(i) || []) {
             if (countedMachineLoads.has(entry.machine)) continue;
             countedMachineLoads.add(entry.machine);
+            if (profileCounters) profileCounters.loadMachines++;
             consumption += entry.load;
         }
 
@@ -3352,6 +3685,15 @@ function recomputeLogicalCurrent() {
 // a charged piece draws charge from the old cells immediately on the next
 // simulation frame. Eight-way contact matches electrical wire connectivity.
 function balanceStoredCharge() {
+    const recorder = activeP0PerformanceRecorder();
+    const startedAt = recorder ? performance.now() : 0;
+    const profileCounters = recorder ? {
+        batteryGroups: 0,
+        batteryCells: 0,
+        conductiveCells: 0,
+        loadMachines: 0,
+        visitedCells: 0
+    } : null;
     const visited = new Uint8Array(world.type.length);
     let electricalLoadsByWire = null;
 
@@ -3394,12 +3736,17 @@ function balanceStoredCharge() {
             }
         }
 
+        if (profileCounters) {
+            profileCounters.batteryGroups++;
+            profileCounters.batteryCells += cells.length;
+        }
+
         // Every conductive cell in the connected grid draws its configured
         // amount on every simulation tick. A bare copper wire therefore drains
         // very slowly, while powered machines can make the same grid consume
         // hundreds of charge units per tick.
         if (!electricalLoadsByWire) electricalLoadsByWire = buildElectricalMachineLoads();
-        const gridConsumption = connectedGridConsumption(dischargeContacts, electricalLoadsByWire) /
+        const gridConsumption = connectedGridConsumption(dischargeContacts, electricalLoadsByWire, profileCounters) /
             BATTERY_DISCHARGE_SCALE;
         if (totalCharge > 0 && gridConsumption > 0) {
             totalCharge = Math.max(0, totalCharge - gridConsumption);
@@ -3411,9 +3758,16 @@ function balanceStoredCharge() {
             world.charge[i] = DEFS[world.type[i]].chargeCapacity * fullness;
         }
     }
+
+    if (recorder) {
+        recorder.record('batteryLoadTraversal', performance.now() - startedAt, profileCounters);
+    }
 }
 
 function updateElectricalPower() {
+    const recorder = activeP0PerformanceRecorder();
+    const startedAt = recorder ? performance.now() : 0;
+    let conductiveCells = 0;
     for (let i = 0; i < world.type.length; i++) {
         const id = world.type[i];
         if (id === EMPTY) {
@@ -3424,6 +3778,7 @@ function updateElectricalPower() {
         }
 
         const def = DEFS[id];
+        if (recorder && def.conductive) conductiveCells++;
         if (!def.conductive) {
             world.power[i] = 0;
             world.powerDelay[i] = 0;
@@ -3443,6 +3798,12 @@ function updateElectricalPower() {
     balanceStoredCharge();
     recomputeLogicalCurrent();
     relayElectricalSwitches();
+    if (recorder) {
+        recorder.record('updateElectricalPower', performance.now() - startedAt, {
+            worldCells: world.type.length,
+            conductiveCells
+        });
+    }
 }
 
 function relayElectricalSwitches() {
@@ -3657,7 +4018,10 @@ function nearbyClouds(x, y, radius) {
 }
 
 export function stepSimulation() {
+    const recorder = activeP0PerformanceRecorder();
+    const startedAt = recorder ? performance.now() : 0;
     frameCount++;
+    invalidateAmbientIllumination();
     if (illuminationFlashes.length) {
         illuminationFlashes = illuminationFlashes.filter(flash =>
             flash.expiresAtFrame > frameCount);
@@ -3741,6 +4105,11 @@ export function stepSimulation() {
             else if (def.category === 'liquid') moveLiquid(x, y, i, def, sluggish);
             else if (def.category === 'gas' && !sluggish) moveGas(x, y, i, def);
         }
+    }
+    if (recorder) {
+        recorder.record('stepSimulation', performance.now() - startedAt, {
+            worldCells: world.type.length
+        });
     }
 }
 
@@ -4302,7 +4671,8 @@ function applyReactions(x, y, i, def) {
 
     if (def.plantSpecies && def.isSeed && ((frameCount + i) & 3) === 0 &&
         world.temp[i] >= def.germinationMinTemp &&
-        humidityNearCell(x, y) >= def.germinationMinHumidity) {
+        humidityNearCell(x, y) >= def.germinationMinHumidity &&
+        getIlluminationAt(x, y) >= def.plantMinIllumination) {
         if (def.plantSpecies === 'moss') {
             const rule = def.sprouts[0];
             const grownDef = rule ? DEFS[rule.into] : null;
@@ -4340,7 +4710,7 @@ function applyReactions(x, y, i, def) {
     if (def.energizesConductors && world.data[i] === 0) {
         const conductors = conductiveNeighbours(x, y);
         if (conductors.length > 0) {
-            energizeConnectedMetal(conductors);
+            energizeConnectedMetal(conductors, true, true);
             removeParticle(i);
             return true;
         }
@@ -4646,9 +5016,10 @@ function applyReactions(x, y, i, def) {
         if (def.growStyle === 'surface') return creepAcrossSurface(x, y, i, def);
 
         const budget = world.data[i];
-        const growthChance = def.plantSpecies === 'grass' && soil === ROOT_RICH
+        const baseGrowthChance = def.plantSpecies === 'grass' && soil === ROOT_RICH
             ? def.growChance * def.richSoilGrowthMultiplier
             : def.growChance;
+        const growthChance = plantGrowthChanceAt(x, y, def, baseGrowthChance);
         if (budget > 1 && random() < growthChance) {
             // Nothing grows out of dry ground. A plant only puts on another
             // cell while some part of it - anywhere in the plant, not just the
@@ -4999,7 +5370,7 @@ function strandBeside(x, y, id) {
 function creepAcrossSurface(x, y, i, def) {
     const budget = world.data[i];
 
-    if (budget > 1 && random() < def.growChance) {
+    if (budget > 1 && random() < plantGrowthChanceAt(x, y, def)) {
         // Both ways at once. The side it came from is already a pad and so is
         // never a candidate, which is what keeps it spreading outwards.
         for (const dx of [-1, 1]) {
@@ -5127,6 +5498,7 @@ function explode(x, y, def) {
             }
 
             world.type[ni] = EMPTY;
+            invalidateAmbientIllumination();
             invalidateLogicalCurrent();
             world.life[ni] = 0;
             world.lifeMax[ni] = 0;

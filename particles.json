@@ -169,6 +169,16 @@
   "ambientTemp": 8,
   "airConductivity": 0.06,
   "airCooling": 0.012,
+  "plantIlluminationProfiles": {
+    "moss": { "minimum": 5, "ideal": 25 },
+    "grass": { "minimum": 15, "ideal": 70 },
+    "daffodil": { "minimum": 15, "ideal": 65 },
+    "red tulip": { "minimum": 20, "ideal": 70 },
+    "geranium": { "minimum": 25, "ideal": 75 },
+    "blue flower": { "minimum": 10, "ideal": 55 },
+    "banana": { "minimum": 30, "ideal": 85 },
+    "water grass": { "minimum": 10, "ideal": 60 }
+  },
 
   "particles": {
     "1": {

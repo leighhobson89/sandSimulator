@@ -24,7 +24,7 @@ import {
     windStrengthToLegacyScale,
     getBatteryCircuitMetrics, getMachineLiveStatus,
     getTubingFlows, isMachinePoweredAt,
-    getIlluminationAt,
+    getIlluminationAt, ensureLocalIlluminationCurrent, getPlantEnvironment,
     getMachinePorts, getMachinePortTemplates, getMachineSetting,
     registerMachinePortLead, getMachinePortLeadOwner,
     getMachineArtworkLayout, isMachinePortMaterialCompatible, EMPTY,
@@ -60,6 +60,11 @@ let fittedCanvasHeight = 0;
 let canvasBaseScale = 1;
 let expandedZoomProfile = false;
 let zoomStatusTimer = null;
+
+function activeP0PerformanceRecorder() {
+    const recorder = typeof window !== 'undefined' ? window.__P0_PERF__ : null;
+    return recorder?.enabled && typeof recorder.record === 'function' ? recorder : null;
+}
 
 // A blueprint is a compact, rectangular copy of the persistent cell state.
 // Transient frame bookkeeping (moved and tempNext) is intentionally excluded:
@@ -480,12 +485,22 @@ function visibleCellBounds(margin = 0) {
 
 function drawIlluminationLayer(world, visualizationMode) {
     if (!illuminationContext || !illuminationImageData) return;
+    const recorder = typeof window !== 'undefined' ? window.__P0_PERF__ : null;
+    const profiling = !!recorder?.enabled && typeof recorder.record === 'function';
+    const startedAt = profiling ? performance.now() : 0;
     const data = illuminationImageData.data;
     data.fill(0);
+    let litCells = 0;
     if (visualizationMode === 'normal') {
+        // A valid world always has at least one cell. Trigger lazy rebuilding
+        // once, then sample the local-emitter plane directly for this frame.
+        ensureLocalIlluminationCurrent();
         for (let i = 0; i < world.type.length; i++) {
-            const intensity = getIlluminationAt(i % world.cols, Math.floor(i / world.cols));
+            // The overlay visualizes local emitters only; ambient light is a
+            // separate effective-light value used by plants and feedback.
+            const intensity = world.illumination[i] || 0;
             if (intensity <= 0) continue;
+            if (profiling) litCells++;
             const pixel = i * 4;
             if (world.illuminationTint[i] === 1) {
                 data[pixel] = 255;
@@ -502,9 +517,17 @@ function drawIlluminationLayer(world, visualizationMode) {
     // This is a one-pixel-per-cell transparent surface. CSS scales it with
     // the world canvas, so intensity and the 25-cell reach stay world-based.
     illuminationContext.putImageData(illuminationImageData, 0, 0);
+    if (profiling) {
+        recorder.record('illuminationLayer', performance.now() - startedAt, {
+            cellsScanned: visualizationMode === 'normal' ? world.type.length : 0,
+            litCells
+        });
+    }
 }
 
 function drawWorld() {
+    const recorder = activeP0PerformanceRecorder();
+    const startedAt = recorder ? performance.now() : 0;
     const world = getWorld();
     const defs = getDefinitions();
     const type = world.type;
@@ -665,6 +688,12 @@ function drawWorld() {
     drawGrabberOutline();
     drawLinePreview();
     drawShapePreview();
+    if (recorder) {
+        recorder.record('drawWorld', performance.now() - startedAt, {
+            visibleCells: Math.max(0, bounds.right - bounds.left) *
+                Math.max(0, bounds.bottom - bounds.top)
+        });
+    }
 }
 
 // A pending machine is only a visual preview. It is deliberately kept outside
@@ -1190,6 +1219,9 @@ export function placeMachineWithLead(x, y, machine, direction, endClientX, endCl
 function drawMachineOverlays() {
     const overlay = getElements().machineOverlay;
     if (!overlay) return;
+    const recorder = activeP0PerformanceRecorder();
+    const startedAt = recorder ? performance.now() : 0;
+    let machineCount = 0;
     machineArtworkIcons = [];
     if (typeof overlay.replaceChildren === 'function') overlay.replaceChildren();
     else overlay.innerHTML = '';
@@ -1375,6 +1407,7 @@ function drawMachineOverlays() {
         const def = defs[world.type[i]];
         const machine = def?.machine;
         if (!machine || !icons[machine]) continue;
+        if (recorder) machineCount++;
         if ((machine === 'fan' || machine === 'heater' || machine === 'cooler') &&
             isMachinePoweredAt(x, y)) {
             const cone = document.createElementNS(MACHINE_ICON_SVG_NS, 'path');
@@ -1475,6 +1508,14 @@ function drawMachineOverlays() {
         line.setAttribute('data-end-client-y', String(preview.endClientY));
         layer.appendChild(line);
         overlay.appendChild(layer);
+    }
+
+    if (recorder) {
+        recorder.record('machineOverlayRebuild', performance.now() - startedAt, {
+            machineCount,
+            svgElements: overlay.querySelectorAll('*').length,
+            sparkPaths: overlay.querySelectorAll('.electrical-signal-spark').length
+        });
     }
 }
 
@@ -2042,13 +2083,24 @@ function updateFeedback() {
     }
     const def = defs[id];
     if (!def) return;
+    const plantEnvironment = def.isPlant && def.plantSpecies
+        ? getPlantEnvironment(feedbackX, feedbackY) : null;
     appendFeedbackLine(feedback, def.name);
     appendFeedbackLine(feedback,
         `Catalog: ${def.group}${def.catalogSubgroup ? ` / ${def.catalogSubgroup}` : ''} · ${def.category}`);
-    appendFeedbackLine(feedback, `Temperature: ${formatFeedbackNumber(world.temp[cellIndex])}°C`);
-    appendFeedbackLine(feedback,
-        `Illumination: ${formatFeedbackNumber(getIlluminationAt(feedbackX, feedbackY))}%`);
-    appendFeedbackLine(feedback, `Humidity: ${Math.round(world.humidity[cellIndex])}%`);
+    if (plantEnvironment) {
+        appendFeedbackLine(feedback,
+            `Temperature: ${formatFeedbackNumber(plantEnvironment.temperature)}°C · ideal ${formatFeedbackNumber(plantEnvironment.idealTemperature)}°C (${formatFeedbackNumber(plantEnvironment.minTemperature)}–${formatFeedbackNumber(plantEnvironment.maxTemperature)}°C)`);
+        appendFeedbackLine(feedback,
+            `Illumination: ${formatFeedbackNumber(plantEnvironment.illumination)}% · min ${formatFeedbackNumber(plantEnvironment.minIllumination)} / ideal ${formatFeedbackNumber(plantEnvironment.idealIllumination)}`);
+        appendFeedbackLine(feedback,
+            `Humidity: ${formatFeedbackNumber(plantEnvironment.humidity)}% · ideal ${formatFeedbackNumber(plantEnvironment.idealHumidity)}% (${formatFeedbackNumber(plantEnvironment.minHumidity)}–${formatFeedbackNumber(plantEnvironment.maxHumidity)}%)`);
+    } else {
+        appendFeedbackLine(feedback, `Temperature: ${formatFeedbackNumber(world.temp[cellIndex])}°C`);
+        appendFeedbackLine(feedback,
+            `Illumination: ${formatFeedbackNumber(getIlluminationAt(feedbackX, feedbackY))}%`);
+        appendFeedbackLine(feedback, `Humidity: ${Math.round(world.humidity[cellIndex])}%`);
+    }
     const transitions = transitionLines(def, defs);
     if (def.name !== 'Battery' || transitions.length) {
         appendFeedbackLine(feedback,

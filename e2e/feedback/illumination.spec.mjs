@@ -13,6 +13,7 @@ async function seedPoweredLamp(page, { lamp, target }) {
         const definitions = physics.getDefinitions();
         const id = name => definitions.findIndex(definition => definition?.name === name);
         physics.clearWorld();
+        physics.setAmbientIlluminationTarget(0);
         physics.setCell(lamp.x, lamp.y, id('Lamp'));
         const world = physics.getWorld();
         const lampIndex = physics.index(lamp.x, lamp.y);
@@ -146,6 +147,7 @@ test('Fire, Lava, and Scoria emit at their configured strengths over five cells'
         const result = {};
         for (const name of ['Fire', 'Lava', 'Scoria']) {
             physics.clearWorld();
+            physics.setAmbientIlluminationTarget(0);
             physics.setCell(source.x, source.y, id(name));
             result[name] = {
                 atSource: physics.getIlluminationAt(source.x, source.y),
@@ -179,6 +181,7 @@ test('Fire, Lava, and Scoria light renders orange', async ({ page }) => {
         view.setVisualizationMode('normal');
         for (const name of ['Fire', 'Lava', 'Scoria']) {
             physics.clearWorld();
+            physics.setAmbientIlluminationTarget(0);
             physics.setCell(source.x, source.y, id(name));
             game.renderWorld();
             result[name] = Array.from(document.querySelector('#illuminationOverlay')
@@ -187,9 +190,12 @@ test('Fire, Lava, and Scoria light renders orange', async ({ page }) => {
         return result;
     });
     for (const name of ['Fire', 'Lava', 'Scoria']) {
+        // Canvas unpremultiplication rounds low-alpha pixels, especially dim Scoria.
         expect(colors[name][0], `${name} glow is orange`).toBe(255);
-        expect(colors[name][1], `${name} glow is orange`).toBe(126);
-        expect(colors[name][2], `${name} glow is orange`).toBe(32);
+        expect(colors[name][1], `${name} glow is orange`).toBeGreaterThanOrEqual(120);
+        expect(colors[name][1], `${name} glow is orange`).toBeLessThanOrEqual(135);
+        expect(colors[name][1], `${name} glow is orange`).toBeGreaterThan(colors[name][2]);
+        expect(colors[name][2], `${name} glow is orange`).toBeLessThan(48);
         expect(colors[name][3], `${name} emits visible light`).toBeGreaterThan(0);
     }
 });
@@ -208,6 +214,7 @@ test('Fire produced by burning Oil and Wood keeps emitting its persistent dim li
         physics.setRandomSource(() => 0.99999);
         for (const fuel of ['Oil', 'Wood']) {
             physics.clearWorld();
+            physics.setAmbientIlluminationTarget(0);
             physics.setCell(source.x, source.y, id(fuel));
             physics.setCell(source.x - 1, source.y, id('Wall'));
             physics.setCell(source.x + 1, source.y, id('Wall'));
@@ -284,6 +291,7 @@ test('Gunpowder stays dark during its fuse, then leaves a four-tick bright explo
         const world = physics.getWorld();
         const centerIndex = physics.index(center.x, center.y);
         physics.clearWorld();
+        physics.setAmbientIlluminationTarget(0);
         physics.setRandomSource(() => 0.99999);
         physics.setCell(center.x, center.y, id('Gunpowder'));
         physics.setCell(center.x, center.y + 1, id('Wall'));
@@ -352,9 +360,11 @@ test('overlapping Fire and Lava light adds contributions and clamps to 100', asy
         const id = name => definitions.findIndex(definition => definition?.name === name);
         const target = { x: 90, y: 70 };
         physics.clearWorld();
+        physics.setAmbientIlluminationTarget(0);
         physics.setCell(target.x - 1, target.y, id('Fire'));
         const oneSource = physics.getIlluminationAt(target.x, target.y);
         physics.clearWorld();
+        physics.setAmbientIlluminationTarget(0);
         const emitters = [
             { x: target.x - 1, y: target.y, name: 'Fire' },
             { x: target.x + 1, y: target.y, name: 'Lava' },
@@ -380,6 +390,7 @@ test('empty Normal-view illumination stays fully transparent', async ({ page }) 
         const view = await import('/constantsAndGlobalVars.js');
         const game = await import('/game.js');
         physics.clearWorld();
+        physics.setAmbientIlluminationTarget(80);
         view.setVisualizationMode('normal');
         game.renderWorld();
         const light = document.querySelector('#illuminationOverlay');
@@ -522,8 +533,8 @@ test('moving a Lamp or blocker invalidates the previous light field', async ({ p
         physics.setCell(lamp.x, lamp.y, 0);
         const oldSourceAfterMove = physics.getIlluminationAt(target.x, target.y);
 
-        const newLamp = { x: lamp.x + 30, y: lamp.y };
-        const newTarget = { x: target.x + 30, y: target.y };
+        const newLamp = { x: lamp.x + 40, y: lamp.y };
+        const newTarget = { x: target.x + 40, y: target.y };
         physics.setCell(newLamp.x, newLamp.y, id('Lamp'));
         const newLampIndex = physics.index(newLamp.x, newLamp.y);
         let best = null;
@@ -582,7 +593,8 @@ test('overlapping Lamp fields add and clamp at 100', async ({ page }) => {
         const definitions = physics.getDefinitions();
         const id = name => definitions.findIndex(definition => definition?.name === name);
         physics.clearWorld();
-        const target = { x: 55, y: 75 };
+        physics.setAmbientIlluminationTarget(0);
+        const target = { x: 55, y: 70 };
         const lamps = [{ x: 50, y: 70 }, { x: 60, y: 70 }];
         const connect = lamp => {
             physics.setCell(lamp.x, lamp.y, id('Lamp'));
@@ -617,14 +629,16 @@ test('overlapping Lamp fields add and clamp at 100', async ({ page }) => {
         physics.setMachineSetting(lamps[1].x, lamps[1].y, 0);
         const oneNear = physics.getIlluminationAt(target.x, target.y);
         physics.setMachineSetting(lamps[1].x, lamps[1].y, 1);
-        const bothFarther = physics.getIlluminationAt(target.x, target.y + 3);
+        const farther = { x: target.x, y: target.y + 14 };
+        const bothFarther = physics.getIlluminationAt(farther.x, farther.y);
         return { bothNear, oneNear, bothFarther };
     });
-    const nearDistance = Math.sqrt(5 ** 2 + 5 ** 2);
-    const fartherDistance = Math.sqrt(5 ** 2 + 8 ** 2);
+    const nearDistance = 5;
+    const fartherDistance = Math.sqrt(5 ** 2 + 14 ** 2);
     expect(result.oneNear).toBeCloseTo(100 * (26 - nearDistance) / 25, 1);
     expect(result.bothNear).toBe(100);
     expect(result.bothFarther).toBeCloseTo(2 * 100 * (26 - fartherDistance) / 25, 1);
+    expect(result.bothFarther).toBeLessThan(100);
 });
 
 test('solids, plants, and machines block Lamp light while gas, Elec, and Tubing transmit it', async ({ page }) => {
@@ -654,6 +668,7 @@ test('solids, plants, and machines block Lamp light while gas, Elec, and Tubing 
         for (const fixture of cases) {
             if (!(fixture.id > 0)) throw new Error('Missing illumination fixture: ' + fixture.key);
             physics.clearWorld();
+            physics.setAmbientIlluminationTarget(0);
             physics.setCell(source.x, source.y, id('Lamp'));
             const world = physics.getWorld();
             const lampIndex = physics.index(source.x, source.y);
@@ -726,7 +741,8 @@ test('normal view receives yellow Lamp tint while diagnostic palettes and world 
     const normalLit = await sampleOverlayPixel(page, target);
     expect(normalDark[3]).toBe(0);
     expect(normalLit[0]).toBe(255);
-    expect(normalLit[1]).toBe(220);
+    expect(normalLit[1]).toBeGreaterThanOrEqual(219);
+    expect(normalLit[1]).toBeLessThanOrEqual(221);
     expect(normalLit[2]).toBeGreaterThanOrEqual(64);
     expect(normalLit[2]).toBeLessThanOrEqual(65);
     expect(normalLit[3]).toBeGreaterThan(normalDark[3]);
@@ -891,4 +907,136 @@ test('air and Lamp feedback report received light and emission state, range, and
     }, { lamp, fixture });
     await page.mouse.move(...Object.values(await machineArtworkCellPoint(page, lamp)));
     await expect(feedback).toContainText(/emission.*OFF|OFF.*emission/i);
+});
+
+test('ambient illumination follows the low-light floor, top/bottom visibility, and one-time gas attenuation', async ({ page }) => {
+    const game = new GamePage(page);
+    await game.openMenu();
+    await game.newGame();
+
+    const field = await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        const definitions = physics.getDefinitions();
+        const id = name => definitions.findIndex(definition => definition?.name === name);
+        const world = physics.getWorld();
+        const sample = { x: 120, y: 80 };
+        const setRow = (y, material) => {
+            for (let x = 0; x < world.cols; x++) physics.setCell(x, y, material);
+        };
+
+        physics.clearWorld();
+        physics.setAmbientIlluminationTarget(10);
+        const lowOpenTop = physics.getIlluminationAt(20, 30);
+        const lowOpenBottom = physics.getIlluminationAt(30, 120);
+        setRow(sample.y - 1, id('Wall'));
+        setRow(sample.y + 1, id('Wall'));
+        const lowEnclosed = physics.getIlluminationAt(sample.x, sample.y);
+        physics.setAmbientIlluminationTarget(0);
+        const zeroEnclosed = physics.getIlluminationAt(sample.x, sample.y);
+
+        physics.setAmbientIlluminationTarget(80);
+        const topAndBottomVisible = physics.getIlluminationAt(200, 60);
+        setRow(sample.y + 1, 0);
+        const bottomOnly = physics.getIlluminationAt(sample.x, sample.y);
+        setRow(sample.y + 1, id('Wall'));
+        const neitherBoundaryVisible = physics.getIlluminationAt(sample.x, sample.y);
+        const topOnly = physics.getIlluminationAt(sample.x, sample.y - 2);
+
+        setRow(sample.y - 1, 0);
+        setRow(sample.y + 1, 0);
+        physics.setCell(sample.x, 20, id('Steam'));
+        physics.setCell(sample.x, 40, id('Steam'));
+        const twoGasCellsOnRay = physics.getIlluminationAt(sample.x, sample.y);
+        const steamIsGas = definitions[id('Steam')]?.category === 'gas';
+        return {
+            lowOpenTop, lowOpenBottom, lowEnclosed, zeroEnclosed,
+            topAndBottomVisible, bottomOnly, neitherBoundaryVisible, topOnly,
+            twoGasCellsOnRay, steamIsGas
+        };
+    });
+
+    expect(field.lowOpenTop).toBe(10);
+    expect(field.lowOpenBottom).toBe(10);
+    expect(field.lowEnclosed).toBe(10);
+    expect(field.zeroEnclosed).toBe(0);
+    expect(field.topAndBottomVisible, 'top visibility takes precedence over the bottom half-strength').toBe(80);
+    expect(field.bottomOnly).toBe(40);
+    expect(field.neitherBoundaryVisible).toBe(10);
+    expect(field.topOnly).toBe(80);
+    expect(field.steamIsGas).toBe(true);
+    expect(field.twoGasCellsOnRay, 'multiple gas cells attenuate the chosen ambient ray only once').toBe(60);
+});
+
+test('ambient light uses the brighter local source and refreshes after slider, solid, gas, and tick changes', async ({ page }) => {
+    const game = new GamePage(page);
+    await game.openMenu();
+    await game.newGame();
+
+    const lamp = { x: 70, y: 55 };
+    await seedPoweredLamp(page, { lamp, target: { x: 80, y: 55 } });
+    const slider = page.getByRole('slider', { name: /ambient light/i });
+    const ambientOnly = { x: 20, y: 60 };
+    await slider.fill('80');
+
+    const brighterLocalAndTransparentAmbient = await page.evaluate(async ({ lamp, ambientOnly }) => {
+        const physics = await import('/physics.js');
+        const game = await import('/game.js');
+        game.renderWorld();
+        const world = physics.getWorld();
+        const overlay = document.querySelector('#illuminationOverlay');
+        const pixel = cell => Array.from(overlay.getContext('2d').getImageData(cell.x, cell.y, 1, 1).data);
+        const dimLocal = { x: lamp.x + 24, y: lamp.y };
+        const brightLocal = { x: lamp.x + 2, y: lamp.y };
+        return {
+            ambientOnly: physics.getIlluminationAt(ambientOnly.x, ambientOnly.y),
+            ambientOnlyLocal: world.illumination[physics.index(ambientOnly.x, ambientOnly.y)],
+            ambientOnlyPixel: pixel(ambientOnly),
+            dimLocal: physics.getIlluminationAt(dimLocal.x, dimLocal.y),
+            dimLocalSource: world.illumination[physics.index(dimLocal.x, dimLocal.y)],
+            brightLocal: physics.getIlluminationAt(brightLocal.x, brightLocal.y),
+            brightLocalSource: world.illumination[physics.index(brightLocal.x, brightLocal.y)]
+        };
+    }, { lamp, ambientOnly });
+    expect(brighterLocalAndTransparentAmbient.ambientOnly).toBe(80);
+    expect(brighterLocalAndTransparentAmbient.ambientOnlyLocal).toBe(0);
+    expect(brighterLocalAndTransparentAmbient.ambientOnlyPixel[3]).toBe(0);
+    expect(brighterLocalAndTransparentAmbient.dimLocalSource).toBeLessThan(80);
+    expect(brighterLocalAndTransparentAmbient.dimLocal).toBe(80);
+    expect(brighterLocalAndTransparentAmbient.brightLocalSource).toBeGreaterThan(80);
+    expect(brighterLocalAndTransparentAmbient.brightLocal).toBeCloseTo(
+        brighterLocalAndTransparentAmbient.brightLocalSource, 4);
+
+    const editedField = await page.evaluate(async ({ ambientOnly }) => {
+        const physics = await import('/physics.js');
+        const world = physics.getWorld();
+        const wall = physics.getDefinitions().findIndex(definition => definition?.name === 'Wall');
+        const steam = physics.getDefinitions().findIndex(definition => definition?.name === 'Steam');
+        const setRow = (y, material) => {
+            for (let x = 0; x < world.cols; x++) physics.setCell(x, y, material);
+        };
+        const target = { x: ambientOnly.x, y: 80 };
+        const openField = physics.getIlluminationAt(target.x, target.y);
+        setRow(target.y - 1, wall);
+        const afterSolidEdit = physics.getIlluminationAt(target.x, target.y);
+        physics.setCell(target.x, target.y + 2, steam);
+        physics.setCell(target.x, target.y + 3, steam);
+        const afterGasEdit = physics.getIlluminationAt(target.x, target.y);
+        physics.setCell(target.x, target.y + 2, 0);
+        physics.setCell(target.x, target.y + 3, 0);
+        physics.stepSimulation();
+        const afterTick = physics.getIlluminationAt(target.x, target.y);
+        setRow(target.y - 1, 0);
+        const afterOpeningSolidBarrier = physics.getIlluminationAt(target.x, target.y);
+        return { openField, afterSolidEdit, afterGasEdit, afterTick, afterOpeningSolidBarrier };
+    }, { ambientOnly });
+
+    expect(editedField.openField).toBe(80);
+    expect(editedField.afterSolidEdit).toBe(40);
+    expect(editedField.afterGasEdit).toBe(30);
+    expect(editedField.afterTick).toBe(40);
+    expect(editedField.afterOpeningSolidBarrier).toBe(80);
+    await slider.fill('40');
+    await expect.poll(async () => page.evaluate(async ({ ambientOnly }) =>
+        (await import('/physics.js')).getIlluminationAt(ambientOnly.x, ambientOnly.y), { ambientOnly }))
+        .toBe(40);
 });

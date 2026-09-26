@@ -24,9 +24,13 @@ visualization modes are documented there as well.
   follow-ups.
 - [`FUTURE_IDEAS.md`](FUTURE_IDEAS.md) — unfinished product and technical
   roadmap ideas.
-- [`proposals/LOGIC_GATES_AND_LIGHTING.md`](proposals/LOGIC_GATES_AND_LIGHTING.md)
-  — implemented gate and local illumination behavior, with future proposals
-  for light-responsive plants and additional emitters.
+- [`archive/plans/2026-09-26-plant-illumination-and-world-light.md`](archive/plans/2026-09-26-plant-illumination-and-world-light.md)
+  — completed ambient-light, plant-response, and opt-in performance-test plan.
+- [`reviews/2026-09-26-p0-performance-results.md`](reviews/2026-09-26-p0-performance-results.md)
+  — P0 browser benchmark method, measurements, limitations, and follow-up.
+- [`archive/plans/2026-09-26-logic-gates-and-local-illumination.md`](archive/plans/2026-09-26-logic-gates-and-local-illumination.md)
+  — historical gate and initial local-illumination implementation record;
+  current values and behavior are in Game Mechanics.
 - [`E2E_TEST_PLAN.md`](E2E_TEST_PLAN.md) — current Playwright architecture,
   commands, maintenance contract, regression policy, and next coverage work.
 - [`PHYSICS_REFACTOR_AUDIT.md`](PHYSICS_REFACTOR_AUDIT.md) — source-backed

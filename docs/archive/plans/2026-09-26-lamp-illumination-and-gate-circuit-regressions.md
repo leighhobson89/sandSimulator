@@ -78,7 +78,7 @@ records the implemented and verified behavior described below.
   `e2e/feedback/hover.spec.mjs` and `e2e/feedback/illumination.spec.mjs`.
   Update `docs/GAME_MECHANICS.md`,
   `docs/FUTURE_IDEAS.md`, `docs/README.md`, and
-  `docs/proposals/LOGIC_GATES_AND_LIGHTING.md` after implementation and focused
+  `docs/archive/plans/2026-09-26-logic-gates-and-local-illumination.md` after implementation and focused
   verification. Keep plant response and all other unimplemented lighting ideas
   clearly future-facing.
 

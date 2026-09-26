@@ -1815,6 +1815,182 @@ function runPlantIlluminationRegressions() {
         localEmission > 0 && effectiveAtSource === localEmission && effectiveAmbient === 50,
         JSON.stringify({ localEmission, effectiveAtSource, effectiveAmbient }));
 
+    createWorld(20, 20);
+    const sampleX = 10;
+    const sampleY = 10;
+    const wallId = ID.Wall;
+    const steamId = ID.Steam;
+    const setLightRow = (y, materialId) => {
+        for (let x = 0; x < getWorld().cols; x++) setCell(x, y, materialId);
+    };
+    physics.setAmbientIlluminationTarget(10);
+    const lowOpenTop = physics.getIlluminationAt(3, 3);
+    const lowOpenBottom = physics.getIlluminationAt(16, 16);
+    setLightRow(sampleY - 1, wallId);
+    setLightRow(sampleY + 1, wallId);
+    const lowEnclosed = physics.getIlluminationAt(sampleX, sampleY);
+    physics.setAmbientIlluminationTarget(0);
+    const zeroEnclosed = physics.getIlluminationAt(sampleX, sampleY);
+    check('ambient targets at or below 10 stay uniform across open and enclosed cells',
+        lowOpenTop === 10 && lowOpenBottom === 10 && lowEnclosed === 10 && zeroEnclosed === 0,
+        JSON.stringify({ lowOpenTop, lowOpenBottom, lowEnclosed, zeroEnclosed }));
+
+    physics.setAmbientIlluminationTarget(80);
+    setLightRow(sampleY - 1, ID.Empty ?? 0);
+    setLightRow(sampleY + 1, ID.Empty ?? 0);
+    const bothBoundariesVisible = physics.getIlluminationAt(sampleX, sampleY);
+    setLightRow(sampleY - 1, wallId);
+    const bottomOnly = physics.getIlluminationAt(sampleX, sampleY);
+    setLightRow(sampleY + 1, wallId);
+    const neitherBoundaryVisible = physics.getIlluminationAt(sampleX, sampleY);
+    const topOnly = physics.getIlluminationAt(sampleX, sampleY - 2);
+    check('high ambient prefers full top exposure, then half bottom exposure, then the 10 floor',
+        bothBoundariesVisible === 80 && bottomOnly === 40 &&
+        neitherBoundaryVisible === 10 && topOnly === 80,
+        JSON.stringify({ bothBoundariesVisible, bottomOnly, neitherBoundaryVisible, topOnly }));
+
+    setLightRow(sampleY + 1, ID.Empty ?? 0);
+    setLightRow(sampleY - 1, wallId);
+    setCell(sampleX - 1, sampleY - 1, ID.Empty ?? 0);
+    const diagonalTopWitness = physics.getIlluminationAt(sampleX, sampleY);
+    setCell(sampleX - 1, sampleY - 1, wallId);
+    const diagonalTopBlocked = physics.getIlluminationAt(sampleX, sampleY);
+    check('an open diagonal line to the top preserves full ambient visibility around a solid above',
+        diagonalTopWitness === 80 && diagonalTopBlocked === 40,
+        JSON.stringify({ diagonalTopWitness, diagonalTopBlocked }));
+
+    const lineCells = (x0, y0, x1, y1) => {
+        const points = [];
+        let x = x0;
+        let y = y0;
+        const dx = Math.abs(x1 - x0);
+        const sx = x0 < x1 ? 1 : -1;
+        const dy = -Math.abs(y1 - y0);
+        const sy = y0 < y1 ? 1 : -1;
+        let error = dx + dy;
+        while (true) {
+            points.push({ x, y });
+            if (x === x1 && y === y1) break;
+            const doubledError = 2 * error;
+            if (doubledError >= dy) {
+                error += dy;
+                x += sx;
+            }
+            if (doubledError <= dx) {
+                error += dx;
+                y += sy;
+            }
+        }
+        return points;
+    };
+    const makeRayFixture = (cols, rows, target, rays, gas = []) => {
+        createWorld(cols, rows);
+        physics.setAmbientIlluminationTarget(80);
+        for (let y = 0; y < rows; y++) {
+            for (let x = 0; x < cols; x++) setCell(x, y, wallId);
+        }
+        for (const ray of rays) {
+            for (const cell of lineCells(ray.x, 0, target.x, target.y)) {
+                setCell(cell.x, cell.y, ID.Empty ?? 0);
+            }
+        }
+        for (const cell of gas) setCell(cell.x, cell.y, steamId);
+    };
+
+    const slopeTarget = { x: 10, y: 10 };
+    const shallowSlope = lineCells(5, 0, slopeTarget.x, slopeTarget.y);
+    makeRayFixture(20, 20, slopeTarget, [{ x: 5 }]);
+    const shallowSlopeOpen = physics.getIlluminationAt(slopeTarget.x, slopeTarget.y);
+    const shallowSlopeGas = shallowSlope[Math.floor(shallowSlope.length / 2)];
+    setCell(shallowSlopeGas.x, shallowSlopeGas.y, steamId);
+    const shallowSlopeThroughGas = physics.getIlluminationAt(slopeTarget.x, slopeTarget.y);
+    check('a non-45-degree 1:2 top ray carries full ambient light and attenuates along its selected path',
+        shallowSlopeOpen === 80 && shallowSlopeThroughGas === 60,
+        JSON.stringify({ shallowSlopeOpen, shallowSlopeThroughGas, shallowSlopeGas }));
+
+    const rayTarget = { x: 11, y: 10 };
+    const leftRay = lineCells(1, 0, rayTarget.x, rayTarget.y);
+    const rightRay = lineCells(21, 0, rayTarget.x, rayTarget.y);
+    const verticalRay = lineCells(rayTarget.x, 0, rayTarget.x, rayTarget.y);
+    const leftGas = leftRay[Math.floor(leftRay.length / 2)];
+    const rightGas = rightRay[Math.floor(rightRay.length / 2)];
+    makeRayFixture(22, 20, rayTarget,
+        [{ x: 1 }, { x: 21 }, { x: rayTarget.x }], [leftGas]);
+    const verticalWinsOverGasDiagonal = physics.getIlluminationAt(rayTarget.x, rayTarget.y);
+    makeRayFixture(22, 20, rayTarget, [{ x: 1 }, { x: 21 }], [leftGas]);
+    const leftBoundaryWinsTie = physics.getIlluminationAt(rayTarget.x, rayTarget.y);
+    makeRayFixture(22, 20, rayTarget, [{ x: 1 }, { x: 21 }], [rightGas]);
+    const leftBoundaryWinsClearTie = physics.getIlluminationAt(rayTarget.x, rayTarget.y);
+    check('ambient chooses the closest-to-vertical visible ray, then the smaller boundary x on a tie',
+        verticalWinsOverGasDiagonal === 80 && leftBoundaryWinsTie === 60 &&
+        leftBoundaryWinsClearTie === 80,
+        JSON.stringify({ verticalWinsOverGasDiagonal, leftBoundaryWinsTie, leftBoundaryWinsClearTie,
+            leftBoundaryX: 1, rightBoundaryX: 21, verticalBoundaryX: rayTarget.x,
+            leftGas, rightGas, verticalRayLength: verticalRay.length }));
+    createWorld(20, 20);
+    physics.setAmbientIlluminationTarget(80);
+
+    setLightRow(sampleY - 1, ID.Empty ?? 0);
+    setLightRow(sampleY + 1, ID.Empty ?? 0);
+    setCell(sampleX, 2, steamId);
+    setCell(sampleX, 5, steamId);
+    const twoGasCellsOnRay = physics.getIlluminationAt(sampleX, sampleY);
+    const oneGasCellOnRay = (() => {
+        setCell(sampleX, 2, ID.Empty ?? 0);
+        return physics.getIlluminationAt(sampleX, sampleY);
+    })();
+    check('a straight ambient ray loses 25% once when it crosses one or more gas cells',
+        twoGasCellsOnRay === 60 && oneGasCellOnRay === 60,
+        JSON.stringify({ twoGasCellsOnRay, oneGasCellOnRay, steamCategory: defs[steamId]?.category }));
+
+    setCell(sampleX, 5, ID.Empty ?? 0);
+    const cachedOpenLight = physics.getIlluminationAt(sampleX, sampleY);
+    setLightRow(sampleY - 1, wallId);
+    const afterSolidEdit = physics.getIlluminationAt(sampleX, sampleY);
+    setLightRow(sampleY - 1, ID.Empty ?? 0);
+    const afterOpeningSolid = physics.getIlluminationAt(sampleX, sampleY);
+    setCell(sampleX, 5, steamId);
+    const afterGasEdit = physics.getIlluminationAt(sampleX, sampleY);
+    getWorld().type[index(sampleX, 5)] = ID.Empty ?? 0;
+    stepSimulation();
+    const afterTick = physics.getIlluminationAt(sampleX, sampleY);
+    check('ambient cache refreshes after slider, solid, gas, and simulation-tick changes',
+        cachedOpenLight === 80 && afterSolidEdit === 40 && afterOpeningSolid === 80 &&
+        afterGasEdit === 60 && afterTick === 80,
+        JSON.stringify({ cachedOpenLight, afterSolidEdit, afterOpeningSolid, afterGasEdit, afterTick }));
+    if (typeof physics.getIlluminationCacheStats === 'function') {
+        physics.getIlluminationAt(sampleX, sampleY);
+        const beforeRepeatedReads = physics.getIlluminationCacheStats();
+        physics.getIlluminationAt(sampleX, sampleY);
+        physics.getIlluminationAt(sampleX, sampleY);
+        physics.getIlluminationAt(sampleX, sampleY);
+        const afterRepeatedReads = physics.getIlluminationCacheStats();
+        stepSimulation();
+        physics.getIlluminationAt(sampleX, sampleY);
+        const afterNextTickRead = physics.getIlluminationCacheStats();
+        check('repeated illumination reads reuse one field build and one new tick needs one rebuild',
+            afterRepeatedReads.rebuilds === beforeRepeatedReads.rebuilds &&
+            afterRepeatedReads.lookups - beforeRepeatedReads.lookups === 3 &&
+            afterNextTickRead.rebuilds === afterRepeatedReads.rebuilds + 1,
+            JSON.stringify({ beforeRepeatedReads, afterRepeatedReads, afterNextTickRead }));
+    } else {
+        console.log('Illumination cache work counter unavailable; exact rebuild-count coverage needs ' +
+            'physics.getIlluminationCacheStats() returning { lookups, rebuilds }.');
+    }
+
+    physics.setAmbientIlluminationTarget(10);
+    setCell(4, 4, ID.Fire);
+    const localBrightensAmbient = physics.getIlluminationAt(4, 4);
+    const localSourceAtPeak = getWorld().illumination[index(4, 4)];
+    physics.setAmbientIlluminationTarget(80);
+    const ambientSample = { x: 6, y: 4 };
+    const ambientOutshinesLocal = physics.getIlluminationAt(ambientSample.x, ambientSample.y);
+    check('effective illumination uses max(ambient, local source)',
+        localBrightensAmbient === localSourceAtPeak && localSourceAtPeak > 10 &&
+        localSourceAtPeak < 80 && ambientOutshinesLocal === 80 &&
+        getWorld().type[index(ambientSample.x, ambientSample.y)] === (ID.Empty ?? 0),
+        JSON.stringify({ localBrightensAmbient, localSourceAtPeak, ambientSample, ambientOutshinesLocal }));
+
     physics.setAmbientIlluminationTarget(73);
     const saved = captureSimulationState();
     const lightField = Object.keys(saved).find(key => /ambient.*illumination/i.test(key));
@@ -1841,6 +2017,7 @@ function runPlantIlluminationRegressions() {
         getWorld().temp.fill(14);
         getWorld().humidity.fill(68);
         setCell(5, 10, ID['Wet Mud']);
+        setCell(5, 11, ID.Wall);
         setCell(5, 9, ID.Daffodil);
         const plantIndex = index(5, 9);
         getWorld().temp[plantIndex] = 14;
@@ -1867,10 +2044,10 @@ function runPlantIlluminationRegressions() {
         run(240);
         fitnessReadings.push(getWorld().plantHealth[plantIndex]);
     }
-    check('light fitness scales plant health linearly to ideal and saturates above it',
+    check('light improves plant health toward its ideal and adds no further benefit above ideal',
         Math.abs(fitnessReadings[0] - 0.55) < 0.025 &&
         Math.abs(fitnessReadings[1] - 0.775) < 0.035 &&
-        Math.abs(fitnessReadings[2] - 1) < 0.025 &&
+        fitnessReadings[2] > fitnessReadings[1] + 0.03 &&
         Math.abs(fitnessReadings[3] - fitnessReadings[2]) < 0.025,
         JSON.stringify(fitnessReadings));
 

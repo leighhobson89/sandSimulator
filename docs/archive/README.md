@@ -19,6 +19,12 @@ in [`../README.md`](../README.md); active findings remain in
 
 ## Executed Plans
 
+- [`plans/2026-09-26-plant-illumination-and-world-light.md`](plans/2026-09-26-plant-illumination-and-world-light.md)
+  — ambient world illumination, species-specific plant light responses,
+  feedback, focused regressions, and the opt-in P0 performance benchmark.
+- [`plans/2026-09-26-logic-gates-and-local-illumination.md`](plans/2026-09-26-logic-gates-and-local-illumination.md)
+  — implemented Battery-backed logic gates and the initial local illumination
+  field, with the 32/32 focused browser verification record.
 - [`plans/2026-09-26-lamp-illumination-and-gate-circuit-regressions.md`](plans/2026-09-26-lamp-illumination-and-gate-circuit-regressions.md)
   — derived grid illumination, persistent and transient emitters, independent
   gate circuits and load attribution, port geometry, and the focused 32/32

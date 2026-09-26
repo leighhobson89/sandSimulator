@@ -1,15 +1,13 @@
-# Proposal: light-responsive plants and additional emitters
+# Archived record: logic gates and initial local illumination
 
-**Status:** Battery-backed NOT, AND, OR, NAND, and XOR gates and the local
-illumination field are implemented. Focused gate, port, and illumination browser
-coverage passed 32/32 on 26 September 2026. The field currently responds to
-powered Lamps, persistent Fire/Lava/Scoria, and short Gunpowder explosion
-flashes.
-Light does not yet affect plant viability. Plant response, additional emitter
-types, ambient sunlight, Solar generation, and day/night remain future work.
-For current behavior, see [Game Mechanics](../GAME_MECHANICS.md#3-powered-storage-transfer-and-connection-machines),
-its [illumination and hover reference](../GAME_MECHANICS.md#9-canvas-feedback-and-live-inspection),
-and [future ideas](../FUTURE_IDEAS.md).
+**Status:** This archived record preserves the initial implementation design
+for Battery-backed NOT, AND, OR, NAND, and XOR gates and local illumination.
+The focused gate, port, and illumination browser coverage passed 32/32 on
+26 September 2026. Its implementation details below are historical; current
+behavior and numeric values are maintained in [Game Mechanics](../../GAME_MECHANICS.md#3-powered-storage-transfer-and-connection-machines)
+and its [illumination and hover reference](../../GAME_MECHANICS.md#9-canvas-feedback-and-live-inspection).
+Plant response and ambient/world-light behavior were completed in the
+[plant illumination plan](2026-09-26-plant-illumination-and-world-light.md).
 
 ## Implemented electrical baseline
 
@@ -64,17 +62,19 @@ plant viability.
 
 ## Future plant response and extensions
 
-Plant species currently ignore illumination. A future feature could add
-light-neutral defaults plus minimum, ideal, and maximum light requirements, then
-demonstrate the rule with shade-loving and light-seeking plants. Keep that
-viability curve separate from temperature and thermal glow, and preserve
-existing gardens and saves when adding species fields.
+At the time of this initial local-light implementation, plant species ignored
+illumination. Species-specific minimum and ideal light needs, ambient world
+illumination, and plant feedback were implemented later; current rules are in
+[Game Mechanics](../../GAME_MECHANICS.md#7-seeds-plants-humidity-dewpoint-weather-and-corrosion)
+and the completed [plant illumination plan](2026-09-26-plant-illumination-and-world-light.md).
 
 The current field has no ambient sunlight, day/night, or weather scattering.
 Future emitters may add carefully selected materials or directional sources;
 each needs explicit intensity, radius/range, blockers, and performance costs.
 Solar generation, dynamic colored-light mixing, and light-driven electrical
-generation are also out of scope until separately designed.
+generation are outside this archived implementation scope. Current plant
+response and ambient/world-illumination behavior are in the completed
+[plant illumination plan](2026-09-26-plant-illumination-and-world-light.md).
 
 Focused regressions live in `e2e/feedback/illumination.spec.mjs`,
 `e2e/machines/logic-gates.spec.mjs`, and `e2e/machines/ports.spec.mjs`. The

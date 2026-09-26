@@ -160,7 +160,8 @@ consolidate current guide material into the mechanics reference.
   features, and marks gates as present while retaining routed AND and
   supply-side output-load accounting as verification work. The lighting
   proposal remains partial; illumination is explicitly `Not simulated`.
-- `docs/proposals/LOGIC_GATES_AND_LIGHTING.md`, `docs/E2E_TEST_PLAN.md`,
+- `docs/archive/plans/2026-09-26-logic-gates-and-local-illumination.md`,
+  `docs/E2E_TEST_PLAN.md`,
   `docs/MACHINE_CONSTRUCTION_STANDARDS.md`, and the feedback, machine, and
   materials E2E readmes describe the current behavior and drafted routed
   circuit/port-geometry checks, which remain unverified.

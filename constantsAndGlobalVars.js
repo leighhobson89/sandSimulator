@@ -87,6 +87,8 @@ export function setElements() {
         airTempInput: document.getElementById('airTemp'),
         airTempValue: document.getElementById('airTempValue'),
         airTempLabel: document.getElementById('airTempLabel'),
+        ambientIlluminationInput: document.getElementById('ambientIllumination'),
+        ambientIlluminationValue: document.getElementById('ambientIlluminationValue'),
         baseHumidityInput: document.getElementById('baseHumidity'),
         baseHumidityValue: document.getElementById('baseHumidityValue'),
         dewpointInput: document.getElementById('dewpoint'),
