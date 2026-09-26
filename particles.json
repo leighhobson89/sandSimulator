@@ -582,7 +582,7 @@
     "21": {
       "name": "Spark",
       "description": "Short-lived drifting electrical gas that energizes touching conductors before expiring.",
-      "group": "Metals",
+      "group": "Electricals",
       "color": "rgb(255, 246, 196)",
       "color2": "rgb(255, 96, 16)",
       "category": "gas",
@@ -988,7 +988,7 @@
     "39": {
       "name": "Battery",
       "description": "Conductive storage metal that shares Spark charge across connected Battery cells and melts into Molten Aluminum. Its pixel color brightens toward a configured glow as it heats toward melting.",
-      "group": "Metals",
+      "group": "Electricals",
       "color": "rgb(188, 198, 210)",
       "category": "static",
       "density": 2.7,
@@ -1091,7 +1091,7 @@
     "43": {
       "name": "Spark Dust",
       "description": "Loose conductive powder that emits nearby Sparks until its long lifetime expires into Ash.",
-      "group": "Powders",
+      "group": "Electricals",
       "color": "rgb(150, 62, 196)",
       "category": "powder",
       "density": 1.6,
@@ -1109,7 +1109,7 @@
     "44": {
       "name": "Spark Block",
       "description": "Fixed conductive spark source that emits Sparks for a long lifetime, then becomes Spark Dust near the end.",
-      "group": "Solids",
+      "group": "Electricals",
       "color": "rgb(118, 46, 164)",
       "category": "static",
       "density": 1.6,
@@ -1999,7 +1999,7 @@
     },
     "83": {
       "name": "Simple Switch",
-      "description": "Electrical machine that relays an incoming wire pulse to its output while switched ON and blocks it while OFF.",
+      "description": "Electrical machine that relays steady current from its input wire to its output while switched ON and blocks it while OFF.",
       "group": "Electricals",
       "color": "rgb(216, 183, 88)",
       "category": "static",
@@ -2024,6 +2024,42 @@
       "meltPoint": 10000,
       "machine": "lamp",
       "powerConsumption": 1,
+      "corrodible": false
+    },
+    "85": {
+      "name": "Temperature Switch",
+      "description": "Electrical temperature switch that compares nearby air with a configurable threshold and relays steady input current when the comparison is true.",
+      "group": "Electricals",
+      "color": "rgb(223, 126, 64)",
+      "category": "static",
+      "density": 7.8,
+      "conductivity": 0.04,
+      "cooling": 0.002,
+      "bulkInsulation": 0.3,
+      "meltPoint": 10000,
+      "machine": "temperatureSwitch",
+      "machineCollisionWidth": 5,
+      "machineCollisionHeight": 5,
+      "machineSensorDefaultRule": 3,
+      "machineSensorDefaultThreshold": 20,
+      "corrodible": false
+    },
+    "86": {
+      "name": "Humidity Switch",
+      "description": "Electrical humidity switch that compares nearby air with a configurable percentage threshold and relays steady input current when the comparison is true.",
+      "group": "Electricals",
+      "color": "rgb(75, 155, 190)",
+      "category": "static",
+      "density": 7.8,
+      "conductivity": 0.04,
+      "cooling": 0.002,
+      "bulkInsulation": 0.3,
+      "meltPoint": 10000,
+      "machine": "humiditySwitch",
+      "machineCollisionWidth": 5,
+      "machineCollisionHeight": 5,
+      "machineSensorDefaultRule": 3,
+      "machineSensorDefaultThreshold": 50,
       "corrodible": false
     }
   }

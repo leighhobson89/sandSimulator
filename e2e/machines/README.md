@@ -5,10 +5,21 @@ Exhaustive browser workflows for machines and material transfer.
   preview, blocked placement, all Fan directions, hit testing, Fan speed
   bounds/default, settings bounds, and tooltip behavior.
 - `powered.spec.mjs` checks powered/unpowered Fan, Heater, and Cooler outcomes.
-- `electrical.spec.mjs` checks Battery charge sharing and conductor pulses,
-  electrical wire compatibility at Simple Switch and Lamp ports, ON/OFF switch
-  relay behavior, Lamp glow and its small Battery load, two-cell Elec leads,
-  signal expiry, and electrical-state reset.
+- `electrical.spec.mjs` checks Battery charge sharing and traveling-Spark
+  rendering, electrical wire compatibility at Simple Switch and Lamp ports,
+  ON/OFF logical-current relay behavior, Lamp glow and its small Battery load,
+  two-cell Elec leads, animation expiry, and electrical-state reset.
+  Temperature Switch and Humidity
+  Switch coverage checks their declared input/output ports, 2-cell Elec leads,
+  exposed yellow sensor-marker geometry, accessible comparison controls,
+  fractional thresholds, five-probe arithmetic means, all comparator truth
+  boundaries, no-air behavior, logical-current gating, live dialog/hover
+  reading and current-status transitions/colors, and the sealed 5-by-5 body
+  collision. The Battery-to-switch-to-Lamp regression checks a separate
+  logical-current query over long Elec runs while traveling-Spark animation
+  has delay-only frames, immediate logical blocking under a false comparison,
+  restored passage, and immediate Battery-depletion shutdown despite any
+  remaining visual tail.
 - `storage.spec.mjs` checks storage dialogs, family categories, tubing-only
   intake, capacity, type retention, and purge. It also checks Collector
   two-cell world suction and compatible Tubing transfer to Storage. Its
@@ -31,12 +42,21 @@ Exhaustive browser workflows for machines and material transfer.
   and hit projection from world `connectionCell` anchors. It also checks the
   20 CSS pixel hit distance, declared port roles, near-port Tubing snapping,
   and rejection of incompatible Copper at Mixer inputs.
-- `persistence.spec.mjs` checks machine settings, including Simple Switch OFF
-  and Lamp ON, inventories, tubing, Mixer
-  inputs, Sprinkler fractional credits and launch state, and machine state
-  through portable Save/Load, blueprints, and Grabber moves. It also verifies
-  legacy Sprinkler mode and spray-credit migration, compatible legacy machine
-  port endpoint migration, and one-time migration of Fan speeds.
+- `persistence.spec.mjs` checks machine settings, including Simple Switch OFF,
+  Lamp ON, and both sensor comparison/threshold pairs. Sensor settings include
+  fractional values and are checked through portable Save/Load and blueprint
+  capture/stamping: Temperature Switch `Greater than 42.5 C` and Humidity Switch
+  `Less than or equal to 67.25%`. The spec also covers inventories, tubing, Mixer inputs,
+  Sprinkler fractional credits and launch state, and machine state through
+  portable Save/Load, blueprints, and Grabber moves. It verifies legacy
+  Sprinkler mode and spray-credit migration, compatible legacy machine port
+  endpoint migration, and one-time migration of Fan speeds.
+
+The Electricals picker-group and stable switch ID/key contract are owned by
+`e2e/materials/catalog.spec.mjs`; the picker heading order and Vegetation's
+initial/new-game collapsed state are also covered there. See
+[`MACHINE_CONSTRUCTION_STANDARDS.md`](../../docs/MACHINE_CONSTRUCTION_STANDARDS.md)
+for the reusable machine review checklist.
 
 Run the machine browser tests headlessly for required verification; headed
 runs are optional diagnostics only and are never an acceptance or release

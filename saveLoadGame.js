@@ -10,6 +10,7 @@ import {
 } from './constantsAndGlobalVars.js';
 import {
     captureSimulationState, restoreSimulationState,
+    getDefinitions,
     getGeneralWindStrength as getPhysicsGeneralWindStrength,
     getGustWindStrength as getPhysicsGustWindStrength,
     setGeneralWindStrength as setPhysicsGeneralWindStrength,
@@ -22,11 +23,12 @@ export const AUTOSAVE_STORAGE_KEY = 'elemental-foundry.autosave.v1';
 const SAVE_VERSION = 2;
 const AUTOSAVE_INTERVAL_MS = 5 * 60_000;
 const MAX_WORLD_CELLS = 2_000_000;
-const ARRAY_TYPES = { Uint8Array, Uint16Array, Uint32Array, Int16Array, Float32Array };
+const ARRAY_TYPES = { Uint8Array, Uint16Array, Uint32Array, Int16Array, Float32Array, Float64Array };
 const BLUEPRINT_FIELD_TYPES = {
     type: Uint8Array, temp: Float32Array, life: Int16Array, lifeMax: Int16Array,
     residue: Uint8Array, shade: Uint8Array, heat: Float32Array, surface: Int16Array,
     data: Uint8Array, machineSetting: Float32Array, storageType: Uint8Array, storageCount: Uint16Array,
+    machineSensorRule: Uint8Array, machineSensorThreshold: Float64Array,
     storageFlowRemainder: Float32Array,
     machinePortEndpointRemap: Uint8Array, machinePortEndpointSlot: Uint8Array,
     machinePortLeadRemap: Uint32Array, machinePortLeadSlot: Uint8Array,
@@ -300,7 +302,8 @@ function decodeBlueprintState(state, saveVersion = SAVE_VERSION) {
             const Type = BLUEPRINT_FIELD_TYPES[field];
             // New machine state planes did not exist in older blueprint saves;
             // their zero-filled defaults preserve the prior machine behavior.
-            if ((field === 'machineSetting' || field === 'storageType' || field === 'storageCount' ||
+            if ((field === 'machineSetting' || field === 'machineSensorRule' || field === 'machineSensorThreshold' ||
+                field === 'storageType' || field === 'storageCount' ||
                 field === 'storageFlowRemainder' || field.startsWith('machinePortEndpoint') ||
                 field.startsWith('machinePortLead') || field.startsWith('mixer') ||
                 field.startsWith('splitter') || field.startsWith('sprinkler')) && !encoded) {
@@ -308,6 +311,16 @@ function decodeBlueprintState(state, saveVersion = SAVE_VERSION) {
                 if (field === 'machineSetting') {
                     for (let cell = 0; cell < cells.type.length; cell++) {
                         if (cells.type[cell] === 52) cells.machineSetting[cell] = 3;
+                    }
+                }
+                if (field === 'machineSensorRule' || field === 'machineSensorThreshold') {
+                    const definitions = getDefinitions();
+                    for (let cell = 0; cell < cells.type.length; cell++) {
+                        const def = definitions[cells.type[cell]];
+                        if (def?.machine !== 'temperatureSwitch' && def?.machine !== 'humiditySwitch') continue;
+                        cells[field][cell] = field === 'machineSensorRule'
+                            ? (def.machineSensorDefaultRule ?? 3)
+                            : (def.machineSensorDefaultThreshold ?? 0);
                     }
                 }
                 continue;
@@ -320,6 +333,20 @@ function decodeBlueprintState(state, saveVersion = SAVE_VERSION) {
                 throw new Error(`This save has invalid blueprint ${field} data.`);
             }
             cells[field] = array;
+        }
+        const definitions = getDefinitions();
+        for (let cell = 0; cell < cells.type.length; cell++) {
+            const def = definitions[cells.type[cell]];
+            if (def?.machine !== 'temperatureSwitch' && def?.machine !== 'humiditySwitch') continue;
+            const rule = Number(cells.machineSensorRule[cell]);
+            if (!Number.isInteger(rule) || rule < 0 || rule > 4) {
+                cells.machineSensorRule[cell] = def.machineSensorDefaultRule ?? 3;
+            }
+            const threshold = Number(cells.machineSensorThreshold[cell]);
+            const safeThreshold = Number.isFinite(threshold)
+                ? threshold : (def.machineSensorDefaultThreshold ?? 0);
+            cells.machineSensorThreshold[cell] = def.machine === 'humiditySwitch'
+                ? Math.max(0, Math.min(100, safeThreshold)) : safeThreshold;
         }
         const blueprintModeVersion = saveVersion === 1 ? 1
             : (blueprint.sprinklerModeVersion ?? state.sprinklerModeVersion);

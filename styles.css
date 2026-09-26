@@ -1064,6 +1064,21 @@ input[type="range"]::-moz-range-thumb {
     pointer-events: none;
     animation: tooltip-in 0.14s ease both;
 }
+.machine-sensor-tooltip,
+.machine-dialog-status.machine-sensor-live-status {
+    display: grid;
+    gap: 0.2rem;
+    color: #e65050;
+    border-left: 3px solid currentColor;
+    background: var(--bg-sunken);
+}
+.machine-sensor-live-status[data-signal-state="passing"] { color: #32c878; }
+.machine-sensor-live-status [data-sensor-live-state],
+.machine-sensor-live-status [data-sensor-live-signal] { font-weight: 700; }
+.machine-sensor-tooltip { min-width: 190px; }
+.machine-sensor-tooltip-title { margin-bottom: 0.12rem; }
+.machine-sensor-live-status span,
+.machine-sensor-live-status strong { display: block; }
 
 @keyframes tooltip-in {
     from { opacity: 0; transform: translateX(3px); }
@@ -1544,6 +1559,10 @@ canvas.tubing-hover { cursor: help; }
     margin-top: 0.35rem;
     color: var(--text-dim);
     font: 0.72rem var(--mono);
+}
+.machine-dialog-comparison {
+    width: 100%;
+    margin: 0 0 14px;
 }
 .machine-dialog-input-wrap {
     display: flex;

@@ -19,6 +19,10 @@ in [`../README.md`](../README.md); active findings remain in
 
 ## Executed Plans
 
+- [`plans/2026-09-26-electrical-catalog-and-environment-sensors.md`](plans/2026-09-26-electrical-catalog-and-environment-sensors.md)
+  — Electricals catalog regrouping, Temperature/Humidity Switches, independent
+  Battery-backed DC logic, Vegetation picker behavior, persistence, and focused
+  verification outcome.
 - [`plans/2026-09-25-machine-ports-sprinkler-collector-splitter.md`](plans/2026-09-25-machine-ports-sprinkler-collector-splitter.md)
   — machine ports, two-stage placement, Sprinkler migration, Collector sealing,
   Splitter flow, compatibility regressions, and final verification record.

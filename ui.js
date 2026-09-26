@@ -40,6 +40,8 @@ import {
     getStorageInventory, purgeStorageBin, getSprinklerInventory, getSprinklerReleaseRate,
     setSprinklerReleaseRate, isSprinklerReleaseEnabled, setSprinklerReleaseEnabled,
     isDrainModeEnabled, setDrainModeEnabled,
+    getMachineSensorRule, setMachineSensorRule, getMachineSensorThreshold,
+    setMachineSensorThreshold, getMachineSensorStatus,
     getTubingFlows, getSprinklerTubingRate, getMixerInventory, purgeMixerBin,
     isMixerReleaseEnabled, setMixerReleaseEnabled, isMachinePoweredAt,
     migrateLegacyMachinePortEndpointRemap
@@ -140,6 +142,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     elements.purgeDialogConfirm.addEventListener('click', confirmPurgeDialog);
     elements.purgeDialogCancel.addEventListener('click', closePurgeDialog);
     elements.machineDialogInput.addEventListener('input', validateMachineInput);
+    elements.machineDialogComparison.addEventListener('change', updateMachineSensorRule);
     elements.machineDialogSprinklerReleaseToggle.addEventListener('change', updateSprinklerReleaseToggle);
     elements.machineDialogDrainModeToggle.addEventListener('change', updateDrainModeToggle);
     document.getElementById('machineDialogElectricalToggle').addEventListener('change', updateElectricalMachineToggle);
@@ -260,6 +263,7 @@ async function startNewGame() {
     setGridCols(cols);
     setGridRows(rows);
     startGame({ newWorld: true, alignAtGround: true });
+    collapseVegetationCatalogGroup();
 
     if (useAsResumeGame) {
         try {
@@ -595,7 +599,9 @@ const MACHINE_CONTROL_SPECS = {
     fan: { label: 'Wind speed', min: 1, max: FAN_WIND_SCALE, unit: '', defaultValue: 7 },
     heater: { label: 'Temperature', min: 0, max: 4000, unit: '°C' },
     cooler: { label: 'Temperature', min: -60, max: 20, unit: '°C' },
-    sprinkler: { label: 'Release rate', min: 1, max: 100, unit: 'particles/s', defaultValue: 10 }
+    sprinkler: { label: 'Release rate', min: 1, max: 100, unit: 'particles/s', defaultValue: 10 },
+    temperatureSwitch: { label: 'Temperature', unit: '°C' },
+    humiditySwitch: { label: 'Humidity', min: 0, max: 100, unit: '%' }
 };
 
 function isElectricalMachine(machine) {
@@ -767,17 +773,20 @@ function openMachineDialog(x, y, machine = machineAtCell({ x, y })) {
     const storage = isStorageMachineDefinition(machine.def);
     const sprinkler = machine.def.machine === 'sprinkler';
     const electrical = isElectricalMachine(machine.def.machine);
+    const sensor = machine.def.machine === 'temperatureSwitch' || machine.def.machine === 'humiditySwitch';
     if (machine.def.machine === 'mixer') return openMixerDialog(x, y);
-    if (!spec && !storage && !sprinkler && !electrical) return false;
+    if (!spec && !storage && !sprinkler && !electrical && !sensor) return false;
 
     const elements = getElements();
     hideMachineTooltip();
     const current = sprinkler ? getSprinklerReleaseRate(x, y) : getMachineSetting(x, y);
-    editingMachine = { x, y, machine: machine.def.machine, fallback: current, storage, sprinkler, electrical };
+    editingMachine = { x, y, machine: machine.def.machine, fallback: current, storage, sprinkler, electrical, sensor };
     elements.machineDialogTitle.textContent = storage ? `${machine.def.name} contents` : `${machine.def.name} settings`;
-    elements.machineDialogDescription.textContent = electrical
+    elements.machineDialogDescription.textContent = sensor
+        ? `Measures the ${machine.def.machine === 'temperatureSwitch' ? 'temperature' : 'humidity'} of air along its exposed sensor face. A steady electrical level reaches the output only when the selected comparison is true.`
+        : electrical
         ? machine.def.machine === 'simpleSwitch'
-            ? 'ON relays a live electrical pulse from the input port to the output port. OFF blocks the signal.'
+            ? 'ON relays steady electrical current from the input port to the output port. OFF blocks the signal.'
             : 'ON lights the Lamp when its input receives electrical power. OFF blocks the input and keeps the Lamp dark.'
         : storage
         ? machine.def.machine === 'splitter'
@@ -800,6 +809,10 @@ function openMachineDialog(x, y, machine = machineAtCell({ x, y })) {
     }
     storageSummary.hidden = !storage && !sprinkler;
     elements.machineDialogLabel.textContent = spec?.label || 'Contents';
+    elements.machineDialogComparisonWrap.hidden = !sensor;
+    elements.machineDialogComparison.hidden = !sensor;
+    elements.machineDialogComparison.value = String(sensor ? getMachineSensorRule(x, y) : 0);
+    elements.machineDialogSensorStatus.hidden = !sensor;
     elements.machineDialogLabel.hidden = storage || electrical;
     elements.machineDialogInputWrap.hidden = storage || electrical;
     elements.machineDialogInput.hidden = storage || electrical;
@@ -819,28 +832,33 @@ function openMachineDialog(x, y, machine = machineAtCell({ x, y })) {
     status.hidden = !electrical;
     elements.machineDialogInput.setAttribute('aria-label', spec?.label || 'Contents');
     if (spec) {
-        elements.machineDialogInput.min = String(spec.min);
+        const humiditySwitch = machine.def.machine === 'humiditySwitch';
+        elements.machineDialogInput.min = sensor && !humiditySwitch ? '' : String(spec.min ?? '');
         const sprinklerRate = sprinkler ? getSprinklerTubingRate(x, y) : null;
         const inputMax = sprinkler ? sprinklerRate : spec.max;
-        elements.machineDialogInput.max = String(inputMax || spec.max);
-        elements.machineDialogInput.step = '1';
+        elements.machineDialogInput.max = sensor && !humiditySwitch ? '' : String(inputMax || spec.max || '');
+        elements.machineDialogInput.step = sensor ? 'any' : '1';
         elements.machineDialogInput.placeholder = sprinkler && !sprinklerRate ? 'Not Connected' : '';
         elements.machineDialogInput.disabled = storage || (sprinkler && !sprinklerRate);
+        const sensorThreshold = sensor ? getMachineSensorThreshold(x, y) : null;
         elements.machineDialogInput.value = sprinkler && !sprinklerRate
             ? ''
-            : String(Number.isFinite(current) ? Math.min(current, inputMax) : (spec.defaultValue ?? spec.min));
+            : sensor
+                ? formatMachineSensorThreshold(sensorThreshold)
+                : String(Number.isFinite(current) ? Math.min(current, inputMax) : (spec.defaultValue ?? spec.min));
     }
     elements.machineDialogUnit.textContent = spec?.unit || '';
     elements.machineDialogUnit.hidden = !spec?.unit;
     elements.machineDialogError.hidden = true;
-    elements.machineDialogOk.hidden = storage || sprinkler || electrical;
+    elements.machineDialogOk.hidden = storage || sprinkler || electrical || sensor;
     elements.machineDialogPurge.hidden = !storage;
-    elements.machineDialogCancel.textContent = storage || sprinkler || electrical ? 'Close' : 'Cancel';
+    elements.machineDialogCancel.textContent = storage || sprinkler || electrical || sensor ? 'Close' : 'Cancel';
     elements.machineDialog.hidden = false;
     if (machineDialogTimer) clearInterval(machineDialogTimer);
     refreshMachineDialog();
     machineDialogTimer = setInterval(refreshMachineDialog, 150);
     if (electrical) electricalToggle.focus();
+    else if (sensor) elements.machineDialogComparison.focus();
     else if (!storage) elements.machineDialogInput.focus();
     else elements.machineDialogCancel.focus();
     return true;
@@ -973,6 +991,10 @@ function refreshMachineDialog() {
         if (status) status.textContent = isMachinePoweredAt(editingMachine.x, editingMachine.y)
             ? 'Status: Powered' : 'Status: No signal at input';
     }
+    if (editingMachine.sensor) {
+        renderMachineSensorStatus(elements.machineDialogSensorStatus,
+            getMachineSensorStatus(editingMachine.x, editingMachine.y), editingMachine.machine);
+    }
 }
 
 function updateElectricalMachineToggle() {
@@ -980,6 +1002,71 @@ function updateElectricalMachineToggle() {
     const enabled = document.getElementById('machineDialogElectricalToggle').checked;
     setMachineSetting(editingMachine.x, editingMachine.y, enabled ? 1 : 0);
     refreshMachineDialog();
+}
+
+function formatMachineSensorThreshold(value) {
+    return Number.isFinite(value) ? String(value) : '';
+}
+
+function updateMachineSensorRule() {
+    if (!editingMachine?.sensor) return;
+    setMachineSensorRule(editingMachine.x, editingMachine.y,
+        Number.parseInt(getElements().machineDialogComparison.value, 10));
+    refreshMachineDialog();
+}
+
+const MACHINE_SENSOR_STATE_LABELS = Object.freeze({
+    'no-air': 'No air detected',
+    blocked: 'Comparison blocked signal',
+    ready: 'RULE TRUE · NO INPUT CURRENT',
+    passing: 'Signal passing'
+});
+
+function machineSensorUnit(machineType) {
+    return machineType === 'temperatureSwitch' ? ' °C' : '%';
+}
+
+function renderMachineSensorStatus(surface, status, machineType) {
+    if (!surface || !status) return;
+    const unit = machineSensorUnit(machineType);
+    const reading = status.reading === null
+        ? 'No air detected' : `${formatNumber(status.reading)}${unit}`;
+    surface.dataset.signalState = status.state;
+    const stateLabel = surface.querySelector('[data-sensor-live-state]');
+    const readingLabel = surface.querySelector('[data-sensor-live-reading]');
+    const comparisonLabel = surface.querySelector('[data-sensor-live-comparison]');
+    const inputLabel = surface.querySelector('[data-sensor-live-input]');
+    const signalLabel = surface.querySelector('[data-sensor-live-signal]');
+    if (stateLabel) stateLabel.textContent = MACHINE_SENSOR_STATE_LABELS[status.state] || 'Signal blocked';
+    if (readingLabel) readingLabel.textContent = `Current reading: ${reading}`;
+    if (comparisonLabel) comparisonLabel.textContent =
+        `Comparison: ${status.ruleLabel} ${formatMachineSensorThreshold(status.threshold)}${unit}`;
+    if (inputLabel) inputLabel.textContent = `Input power: ${status.inputActive ? 'ON' : 'OFF'}`;
+    if (signalLabel) signalLabel.textContent = `Signal: ${status.passing ? 'Passing' : 'Not passing'}`;
+}
+
+function createMachineSensorTooltip(machine, status) {
+    const root = document.createElement('div');
+    root.className = 'machine-sensor-tooltip machine-sensor-live-status';
+    const title = document.createElement('strong');
+    title.className = 'machine-sensor-tooltip-title';
+    title.textContent = machine.def.name;
+    root.appendChild(title);
+    const children = [
+        ['strong', 'state', 'No air detected'],
+        ['span', 'reading', 'Current reading: No air detected'],
+        ['span', 'comparison', 'Comparison: —'],
+        ['span', 'input', 'Input power: OFF'],
+        ['strong', 'signal', 'Signal: Not passing']
+    ];
+    for (const [tag, selector, initialText] of children) {
+        const line = document.createElement(tag);
+        line.setAttribute(`data-sensor-live-${selector}`, '');
+        line.textContent = initialText;
+        root.appendChild(line);
+    }
+    renderMachineSensorStatus(root, status, machine.def.machine);
+    return root;
 }
 
 function updateSprinklerReleaseInput() {
@@ -1024,6 +1111,15 @@ function validateMachineInput() {
     if (!raw) return null;
     const numeric = Number(raw);
     if (!Number.isFinite(numeric)) return null;
+    if (editingMachine.sensor) {
+        const value = editingMachine.machine === 'humiditySwitch'
+            ? Math.max(0, Math.min(100, numeric)) : numeric;
+        if (String(value) !== raw) input.value = String(value);
+        setMachineSensorThreshold(editingMachine.x, editingMachine.y, value);
+        getElements().machineDialogError.hidden = true;
+        refreshMachineDialog();
+        return value;
+    }
     const max = editingMachine.sprinkler
         ? getSprinklerTubingRate(editingMachine.x, editingMachine.y)
         : spec.max;
@@ -1044,6 +1140,15 @@ function closeMachineDialog() {
     elements.machineDialogStorageSummary.hidden = true;
     elements.machineDialogStorageSummary.textContent = '';
     elements.machineDialogLabel.hidden = false;
+    elements.machineDialogComparisonWrap.hidden = true;
+    elements.machineDialogComparison.hidden = true;
+    elements.machineDialogComparison.value = '0';
+    elements.machineDialogSensorStatus.hidden = true;
+    elements.machineDialogSensorStatus.dataset.signalState = 'no-air';
+    renderMachineSensorStatus(elements.machineDialogSensorStatus, {
+        reading: null, ruleLabel: 'Less than', threshold: 0,
+        inputActive: false, passing: false, state: 'no-air'
+    }, 'temperatureSwitch');
     elements.machineDialogInput.disabled = false;
     elements.machineDialogInput.hidden = false;
     elements.machineDialogInputWrap.hidden = false;
@@ -1120,7 +1225,7 @@ function buildParticleButtons() {
     const defs = getDefinitions();
     container.innerHTML = '';
 
-    const order = ['Powders', 'Liquids', 'Gases', 'Solids', 'Seeds', 'Vegetation', 'Metals', 'Electricals', 'Machines', 'Storage', 'Tools', 'Other'];
+    const order = ['Powders', 'Liquids', 'Gases', 'Solids', 'Seeds', 'Metals', 'Electricals', 'Machines', 'Storage', 'Tools', 'Other', 'Vegetation'];
     const groups = {};
     for (let id = 1; id < defs.length; id++) {
         if (!defs[id]) continue;
@@ -1146,7 +1251,8 @@ function buildParticleButtons() {
         arrow.setAttribute('aria-hidden', 'true');
         toggle.appendChild(label);
         toggle.appendChild(arrow);
-        toggle.setAttribute('aria-expanded', 'true');
+        const initiallyExpanded = heading !== 'Vegetation';
+        toggle.setAttribute('aria-expanded', String(initiallyExpanded));
         toggle.setAttribute('aria-controls', gridId);
         title.appendChild(toggle);
         container.appendChild(title);
@@ -1154,6 +1260,7 @@ function buildParticleButtons() {
         const grid = document.createElement('div');
         grid.className = 'particle-grid';
         grid.id = gridId;
+        grid.hidden = !initiallyExpanded;
         groups[heading].forEach(id => grid.appendChild(makeParticleButton(defs[id], id)));
         container.appendChild(grid);
 
@@ -1165,6 +1272,16 @@ function buildParticleButtons() {
     }
 
     highlightSelectedParticle();
+}
+
+function collapseVegetationCatalogGroup() {
+    const container = getElements().particleButtons;
+    const toggle = Array.from(container.querySelectorAll('.panel-heading-toggle'))
+        .find(button => button.textContent.trim() === 'Vegetation');
+    if (!toggle) return;
+    toggle.setAttribute('aria-expanded', 'false');
+    const grid = document.getElementById(toggle.getAttribute('aria-controls'));
+    if (grid) grid.hidden = true;
 }
 
 function makeParticleButton(def, id) {
@@ -1606,7 +1723,13 @@ function machineTooltipText(machine) {
 function renderMachineTooltip(machine, event) {
     const tooltip = document.getElementById('toolTooltip');
     if (!tooltip) return;
-    tooltip.textContent = machineTooltipText(machine);
+    if (!machine.tubing && (machine.def.machine === 'temperatureSwitch' || machine.def.machine === 'humiditySwitch')) {
+        tooltip.textContent = '';
+        tooltip.appendChild(createMachineSensorTooltip(machine,
+            getMachineSensorStatus(machine.x, machine.y)));
+    } else {
+        tooltip.textContent = machineTooltipText(machine);
+    }
     tooltip.hidden = false;
 
     const viewportWidth = window.innerWidth || 1024;

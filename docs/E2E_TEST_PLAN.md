@@ -155,11 +155,14 @@ own workflow captures them. See the [Playwright HTML reporter guide](https://pla
   Horizontal and Shift + wheel remain browser-owned rather than entering the
   application zoom path.
 - `e2e/materials/` covers catalog metadata, rendering, and browser-observable
-  material reactions. The Insulation catalog spec checks its retained Solids
-  entry, heat-retention glossary text, and zero network rate; it also checks
+  material reactions. The catalog spec checks the Electricals grouping for
+  Battery, Spark, Spark Dust, Spark Block, and both environment switches, plus
+  the switch ID/key/API contract and Vegetation's last/initially-collapsed/new
+  game behavior. It also checks Insulation's retained Solids entry,
+  heat-retention glossary text, and zero network rate; it checks
   `thermalNetworkRate` participation by metals including Tubing, molten forms,
-  and powered Fan/Heater/Cooler machines. `rendering.spec.mjs` checks local glow color
-  interpolation for solid Copper, Battery, Iron, Fan, Cooler, Tubing, and
+  and powered Fan/Heater/Cooler machines. `rendering.spec.mjs` checks local glow
+  color interpolation for solid Copper, Battery, Iron, Fan, Cooler, Tubing, and
   Heater, while preserving existing molten gradients.
 - `e2e/physics/` covers deterministic, user-visible settling, thermal, and
   reaction behavior. Thermal coverage includes open versus enclosed air,
@@ -168,11 +171,18 @@ own workflow captures them. See the [Playwright HTML reporter guide](https://pla
   bridges between enclosed chambers without open-air leakage.
 - `e2e/machines/` covers two-stage placement, powered machines, storage,
   Collector intake/sealing, Sprinkler release, machine ports and Tubing, Mixers,
-  Splitter flow, electrical behavior, and persistence. Fan placement coverage
-  checks its 1-50 speed range and default speed 7; machine persistence checks
-  legacy Sprinkler mode and endpoint migration, plus one-time migration of Fan
-  speeds in saved worlds and blueprints. The Sprinkler browser coverage lives in
-  `e2e/machines/sprinkler.spec.mjs`.
+  Splitter flow, electrical behavior, and persistence. Electrical browser
+  coverage includes Temperature Switch and Humidity Switch probe means,
+  comparator routing, exposed marker and collision geometry, live dialog/hover
+  reading and logical-current status, and all four sensor status states. The
+  Battery-to-switch-to-Lamp regression checks dedicated DC-current state
+  independently of traveling-Spark animation, including delay-only visual
+  frames, immediate switch blocking, and Battery-depletion shutdown. Machine
+  persistence checks sensor comparison/threshold values through portable
+  Save/Load and blueprints, as well as legacy Sprinkler mode and endpoint
+  migration and one-time migration of Fan speeds. Fan placement coverage checks
+  its 1-50 speed range and default speed 7. The Sprinkler browser coverage lives
+  in `e2e/machines/sprinkler.spec.mjs`.
 - `e2e/blueprints/` covers capture, stamping, history, lifecycle, and portable
   persistence.
 - `e2e/scaling/default-world.spec.mjs` covers the two fixed New Game choices

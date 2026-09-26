@@ -56,6 +56,7 @@ const ELECTRICAL_NEIGHBOURS = [
 let COLS = 0;
 let ROWS = 0;
 let world = null;
+let logicalCurrentDirty = true;
 // The flood mask borrows the movement flags before they are cleared for the
 // current tick. Queue views borrow the two temperature buffers, which are
 // overwritten by diffuseHeat immediately after the flood fill completes.
@@ -259,6 +260,10 @@ export function prepareDefinitions(json) {
             machineRange: p.machineRange || 0,
             machineRate: p.machineRate || 0,
             machineEmits: toId(p.machineEmits),
+            machineCollisionWidth: p.machineCollisionWidth || 0,
+            machineCollisionHeight: p.machineCollisionHeight || 0,
+            machineSensorDefaultRule: p.machineSensorDefaultRule ?? 3,
+            machineSensorDefaultThreshold: p.machineSensorDefaultThreshold ?? 0,
             wireReach: p.wireReach || 0,
             energizesConductors: !!p.energizesConductors,
             chargeCapacity: p.chargeCapacity || 0,
@@ -819,7 +824,8 @@ function humidityNearCell(x, y) {
 const PERSISTED_WORLD_FIELDS = [
     'type', 'temp', 'life', 'lifeMax', 'residue', 'shade', 'heat', 'data',
     'humidity', 'plantHealth', 'corrosionExposure', 'plantCooldown',
-    'machineSetting', 'storageType', 'storageCount', 'storageFlowRemainder',
+    'machineSetting', 'machineSensorRule', 'machineSensorThreshold',
+    'storageType', 'storageCount', 'storageFlowRemainder',
     'machinePortEndpointRemap', 'machinePortEndpointSlot',
     'machinePortLeadRemap', 'machinePortLeadSlot',
     'sprinklerLaunchDirection', 'sprinklerLaunchAge',
@@ -920,6 +926,17 @@ export function restoreSimulationState(state) {
             }
             continue;
         }
+        if ((field === 'machineSensorRule' || field === 'machineSensorThreshold') && !source) {
+            const defaultKey = field === 'machineSensorRule'
+                ? 'machineSensorDefaultRule' : 'machineSensorDefaultThreshold';
+            for (let i = 0; i < cells; i++) {
+                const def = DEFS[world.type[i]];
+                if (def?.machine === 'temperatureSwitch' || def?.machine === 'humiditySwitch') {
+                    world[field][i] = def[defaultKey];
+                }
+            }
+            continue;
+        }
         // Storage inventory was added after the original machine state. Old
         // saves simply have empty inventories because newly-created arrays are
         // already zero-filled.
@@ -929,6 +946,23 @@ export function restoreSimulationState(state) {
             field.startsWith('splitter') || field.startsWith('sprinklerLaunch')) && !source) continue;
         if (!source || source.length !== cells) {
             throw new Error(`This save has invalid ${field} data.`);
+        }
+        if (field === 'machineSensorRule' || field === 'machineSensorThreshold') {
+            for (let i = 0; i < cells; i++) {
+                const def = DEFS[world.type[i]];
+                if (!isMachineSensor(def)) continue;
+                if (field === 'machineSensorRule') {
+                    const value = Number(source[i]);
+                    world.machineSensorRule[i] = Number.isInteger(value) && value >= 0 && value <= 4
+                        ? value : defaultMachineSensorRule(def);
+                } else {
+                    const value = Number(source[i]);
+                    const safeValue = Number.isFinite(value) ? value : defaultMachineSensorThreshold(def);
+                    world.machineSensorThreshold[i] = def.machine === 'humiditySwitch'
+                        ? Math.max(0, Math.min(100, safeValue)) : safeValue;
+                }
+            }
+            continue;
         }
         world[field].set(source);
     }
@@ -1001,6 +1035,7 @@ export function restoreSimulationState(state) {
     generalWindCacheFrame = -1;
     windShelterFrame = -1;
     setAmbientWindOn(!!state.ambientWindOn);
+    machineCollisionMaskDirty = true;
 }
 
 // --------------------------------------------------------------------- world
@@ -1029,6 +1064,8 @@ export function createWorld(cols, rows) {
         surface: new Int16Array(n),
         data: new Uint8Array(n),
         machineSetting: new Float32Array(n),
+        machineSensorRule: new Uint8Array(n),
+        machineSensorThreshold: new Float64Array(n),
         storageType: new Uint8Array(n),
         storageCount: new Uint16Array(n),
         storageFlowRemainder: new Float32Array(n),
@@ -1063,6 +1100,7 @@ export function createWorld(cols, rows) {
         sprinklerSprayFlow3: new Float32Array(n),
         power: new Uint8Array(n),
         powerDelay: new Uint16Array(n),
+        logicalPower: new Uint8Array(n),
         charge: new Float32Array(n),
         wind: new Uint8Array(n),
         airflowX: new Float32Array(n),
@@ -1090,6 +1128,9 @@ export function createWorld(cols, rows) {
     collectorSealMask = null;
     collectorRimMask = null;
     collectorMasksDirty = true;
+    machineCollisionMask = null;
+    machineCollisionMaskDirty = true;
+    logicalCurrentDirty = true;
     tubingFlows = [];
     hasMixerMachine = false;
     windTrailsAlive = 0;
@@ -1107,12 +1148,36 @@ export function createWorld(cols, rows) {
 
 export function getWorld() { return world; }
 
+// Logical current is derived from charged Battery routes and currently open
+// relay paths. Direct topology/settings edits invalidate the cached level;
+// visual power/powerDelay remain independent travelling-pulse fields.
+export function invalidateLogicalCurrent() {
+    logicalCurrentDirty = true;
+}
+
+function ensureLogicalCurrent() {
+    if (logicalCurrentDirty && world) recomputeLogicalCurrent();
+}
+
 function defaultMachineSetting(def) {
     if (def?.machine === 'fan') return def.machineWindSpeed ?? 7;
     if (def?.machine === 'sprinkler') return 3;
     if (def?.machine === 'mixer') return 1;
     if (def?.machine === 'simpleSwitch' || def?.machine === 'lamp') return 1;
     return def?.machineTemp ?? 0;
+}
+
+function isMachineSensor(def) {
+    return def?.machine === 'temperatureSwitch' || def?.machine === 'humiditySwitch';
+}
+
+function defaultMachineSensorRule(def) {
+    return Math.max(0, Math.min(4, Math.round(def?.machineSensorDefaultRule ?? 3)));
+}
+
+function defaultMachineSensorThreshold(def) {
+    const value = Number(def?.machineSensorDefaultThreshold ?? 0);
+    return Number.isFinite(value) ? value : 0;
 }
 
 function sprinklerReleaseSetting(i) {
@@ -1231,6 +1296,18 @@ const MACHINE_PORT_DEFINITIONS = Object.freeze({
     lamp: [
         { id: 'input', role: 'input', material: 'Elec', family: 'electrical',
             sourceX: 0, sourceY: 24, x: -3, y: 0, targetRadius: 1.6, stubLength: 6, visualRadius: 2.8 }
+    ],
+    temperatureSwitch: [
+        { id: 'input', role: 'input', material: 'Elec', family: 'electrical',
+            sourceX: 4, sourceY: 24, x: -3, y: 0, targetRadius: 1.6, stubLength: 6, visualRadius: 2.8 },
+        { id: 'output', role: 'output', material: 'Elec', family: 'electrical',
+            sourceX: 44, sourceY: 24, x: 3, y: 0, targetRadius: 1.6, stubLength: 6, visualRadius: 2.8 }
+    ],
+    humiditySwitch: [
+        { id: 'input', role: 'input', material: 'Elec', family: 'electrical',
+            sourceX: 4, sourceY: 24, x: -3, y: 0, targetRadius: 1.6, stubLength: 6, visualRadius: 2.8 },
+        { id: 'output', role: 'output', material: 'Elec', family: 'electrical',
+            sourceX: 44, sourceY: 24, x: 3, y: 0, targetRadius: 1.6, stubLength: 6, visualRadius: 2.8 }
     ]
 });
 
@@ -1249,7 +1326,9 @@ const MACHINE_ARTWORK_LAYOUTS = Object.freeze({
     splitter: { tileX: 512, tileY: 683, trimX: 118, trimY: 19, trimWidth: 276, trimHeight: 222 },
     mixer: { tileX: 1024, tileY: 683, trimX: 54, trimY: 39, trimWidth: 324, trimHeight: 221 },
     simpleSwitch: { tileX: 0, tileY: 0, trimX: 0, trimY: 0, trimWidth: 48, trimHeight: 36 },
-    lamp: { tileX: 0, tileY: 0, trimX: 0, trimY: 0, trimWidth: 48, trimHeight: 48 }
+    lamp: { tileX: 0, tileY: 0, trimX: 0, trimY: 0, trimWidth: 48, trimHeight: 48 },
+    temperatureSwitch: { tileX: 0, tileY: 0, trimX: 0, trimY: 0, trimWidth: 48, trimHeight: 48 },
+    humiditySwitch: { tileX: 0, tileY: 0, trimX: 0, trimY: 0, trimWidth: 48, trimHeight: 48 }
 });
 const MACHINE_ARTWORK_FACE_SIZE = 64;
 const MACHINE_ARTWORK_MAX_SIZE = 56;
@@ -1969,12 +2048,138 @@ export function setMachineSetting(x, y, value) {
     const bounds = machineSettingBounds(def);
     if (!bounds || !Number.isFinite(value)) return false;
     world.machineSetting[i] = Math.max(bounds.min, Math.min(bounds.max, Math.round(value)));
+    if (def.machine === 'simpleSwitch') invalidateLogicalCurrent();
     return true;
+}
+
+const MACHINE_SENSOR_RULES = Object.freeze(['<', '<=', '==', '>=', '>']);
+const MACHINE_SENSOR_RULE_LABELS = Object.freeze([
+    'Less than', 'Less than or equal to', 'Equal to',
+    'Greater than or equal to', 'Greater than'
+]);
+
+export function getMachineSensorRule(x, y) {
+    if (!world || !inBounds(x, y)) return null;
+    const i = index(x, y);
+    return isMachineSensor(DEFS[world.type[i]]) ? world.machineSensorRule[i] : null;
+}
+
+export function setMachineSensorRule(x, y, rule) {
+    if (!world || !inBounds(x, y) || !Number.isInteger(rule) || rule < 0 || rule >= MACHINE_SENSOR_RULES.length) {
+        return false;
+    }
+    const i = index(x, y);
+    if (!isMachineSensor(DEFS[world.type[i]])) return false;
+    world.machineSensorRule[i] = rule;
+    invalidateLogicalCurrent();
+    return true;
+}
+
+export function getMachineSensorThreshold(x, y) {
+    if (!world || !inBounds(x, y)) return null;
+    const i = index(x, y);
+    return isMachineSensor(DEFS[world.type[i]]) ? world.machineSensorThreshold[i] : null;
+}
+
+export function setMachineSensorThreshold(x, y, threshold) {
+    if (!world || !inBounds(x, y) || !Number.isFinite(threshold)) return false;
+    const i = index(x, y);
+    const def = DEFS[world.type[i]];
+    if (!isMachineSensor(def)) return false;
+    world.machineSensorThreshold[i] = def.machine === 'humiditySwitch'
+        ? Math.max(0, Math.min(100, threshold)) : threshold;
+    invalidateLogicalCurrent();
+    return true;
+}
+
+export function getMachineSensorReading(x, y) {
+    if (!world || !inBounds(x, y)) return null;
+    const machine = index(x, y);
+    if (!isMachineSensor(DEFS[world.type[machine]])) return null;
+    const humiditySwitch = DEFS[world.type[machine]].machine === 'humiditySwitch';
+    let total = 0;
+    let count = 0;
+    const sampled = new Set();
+    for (let offset = -2; offset <= 2; offset++) {
+        const probe = rotatedPortOffset(machine, offset, -3);
+        const px = x + Math.round(probe.x);
+        const py = y + Math.round(probe.y);
+        if (!inBounds(px, py)) continue;
+        const cell = index(px, py);
+        if (sampled.has(cell) || machineCollisionIsWall(px, py) ||
+            !AIR_SPACE_BY_TYPE[world.type[cell]]) continue;
+        sampled.add(cell);
+        total += humiditySwitch ? world.humidity[cell] : world.temp[cell];
+        count++;
+    }
+    return count ? total / count : null;
+}
+
+function machineSensorComparisonMet(reading, rule, threshold) {
+    if (reading === null) return false;
+    switch (MACHINE_SENSOR_RULES[rule]) {
+        case '<': return reading < threshold;
+        case '<=': return reading <= threshold;
+        case '==': return reading === threshold;
+        case '>=': return reading >= threshold;
+        case '>': return reading > threshold;
+        default: return false;
+    }
+}
+
+function machineSensorComparisonAt(machine, def, reading) {
+    const storedRule = Number(world.machineSensorRule[machine]);
+    const rule = Number.isInteger(storedRule) && storedRule >= 0 && storedRule < MACHINE_SENSOR_RULES.length
+        ? storedRule : defaultMachineSensorRule(def);
+    const storedThreshold = Number(world.machineSensorThreshold[machine]);
+    const threshold = Number.isFinite(storedThreshold)
+        ? storedThreshold : defaultMachineSensorThreshold(def);
+    return {
+        rule,
+        threshold,
+        conditionMet: machineSensorComparisonMet(reading, rule, threshold)
+    };
+}
+
+export function getMachineSensorStatus(x, y) {
+    if (!world || !inBounds(x, y)) return null;
+    ensureLogicalCurrent();
+    const machine = index(x, y);
+    const def = DEFS[world.type[machine]];
+    if (!isMachineSensor(def)) return null;
+
+    const reading = getMachineSensorReading(x, y);
+    const comparison = machineSensorComparisonAt(machine, def, reading);
+    const { rule, threshold, conditionMet } = comparison;
+    const inputActive = machineHasLogicalInput(machine);
+    const passing = conditionMet && inputActive;
+    const state = reading === null ? 'no-air'
+        : !conditionMet ? 'blocked'
+            : passing ? 'passing' : 'ready';
+
+    return {
+        reading,
+        rule,
+        ruleLabel: MACHINE_SENSOR_RULE_LABELS[rule],
+        threshold,
+        conditionMet,
+        inputActive,
+        passing,
+        state
+    };
 }
 
 // Public electrical state for later devices as well as the current renderer.
 export function isPowered(x, y) {
     return inBounds(x, y) && world.power[index(x, y)] > 0;
+}
+
+// DC logic is derived from charged Battery routes and enabled machine relays.
+// isPowered remains the visual travelling-pulse query for Spark effects.
+export function isLogicallyPowered(x, y) {
+    if (!world || !inBounds(x, y)) return false;
+    ensureLogicalCurrent();
+    return world.logicalPower[index(x, y)] > 0;
 }
 
 export function getStoredCharge(x, y) {
@@ -2036,6 +2241,8 @@ export function clearWorld() {
     world.plantCooldown.fill(0);
     world.data.fill(0);
     world.machineSetting.fill(0);
+    world.machineSensorRule.fill(0);
+    world.machineSensorThreshold.fill(0);
     world.storageType.fill(0);
     world.storageCount.fill(0);
     world.storageFlowRemainder.fill(0);
@@ -2061,6 +2268,7 @@ export function clearWorld() {
     for (const field of SPRINKLER_SPRAY_FIELDS) world[field].fill(0);
     world.power.fill(0);
     world.powerDelay.fill(0);
+    world.logicalPower.fill(0);
     world.charge.fill(0);
     world.wind.fill(0);
     world.airflowX.fill(0);
@@ -2078,6 +2286,9 @@ export function clearWorld() {
     if (collectorSealMask) collectorSealMask.fill(0);
     if (collectorRimMask) collectorRimMask.fill(0);
     collectorMasksDirty = false;
+    if (machineCollisionMask) machineCollisionMask.fill(0);
+    machineCollisionMaskDirty = false;
+    logicalCurrentDirty = false;
     tubingFlows = [];
     hasMixerMachine = false;
     windTrailsAlive = 0;
@@ -2129,8 +2340,18 @@ function collectorSealIsWall(x, y) {
 
 function typeAtForMovement(def, x, y) {
     const id = typeAt(x, y);
+    if (machineCollisionIsWall(x, y)) return STORAGE_VIRTUAL_WALL;
     if (id !== EMPTY || (!storageIntakeIsWall(x, y) && !collectorSealIsWall(x, y))) return id;
     return STORAGE_VIRTUAL_WALL;
+}
+
+function machineCollisionIsWall(x, y) {
+    ensureMachineCollisionMask();
+    return inBounds(x, y) && !!machineCollisionMask?.[index(x, y)];
+}
+
+export function invalidateMachineCollisionMask() {
+    machineCollisionMaskDirty = true;
 }
 
 // Puts a particle into a cell, giving it its starting temperature and lifetime.
@@ -2141,8 +2362,12 @@ export function setCell(x, y, id, keepTemp) {
     const def = DEFS[id];
     const previousType = world.type[i];
     if (isCollectorMachine(DEFS[previousType]) || isCollectorMachine(def)) collectorMasksDirty = true;
+    if (DEFS[previousType]?.machineCollisionWidth || def?.machineCollisionWidth) {
+        machineCollisionMaskDirty = true;
+    }
     const wasSameRay = previousType === id && def?.forceRate > 0;
     world.type[i] = id;
+    invalidateLogicalCurrent();
     if (def?.machine === 'mixer') hasMixerMachine = true;
     world.residue[i] = EMPTY;
     const lifetime = def.life > 0
@@ -2162,6 +2387,8 @@ export function setCell(x, y, id, keepTemp) {
     world.plantCooldown[i] = 0;
     world.data[i] = startingData(def);
     world.machineSetting[i] = def.machine ? defaultMachineSetting(def) : 0;
+    world.machineSensorRule[i] = isMachineSensor(def) ? defaultMachineSensorRule(def) : 0;
+    world.machineSensorThreshold[i] = isMachineSensor(def) ? defaultMachineSensorThreshold(def) : 0;
     world.storageType[i] = 0;
     world.storageCount[i] = 0;
     world.storageFlowRemainder[i] = 0;
@@ -2187,7 +2414,11 @@ export function setCell(x, y, id, keepTemp) {
 function transform(i, id, life, residue) {
     const def = DEFS[id];
     if (isCollectorMachine(DEFS[world.type[i]]) || isCollectorMachine(def)) collectorMasksDirty = true;
+    if (DEFS[world.type[i]]?.machineCollisionWidth || def?.machineCollisionWidth) {
+        machineCollisionMaskDirty = true;
+    }
     world.type[i] = id;
+    invalidateLogicalCurrent();
     const lifetime = life !== undefined ? life
         : (def.life > 0 ? def.life + Math.floor((random() - 0.5) * def.lifeVariance) : 0);
     world.life[i] = lifetime;
@@ -2199,6 +2430,8 @@ function transform(i, id, life, residue) {
     world.plantCooldown[i] = 0;
     world.data[i] = startingData(def);
     world.machineSetting[i] = def.machine ? defaultMachineSetting(def) : 0;
+    world.machineSensorRule[i] = isMachineSensor(def) ? defaultMachineSensorRule(def) : 0;
+    world.machineSensorThreshold[i] = isMachineSensor(def) ? defaultMachineSensorThreshold(def) : 0;
     world.storageType[i] = 0;
     world.storageCount[i] = 0;
     world.storageFlowRemainder[i] = 0;
@@ -2225,7 +2458,9 @@ function defaultBulkInsulation(category) {
 
 function removeParticle(i) {
     if (isCollectorMachine(DEFS[world.type[i]])) collectorMasksDirty = true;
+    if (DEFS[world.type[i]]?.machineCollisionWidth) machineCollisionMaskDirty = true;
     world.type[i] = EMPTY;
+    invalidateLogicalCurrent();
     world.life[i] = 0;
     world.lifeMax[i] = 0;
     world.residue[i] = EMPTY;
@@ -2235,6 +2470,8 @@ function removeParticle(i) {
     world.plantCooldown[i] = 0;
     world.data[i] = 0;
     world.machineSetting[i] = 0;
+    world.machineSensorRule[i] = 0;
+    world.machineSensorThreshold[i] = 0;
     world.storageType[i] = 0;
     world.storageCount[i] = 0;
     world.storageFlowRemainder[i] = 0;
@@ -2255,7 +2492,11 @@ function swapCells(i1, i2) {
     if (isCollectorMachine(DEFS[world.type[i1]]) || isCollectorMachine(DEFS[world.type[i2]])) {
         collectorMasksDirty = true;
     }
+    if (DEFS[world.type[i1]]?.machineCollisionWidth || DEFS[world.type[i2]]?.machineCollisionWidth) {
+        machineCollisionMaskDirty = true;
+    }
     let t = world.type[i1]; world.type[i1] = world.type[i2]; world.type[i2] = t;
+    invalidateLogicalCurrent();
     let h = world.temp[i1]; world.temp[i1] = world.temp[i2]; world.temp[i2] = h;
     let l = world.life[i1]; world.life[i1] = world.life[i2]; world.life[i2] = l;
     let lm = world.lifeMax[i1]; world.lifeMax[i1] = world.lifeMax[i2]; world.lifeMax[i2] = lm;
@@ -2268,6 +2509,8 @@ function swapCells(i1, i2) {
     let f = world.surface[i1]; world.surface[i1] = world.surface[i2]; world.surface[i2] = f;
     let d = world.data[i1]; world.data[i1] = world.data[i2]; world.data[i2] = d;
     let ms = world.machineSetting[i1]; world.machineSetting[i1] = world.machineSetting[i2]; world.machineSetting[i2] = ms;
+    let sensorRule = world.machineSensorRule[i1]; world.machineSensorRule[i1] = world.machineSensorRule[i2]; world.machineSensorRule[i2] = sensorRule;
+    let sensorThreshold = world.machineSensorThreshold[i1]; world.machineSensorThreshold[i1] = world.machineSensorThreshold[i2]; world.machineSensorThreshold[i2] = sensorThreshold;
     let st = world.storageType[i1]; world.storageType[i1] = world.storageType[i2]; world.storageType[i2] = st;
     let sc = world.storageCount[i1]; world.storageCount[i1] = world.storageCount[i2]; world.storageCount[i2] = sc;
     let sfr = world.storageFlowRemainder[i1]; world.storageFlowRemainder[i1] = world.storageFlowRemainder[i2]; world.storageFlowRemainder[i2] = sfr;
@@ -2364,6 +2607,7 @@ function energizeConnectedMetal(seeds, chargeStorage = true) {
         for (const i of storageCells) {
             world.charge[i] = DEFS[world.type[i]].chargeCapacity * fullness;
         }
+        invalidateLogicalCurrent();
     }
 }
 
@@ -2476,6 +2720,70 @@ function connectedGridConsumption(seeds, electricalLoadsByWire = null) {
     return consumption;
 }
 
+function machineHasLogicalInput(machine) {
+    return machinePortDescriptors(machine).some(port =>
+        port.family === 'electrical' && port.role === 'input' &&
+        electricalPortWireCells(port).some(wire => world.logicalPower[wire] > 0));
+}
+
+function energizeLogicalConductors(seeds) {
+    if (!world || seeds.length === 0) return false;
+    const queue = [];
+    let changed = false;
+    const add = cell => {
+        const def = DEFS[world.type[cell]];
+        if (!def?.conductive || def.chargeCapacity > 0 || world.logicalPower[cell] > 0) return;
+        world.logicalPower[cell] = 1;
+        queue.push(cell);
+        changed = true;
+    };
+    for (const seed of seeds) add(seed);
+
+    for (let head = 0; head < queue.length; head++) {
+        const cell = queue[head];
+        forEachConductiveConnection(cell, add);
+    }
+    return changed;
+}
+
+function recomputeLogicalCurrent() {
+    if (!world) return;
+    world.logicalPower.fill(0);
+    const batteryContacts = [];
+    for (let battery = 0; battery < world.type.length; battery++) {
+        const def = DEFS[world.type[battery]];
+        if (!(def?.chargeCapacity > 0) || !(world.charge[battery] > 0)) continue;
+        // Batteries are sources, not bridges in the conductor graph. Only
+        // seed the conductive cells that directly touch a charged reservoir.
+        forEachConductiveConnection(battery, cell => {
+            if (DEFS[world.type[cell]]?.chargeCapacity <= 0) batteryContacts.push(cell);
+        });
+    }
+    energizeLogicalConductors(batteryContacts);
+
+    let changed;
+    do {
+        changed = false;
+        for (let machine = 0; machine < world.type.length; machine++) {
+            const def = DEFS[world.type[machine]];
+            if (!def?.machine) continue;
+            if (def.machine === 'simpleSwitch') {
+                if ((Math.round(world.machineSetting[machine]) & 1) === 0) continue;
+            } else if (isMachineSensor(def)) {
+                const reading = getMachineSensorReading(machine % COLS, Math.floor(machine / COLS));
+                if (!machineSensorComparisonAt(machine, def, reading).conditionMet) continue;
+            } else {
+                continue;
+            }
+            if (!machineHasLogicalInput(machine)) continue;
+            const output = machinePortDescriptors(machine).find(port =>
+                port.family === 'electrical' && port.role === 'output');
+            if (energizeLogicalConductors(electricalPortWireCells(output))) changed = true;
+        }
+    } while (changed);
+    logicalCurrentDirty = false;
+}
+
 // Directly touching storage metals behave as one reservoir. This conserves
 // their total charge while equalising fullness, so fresh Battery painted onto
 // a charged piece draws charge from the old cells immediately on the next
@@ -2567,6 +2875,7 @@ function updateElectricalPower() {
     }
 
     balanceStoredCharge();
+    recomputeLogicalCurrent();
     relayElectricalSwitches();
 }
 
@@ -2575,9 +2884,18 @@ function relayElectricalSwitches() {
         if (DEFS[world.type[machine]]?.machine !== 'simpleSwitch' ||
             (Math.round(world.machineSetting[machine]) & 1) === 0) continue;
         const ports = machinePortDescriptors(machine);
-        const input = ports.find(port => port.family === 'electrical' && port.role === 'input');
         const output = ports.find(port => port.family === 'electrical' && port.role === 'output');
-        if (!electricalPortWireCells(input).some(wire => world.power[wire] > 0)) continue;
+        if (!machineHasLogicalInput(machine)) continue;
+        const outputWires = electricalPortWireCells(output);
+        if (outputWires.length) energizeConnectedMetal(outputWires, false);
+    }
+    for (let machine = 0; machine < world.type.length; machine++) {
+        const def = DEFS[world.type[machine]];
+        if (!isMachineSensor(def)) continue;
+        const status = getMachineSensorStatus(machine % COLS, Math.floor(machine / COLS));
+        if (!status?.passing) continue;
+        const output = machinePortDescriptors(machine).find(port =>
+            port.family === 'electrical' && port.role === 'output');
         const outputWires = electricalPortWireCells(output);
         if (outputWires.length) energizeConnectedMetal(outputWires, false);
     }
@@ -4224,6 +4542,7 @@ function explode(x, y, def) {
             }
 
             world.type[ni] = EMPTY;
+            invalidateLogicalCurrent();
             world.life[ni] = 0;
             world.lifeMax[ni] = 0;
             world.residue[ni] = EMPTY;
@@ -4301,6 +4620,8 @@ let storageBarrierMask = null;
 let collectorSealMask = null;
 let collectorRimMask = null;
 let collectorMasksDirty = true;
+let machineCollisionMask = null;
+let machineCollisionMaskDirty = true;
 
 const COLLECTOR_LOCAL_ROTATION = [0, 180, -90, 90, -45, -135, 135, 45];
 
@@ -4477,7 +4798,8 @@ function isStorageFunnelArea(x, y) {
 function canSinkDiagonally(def, x, y, nx, ny) {
     if (!canSinkInto(def, typeAtForMovement(def, nx, ny))) return false;
     if (nx === x || ny === y) return true;
-    if (!isStorageFunnelArea(x, y) && !isStorageFunnelArea(nx, ny)) return true;
+    if (!isStorageFunnelArea(x, y) && !isStorageFunnelArea(nx, ny) &&
+        !machineCollisionIsWall(nx, y) && !machineCollisionIsWall(x, ny)) return true;
     return !isSolidBarrier(typeAtForMovement(def, nx, y)) &&
         !isSolidBarrier(typeAtForMovement(def, x, ny));
 }
@@ -4485,7 +4807,8 @@ function canSinkDiagonally(def, x, y, nx, ny) {
 function canRiseDiagonally(def, x, y, nx, ny) {
     if (typeAtForMovement(def, nx, ny) !== EMPTY) return false;
     if (nx === x || ny === y) return true;
-    if (!isStorageFunnelArea(x, y) && !isStorageFunnelArea(nx, ny)) return true;
+    if (!isStorageFunnelArea(x, y) && !isStorageFunnelArea(nx, ny) &&
+        !machineCollisionIsWall(nx, y) && !machineCollisionIsWall(x, ny)) return true;
     return !isSolidBarrier(typeAtForMovement(def, nx, y)) &&
         !isSolidBarrier(typeAtForMovement(def, x, ny));
 }
@@ -5066,12 +5389,13 @@ function moveProjectile(x, y, i, def) {
 }
 
 function machineIsPowered(x, y, i) {
-    if (world.power[i] > 0 || world.powerDelay[i] > 0) return true;
+    ensureLogicalCurrent();
+    if (world.logicalPower[i] > 0) return true;
 
     // Broad power-port targets can include copper cells that sit just outside
-    // the ordinary two-cell wire reach. A live pulse on any declared copper
-    // contact powers the machine through that port, while bare copper still
-    // cannot activate it.
+    // the ordinary two-cell wire reach. A Battery-backed logical route on any
+    // declared copper contact powers the machine through that port, while bare
+    // copper still cannot activate it.
     const poweredCopperPort = machinePortDescriptors(i).some(port =>
         port.family === 'copper' && [port.connectionCell, ...legacyPortCells(i, port)]
             .some(cell => {
@@ -5079,23 +5403,18 @@ function machineIsPowered(x, y, i) {
                 const contact = index(cell.x, cell.y);
                 const def = DEFS[world.type[contact]];
                 return def?.name === 'Copper' &&
-                    (world.power[contact] > 0 || world.powerDelay[contact] > 0);
+                    world.logicalPower[contact] > 0;
             }));
     if (poweredCopperPort) return true;
 
     const poweredElectricalPort = machinePortDescriptors(i).some(port =>
         port.family === 'electrical' && port.role === 'input' &&
-        electricalPortWireCells(port).some(wire => world.power[wire] > 0 || world.powerDelay[wire] > 0));
+        electricalPortWireCells(port).some(wire => world.logicalPower[wire] > 0));
     if (poweredElectricalPort) return true;
 
-    // A live Spark or a Spark source touching a machine is enough to start it.
-    // The source check is deliberate: a source does not need an empty cell on
-    // the machine-facing side in order to energize a machine it is touching.
-    const spark = idOf('Spark');
-    for (const [dx, dy] of ELECTRICAL_NEIGHBOURS) {
-        const neighbour = typeAt(x + dx, y + dy);
-        if (neighbour === spark || DEFS[neighbour]?.sparkEmitterChance > 0) return true;
-    }
+    // Spark particles and their travelling visuals do not constitute DC
+    // current. Machines only run from a charged Battery route represented in
+    // logicalPower above.
     return false;
 }
 
@@ -5750,6 +6069,57 @@ function refreshStorageFunnelMachines() {
         storageFunnelMachines.push({ i, x, y, frontX, frontY, ...geometry, barrierCells });
     }
     collectorMasksDirty = false;
+}
+
+function ensureMachineCollisionMask() {
+    if (machineCollisionMaskDirty && world) refreshMachineCollisionMask();
+}
+
+function refreshMachineCollisionMask() {
+    if (!machineCollisionMask || machineCollisionMask.length !== world.type.length) {
+        machineCollisionMask = new Uint8Array(world.type.length);
+    } else {
+        machineCollisionMask.fill(0);
+    }
+    for (let machine = 0; machine < world.type.length; machine++) {
+        const def = DEFS[world.type[machine]];
+        const width = Math.max(0, Math.floor(def?.machineCollisionWidth || 0));
+        const height = Math.max(0, Math.floor(def?.machineCollisionHeight || 0));
+        if (!width || !height) continue;
+        const x = machine % COLS;
+        const y = Math.floor(machine / COLS);
+        const left = Math.floor((width - 1) / 2);
+        const top = Math.floor((height - 1) / 2);
+        const explicitOpenCells = new Set();
+        for (const port of MACHINE_PORT_DEFINITIONS[def.machine] || []) {
+            const offset = rotatedPortOffset(machine, port.x, port.y);
+            const px = x + Math.round(offset.x);
+            const py = y + Math.round(offset.y);
+            if (inBounds(px, py)) explicitOpenCells.add(index(px, py));
+        }
+        // Sensors sample five air cells at the exposed face, three cells above
+        // the anchor before orientation is applied. This face and all declared
+        // port anchors remain open even if a future body size overlaps them.
+        if (isMachineSensor(def)) {
+            for (let offset = -2; offset <= 2; offset++) {
+                const probe = rotatedPortOffset(machine, offset, -3);
+                const px = x + Math.round(probe.x);
+                const py = y + Math.round(probe.y);
+                if (inBounds(px, py)) explicitOpenCells.add(index(px, py));
+            }
+        }
+        for (let dy = -top; dy < height - top; dy++) {
+            for (let dx = -left; dx < width - left; dx++) {
+                const px = x + dx;
+                const py = y + dy;
+                if (!inBounds(px, py)) continue;
+                const cell = index(px, py);
+                if (explicitOpenCells.has(cell)) continue;
+                machineCollisionMask[cell] = 1;
+            }
+        }
+    }
+    machineCollisionMaskDirty = false;
 }
 
 function emitMachineProjectile(x, y, direction, def, targetTemp) {

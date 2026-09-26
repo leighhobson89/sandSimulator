@@ -11,10 +11,11 @@ are preserved in the [archive](archive/) index.
   fitted to show their edges. The larger world is flagged as performance-heavy;
   a 780×450 choice was removed after a focused browser start took more than ten
   seconds. The 1040×600 profile is diagnostic only, not a supported world size.
-- The electrical model sends visible pulses through Spark, Copper, Iron, and
-  Battery networks. Battery stores charge, and powered Fans, Heaters, and
-  Coolers consume it. This is an intentionally readable game rule, not a
-  voltage/current simulation.
+- Electrical logic is steady DC: a conductor is logically ON while its route
+  reaches a charged Battery. Switches gate logical current toward declared
+  outputs; travelling Sparks are visual effects and do not determine machine
+  power. This remains an intentionally readable game rule, not a voltage/current
+  simulation.
 - Tubing moves discrete stored particles through declared machine ports,
   including storage, Mixer, Sprinkler, Collector, and Splitter connections.
   Connections use touching edges; transfer is limited by the narrowest
@@ -30,24 +31,25 @@ already implemented.
 
 ## Power: make circuits easier to understand and extend
 
-Before adding elaborate electronics, settle one design question: should a
-device respond to a short pulse, remain active while a network is powered, or
-support both? The current pulse-and-stored-charge rules are easy to see, but
-logic gates and persistent controls need a consistent answer.
+The current DC contract provides a stable base for more circuits: machine
+inputs read logical current, and directional switches pass that current only
+when their rule permits it. The proposal for a small gate set, supporting
+controls, and power diagnostics is in
+[Logic gates and lighting](proposals/LOGIC_GATES_AND_LIGHTING.md). Keep future
+timed pulses separate from sustained current so each behavior has a clear
+meaning.
 
 | Candidate | What the player could do | Design point to resolve |
 | --- | --- | --- |
-| **Power Switch** | Open or close a conductor path by clicking it, with an optional Spark-triggered switch. | Decide whether it interrupts pulse travel, device activation, or both. Make its state visible and saveable. |
-| **Sensor** | Emit a pulse when nearby temperature, water, a chosen material, or Battery charge crosses a threshold. | Start with one or two observable inputs; avoid a general programmable sensor interface. |
-| **Relay / repeater** | Pass a pulse across a gap, delay it, or refresh a pulse so a remote machine can be triggered. | Give it a small, predictable rule and clear directionality before introducing logic gates. |
+| **Logic gates** | Combine two or more sustained input levels with NOT, AND, OR, or XOR. | Define the supply contact, fan-out, output load, and deterministic feedback behavior. |
+| **Toggle / button** | Manually hold a route ON or trigger a temporary action. | Distinguish saved toggle state from momentary activation duration. |
+| **Latch / timer** | Remember an input or produce repeatable and one-shot timing. | Specify simultaneous set/reset priority, restart rules, timing bounds, and persistence. |
 | **Dedicated wire** | Route power through a visually distinct, paintable wire instead of relying on Copper or Iron material. | Clarify how wire joins existing conductors and whether it has durability or capacity. |
 | **Generator family** | Add a Wind Turbine that turns ambient airflow into stored Battery charge; later consider a Steam Dynamo. | A generator needs a defined output path into the current Battery network and understandable rate feedback. |
 
-Useful feedback could come before new circuit rules: a power overlay showing
-conductors, moving pulses, stored Battery charge, and machines currently
-consuming power; a hover readout could explain why a machine is inactive. This
-would make the existing system easier to learn and provide a debugging surface
-for any future switches or sensors.
+Useful feedback includes a logical-current overlay, Battery charge and load
+readouts, and a hover explanation for inactive machines. Keep that diagnostic
+state visibly separate from cosmetic traveling Sparks.
 
 ## Machines that connect the existing loops
 
@@ -72,11 +74,13 @@ model without requiring a continuous fluid solver.
 - **Plant nutrients and compost:** let Ash, Wet Ash, or a new Compost material
   improve growth or seed production. A soil-quality readout could make the
   effect observable without adding a hidden global fertility map.
-- **Light as a local field:** a simple directional Lamp could illuminate a
-  small area, enable light-responsive plants, and provide a prerequisite for a
-  Solar Panel. This is a larger system: decide how light travels through
-  materials and how it is rendered before adding several light-dependent
-  elements.
+- **Light as a local field:** a powered Lamp and selected light-emitting
+  materials could illuminate nearby cells and affect responsive plants. Keep
+  irradiance separate from heat and thermal glow; decide material transmission,
+  shadow updates, rendering, and performance before adding light-dependent
+  elements. The [logic gates and lighting proposal](proposals/LOGIC_GATES_AND_LIGHTING.md)
+  outlines a bounded first version. Solar generation and day/night are later
+  ideas.
 - **Wind Turbine element or machine:** use existing decaying airflow as an
   input to a generator. It would pair naturally with the Wind tool and Fan,
   though a powered Fan feeding its own generator must not create free energy.
@@ -146,8 +150,8 @@ cross-system coupling would make layouts harder to reason about.
 
 1. Improve power and machine status overlays using existing state; measure the
    value before changing the electrical model.
-2. Prototype a simple Switch or Sensor with a focused test that pins its exact
-   pulse or persistent-power semantics.
+2. Extend the steady DC model with a small tested gate or control, using the
+   proposal's supply, fan-out, load, and persistence decisions.
 3. Prototype a Pump or Valve and extend Tubing only as far as that use case
    needs; add a small scenario to explain the resulting loop.
 4. Explore a local light field only after profiling its simulation and rendering

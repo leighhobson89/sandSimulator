@@ -124,11 +124,13 @@ rule based on the surface of connected liquid, not a Navier–Stokes solution.
   Solid Copper, Battery, Iron, Fan, Cooler, Tubing, and Heater also blend their
   local pixel color toward a configured glow color as they approach melting.
   This is a visual-only per-cell interpolation; molten gradients are unchanged.
-- The electrical system is more than a colour change. Sparks launch visible
-  pulses through conductive networks; Battery stores shared charge; Copper,
-  Iron and machines consume it; a Fan converts power into directional airflow,
-  while Heater and Cooler convert it into directional temperature forces and
-  matching centreline Heat Ray/Cold Ray projectiles.
+- A charged Battery supplies independent DC logical current along connected
+  conductive wire routes. Copper, Iron, Elec, and machine loads draw from the
+  shared Battery charge; declared switch/sensor ports gate that current, and
+  powered machines apply airflow or directional temperature effects. Traveling
+  Sparks over wire are visual animation only and never determine logical ON or
+  OFF state. Battery depletion or a broken route switches logical power off
+  immediately even when an animation tail remains visible.
 - The simulator is testable outside the browser. The physics core has no DOM
   dependency, and deterministic simulation, startup smoke, scale-profile, and
   browser-visible regressions use the documented npm harness. On 25 September

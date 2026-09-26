@@ -25,7 +25,8 @@ import {
     getConnectedBatteryCharge, getTubingFlows, isMachinePoweredAt,
     getMachinePorts, getMachinePortTemplates, getMachineSetting,
     registerMachinePortLead, getMachinePortLeadOwner,
-    getMachineArtworkLayout, isMachinePortMaterialCompatible, EMPTY
+    getMachineArtworkLayout, isMachinePortMaterialCompatible, EMPTY,
+    invalidateMachineCollisionMask, invalidateLogicalCurrent
 } from './physics.js';
 
 let context = null;
@@ -62,6 +63,7 @@ export const BLUEPRINT_SLOT_COUNT = 24;
 export const BLUEPRINT_FIELDS = [
     'type', 'temp', 'life', 'lifeMax', 'residue', 'shade', 'heat', 'surface',
     'data', 'machineSetting', 'storageType', 'storageCount', 'storageFlowRemainder',
+    'machineSensorRule', 'machineSensorThreshold',
     'machinePortEndpointRemap', 'machinePortEndpointSlot',
     'machinePortLeadRemap', 'machinePortLeadSlot',
     'sprinklerLaunchDirection', 'sprinklerLaunchAge',
@@ -744,7 +746,8 @@ function machineIconContainsArtworkAt(icon, clientX, clientY) {
 
     // Port markers and stubs are visible parts of the machine overlay too.
     // The larger transparent hit circles remain interaction affordances only.
-    for (const shape of icon.querySelectorAll(':scope > .machine-port, :scope > .machine-port-stub')) {
+    for (const shape of icon.querySelectorAll(
+        ':scope > .machine-port, :scope > .machine-port-stub, :scope > [data-sensor-marker]')) {
         const style = getComputedStyle(shape);
         if (style.display === 'none' || style.visibility === 'hidden') continue;
         const matrix = shape.getScreenCTM();
@@ -828,6 +831,38 @@ function appendMachineSprite(icon, machineType) {
     frame.setAttribute('y', String(layout.y));
     frame.setAttribute('width', String(layout.width));
     frame.setAttribute('height', String(layout.height));
+    if (machineType === 'temperatureSwitch' || machineType === 'humiditySwitch') {
+        frame.setAttribute('viewBox', '0 0 64 64');
+        frame.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+        const add = (tag, attributes) => {
+            const element = document.createElementNS(MACHINE_ICON_SVG_NS, tag);
+            for (const [name, value] of Object.entries(attributes)) element.setAttribute(name, String(value));
+            frame.appendChild(element);
+            return element;
+        };
+        add('rect', { x: 9, y: 14, width: 46, height: 40, rx: 8,
+            fill: '#263744', stroke: '#101922', 'stroke-width': 3 });
+        add('rect', { x: 13, y: 17, width: 38, height: 31, rx: 4,
+            fill: machineType === 'temperatureSwitch' ? '#a85a36' : '#287e9d',
+            stroke: '#b9d7df', 'stroke-width': 1.5 });
+        if (machineType === 'temperatureSwitch') {
+            add('path', { d: 'M30 24v13a6 6 0 1 0 8 0V24a4 4 0 0 0-8 0Z',
+                fill: 'none', stroke: '#fff0d2', 'stroke-width': 3, 'stroke-linejoin': 'round' });
+            add('path', { d: 'M34 28v12', fill: 'none', stroke: '#ffb04e',
+                'stroke-width': 3.2, 'stroke-linecap': 'round' });
+        } else {
+            add('path', { d: 'M32 22C28 28 26 31 26 35a6 6 0 0 0 12 0c0-4-2-7-6-13Z',
+                fill: '#a6e9f2', stroke: '#e6fbff', 'stroke-width': 1.6 });
+            add('path', { d: 'M22 43h20', fill: 'none', stroke: '#d4f2f5',
+                'stroke-width': 2, 'stroke-linecap': 'round' });
+        }
+        add('path', { d: 'M6 32h8M50 32h8', fill: 'none', stroke: '#d3b34d',
+            'stroke-width': 2, 'stroke-linecap': 'round' });
+        add('path', { d: 'M32 16v7', fill: 'none', stroke: '#ffdf43',
+            'stroke-width': 2.2, 'stroke-linecap': 'round' });
+        icon.appendChild(frame);
+        return;
+    }
     if (machineType === 'collector') {
         frame.setAttribute('viewBox', '0 0 64 64');
         frame.setAttribute('preserveAspectRatio', 'xMidYMid meet');
@@ -1103,7 +1138,9 @@ function drawMachineOverlays() {
             '<path d="M11 12h8M11 18h8M15 12v3m0 0-4 3m4-3 4 3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>',
         collector: true,
         simpleSwitch: true,
-        lamp: true
+        lamp: true,
+        temperatureSwitch: true,
+        humiditySwitch: true
     };
 
     const appendPortArtwork = (icon, ports, cellWidth, cellHeight, machineX, machineY) => {
@@ -1202,6 +1239,17 @@ function drawMachineOverlays() {
         icon.style.transform = `rotate(${machine === 'sprinkler'
             ? 0 : rotations[world.data[i] & 7]}deg)`;
         appendMachineSprite(icon, machine);
+        if (machine === 'temperatureSwitch' || machine === 'humiditySwitch') {
+            const sensor = document.createElementNS(MACHINE_ICON_SVG_NS, 'circle');
+            sensor.setAttribute('cx', '32');
+            sensor.setAttribute('cy', '14');
+            sensor.setAttribute('r', '2.8');
+            sensor.setAttribute('fill', '#ffdf43');
+            sensor.setAttribute('stroke', '#171717');
+            sensor.setAttribute('stroke-width', '0.8');
+            sensor.setAttribute('data-sensor-marker', 'true');
+            icon.appendChild(sensor);
+        }
         appendPortArtwork(icon, getMachinePorts(x, y), cellWidth, cellHeight, x, y);
         overlay.appendChild(icon);
         machineArtworkIcons.push(icon);
@@ -1778,6 +1826,8 @@ export function paintCell(centreX, centreY, dragX, dragY, rayDirection = null, p
             const i = index(x, y);
             if (id === EMPTY) {
                 world.type[i] = EMPTY;
+                world.machineSensorRule[i] = 0;
+                world.machineSensorThreshold[i] = 0;
                 world.life[i] = 0;
                 world.lifeMax[i] = 0;
                 world.residue[i] = EMPTY;
@@ -1789,6 +1839,8 @@ export function paintCell(centreX, centreY, dragX, dragY, rayDirection = null, p
                 world.power[i] = 0;
                 world.powerDelay[i] = 0;
                 world.charge[i] = 0;
+                invalidateMachineCollisionMask();
+                invalidateLogicalCurrent();
                 continue;
             }
 
@@ -1918,6 +1970,8 @@ function paintSingleCell(x, y, id, fillLooseMaterial = false, rayDirection = nul
     const i = index(x, y);
     if (id === EMPTY) {
         world.type[i] = EMPTY;
+        world.machineSensorRule[i] = 0;
+        world.machineSensorThreshold[i] = 0;
         world.life[i] = 0;
         world.lifeMax[i] = 0;
         world.residue[i] = EMPTY;
@@ -1929,6 +1983,8 @@ function paintSingleCell(x, y, id, fillLooseMaterial = false, rayDirection = nul
         world.power[i] = 0;
         world.powerDelay[i] = 0;
         world.charge[i] = 0;
+        invalidateMachineCollisionMask();
+        invalidateLogicalCurrent();
         return;
     }
     if (world.type[i] !== EMPTY) return;
@@ -2004,6 +2060,10 @@ export function stampBlueprintAt(blueprint, startX, startY) {
             stamped++;
         }
     }
+    if (stamped > 0) {
+        invalidateMachineCollisionMask();
+        invalidateLogicalCurrent();
+    }
     return stamped;
 }
 
@@ -2033,6 +2093,8 @@ export function beginGrab(centreX, centreY, size = getGrabberSize()) {
                 residue: world.residue[i], shade: world.shade[i],
                 heat: world.heat[i], data: world.data[i],
                 machineSetting: world.machineSetting[i],
+                machineSensorRule: world.machineSensorRule[i],
+                machineSensorThreshold: world.machineSensorThreshold[i],
                 storageType: world.storageType[i], storageCount: world.storageCount[i],
                 storageFlowRemainder: world.storageFlowRemainder[i],
                 machinePortEndpointRemap: world.machinePortEndpointRemap[i],
@@ -2077,6 +2139,9 @@ export function beginGrab(centreX, centreY, size = getGrabberSize()) {
             if (getMachinePortLeadOwner(x, y) === machineIndex) captureAt(x, y);
         }
     }
+    if (cells.some(cell => getDefinitions()[cell.type]?.machineCollisionWidth)) {
+        invalidateMachineCollisionMask();
+    }
     grabbedPixels = { centreX, centreY, cells };
     return cells.length;
 }
@@ -2091,6 +2156,7 @@ export function dropGrab(centreX, centreY) {
     const world = getWorld();
     for (const cell of held.cells) restoreGrabbedCell(world,
         index(centre.x + cell.dx, centre.y + cell.dy), cell);
+    invalidateMachineCollisionMask();
     return held.cells.length;
 }
 
@@ -2112,6 +2178,7 @@ export function cancelGrab() {
     grabbedPixels = null;
     const world = getWorld();
     for (const cell of held.cells) restoreGrabbedCell(world, index(cell.x, cell.y), cell);
+    invalidateMachineCollisionMask();
     return held.cells.length;
 }
 
@@ -2121,6 +2188,7 @@ export function hasGrabbedPixels() {
 
 function clearGrabbedCell(world, i, y) {
     world.type[i] = EMPTY;
+    invalidateLogicalCurrent();
     world.temp[i] = getAirTempAt(y);
     world.life[i] = 0;
     world.lifeMax[i] = 0;
@@ -2128,6 +2196,8 @@ function clearGrabbedCell(world, i, y) {
     world.heat[i] = 0;
     world.data[i] = 0;
     world.machineSetting[i] = 0;
+    world.machineSensorRule[i] = 0;
+    world.machineSensorThreshold[i] = 0;
     world.storageType[i] = 0;
     world.storageCount[i] = 0;
     world.storageFlowRemainder[i] = 0;
@@ -2158,6 +2228,7 @@ function clearGrabbedCell(world, i, y) {
 
 function restoreGrabbedCell(world, i, cell) {
     world.type[i] = cell.type;
+    invalidateLogicalCurrent();
     world.temp[i] = cell.temp;
     world.life[i] = cell.life;
     world.lifeMax[i] = cell.lifeMax;
@@ -2166,6 +2237,8 @@ function restoreGrabbedCell(world, i, cell) {
     world.heat[i] = cell.heat;
     world.data[i] = cell.data;
     world.machineSetting[i] = cell.machineSetting || 0;
+    world.machineSensorRule[i] = cell.machineSensorRule ?? 0;
+    world.machineSensorThreshold[i] = cell.machineSensorThreshold ?? 0;
     world.storageType[i] = cell.storageType || 0;
     world.storageCount[i] = cell.storageCount || 0;
     world.storageFlowRemainder[i] = cell.storageFlowRemainder || 0;

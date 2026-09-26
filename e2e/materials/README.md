@@ -2,10 +2,15 @@ Exhaustive browser contracts for the material catalog and canvas behavior.
 
 - `catalog.spec.mjs` checks every prepared definition button, category grouping,
   exact IDs/order, hover and keyboard-focus glossary text, and seeded material
-  rendering. It also checks Insulation's heat-retaining, non-conductive
-  properties and `thermalNetworkRate` participation for metals and powered
-  machines, including Tubing's rate and that Insulation remains outside the
-  fast network.
+  rendering. It checks that Battery, Spark, Spark Dust, Spark Block, Temperature
+  Switch, and Humidity Switch are grouped under Electricals, and protects the
+  switch particle IDs, internal keys, and `machineSensor*` API/field contract.
+  It also verifies Vegetation is the last picker group, starts collapsed, and
+  collapses again after a second successful new-game start. Existing vegetation
+  and all-definition checks expand the initially hidden group before reading
+  its entries. The spec checks Insulation's heat-retaining, non-conductive properties and
+  `thermalNetworkRate` participation for metals and powered machines, including
+  Tubing's rate and that Insulation remains outside the fast network.
 - `rendering.spec.mjs` checks Water painting at an exact mapped cell, prepared
   canvas colors, selected state, and exit from eraser/grabber/blueprint modes.
   Its thermal-color regression checks per-cell glow interpolation for solid

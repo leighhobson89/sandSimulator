@@ -13,8 +13,8 @@ test('catalog groups materials, selects them accessibly, and describes their beh
 
     const headingOrder = await page.locator('#particleButtons .panel-heading-toggle > span:first-child').allTextContents();
     expect(headingOrder).toEqual([
-        'Powders', 'Liquids', 'Gases', 'Solids', 'Seeds', 'Vegetation',
-        'Metals', 'Electricals', 'Machines', 'Storage', 'Tools'
+        'Powders', 'Liquids', 'Gases', 'Solids', 'Seeds',
+        'Metals', 'Electricals', 'Machines', 'Storage', 'Tools', 'Vegetation'
     ]);
 
     const sand = page.getByRole('button', { name: 'Sand', exact: true });
@@ -57,6 +57,35 @@ test('Space on a focused catalog button selects it without toggling simulation p
 
     await expect(water).toHaveClass(/selected/);
     await expect(page.locator('#pauseButton')).toHaveText('Play');
+});
+
+test('Vegetation is last in the catalog, starts collapsed, and resets after a new game', async ({ page }) => {
+    const game = new GamePage(page);
+    await game.openMenu();
+    await game.newGame();
+
+    const headingLabels = await page.locator('#particleButtons .panel-heading-toggle > span:first-child').allTextContents();
+    expect(headingLabels.at(-1)).toBe('Vegetation');
+    const vegetationHeading = page.locator('#particleButtons .panel-heading')
+        .filter({ hasText: /^Vegetation$/ });
+    const toggle = vegetationHeading.getByRole('button');
+    const grid = vegetationHeading.locator('xpath=following-sibling::div[1]');
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(grid).toBeHidden();
+
+    await toggle.click();
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(grid).toBeVisible();
+
+    // Start another world through the menu flow without triggering the
+    // unrelated autosave replacement confirmation.
+    await page.evaluate(() => localStorage.removeItem('elemental-foundry.autosave.v1'));
+    await game.openMenu();
+    await game.newGame();
+    const resetHeading = page.locator('#particleButtons .panel-heading')
+        .filter({ hasText: /^Vegetation$/ });
+    await expect(resetHeading.getByRole('button')).toHaveAttribute('aria-expanded', 'false');
+    await expect(resetHeading.locator('xpath=following-sibling::div[1]')).toBeHidden();
 });
 
 test('Insulation catalog describes heat retention and exposes metal network rates', async ({ page }) => {
@@ -211,6 +240,72 @@ test('Electricals contains Elec, a copper-like wire with stronger heat and elect
     await expect(page.locator('#toolTooltip')).toContainText('Elec');
 });
 
+test('Battery and Spark materials are grouped under Electricals with the electrical switch machines', async ({ page }) => {
+    const game = new GamePage(page);
+    await game.openMenu();
+    await game.newGame();
+
+    const heading = page.locator('#particleButtons .panel-heading').filter({ hasText: /^Electricals/ });
+    const electricals = heading.locator('xpath=following-sibling::div[1]');
+    await expect(heading).toBeVisible();
+    for (const name of ['Battery', 'Spark', 'Spark Dust', 'Spark Block', 'Temperature Switch', 'Humidity Switch']) {
+        await expect(electricals.getByRole('button', { name, exact: true }),
+            `${name} is in the Electricals section`).toBeVisible();
+    }
+
+    const groups = await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        return Object.fromEntries(physics.getDefinitions().filter(Boolean)
+            .map(definition => [definition.name, definition.group]));
+    });
+    for (const name of ['Battery', 'Spark', 'Spark Dust', 'Spark Block', 'Temperature Switch', 'Humidity Switch']) {
+        expect(groups[name], name).toBe('Electricals');
+    }
+});
+
+test('sensor material IDs and machine keys stay stable while sensor APIs and persistence fields keep their names', async ({ page }) => {
+    const game = new GamePage(page);
+    await game.openMenu();
+    await game.newGame();
+
+    const contract = await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        const game = await import('/game.js');
+        const definitions = physics.getDefinitions();
+        const world = physics.getWorld();
+        const sensorApiNames = [
+            'getMachineSensorRule', 'setMachineSensorRule',
+            'getMachineSensorThreshold', 'setMachineSensorThreshold',
+            'getMachineSensorReading', 'getMachineSensorStatus'
+        ];
+        return {
+            sensors: [85, 86].map(id => ({ id, name: definitions[id]?.name, machine: definitions[id]?.machine })),
+            sensorApis: Object.fromEntries(sensorApiNames.map(name => [name, typeof physics[name]])),
+            worldFields: Object.fromEntries(['machineSensorRule', 'machineSensorThreshold']
+                .map(field => [field, world[field]?.constructor.name])),
+            blueprintFields: game.BLUEPRINT_FIELDS.filter(field => field.startsWith('machineSensor'))
+        };
+    });
+
+    expect(contract.sensors).toEqual([
+        { id: 85, name: 'Temperature Switch', machine: 'temperatureSwitch' },
+        { id: 86, name: 'Humidity Switch', machine: 'humiditySwitch' }
+    ]);
+    expect(contract.sensorApis).toEqual({
+        getMachineSensorRule: 'function',
+        setMachineSensorRule: 'function',
+        getMachineSensorThreshold: 'function',
+        setMachineSensorThreshold: 'function',
+        getMachineSensorReading: 'function',
+        getMachineSensorStatus: 'function'
+    });
+    expect(contract.worldFields).toEqual({
+        machineSensorRule: 'Uint8Array',
+        machineSensorThreshold: 'Float64Array'
+    });
+    expect(contract.blueprintFields).toEqual(['machineSensorRule', 'machineSensorThreshold']);
+});
+
 test('Elec forms Corrosion powder but needs four times Copper exposure', async ({ page }) => {
     const game = new GamePage(page);
     await game.openMenu();
@@ -271,6 +366,7 @@ test('every prepared definition has a catalog button and generated glossary text
     await game.newGame();
 
     const definitions = (await game.state()).definitions.filter(Boolean).filter(definition => definition.id > 0);
+    await page.locator('#particleButtons .panel-heading-toggle[aria-expanded="false"]').click();
     const buttons = page.locator('.particle-button');
     await expect(buttons).toHaveCount(definitions.length);
 
@@ -310,6 +406,8 @@ test('seed and vegetation species and Cloud appear under dedicated catalog headi
     const vegetationHeading = page.locator('#particleButtons .panel-heading')
         .filter({ hasText: /^Vegetation/ });
     const vegetationGrid = vegetationHeading.locator('xpath=following-sibling::div[1]');
+    await vegetationHeading.getByRole('button').click();
+    await expect(vegetationGrid).toBeVisible();
     await expect(vegetationHeading).toBeVisible();
     for (const name of vegetationNames) {
         await expect(page.getByRole('button', { name, exact: true })).toBeVisible();
@@ -335,19 +433,23 @@ test('every catalog group can be collapsed and expanded with its accessible togg
     for (const heading of await headings.all()) {
         const toggle = heading.getByRole('button');
         const grid = heading.locator('xpath=following-sibling::div[1]');
+        const initiallyExpanded = (await toggle.getAttribute('aria-expanded')) === 'true';
         await expect(toggle).toHaveCount(1);
         await expect(toggle).toHaveAccessibleName(/\S+/);
-        await expect(toggle).toHaveAttribute('aria-expanded', 'true');
-        await expect(grid).toBeVisible();
+        await expect(toggle).toHaveAttribute('aria-expanded', String(initiallyExpanded));
+        if (initiallyExpanded) await expect(grid).toBeVisible();
+        else await expect(grid).toBeHidden();
 
         await toggle.focus();
         await toggle.press('Enter');
-        await expect(toggle).toHaveAttribute('aria-expanded', 'false');
-        await expect(grid).toBeHidden();
+        await expect(toggle).toHaveAttribute('aria-expanded', String(!initiallyExpanded));
+        if (initiallyExpanded) await expect(grid).toBeHidden();
+        else await expect(grid).toBeVisible();
 
         await toggle.press('Space');
-        await expect(toggle).toHaveAttribute('aria-expanded', 'true');
-        await expect(grid).toBeVisible();
+        await expect(toggle).toHaveAttribute('aria-expanded', String(initiallyExpanded));
+        if (initiallyExpanded) await expect(grid).toBeVisible();
+        else await expect(grid).toBeHidden();
     }
 });
 

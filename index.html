@@ -404,6 +404,14 @@
             <h2 id="machineDialogTitle">Machine</h2>
             <p id="machineDialogDescription" class="save-dialog-description"></p>
             <p id="machineDialogStorageSummary" class="machine-dialog-storage-summary" hidden></p>
+            <label id="machineDialogComparisonWrap" class="machine-dialog-input-label" for="machineDialogComparison" hidden>Comparison</label>
+            <select id="machineDialogComparison" class="select-input machine-dialog-comparison" aria-label="Comparison" hidden>
+                <option value="0">Less than</option>
+                <option value="1">Less than or equal to</option>
+                <option value="2">Equal to</option>
+                <option value="3">Greater than or equal to</option>
+                <option value="4">Greater than</option>
+            </select>
             <label id="machineDialogLabel" class="machine-dialog-input-label" for="machineDialogInput">Value</label>
             <div id="machineDialogInputWrap" class="machine-dialog-input-wrap">
                 <input id="machineDialogInput" class="number-input machine-dialog-input" type="number" step="1" autocomplete="off">
@@ -422,6 +430,13 @@
                 <input id="machineDialogElectricalToggle" type="checkbox" role="switch" aria-label="Electrical machine power">
             </label>
             <p id="machineDialogStatus" class="machine-dialog-status" role="status" hidden></p>
+            <div id="machineDialogSensorStatus" class="machine-dialog-status machine-sensor-live-status" role="status" aria-live="off" data-signal-state="no-air" hidden>
+                <strong data-sensor-live-state>No air detected</strong>
+                <span data-sensor-live-reading>Current reading: No air detected</span>
+                <span data-sensor-live-comparison>Comparison: —</span>
+                <span data-sensor-live-input>Input power: OFF</span>
+                <strong data-sensor-live-signal>Signal: Not passing</strong>
+            </div>
             <p id="machineDialogError" class="save-dialog-error" role="alert" hidden></p>
             <div class="save-dialog-actions">
                 <button id="machineDialogOk" class="btn btn-primary" type="button">OK</button>

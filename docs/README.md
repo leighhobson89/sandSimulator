@@ -26,6 +26,9 @@ visualization modes.
   follow-ups.
 - [`FUTURE_IDEAS.md`](FUTURE_IDEAS.md) — unfinished product and technical
   roadmap ideas.
+- [`proposals/LOGIC_GATES_AND_LIGHTING.md`](proposals/LOGIC_GATES_AND_LIGHTING.md)
+  — a not-yet-implemented design proposal for composable electrical logic and
+  a local light field that can affect plant growth.
 - [`E2E_TEST_PLAN.md`](E2E_TEST_PLAN.md) — current Playwright architecture,
   commands, maintenance contract, regression policy, and next coverage work.
 - [`PHYSICS_REFACTOR_AUDIT.md`](PHYSICS_REFACTOR_AUDIT.md) — source-backed

@@ -292,6 +292,87 @@ test('machine settings, inventories, tubing, and mixer inputs survive portable S
         `a v1 save retains the old Storage-to-Sprinkler Tubing connection: ${JSON.stringify(legacySprinklerState, null, 2)}`).toBe(true);
 });
 
+test('sensor comparison rules and thresholds survive portable Save/Load and blueprint stamps', async ({ page }) => {
+    const game = new GamePage(page);
+    await game.openMenu();
+    await game.newGame();
+    const sensors = [
+        { name: 'Temperature Switch', x: 55, y: 35, rule: 'Greater than', label: 'Temperature', threshold: '42.5' },
+        { name: 'Humidity Switch', x: 70, y: 35, rule: 'Less than or equal to', label: 'Humidity', threshold: '67.25' }
+    ];
+    await page.evaluate(async sensors => {
+        const physics = await import('/physics.js');
+        const definitions = physics.getDefinitions();
+        physics.clearWorld();
+        for (const sensor of sensors) {
+            const id = definitions.findIndex(definition => definition?.name === sensor.name);
+            physics.setCell(sensor.x, sensor.y, id);
+        }
+    }, sensors);
+    await game.step(0);
+
+    async function setSensorControls(sensor) {
+        const point = await canvasPoint(page, { x: sensor.x, y: sensor.y });
+        await page.mouse.click(point.x, point.y);
+        const dialog = page.getByRole('dialog', { name: `${sensor.name} settings` });
+        await expect(dialog).toBeVisible();
+        await dialog.getByLabel('Comparison').selectOption({ label: sensor.rule });
+        await dialog.getByRole('spinbutton', { name: sensor.label, exact: true }).fill(sensor.threshold);
+        await page.locator('#machineDialogCancel').click();
+    }
+
+    async function expectSensorControls(sensor, x = sensor.x, y = sensor.y) {
+        const point = await canvasPoint(page, { x, y });
+        await page.mouse.click(point.x, point.y);
+        const dialog = page.getByRole('dialog', { name: `${sensor.name} settings` });
+        await expect(dialog).toBeVisible();
+        await expect(dialog.getByLabel('Comparison')).toHaveValue(
+            String(['Less than', 'Less than or equal to', 'Equal to',
+                'Greater than or equal to', 'Greater than'].indexOf(sensor.rule)));
+        await expect(dialog.getByRole('spinbutton', { name: sensor.label, exact: true }))
+            .toHaveValue(sensor.threshold);
+        await page.locator('#machineDialogCancel').click();
+    }
+
+    for (const sensor of sensors) await setSensorControls(sensor);
+
+    await page.getByRole('button', { name: 'Save', exact: true }).click();
+    const saveString = await page.locator('#saveString').inputValue();
+    expect(saveString.length).toBeGreaterThan(20);
+    const persistedSensorFields = await page.evaluate(async encoded => {
+        const save = await import('/saveLoadGame.js');
+        const game = await import('/game.js');
+        const payload = save.parseSaveString(encoded);
+        const blueprint = game.captureBlueprint(55, 35, 70, 35);
+        return {
+            save: Object.keys(payload.simulation.arrays).filter(field => field.startsWith('machineSensor')),
+            blueprint: Object.keys(blueprint.cells).filter(field => field.startsWith('machineSensor'))
+        };
+    }, saveString);
+    expect(persistedSensorFields).toEqual({
+        save: ['machineSensorRule', 'machineSensorThreshold'],
+        blueprint: ['machineSensorRule', 'machineSensorThreshold']
+    });
+    await page.getByRole('button', { name: 'Close', exact: true }).click();
+
+    await page.evaluate(async () => (await import('/physics.js')).clearWorld());
+    await page.getByRole('button', { name: 'Load', exact: true }).click();
+    await page.locator('#saveString').fill(saveString);
+    await page.getByRole('button', { name: 'Load Game', exact: true }).click();
+    await expect(page.locator('#autosaveChoiceDialog')).toBeVisible();
+    await page.getByRole('button', { name: 'Yes, replace it', exact: true }).click();
+    await game.step(0);
+    for (const sensor of sensors) await expectSensorControls(sensor);
+
+    await page.evaluate(async () => {
+        const game = await import('/game.js');
+        const blueprint = game.captureBlueprint(55, 35, 70, 35);
+        game.stampBlueprintAt(blueprint, 100, 55);
+    });
+    await game.step(0);
+    for (const sensor of sensors) await expectSensorControls(sensor, sensor.x + 45, sensor.y + 20);
+});
+
 test('v1 saves migrate Drain Mode and legacy Sprinkler credits in worlds and blueprints', async ({ page }) => {
     test.setTimeout(60_000);
     const game = new GamePage(page);

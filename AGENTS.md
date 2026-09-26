@@ -33,6 +33,13 @@ Keep the recipe table, output behavior, bin reset rules, release behavior, and
 any new persistence fields accurate. Add or update regression tests when
 behavior changes.
 
+For any machine addition or change, follow
+`docs/MACHINE_CONSTRUCTION_STANDARDS.md`. Check declared port roles and
+anchors, interaction and settings, exposed sensor markers when applicable,
+Tubing/Elec connector materials and electrical lead width, collision and
+intentional openings, persistence lifecycle, and the focused regression
+coverage. Update the relevant mechanics and E2E documentation with the change.
+
 ## Plan Archiving
 
 After implementation, archive every executed or finalized plan in

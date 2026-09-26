@@ -13,11 +13,11 @@ a special heat network without ordinary heat conductivity.
 
 | Material | Heat behavior | Electrical behavior | Useful role |
 | --- | --- | --- | --- |
-| Copper | Transfers heat; joins the fast thermal network. | Conducts power and can draw charge from a touching Battery. | A strong wire for carrying power from a Battery to a machine. Copper has a higher per-cell power load than Iron, so long Copper runs drain the Battery faster. |
+| Copper | Transfers heat; joins the fast thermal network. | Conducts logical current from a charged Battery route and draws charge from it. | A strong wire for carrying current from a Battery to a machine. Copper has a higher per-cell power load than Iron, so long Copper runs drain the Battery faster. |
 | Elec | Copper-like solid wire with stronger heat transfer and a faster fast-network rate than Copper; melts into Molten Copper at `1085 C`. | High-purity copper wire with stronger electrical conductivity than Copper; reach `2`; load `0.35` per cell. | Electrical machine connector and a low-load conductor. Elec can rust into Corrosion powder, but its exposure threshold is four times Copper's. |
-| Iron | Transfers heat; joins the fast thermal network. | Conducts power and can draw charge from a touching Battery. | A lower-load wire for powered devices and mixed Copper/Iron/Stainless Steel networks. |
-| Stainless Steel | Transfers heat more slowly than Iron through ordinary contact. | Carries power pulses more slowly than Iron and can draw from a touching Battery. | A slower, rust-resistant wire with Iron's per-cell load. |
-| Battery | Transfers heat; joins the fast thermal network. | Stores charge shared across connected Battery cells. | Apply Sparks to charge it, then connect it to Copper, Iron, Stainless Steel, or Elec to feed the power network. |
+| Iron | Transfers heat; joins the fast thermal network. | Conducts logical current from a charged Battery route and draws charge from it. | A lower-load wire for powered devices and mixed Copper/Iron/Stainless Steel networks. |
+| Stainless Steel | Transfers heat more slowly than Iron through ordinary contact. | Conducts logical current from a connected charged Battery and can draw from it. | A rust-resistant wire with Iron's per-cell load and two-cell reach. Traveling-spark animation does not affect logical power. |
+| Battery | Transfers heat; joins the fast thermal network. | Stores charge shared across connected Battery cells. | Apply Sparks to charge it, then connect it to Copper, Iron, Stainless Steel, or Elec to provide continuous DC current to the route. |
 | Tubing | Has zero ordinary conductivity, but its `thermalNetworkRate` lets it move heat through the fast thermal network. | Does not conduct electrical power. | Carries stored materials between compatible storage, Mixer, Sprinkler, Collector, and Splitter ports; it is not a wire. |
 
 The Copper, Elec, Iron, Stainless Steel, and Battery heat and electrical values
@@ -31,6 +31,11 @@ has no ordinary thermal conductivity and no electrical conductivity, but it
 still moves heat through the separate fast thermal network. The network can
 carry heat between connected conductors or into enclosed air.
 
+Picker grouping describes where a player finds a material, not its physical
+category. Battery remains a conductive storage metal, but Battery, Spark,
+Spark Dust, and Spark Block are listed in the Electricals picker group so the
+charge reservoir and its Spark sources are together.
+
 ## Build a powered setup
 
 Battery is the charge reservoir. Each Spark applied to connected Battery adds
@@ -38,45 +43,60 @@ charge shared across the Battery mass. Newly placed Battery touching charged
 Battery equalizes its charge with that connected store. A visible Spark from a
 charged Battery is only an effect; it does not refill or drain the reservoir.
 
-Connect Copper, Iron, Stainless Steel, or Elec from the Battery to a powered
-machine. A Spark touching the connected metal is absorbed and sends a visible
-power pulse through the connected network. Copper, Iron, Stainless Steel, and
-Elec can draw charge from Battery and keep carrying pulses until the reservoir
-empties. Copper uses `1` power per cell; Iron and Stainless Steel use `0.5`;
-Elec uses `0.35`.
-Stainless Steel's lower electrical conductivity makes its pulses travel more
-slowly than Iron's. Its two-cell wire reach lets it bridge the same short empty
-gaps as Copper and Iron. The load of every connected device is drawn from the
-shared Battery store.
+Connect Copper, Iron, Stainless Steel, or Elec from a charged Battery to a
+machine. A wire route that reaches a charged Battery is logically ON and
+provides continuous DC current while the Battery retains charge and the route
+remains connected. Copper, Iron, Stainless Steel, and Elec draw charge from the
+shared Battery store; Copper uses `1` power per cell, Iron and Stainless Steel
+use `0.5`, and Elec uses `0.35`. Stainless Steel's two-cell wire reach lets it
+bridge the same short empty gaps as Copper and Iron. Traveling Sparks over a
+wire route are a cosmetic animation only; they do not determine whether the
+wire or connected machine is logically on. Battery depletion or a broken route
+turns logical power off immediately even if a visible spark trail remains.
 
 Fan, Heater, and Cooler are metal-bodied powered machines. The Fan blows a
 directional cone of air; Heater and Cooler affect a directional cone and launch
-Heat Rays or Cold Rays while they have power. Connect them to a charged Battery
-through Copper, Iron, Stainless Steel, or Elec. Machines and storage bins do
+Heat Rays or Cold Rays while they have logical current. Connect them to a
+charged Battery through Copper, Iron, Stainless Steel, or Elec. Machines and storage bins do
 not rust from water contact or saturated air; their metal bodies still retain
 their heat and electrical behavior where applicable. Stainless Steel also does
-not rust from Water or humid air, while still carrying heat and electrical
-pulses more slowly than Iron.
+not rust from Water or humid air, while remaining part of a Battery-backed
+logical-current route.
 
 ## Electrical machines
 
 Simple Switch and Lamp are in the Electricals picker group. Both have a
-persisted ON/OFF setting that starts ON, and their electrical ports use Elec
-connectors with a forced two-cell lead width. The ports accept Copper, Iron,
-Elec, Stainless Steel, and other compatible conductive wires. The port markers
-remain red when disconnected and green when connected.
+persisted ON/OFF setting that starts ON. Their electrical ports use Elec
+connectors with a forced two-cell lead width and a 2px visible stub. The ports
+accept Copper, Iron, Elec, Stainless Steel, and other compatible conductive
+wires. The port markers remain red when disconnected and green when connected.
 
-Simple Switch has one input and one output. When ON, it relays a live electrical
-signal from the input to the output; when OFF, it blocks the signal. It does not
-generate power. Lamp has one input and emits a warm yellow glow only when it is
-ON and powered. OFF blocks the input and extinguishes the glow. Its load is `1`
-per tick, less than one tenth of Heater's `100`. Live electrical signals show
-as moving yellow zig-zag sparks along powered wire cells.
+Simple Switch has one input and one output. When ON, it relays logical current
+from the input to the output; when OFF, it blocks current immediately. It does
+not generate current. Lamp has one input and emits a warm yellow glow only when
+it is ON and its logical input is ON. OFF blocks the input and extinguishes the
+glow. Its load is `1` per tick, less than one tenth of Heater's `100`. Traveling
+yellow zig-zag Sparks are a visual layer only.
+
+Temperature Switch and Humidity Switch also appear in Electricals. Each has an
+electrical input and output and passes logical input current only when its
+selected comparison is true. Each averages available air among five exposed
+probes across the top sensor face; no air in any probe blocks the logical
+output. Temperature uses degrees Celsius and Humidity uses the 0 to 100 percent
+scale. Both settings dialogs offer `<`, `<=`, `==`, `>=`, and `>` comparisons
+with fractional numeric thresholds. Defaults are `>= 20 C` and `>= 50%`. Their
+settings and current reading/comparison/input-current/passing status are
+available in the settings dialog and hover tooltip. Only true comparison plus
+logical input current is green; every non-passing state is red. The ready state
+uses `RULE TRUE · NO INPUT CURRENT`. Sensor settings persist in world saves and
+blueprints. See
+[Game Mechanics](GAME_MECHANICS.md#3-powered-storage-transfer-and-connection-machines)
+and the [machine construction standard](MACHINE_CONSTRUCTION_STANDARDS.md).
 
 Tubing has a different job. Join its cells edge to edge between compatible
 machine ports to transport stored materials. Storage bins, Mixer, Sprinkler,
 Collector, and Splitter use Tubing for their declared inputs and outputs.
-Tubing does not carry electrical pulses, so it cannot replace Copper, Iron,
+Tubing does not carry electrical current, so it cannot replace Copper, Iron,
 Stainless Steel, or Elec in a power grid. It does conduct heat along the fast
 thermal network despite its zero ordinary conductivity.
 

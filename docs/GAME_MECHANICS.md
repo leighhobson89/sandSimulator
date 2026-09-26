@@ -3,6 +3,8 @@
 This is the current reference for material definitions, machine behavior,
 machine ports, Collector intake, Mixer recipes, Tubing, Sprinkler release, and
 their maintenance contracts.
+For machine interface and construction requirements, see
+[`MACHINE_CONSTRUCTION_STANDARDS.md`](MACHINE_CONSTRUCTION_STANDARDS.md).
 The broad simulation model remains in [`PROGRAM_OVERVIEW.md`](PROGRAM_OVERVIEW.md).
 Use [`E2E_TEST_PLAN.md`](E2E_TEST_PLAN.md) for test ownership and browser-test
 commands; active follow-ups and proposed changes remain in [`ISSUES.md`](ISSUES.md)
@@ -11,8 +13,12 @@ and [`FUTURE_IDEAS.md`](FUTURE_IDEAS.md).
 ## 1. Material catalogue and glossary maintenance
 
 The material picker is also the simulator's glossary. Its category headings
-are keyboard-accessible buttons that expand and collapse each material grid;
-they start expanded and show a right-side arrow for the current state.
+are keyboard-accessible buttons that expand and collapse each material grid.
+Vegetation is the final group and starts collapsed; the other groups start
+expanded. Starting a new world collapses Vegetation after startup succeeds.
+Manual toggles stay in effect during play, and loading or resuming a world does
+not reset the group state. Each heading shows a right-side arrow for its current
+state.
 Hovering or focusing any material button shows a fixed, readable tooltip with
 the material name, short description, important physical and electrical
 properties, and implemented
@@ -33,21 +39,21 @@ actually run.
 
 ### Current catalogue
 
-The 84 entries are grouped in the same order as the picker:
+The prepared entries are grouped in the same order as the picker:
 
 | Group | Materials |
 | --- | --- |
-| Powders | Sand, Wet Mud, Ash, Wet Sand, Dry Mud, Gunpowder, Snow, Scoria, Wet Ash, Spark Dust, Corrosion |
+| Powders | Sand, Wet Mud, Ash, Wet Sand, Dry Mud, Gunpowder, Snow, Scoria, Wet Ash, Corrosion |
 | Liquids | Water, Oil, Lava, Acid |
 | Gases | Fire, Steam, Smoke, Toxic Gas, Cloud |
-| Solids | Ice, Stone, Wood, Glass, Wall, Clay, Ceramic, Spark Block, Insulation |
+| Solids | Ice, Stone, Wood, Glass, Wall, Clay, Ceramic, Insulation |
 | Seeds | Grass Seeds, Moss Spores, Daffodil Seeds, Red Tulip Seeds, Geranium Seeds, Blue Flower Seeds, Banana Seeds, Water Grass / Lily Seeds |
-| Vegetation | Plant, Grass, Flower, Lily Stem, Lily Pad, Lily Flower, Ash Grass, Moss, Daffodil, Red Tulip, Geranium, Blue Flower, Banana Plant, Water Grass, Daffodil Bloom, Tulip Bloom, Geranium Bloom, Blue Flower Bloom, Banana Bunch, Water Grass Bloom, Water Grass Pad, Banana Leaf |
-| Metals | Spark, Copper, Molten Copper, Battery, Molten Aluminum, Iron, Molten Iron, Stainless Steel, Tubing |
-| Electricals | Elec, Simple Switch, Lamp |
+| Metals | Copper, Molten Copper, Molten Aluminum, Iron, Molten Iron, Stainless Steel, Tubing |
+| Electricals | Battery, Spark, Spark Dust, Spark Block, Elec, Simple Switch, Lamp, Temperature Switch, Humidity Switch |
 | Machines | Fan, Heater, Cooler, Sprinkler, Mixer, Splitter, Collector |
 | Storage | Powder Storage Bin, Liquid Storage Bin, Gas Storage Bin |
 | Tools | Heat Ray, Cold Ray, Wind |
+| Vegetation | Plant, Grass, Flower, Lily Stem, Lily Pad, Lily Flower, Ash Grass, Moss, Daffodil, Red Tulip, Geranium, Blue Flower, Banana Plant, Water Grass, Daffodil Bloom, Tulip Bloom, Geranium Bloom, Blue Flower Bloom, Banana Bunch, Water Grass Bloom, Water Grass Pad, Banana Leaf |
 
 Descriptions remain beside each material's `name` in `particles.json`, rather
 than being duplicated here. This prevents the documentation from claiming a
@@ -88,11 +94,11 @@ simulation description in [`PROGRAM_OVERVIEW.md`](PROGRAM_OVERVIEW.md).
 | Powders | Loose materials fall and slide diagonally. Water wets Sand, Dry Mud, and Ash into Wet Sand, Wet Mud, and Wet Ash. Corrosion falls as a powder and melts into Lava at high heat. Powders do not sort themselves by density against other powders. |
 | Liquids | Water, Oil, Lava, and Acid flow and seek a level. Liquid storage also accepts molten metals. Water changes phase at its configured thresholds; Lava and Acid have their own material-defined heat and reaction rules. |
 | Gases | Fire, Steam, Smoke, Toxic Gas, and Cloud rise and spread. Steam and Cloud use humidity and dewpoint condensation. Gas storage accepts non-flaming gases, so Fire is not accepted by a Gas Storage Bin. |
-| Solids | Ice, Stone, Wood, Glass, Wall, Clay, Ceramic, Spark Block, and Insulation provide the fixed, structural, or phase-change behavior declared by their definitions. |
+| Solids | Ice, Stone, Wood, Glass, Wall, Clay, Ceramic, and Insulation provide the fixed, structural, or phase-change behavior declared by their definitions. |
 | Seeds | Eight viable powder seed types wait for suitable local temperature, humidity, and substrate moisture before germinating. Species rules in `particles.json` set their substrate, aquatic depth, and germination requirements. |
 | Vegetation | Plant, grass, moss, aquatic plants, and flowering species use the environmental viability, growth, flowering, and seed-setting rules declared in `particles.json`; their leaves, pads, blooms, and fruit appear in this group too. |
-| Metals | Spark, Copper and Molten Copper, Battery and Molten Aluminum, Iron and Molten Iron, Tubing, and Stainless Steel are listed here. Copper, Iron, Battery, and Stainless Steel carry electrical pulses; Stainless Steel transfers heat and electricity more slowly than Iron, draws Battery charge as a wire, and does not rust from Water or humid air. Battery stores charge; Tubing has no electrical conductivity despite being in the Metals picker group. |
-| Electricals | Elec is high-purity copper wire with higher heat and electrical conductivity than Copper. Simple Switch relays a live signal from its electrical input to its output while ON; OFF blocks it. Lamp glows yellow only when ON and powered, with a small Battery load. |
+| Metals | Copper and Molten Copper, Molten Aluminum, Iron and Molten Iron, Tubing, and Stainless Steel are listed here. Copper, Iron, Battery, and Stainless Steel conduct electrical routes; a charged Battery supplies logical current while connected. Stainless Steel transfers heat more slowly than Iron, draws Battery charge as a wire, and does not rust from Water or humid air. Battery remains a conductive storage metal even though it is listed in the Electricals picker group. Tubing has no electrical conductivity. |
+| Electricals | Battery stores charge; a connected charged Battery supplies logical DC current through conductive wire. Spark charges Battery, and traveling Sparks are a visual effect. Spark Dust and Spark Block emit Sparks. Elec is high-purity copper wire with higher heat and electrical conductivity than Copper. Simple Switch relays logical current while ON; OFF blocks it. Lamp glows only when ON and its logical input is on. Temperature Switch and Humidity Switch compare the mean of five exposed air probes to a configured threshold and relay input current only when the comparison is true. |
 | Tools | Heat Ray and Cold Ray are short-lived directional brushes. A left-button stroke starts Heat Ray upward or Cold Ray downward; its first non-zero drag selects the nearest cardinal direction, which persists while stationary and changes only when the drag heading changes. Painted ray cells travel as projectiles using that stored heading. Wind moves light materials and stirs air; it stops at solid barriers but passes through plants. |
 
 ### Heat, electrical, and reaction anchors
@@ -167,22 +173,25 @@ simulation description in [`PROGRAM_OVERVIEW.md`](PROGRAM_OVERVIEW.md).
   heat emission, or tint to neighboring pixels. Molten materials keep their
   existing color/color2 gradients unchanged.
 - Ordinary materials are non-conductive by default. Copper, Iron, Stainless
-  Steel, Elec, and Battery participate in the electrical network; Spark is
-  absorbed by connected metal and Battery stores charge. Copper, Iron,
-  Stainless Steel, and Elec can discharge a charged Battery through their
-  connected length. Elec uses electrical conductivity `2`, wire reach `2`, and
-  a small per-cell charge draw of `0.35`; its fast thermal-network rate is
-  `0.3`. It behaves like pure copper, melts into Molten Copper, and takes four
-  times the qualifying exposure to become Corrosion powder compared with
-  ordinary Copper. Tubing has no electrical conductivity and opts into fast
-  thermal links while keeping zero ordinary conductivity.
+  Steel, and Elec conduct routes from a charged Battery; Battery stores charge.
+  A reached wire and machine input are logically ON while a charged Battery
+  connects to the route. Traveling Sparks are visual effects and do not
+  determine logical power. Copper, Iron, Stainless Steel, and Elec draw charge
+  from a connected Battery through their wire length. Elec uses electrical
+  conductivity `2`, wire reach `2`, and a small per-cell charge draw of `0.35`;
+  its fast thermal-network rate is `0.3`. It behaves like pure copper, melts
+  into Molten Copper, and takes four times the qualifying exposure to become
+  Corrosion powder compared with ordinary Copper. Tubing has no electrical
+  conductivity and opts into fast thermal links while keeping zero ordinary
+  conductivity.
 - Stainless Steel has nonzero ordinary heat conductivity and electrical
   conductivity, both lower than Iron's. Its power draw is `0.5` per cell and it
   reaches conductive machines across up to two empty cells, like Iron. It does
   not join the fast thermal network or rust from Water or humid air.
-- Electrical port signals travel through Copper, Iron, Stainless Steel, and
-  Elec wire, and are shown as short yellow zig-zag sparks moving over live
-  conductors. Machine ports retain their protruding connection markers: red
+- Electrical current routes through Copper, Iron, Stainless Steel, and Elec
+  wire. Traveling current-effect sparks are a visual layer only; logical ON/OFF
+  state comes from the connected charged Battery route. Machine ports retain
+  their protruding connection markers: red
   while open and green when connected. Electrical machine lead previews and
   painted leads use gold Elec with a forced two-cell width, independent of the
   selected paint-brush size. Their input ports accept compatible conductive
@@ -302,24 +311,56 @@ target and launches Cold Rays along the centreline.
 
 ### Electrical machines
 
-Both electrical machines start ON. Their setting is persisted with machine
+Simple Switch and Lamp start ON. Their setting is persisted with machine
 state in world saves and blueprints, and each has an ON/OFF switch in its
 settings dialog.
 
-- **Simple Switch** accepts a live signal through its electrical input. ON
-  relays the signal to its electrical output; OFF blocks it. The switch does
-  not create a signal by itself.
+- **Simple Switch** accepts logical current through its electrical input. ON
+  relays current to its electrical output; OFF immediately blocks it. The
+  switch does not create current by itself.
 - **Lamp** has one electrical input. ON emits a warm yellow glow only while
-  that input receives power; OFF blocks its input and keeps the glow dark. Its
+  that logical input is ON; OFF blocks its input and keeps the glow dark. Its
   Battery load is `1` per tick, less than one tenth of Heater's `100` load.
 - Both ports use Elec as the protruding connector material and force a
-  two-cell-wide lead regardless of the paint-brush setting. Ports accept
+  two-cell-wide lead regardless of the paint-brush setting; the visible stub
+  is 2px wide. Ports accept
   Copper, Iron, Elec, Stainless Steel, and other compatible conductive wire.
   They keep the existing red disconnected and green connected markers.
 
-Live electrical pulses display as moving yellow zig-zag sparks over powered
-wire cells. The signal animation is a visual layer; electrical power and
-machine effects continue to use the conductor network and declared ports.
+**Temperature Switch** and **Humidity Switch** are comparator machines. Each
+has one electrical input and one electrical output, and uses Elec connectors
+with a forced two-cell lead and a 2px visible stub. Neither switch generates
+current: it passes logical input current to its output only while its
+comparison is true. A false rule or an unavailable reading immediately blocks
+the logical output.
+
+Each switch samples the five air cells across its exposed top sensor face and
+uses the arithmetic mean of the available air probes. Temperature Switch
+compares degrees Celsius; Humidity Switch compares relative humidity as a
+percentage. The settings dialog offers Less than, Less than or equal to, Equal
+to, Greater than or equal to, and Greater than, plus a numeric threshold that
+accepts fractional values.
+The default rule is `>=`, with a threshold of `20 C` for Temperature Switch
+and `50%` for Humidity Switch. If none of the five probe cells contains air,
+the reading is unavailable and the output is blocked.
+
+The settings dialog and hover tooltip show the current reading and unit,
+comparison and threshold, whether input current is present, and the live
+logical state. Green means the rule is true and current is passing to the
+output. Red means it is not passing: the rule is false, the rule is true
+without input current (`RULE TRUE · NO INPUT CURRENT`), or there is no air
+reading (`SIGNAL BLOCKED · NO AIR`). Rule and threshold persist through
+machine state transfers, portable world saves, and blueprints.
+
+Battery, Spark, Spark Dust, and Spark Block appear under the Electricals picker
+heading. Battery remains conductive storage metal. Spark charging and
+traveling-spark visuals do not alter the logical current rule; the picker
+grouping does not change their material physics.
+
+Traveling electrical Sparks display as moving yellow zig-zag marks over wire
+cells. That animation is visual only. Logical current follows the connected
+charged-Battery route and declared machine ports, independently of whether
+those sparks are currently visible.
 
 ### Storage machines
 
@@ -488,8 +529,9 @@ they are separate from Tubing routes.
 | Machine | Material ports | Other input/output |
 | --- | --- | --- |
 | Fan, Heater, Cooler | One Copper input | Directional world-effect cone output, opposite the input |
-| Simple Switch | One electrical input and one electrical output; accepts compatible conductive wire | Relays a live signal when ON; blocks the signal when OFF |
-| Lamp | One electrical input; accepts compatible conductive wire | Yellow light while ON and powered; no output when OFF or unpowered |
+| Simple Switch | One electrical input and one electrical output; accepts compatible conductive wire | Relays logical current when ON; blocks it immediately when OFF |
+| Lamp | One electrical input; accepts compatible conductive wire | Yellow light while ON and its logical input is ON |
+| Temperature Switch, Humidity Switch | One electrical input and one electrical output; accepts compatible conductive wire | Relays input current only while its environmental comparison is true; false or unavailable readings block the logical output |
 | Powder Storage Bin | Powder Tubing input and output | No world-particle intake |
 | Liquid Storage Bin | Liquid Tubing input and output | No world-particle intake |
 | Gas Storage Bin | Gas Tubing input and output | No world-particle intake |
