@@ -296,14 +296,13 @@ test('logic gate ports have stable anchors, correct input/output roles, Elec mat
             .toHaveLength(result.ports.length);
         expect(hitTargets, `${gate.name} has one hit target per declared port`)
             .toHaveLength(result.ports.length);
-        expect(anchorLinks.sort(), `${gate.name} has no signal-input anchor-link strokes`)
-            .toEqual(['output', 'supply']);
+        expect(anchorLinks, `${gate.name} has no anchor-link paths; ports use only their protrusions`)
+            .toEqual([]);
         expect(new Set(stubGeometry.map(stub => stub.id)).size, `${gate.name} has no duplicate protrusion IDs`)
             .toBe(result.ports.length);
         expect(new Set(hitTargets).size, `${gate.name} has no duplicate hit targets`)
             .toBe(result.ports.length);
-        expect(new Set(anchorLinks).size, `${gate.name} has no duplicate supply/output anchor links`)
-            .toBe(2);
+        expect(new Set(anchorLinks).size, `${gate.name} has no duplicate anchor links`).toBe(0);
         const stubById = Object.fromEntries(stubGeometry.map(stub => [stub.id, stub]));
         expect(Math.abs(stubById.supply.directionX), `${gate.name} supply stub stays vertical`).toBeLessThan(0.1);
         expect(stubById.supply.directionY, `${gate.name} supply stub points down`).toBeGreaterThan(0.95);
@@ -331,7 +330,7 @@ test('logic gate ports have stable anchors, correct input/output roles, Elec mat
         expect(signalInputs, `${gate.name} signal inputs`).toHaveLength(gate.signalInputs);
         expect(outputs, `${gate.name} signal outputs`).toHaveLength(1);
         const supplyMarker = icon.locator('circle.machine-port[data-port-id="supply"]');
-        const supplyStub = icon.locator('path.machine-port-stub[data-port-stub="supply"]');
+        const supplyStub = icon.locator('path.machine-port-protruding[data-port-protrusion="supply"]');
         await expect(supplyMarker).toHaveAttribute('fill', '#4fa6ff');
         await expect(supplyStub).toHaveAttribute('stroke', '#4fa6ff');
         await expect(icon.locator('path.machine-port-protruding[data-port-protrusion="supply"]'))
@@ -352,7 +351,7 @@ test('logic gate ports have stable anchors, correct input/output roles, Elec mat
     }
 });
 
-test('unrotated gate input leads stay attached and scale with zoom up to the 30px cap', async ({ page }) => {
+test('unrotated gate input leads stay attached and scale with zoom under the 30px local cap', async ({ page }) => {
     const game = new GamePage(page);
     await game.openMenu();
     await game.newGame();
@@ -393,6 +392,8 @@ test('unrotated gate input leads stay attached and scale with zoom up to the 30p
                 return {
                     id: path.dataset.portProtrusion,
                     length: Math.hypot(pathEnd.x - pathStart.x, pathEnd.y - pathStart.y),
+                    localLength: path.getTotalLength(),
+                    markerToEnd: Math.hypot(pathEnd.x - center.x, pathEnd.y - center.y),
                     markerGap: Math.abs(Math.hypot(pathStart.x - center.x, pathStart.y - center.y) - screenRadius),
                     horizontalError: Math.abs(pathEnd.y - pathStart.y),
                     pointsLeft: pathEnd.x < pathStart.x
@@ -421,19 +422,20 @@ test('unrotated gate input leads stay attached and scale with zoom up to the 30p
                 .toBe(true);
             expect(baseline.length, `${gate.name} ${baseline.id} is visible at zoom 1`).toBeGreaterThan(0);
             expect(zoomed.length, `${gate.name} ${baseline.id} is visible at zoom 2`).toBeGreaterThan(0);
-            expect(baseline.length, `${gate.name} ${baseline.id} does not exceed the 30px cap`).toBeLessThanOrEqual(30.5);
-            expect(zoomed.length, `${gate.name} ${baseline.id} does not exceed the 30px cap`).toBeLessThanOrEqual(30.5);
-            expect(zoomed.length, `${gate.name} ${baseline.id} length does not shrink with zoom`)
-                .toBeGreaterThanOrEqual(baseline.length - 0.5);
-            if (baseline.length < 29) {
-                expect(zoomed.length, `${gate.name} ${baseline.id} grows before reaching the cap`)
-                    .toBeGreaterThan(baseline.length + 0.5);
-            } else {
-                expect(baseline.length, `${gate.name} ${baseline.id} reached the cap at zoom 1`)
-                    .toBeGreaterThanOrEqual(29);
-                expect(zoomed.length, `${gate.name} ${baseline.id} remains at the cap at zoom 2`)
-                    .toBeGreaterThanOrEqual(29);
-            }
+            expect(baseline.localLength, `${gate.name} ${baseline.id} local path respects the cap`)
+                .toBeLessThanOrEqual(30.5);
+            expect(zoomed.localLength, `${gate.name} ${baseline.id} local path respects the cap`)
+                .toBeLessThanOrEqual(30.5);
+            expect(zoomed.localLength, `${gate.name} ${baseline.id} viewBox length remains stable`)
+                .toBeCloseTo(baseline.localLength, 1);
+            expect(baseline.length, `${gate.name} ${baseline.id} screen length respects the 1x cap`)
+                .toBeLessThanOrEqual(30.5);
+            expect(zoomed.length, `${gate.name} ${baseline.id} screen length grows with zoom`)
+                .toBeGreaterThan(baseline.length + 0.5);
+            expect(zoomed.length, `${gate.name} ${baseline.id} stays under the 60px zoomed cap`)
+                .toBeLessThanOrEqual(60.5);
+            expect(zoomed.markerToEnd, `${gate.name} ${baseline.id} endpoint moves outward with zoom`)
+                .toBeGreaterThan(baseline.markerToEnd + 0.5);
         }
     }
 });
@@ -490,7 +492,7 @@ test('two-input gate connectors have clear vertical spacing', async ({ page }) =
     }
 });
 
-test('rotated gate protrusions still follow one declared terminal axis each', async ({ page }) => {
+test('rotated gate protrusions still follow one declared terminal axis each without anchor links', async ({ page }) => {
     const game = new GamePage(page);
     await game.openMenu();
     await game.newGame();
@@ -547,12 +549,11 @@ test('rotated gate protrusions still follow one declared terminal axis each', as
 
         expect(rendered.protrusions, `${gate.name} has one rotated protrusion per declared port`)
             .toHaveLength(declaredPorts.length);
-        expect(rendered.anchorLinks, `${gate.name} has one rotated anchor link per declared port`)
-            .toHaveLength(declaredPorts.length);
+        expect(rendered.anchorLinks, `${gate.name} has no anchor-link paths`)
+            .toEqual([]);
         expect(rendered.hitTargets, `${gate.name} has one rotated hit target per declared port`)
             .toHaveLength(declaredPorts.length);
         expect(new Set(rendered.protrusions.map(port => port.id)).size).toBe(declaredPorts.length);
-        expect(new Set(rendered.anchorLinks).size).toBe(declaredPorts.length);
         expect(new Set(rendered.hitTargets).size).toBe(declaredPorts.length);
         const directionById = Object.fromEntries(declaredPorts.map(port => [port.id, port]));
         expect(directionById.supply.directionX, `${gate.name} rotated supply points right`).toBeGreaterThan(0.95);
