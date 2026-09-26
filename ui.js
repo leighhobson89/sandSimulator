@@ -142,6 +142,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     elements.machineDialogInput.addEventListener('input', validateMachineInput);
     elements.machineDialogSprinklerReleaseToggle.addEventListener('change', updateSprinklerReleaseToggle);
     elements.machineDialogDrainModeToggle.addEventListener('change', updateDrainModeToggle);
+    document.getElementById('machineDialogElectricalToggle').addEventListener('change', updateElectricalMachineToggle);
     elements.mixerDialogCancel.addEventListener('click', closeMixerDialog);
     elements.mixerDialogToggle.addEventListener('change', updateMixerReleaseToggle);
     elements.mixerDialogBinPurge0.addEventListener('click', () => purgeMixerDialogBin(0));
@@ -597,6 +598,10 @@ const MACHINE_CONTROL_SPECS = {
     sprinkler: { label: 'Release rate', min: 1, max: 100, unit: 'particles/s', defaultValue: 10 }
 };
 
+function isElectricalMachine(machine) {
+    return machine === 'simpleSwitch' || machine === 'lamp';
+}
+
 function isStorageMachineDefinition(def) {
     return !!def?.storageCategory || def?.machine === 'splitter' || def?.machine === 'collector';
 }
@@ -707,7 +712,8 @@ function updateMachinePortConnectorPreview(gesture, event) {
         startClientY: gesture.port.markerClientY,
         endClientX: event.clientX,
         endClientY: event.clientY,
-        material: gesture.port.connectorMaterial
+        material: gesture.port.connectorMaterial,
+        connectorBrushWidth: gesture.port.connectorBrushWidth
     });
 }
 
@@ -727,7 +733,8 @@ function previewMachinePlacementLead(event = null) {
         startClientY: port.markerClientY,
         endClientX: pointerX,
         endClientY: pointerY,
-        material: port.connectorMaterial
+        material: port.connectorMaterial,
+        connectorBrushWidth: port.connectorBrushWidth
     });
 }
 
@@ -759,15 +766,20 @@ function openMachineDialog(x, y, machine = machineAtCell({ x, y })) {
     const spec = MACHINE_CONTROL_SPECS[machine.def.machine];
     const storage = isStorageMachineDefinition(machine.def);
     const sprinkler = machine.def.machine === 'sprinkler';
+    const electrical = isElectricalMachine(machine.def.machine);
     if (machine.def.machine === 'mixer') return openMixerDialog(x, y);
-    if (!spec && !storage && !sprinkler) return false;
+    if (!spec && !storage && !sprinkler && !electrical) return false;
 
     const elements = getElements();
     hideMachineTooltip();
     const current = sprinkler ? getSprinklerReleaseRate(x, y) : getMachineSetting(x, y);
-    editingMachine = { x, y, machine: machine.def.machine, fallback: current, storage, sprinkler };
+    editingMachine = { x, y, machine: machine.def.machine, fallback: current, storage, sprinkler, electrical };
     elements.machineDialogTitle.textContent = storage ? `${machine.def.name} contents` : `${machine.def.name} settings`;
-    elements.machineDialogDescription.textContent = storage
+    elements.machineDialogDescription.textContent = electrical
+        ? machine.def.machine === 'simpleSwitch'
+            ? 'ON relays a live electrical pulse from the input port to the output port. OFF blocks the signal.'
+            : 'ON lights the Lamp when its input receives electrical power. OFF blocks the input and keeps the Lamp dark.'
+        : storage
         ? machine.def.machine === 'splitter'
             ? 'Receives one compatible Tubing material and buffers it while dividing flow evenly between its two outputs. Purge the buffer to accept a different material.'
             : machine.def.machine === 'collector'
@@ -788,14 +800,23 @@ function openMachineDialog(x, y, machine = machineAtCell({ x, y })) {
     }
     storageSummary.hidden = !storage && !sprinkler;
     elements.machineDialogLabel.textContent = spec?.label || 'Contents';
-    elements.machineDialogLabel.hidden = storage;
-    elements.machineDialogInputWrap.hidden = storage;
-    elements.machineDialogInput.hidden = storage;
-    elements.machineDialogInput.disabled = storage;
+    elements.machineDialogLabel.hidden = storage || electrical;
+    elements.machineDialogInputWrap.hidden = storage || electrical;
+    elements.machineDialogInput.hidden = storage || electrical;
+    elements.machineDialogInput.disabled = storage || electrical;
     elements.machineDialogSprinklerReleaseToggleWrap.hidden = !sprinkler;
     elements.machineDialogSprinklerReleaseToggle.checked = sprinkler && isSprinklerReleaseEnabled(x, y);
     elements.machineDialogDrainModeToggleWrap.hidden = !sprinkler;
     elements.machineDialogDrainModeToggle.checked = sprinkler && isDrainModeEnabled(x, y);
+    const electricalToggleWrap = document.getElementById('machineDialogElectricalToggleWrap');
+    const electricalToggle = document.getElementById('machineDialogElectricalToggle');
+    const electricalToggleState = document.getElementById('machineDialogElectricalToggleState');
+    electricalToggleWrap.hidden = !electrical;
+    electricalToggle.checked = electrical && (Math.round(current) & 1) !== 0;
+    electricalToggle.setAttribute('aria-label', machine.def.name);
+    electricalToggleState.textContent = electricalToggle.checked ? 'ON' : 'OFF';
+    const status = document.getElementById('machineDialogStatus');
+    status.hidden = !electrical;
     elements.machineDialogInput.setAttribute('aria-label', spec?.label || 'Contents');
     if (spec) {
         elements.machineDialogInput.min = String(spec.min);
@@ -812,14 +833,15 @@ function openMachineDialog(x, y, machine = machineAtCell({ x, y })) {
     elements.machineDialogUnit.textContent = spec?.unit || '';
     elements.machineDialogUnit.hidden = !spec?.unit;
     elements.machineDialogError.hidden = true;
-    elements.machineDialogOk.hidden = storage || sprinkler;
+    elements.machineDialogOk.hidden = storage || sprinkler || electrical;
     elements.machineDialogPurge.hidden = !storage;
-    elements.machineDialogCancel.textContent = storage || sprinkler ? 'Close' : 'Cancel';
+    elements.machineDialogCancel.textContent = storage || sprinkler || electrical ? 'Close' : 'Cancel';
     elements.machineDialog.hidden = false;
     if (machineDialogTimer) clearInterval(machineDialogTimer);
     refreshMachineDialog();
     machineDialogTimer = setInterval(refreshMachineDialog, 150);
-    if (!storage) elements.machineDialogInput.focus();
+    if (electrical) electricalToggle.focus();
+    else if (!storage) elements.machineDialogInput.focus();
     else elements.machineDialogCancel.focus();
     return true;
 }
@@ -941,7 +963,23 @@ function refreshMachineDialog() {
         renderInventorySummary(elements.machineDialogStorageSummary,
             getSprinklerInventory(editingMachine.x, editingMachine.y));
         updateSprinklerReleaseInput();
+    } else if (editingMachine.electrical) {
+        const enabled = (Math.round(getMachineSetting(editingMachine.x, editingMachine.y)) & 1) !== 0;
+        const toggle = document.getElementById('machineDialogElectricalToggle');
+        const state = document.getElementById('machineDialogElectricalToggleState');
+        const status = document.getElementById('machineDialogStatus');
+        if (toggle) toggle.checked = enabled;
+        if (state) state.textContent = enabled ? 'ON' : 'OFF';
+        if (status) status.textContent = isMachinePoweredAt(editingMachine.x, editingMachine.y)
+            ? 'Status: Powered' : 'Status: No signal at input';
     }
+}
+
+function updateElectricalMachineToggle() {
+    if (!editingMachine?.electrical) return;
+    const enabled = document.getElementById('machineDialogElectricalToggle').checked;
+    setMachineSetting(editingMachine.x, editingMachine.y, enabled ? 1 : 0);
+    refreshMachineDialog();
 }
 
 function updateSprinklerReleaseInput() {
@@ -1013,6 +1051,10 @@ function closeMachineDialog() {
     elements.machineDialogSprinklerReleaseToggle.checked = false;
     elements.machineDialogDrainModeToggleWrap.hidden = true;
     elements.machineDialogDrainModeToggle.checked = false;
+    document.getElementById('machineDialogElectricalToggleWrap').hidden = true;
+    document.getElementById('machineDialogElectricalToggle').checked = false;
+    document.getElementById('machineDialogStatus').hidden = true;
+    document.getElementById('machineDialogStatus').textContent = '';
     elements.machineDialogOk.hidden = false;
     elements.machineDialogPurge.hidden = true;
     elements.machineDialogCancel.textContent = 'Cancel';
@@ -1078,7 +1120,7 @@ function buildParticleButtons() {
     const defs = getDefinitions();
     container.innerHTML = '';
 
-    const order = ['Powders', 'Liquids', 'Gases', 'Solids', 'Seeds', 'Vegetation', 'Metals', 'Machines', 'Storage', 'Tools', 'Other'];
+    const order = ['Powders', 'Liquids', 'Gases', 'Solids', 'Seeds', 'Vegetation', 'Metals', 'Electricals', 'Machines', 'Storage', 'Tools', 'Other'];
     const groups = {};
     for (let id = 1; id < defs.length; id++) {
         if (!defs[id]) continue;
@@ -1542,6 +1584,20 @@ function machineTooltipText(machine) {
     if (def.machine === 'fan') lines.push(`Wind speed: ${formatNumber(setting)}`);
     else if (def.machine === 'heater' || def.machine === 'cooler') {
         lines.push(`Temperature: ${formatNumber(setting)} \u00b0C`);
+    } else if (def.machine === 'simpleSwitch') {
+        const enabled = (Math.round(setting || 0) & 1) !== 0;
+        lines.push(`Switch: ${enabled ? 'ON' : 'OFF'}`);
+        lines.push(`Status: ${enabled && isMachinePoweredAt(machine.x, machine.y)
+            ? 'Signal passing' : 'Signal blocked or no input'}`);
+        lines.push('Click to change Simple Switch settings');
+        return lines.join('\n');
+    } else if (def.machine === 'lamp') {
+        const enabled = (Math.round(setting || 0) & 1) !== 0;
+        lines.push(`Switch: ${enabled ? 'ON' : 'OFF'}`);
+        lines.push(`Status: ${enabled && isMachinePoweredAt(machine.x, machine.y)
+            ? 'Lit' : enabled ? 'No signal at input' : 'Off'}`);
+        lines.push('Click to change Lamp settings');
+        return lines.join('\n');
     }
     lines.push(`Status: ${isMachinePoweredAt(machine.x, machine.y) ? 'Powered / active' : 'Not powered'}`);
     return lines.join('\n');

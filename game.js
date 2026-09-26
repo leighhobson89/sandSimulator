@@ -23,7 +23,8 @@ import {
     getAmbientTarget, getTemperature, getHumidityAt, getFrameCount, applyWind, decayWindTrails,
     windStrengthToLegacyScale,
     getConnectedBatteryCharge, getTubingFlows, isMachinePoweredAt,
-    getMachinePorts, getMachinePortTemplates, registerMachinePortLead, getMachinePortLeadOwner,
+    getMachinePorts, getMachinePortTemplates, getMachineSetting,
+    registerMachinePortLead, getMachinePortLeadOwner,
     getMachineArtworkLayout, isMachinePortMaterialCompatible, EMPTY
 } from './physics.js';
 
@@ -777,6 +778,51 @@ export function getMachineArtworkAtClientPoint(clientX, clientY) {
 function appendMachineSprite(icon, machineType) {
     const layout = getMachineArtworkLayout(machineType);
     if (!layout) return;
+    if (machineType === 'simpleSwitch' || machineType === 'lamp') {
+        const frame = document.createElementNS(MACHINE_ICON_SVG_NS, 'svg');
+        frame.setAttribute('x', '4');
+        frame.setAttribute('y', '8');
+        frame.setAttribute('width', '56');
+        frame.setAttribute('height', '48');
+        frame.setAttribute('viewBox', '0 0 56 48');
+        frame.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+        const add = (tag, attributes) => {
+            const element = document.createElementNS(MACHINE_ICON_SVG_NS, tag);
+            for (const [name, value] of Object.entries(attributes)) element.setAttribute(name, String(value));
+            frame.appendChild(element);
+            return element;
+        };
+        const machineX = Number(icon.getAttribute('data-machine-x'));
+        const machineY = Number(icon.getAttribute('data-machine-y'));
+        const enabled = (Math.round(getMachineSetting(machineX, machineY) || 0) & 1) !== 0;
+        if (machineType === 'simpleSwitch') {
+            add('rect', { x: 9, y: 8, width: 38, height: 32, rx: 7,
+                fill: '#35414b', stroke: '#101922', 'stroke-width': 3 });
+            add('rect', { x: 13, y: 12, width: 30, height: 24, rx: 4,
+                fill: '#53616b', stroke: '#9ba8ae', 'stroke-width': 1.5 });
+            add('path', { d: enabled ? 'M20 26 L34 16' : 'M22 17 L36 27',
+                fill: 'none', stroke: enabled ? '#ffe25b' : '#d4dce0',
+                'stroke-width': 5, 'stroke-linecap': 'round' });
+            add('circle', { cx: enabled ? 35 : 21, cy: enabled ? 15 : 29, r: 3.4,
+                fill: enabled ? '#fff3a1' : '#93a0a7', stroke: '#18232b', 'stroke-width': 1 });
+            add('path', { d: 'M25 44 H31', fill: 'none', stroke: '#d8e0e5',
+                'stroke-width': 1.8, 'stroke-linecap': 'round' });
+        } else {
+            const lit = enabled && isMachinePoweredAt(machineX, machineY);
+            add('circle', { class: 'machine-lamp-glow', cx: 28, cy: 24, r: 18,
+                fill: '#ffe25b', opacity: lit ? 0.82 : 0, 'data-lit': String(lit) });
+            add('path', { d: 'M13 25 A15 15 0 1 1 43 25 C43 31 38 33 36 37 H20 C18 33 13 31 13 25Z',
+                fill: lit ? '#fff2a6' : '#59636b', stroke: '#18232b', 'stroke-width': 2.7 });
+            add('path', { d: 'M20 37 H36 V41 H20 Z M22 43 H34',
+                fill: '#c4a94d', stroke: '#18232b', 'stroke-width': 1.8,
+                'stroke-linejoin': 'round', 'stroke-linecap': 'round' });
+            add('path', { d: 'M24 22 L28 18 L32 23 L28 27 L32 31',
+                fill: 'none', stroke: lit ? '#d18a19' : '#899197',
+                'stroke-width': 2, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' });
+        }
+        icon.appendChild(frame);
+        return;
+    }
     const frame = document.createElementNS(MACHINE_ICON_SVG_NS, 'svg');
     frame.setAttribute('x', String(layout.x));
     frame.setAttribute('y', String(layout.y));
@@ -917,9 +963,14 @@ function machineConnectorCells(port, endClientX, endClientY, allowConnectedBranc
         const t = step / steps;
         const centerX = Math.round(startX + (endX - startX) * t);
         const centerY = Math.round(startY + (endY - startY) * t);
-        // The forced brush is exactly size 3 in simulation cells: center and
-        // its four orthogonal neighbours, matching the regular brush raster.
-        for (const [ox, oy] of [[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1]]) {
+        // Electrical ports force a two-cell perpendicular brush regardless of
+        // the selected paint brush. Existing connectors keep their three-cell
+        // cross stamp.
+        const offsets = port.connectorBrushWidth === 2
+            ? (Math.abs(outwardX) >= Math.abs(outwardY)
+                ? [[0, 0], [0, 1]] : [[0, 0], [1, 0]])
+            : [[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1]];
+        for (const [ox, oy] of offsets) {
             const x = centerX + ox;
             const y = centerY + oy;
             if (!inBounds(x, y)) return null;
@@ -1008,6 +1059,13 @@ function drawMachineOverlays() {
     flowLayer.setAttribute('height', '100%');
     flowLayer.setAttribute('aria-hidden', 'true');
     overlay.appendChild(flowLayer);
+    const electricalLayer = document.createElementNS(MACHINE_ICON_SVG_NS, 'svg');
+    electricalLayer.setAttribute('class', 'electrical-signal-overlay');
+    electricalLayer.setAttribute('viewBox', `0 0 ${canvasBounds.width} ${canvasBounds.height}`);
+    electricalLayer.setAttribute('width', '100%');
+    electricalLayer.setAttribute('height', '100%');
+    electricalLayer.setAttribute('aria-hidden', 'true');
+    overlay.appendChild(electricalLayer);
     const icons = {
         fan: '<circle cx="11" cy="15" r="7" fill="none" stroke="currentColor" stroke-width="1.6"/>' +
         '<circle cx="11" cy="15" r="2.2" fill="currentColor"/>' +
@@ -1043,7 +1101,9 @@ function drawMachineOverlays() {
             '<path d="M7 23h16M11 25v2M19 25v2" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>',
         splitter: '<rect x="8" y="7" width="14" height="16" rx="2.4" fill="none" stroke="currentColor" stroke-width="1.8"/>' +
             '<path d="M11 12h8M11 18h8M15 12v3m0 0-4 3m4-3 4 3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>',
-        collector: true
+        collector: true,
+        simpleSwitch: true,
+        lamp: true
     };
 
     const appendPortArtwork = (icon, ports, cellWidth, cellHeight, machineX, machineY) => {
@@ -1075,7 +1135,8 @@ function drawMachineOverlays() {
             const stub = document.createElementNS(MACHINE_ICON_SVG_NS, 'path');
             stub.setAttribute('class', 'machine-port-stub');
             stub.setAttribute('d', `M ${startX.toFixed(2)} ${startY.toFixed(2)} L ${anchorX.toFixed(2)} ${anchorY.toFixed(2)}`);
-            stub.setAttribute('stroke', port.connectorMaterial === 'Copper' ? '#d88742' : '#a9b5bf');
+            stub.setAttribute('stroke', port.connectorMaterial === 'Copper' ? '#d88742'
+                : port.connectorMaterial === 'Elec' ? '#e6ca50' : '#a9b5bf');
             stub.setAttribute('fill', 'none');
             stub.setAttribute('stroke-width', '2');
             stub.setAttribute('stroke-linecap', 'round');
@@ -1110,6 +1171,7 @@ function drawMachineOverlays() {
     };
 
     drawTubingFlowOverlay(flowLayer, getTubingFlows(), cellWidth, cellHeight, viewport);
+    drawElectricalSignalOverlay(electricalLayer, world, defs, viewport, cellWidth, cellHeight);
 
     for (let y = visible.top; y < visible.bottom; y++) {
       for (let x = visible.left; x < visible.right; x++) {
@@ -1192,8 +1254,10 @@ function drawMachineOverlays() {
         line.setAttribute('y1', String(preview.startClientY - canvasRect.top));
         line.setAttribute('x2', String(preview.endClientX - canvasRect.left));
         line.setAttribute('y2', String(preview.endClientY - canvasRect.top));
-        line.setAttribute('stroke', preview.material === 'Copper' ? '#d88742' : '#60b4e8');
-        line.setAttribute('stroke-width', String(Math.max(cellWidth, cellHeight) * 3));
+        line.setAttribute('stroke', preview.material === 'Copper' ? '#d88742'
+            : preview.material === 'Elec' ? '#e6ca50' : '#60b4e8');
+        line.setAttribute('stroke-width', String(Math.max(cellWidth, cellHeight) *
+            (preview.connectorBrushWidth || 3)));
         line.setAttribute('stroke-linecap', 'round');
         line.setAttribute('data-port-connector-preview', '');
         line.setAttribute('data-start-client-x', String(preview.startClientX));
@@ -1223,6 +1287,33 @@ export function setMachinePortConnectorPreview(preview = null) {
         machinePortConnectorPreview = null;
     }
     drawMachineOverlays();
+}
+
+function drawElectricalSignalOverlay(layer, world, definitions, visible, cellWidth, cellHeight) {
+    const frame = getFrameCount();
+    for (let y = visible.top; y < visible.bottom; y++) {
+        for (let x = visible.left; x < visible.right; x++) {
+            const i = y * world.cols + x;
+            if (!world.power[i] || !definitions[world.type[i]]?.conductive) continue;
+            // Stagger sparks along the pulse so the signal reads as moving
+            // current instead of a static highlight over every live cell.
+            const phase = (frame + i * 7) % 6;
+            if (phase > 2) continue;
+            const px = (x + 0.5) * cellWidth;
+            const py = (y + 0.5) * cellHeight;
+            const size = Math.max(2, Math.min(5, Math.min(cellWidth, cellHeight) * 0.62));
+            const spark = document.createElementNS(MACHINE_ICON_SVG_NS, 'path');
+            spark.setAttribute('class', 'electrical-signal-spark');
+            spark.setAttribute('d', `M ${px - size} ${py - size} L ${px + size * 0.2} ${py - size * 0.25} L ${px - size * 0.25} ${py + size * 0.15} L ${px + size} ${py + size}`);
+            spark.setAttribute('stroke', '#fff4a3');
+            spark.setAttribute('stroke-width', String(Math.max(1, size * 0.42)));
+            spark.setAttribute('stroke-linecap', 'round');
+            spark.setAttribute('stroke-linejoin', 'round');
+            spark.setAttribute('fill', 'none');
+            spark.setAttribute('opacity', String(0.48 + world.power[i] / 16));
+            layer.appendChild(spark);
+        }
+    }
 }
 
 // Animate discrete bands along the same ordered tubing-cell route which moves

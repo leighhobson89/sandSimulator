@@ -5,6 +5,10 @@ Exhaustive browser workflows for machines and material transfer.
   preview, blocked placement, all Fan directions, hit testing, Fan speed
   bounds/default, settings bounds, and tooltip behavior.
 - `powered.spec.mjs` checks powered/unpowered Fan, Heater, and Cooler outcomes.
+- `electrical.spec.mjs` checks Battery charge sharing and conductor pulses,
+  electrical wire compatibility at Simple Switch and Lamp ports, ON/OFF switch
+  relay behavior, Lamp glow and its small Battery load, two-cell Elec leads,
+  signal expiry, and electrical-state reset.
 - `storage.spec.mjs` checks storage dialogs, family categories, tubing-only
   intake, capacity, type retention, and purge. It also checks Collector
   two-cell world suction and compatible Tubing transfer to Storage. Its
@@ -27,7 +31,8 @@ Exhaustive browser workflows for machines and material transfer.
   and hit projection from world `connectionCell` anchors. It also checks the
   20 CSS pixel hit distance, declared port roles, near-port Tubing snapping,
   and rejection of incompatible Copper at Mixer inputs.
-- `persistence.spec.mjs` checks machine settings, inventories, tubing, Mixer
+- `persistence.spec.mjs` checks machine settings, including Simple Switch OFF
+  and Lamp ON, inventories, tubing, Mixer
   inputs, Sprinkler fractional credits and launch state, and machine state
   through portable Save/Load, blueprints, and Grabber moves. It also verifies
   legacy Sprinkler mode and spray-credit migration, compatible legacy machine

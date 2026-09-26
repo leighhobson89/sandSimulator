@@ -417,6 +417,11 @@
                 <span>Drain Mode</span>
                 <input id="machineDialogDrainModeToggle" type="checkbox" role="switch" aria-label="Drain Mode">
             </label>
+            <label id="machineDialogElectricalToggleWrap" class="machine-dialog-toggle" hidden>
+                <span id="machineDialogElectricalToggleState">OFF</span>
+                <input id="machineDialogElectricalToggle" type="checkbox" role="switch" aria-label="Electrical machine power">
+            </label>
+            <p id="machineDialogStatus" class="machine-dialog-status" role="status" hidden></p>
             <p id="machineDialogError" class="save-dialog-error" role="alert" hidden></p>
             <div class="save-dialog-actions">
                 <button id="machineDialogOk" class="btn btn-primary" type="button">OK</button>

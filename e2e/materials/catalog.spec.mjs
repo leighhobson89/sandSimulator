@@ -14,7 +14,7 @@ test('catalog groups materials, selects them accessibly, and describes their beh
     const headingOrder = await page.locator('#particleButtons .panel-heading-toggle > span:first-child').allTextContents();
     expect(headingOrder).toEqual([
         'Powders', 'Liquids', 'Gases', 'Solids', 'Seeds', 'Vegetation',
-        'Metals', 'Machines', 'Storage', 'Tools'
+        'Metals', 'Electricals', 'Machines', 'Storage', 'Tools'
     ]);
 
     const sand = page.getByRole('button', { name: 'Sand', exact: true });
@@ -167,6 +167,102 @@ test('Stainless Steel is selectable in Metals and describes its conductive rust 
     await expect(tooltip).toContainText('Stainless Steel');
     await expect(tooltip).toContainText(/rust|water|humidity/i);
     await expect(tooltip).toContainText(/conduct/i);
+});
+
+test('Electricals contains Elec, a copper-like wire with stronger heat and electrical conductivity', async ({ page }) => {
+    const game = new GamePage(page);
+    await game.openMenu();
+    await game.newGame();
+
+    const electricalsHeading = page.locator('#particleButtons .panel-heading')
+        .filter({ hasText: /^Electricals/ });
+    const electricalsGrid = electricalsHeading.locator('xpath=following-sibling::div[1]');
+    const elecButton = page.getByRole('button', { name: 'Elec', exact: true });
+    await expect(electricalsHeading).toBeVisible();
+    await expect(elecButton).toBeVisible();
+    await expect(electricalsGrid.getByRole('button', { name: 'Elec', exact: true })).toBeVisible();
+    await expect(elecButton).toHaveAttribute('aria-describedby', 'toolTooltip');
+
+    const materials = await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        const definitions = physics.getDefinitions();
+        return Object.fromEntries(['Elec', 'Copper'].map(name => [
+            name, definitions.find(definition => definition?.name === name)
+        ]));
+    });
+    const { Elec: elec, Copper: copper } = materials;
+    expect(elec.group).toBe('Electricals');
+    expect(elec.category).toBe('static');
+    expect(elec.conductive).toBe(true);
+    expect(elec.metal).toBe(true);
+    expect(elec.conductivity).toBeGreaterThan(copper.conductivity);
+    expect(elec.thermalNetworkRate).toBeGreaterThan(copper.thermalNetworkRate);
+    expect(elec.electricalConductivity).toBeGreaterThan(copper.electricalConductivity);
+    expect(elec.dischargeBattery).toBe(true);
+    expect(elec.wireReach).toBeGreaterThan(0);
+    expect(elec.corrosionResistance).toBeGreaterThan(copper.corrosionResistance);
+    expect(elec.description).toMatch(/copper/i);
+    expect(elec.description).toMatch(/heat|thermal/i);
+    expect(elec.description).toMatch(/electric|wire|conduct/i);
+
+    await elecButton.click();
+    await expect(elecButton).toHaveClass(/selected/);
+    await elecButton.hover();
+    await expect(page.locator('#toolTooltip')).toContainText('Elec');
+});
+
+test('Elec forms Corrosion powder but needs four times Copper exposure', async ({ page }) => {
+    const game = new GamePage(page);
+    await game.openMenu();
+    await game.newGame();
+
+    const specimens = await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        const definitions = physics.getDefinitions();
+        const id = name => definitions.findIndex(definition => definition?.name === name);
+        physics.clearWorld();
+        const world = physics.getWorld();
+        const cases = [
+            { name: 'Copper', x: 40, exposure: 359 },
+            { name: 'Elec', x: 60, exposure: 359 },
+            { name: 'Elec', x: 80, exposure: 1439 }
+        ];
+        for (const specimen of cases) {
+            const { x } = specimen;
+            const y = 40;
+            physics.setCell(x, y, id(specimen.name));
+            physics.setCell(x - 1, y, id('Water'));
+            physics.setCell(x - 2, y, id('Wall'));
+            for (const offset of [-1, 1]) {
+                physics.setCell(x - 2, y + offset, id('Wall'));
+                physics.setCell(x - 1, y + offset, id('Wall'));
+                physics.setCell(x, y + offset, id('Wall'));
+                physics.setCell(x + 1, y + offset, id('Wall'));
+            }
+            physics.setCell(x + 1, y, id('Wall'));
+            world.corrosionExposure[physics.index(x, y)] = specimen.exposure;
+        }
+        return cases.map(({ name, x }) => ({ name, x, y: 40 }));
+    });
+
+    await game.step(4);
+    const result = await page.evaluate(async specimens => {
+        const physics = await import('/physics.js');
+        const world = physics.getWorld();
+        const corrosion = physics.getDefinitions().findIndex(definition => definition?.name === 'Corrosion');
+        return specimens.map(({ name, x, y }) => ({
+            name,
+            type: world.type[physics.index(x, y)],
+            corrosionExposure: world.corrosionExposure[physics.index(x, y)],
+            corrosionId: corrosion
+        }));
+    }, specimens);
+
+    expect(result[0].type, JSON.stringify(result)).toBe(result[0].corrosionId);
+    expect(result[1].type).toBeGreaterThan(0);
+    expect(result[1].type).not.toBe(result[1].corrosionId);
+    expect(result[1].corrosionExposure).toBeGreaterThan(359);
+    expect(result[2].type).toBe(result[2].corrosionId);
 });
 
 test('every prepared definition has a catalog button and generated glossary text', async ({ page }) => {

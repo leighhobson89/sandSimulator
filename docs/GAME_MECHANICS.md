@@ -33,7 +33,7 @@ actually run.
 
 ### Current catalogue
 
-The 81 entries are grouped in the same order as the picker:
+The 84 entries are grouped in the same order as the picker:
 
 | Group | Materials |
 | --- | --- |
@@ -44,6 +44,7 @@ The 81 entries are grouped in the same order as the picker:
 | Seeds | Grass Seeds, Moss Spores, Daffodil Seeds, Red Tulip Seeds, Geranium Seeds, Blue Flower Seeds, Banana Seeds, Water Grass / Lily Seeds |
 | Vegetation | Plant, Grass, Flower, Lily Stem, Lily Pad, Lily Flower, Ash Grass, Moss, Daffodil, Red Tulip, Geranium, Blue Flower, Banana Plant, Water Grass, Daffodil Bloom, Tulip Bloom, Geranium Bloom, Blue Flower Bloom, Banana Bunch, Water Grass Bloom, Water Grass Pad, Banana Leaf |
 | Metals | Spark, Copper, Molten Copper, Battery, Molten Aluminum, Iron, Molten Iron, Stainless Steel, Tubing |
+| Electricals | Elec, Simple Switch, Lamp |
 | Machines | Fan, Heater, Cooler, Sprinkler, Mixer, Splitter, Collector |
 | Storage | Powder Storage Bin, Liquid Storage Bin, Gas Storage Bin |
 | Tools | Heat Ray, Cold Ray, Wind |
@@ -91,6 +92,7 @@ simulation description in [`PROGRAM_OVERVIEW.md`](PROGRAM_OVERVIEW.md).
 | Seeds | Eight viable powder seed types wait for suitable local temperature, humidity, and substrate moisture before germinating. Species rules in `particles.json` set their substrate, aquatic depth, and germination requirements. |
 | Vegetation | Plant, grass, moss, aquatic plants, and flowering species use the environmental viability, growth, flowering, and seed-setting rules declared in `particles.json`; their leaves, pads, blooms, and fruit appear in this group too. |
 | Metals | Spark, Copper and Molten Copper, Battery and Molten Aluminum, Iron and Molten Iron, Tubing, and Stainless Steel are listed here. Copper, Iron, Battery, and Stainless Steel carry electrical pulses; Stainless Steel transfers heat and electricity more slowly than Iron, draws Battery charge as a wire, and does not rust from Water or humid air. Battery stores charge; Tubing has no electrical conductivity despite being in the Metals picker group. |
+| Electricals | Elec is high-purity copper wire with higher heat and electrical conductivity than Copper. Simple Switch relays a live signal from its electrical input to its output while ON; OFF blocks it. Lamp glows yellow only when ON and powered, with a small Battery load. |
 | Tools | Heat Ray and Cold Ray are short-lived directional brushes. A left-button stroke starts Heat Ray upward or Cold Ray downward; its first non-zero drag selects the nearest cardinal direction, which persists while stationary and changes only when the drag heading changes. Painted ray cells travel as projectiles using that stored heading. Wind moves light materials and stirs air; it stops at solid barriers but passes through plants. |
 
 ### Heat, electrical, and reaction anchors
@@ -105,7 +107,7 @@ simulation description in [`PROGRAM_OVERVIEW.md`](PROGRAM_OVERVIEW.md).
   becomes Stone. Heating Stone above `100 C` returns it to Scoria, and heating
   Scoria above `900 C` returns it to Lava.
 - Battery melts at `660 C` into Molten Aluminum and cools back into Battery.
-  Copper and Iron use approximate melting points of `1085 C` and `1538 C`.
+  Copper and Elec melt into Molten Copper at `1085 C`; Iron uses `1538 C`.
 - State changes bank heat over time using each material's latent amount rather
   than changing immediately at a threshold. Water extinguishes Fire on contact,
   Lava chills to Scoria when Water touches it, and water wetting is limited to
@@ -146,8 +148,8 @@ simulation description in [`PROGRAM_OVERVIEW.md`](PROGRAM_OVERVIEW.md).
   direct air cooling of shielded contents without making the shell perfectly
   thermally isolated.
 - A material can opt into the fast thermal network with `thermalNetworkRate`.
-  The current conductors are Copper, Molten Copper, Battery, Molten Aluminum,
-  Iron, Molten Iron, Tubing, Fan, Heater, and Cooler. Tubing uses
+  The current conductors are Copper, Elec, Molten Copper, Battery,
+  Molten Aluminum, Iron, Molten Iron, Tubing, Fan, Heater, and Cooler. Tubing uses
   `thermalNetworkRate: 0.12`, despite having zero ordinary conductivity and no
   electrical conductivity. The network transfers heat between two opted-in
   conductors or between an opted-in conductor and adjacent enclosed empty/gas
@@ -157,7 +159,7 @@ simulation description in [`PROGRAM_OVERVIEW.md`](PROGRAM_OVERVIEW.md).
   handles every other contact pair, including slower Wood, Stone, and Wall
   exchange; eligible conductors use ordinary conductivity for links to open air
   or other non-network materials when their conductivity permits it.
-- Solid Copper, Battery, Iron, Fan, Cooler, Tubing, and Heater have a local
+- Solid Copper, Elec, Battery, Iron, Fan, Cooler, Tubing, and Heater have a local
   temperature glow. The material definitions provide `glowColor`, prepared as
   `glowRgb`, and blend from the base pixel color starting at `glowStartTemp`;
   `glowTemp` marks the fully blended point and equals each material's
@@ -165,15 +167,26 @@ simulation description in [`PROGRAM_OVERVIEW.md`](PROGRAM_OVERVIEW.md).
   heat emission, or tint to neighboring pixels. Molten materials keep their
   existing color/color2 gradients unchanged.
 - Ordinary materials are non-conductive by default. Copper, Iron, Stainless
-  Steel, and Battery participate in the electrical network; Spark is absorbed
-  by connected metal, Battery stores charge, and Copper, Iron, or Stainless
-  Steel can discharge a charged Battery through their connected length. Tubing
-  has no electrical conductivity and opts into fast thermal links while keeping
-  zero ordinary conductivity.
+  Steel, Elec, and Battery participate in the electrical network; Spark is
+  absorbed by connected metal and Battery stores charge. Copper, Iron,
+  Stainless Steel, and Elec can discharge a charged Battery through their
+  connected length. Elec uses electrical conductivity `2`, wire reach `2`, and
+  a small per-cell charge draw of `0.35`; its fast thermal-network rate is
+  `0.3`. It behaves like pure copper, melts into Molten Copper, and takes four
+  times the qualifying exposure to become Corrosion powder compared with
+  ordinary Copper. Tubing has no electrical conductivity and opts into fast
+  thermal links while keeping zero ordinary conductivity.
 - Stainless Steel has nonzero ordinary heat conductivity and electrical
   conductivity, both lower than Iron's. Its power draw is `0.5` per cell and it
   reaches conductive machines across up to two empty cells, like Iron. It does
   not join the fast thermal network or rust from Water or humid air.
+- Electrical port signals travel through Copper, Iron, Stainless Steel, and
+  Elec wire, and are shown as short yellow zig-zag sparks moving over live
+  conductors. Machine ports retain their protruding connection markers: red
+  while open and green when connected. Electrical machine lead previews and
+  painted leads use gold Elec with a forced two-cell width, independent of the
+  selected paint-brush size. Their input ports accept compatible conductive
+  wire rather than Tubing.
 - Heat Ray and Cold Ray ramp their cells toward `2000 C`
   and `-120 C` over several frames rather than initializing an instant
   temperature source. Both burn out after a few frames instead of collecting as
@@ -197,14 +210,16 @@ have family-compatible Tubing input and output ports. The Sprinkler has one
 Tubing input and releases into the world. The Mixer has two Tubing inputs and
 releases its output into the world, with no Tubing output. The Splitter has one
 Tubing input and two Tubing outputs. The Collector has one world-facing funnel
-intake and one Tubing output.
+intake and one Tubing output. Simple Switch has one electrical input and one
+electrical output; Lamp has one electrical input and emits light as its output.
 
 Machine placement uses two stages. During `poseSelecting`, the first pointer
 gesture moves and faces a ghost without changing the world or saved state. On
 pointer-up, `extensionPreview` freezes the pose and previews a size-3 connector
 from the first input port in definition order; the output-only Collector
-previews from its Tubing output. A second click preflights and commits the
-machine and connector together. Invalid placement remains available to retry;
+previews from its Tubing output. Electrical machines use Elec connectors at a
+forced two-cell width. A second click preflights and commits the machine and
+connector together. Invalid placement remains available to retry;
 Escape or right-click cancels, and touch follows the same stages. Saves and
 blueprints capture committed machines only.
 
@@ -214,9 +229,11 @@ hit/snap, connector gestures, and placement previews use the same rotated
 `connectionCell` projection with runtime cell dimensions. The pointer hit
 distance remains 20 CSS pixels as zoom changes; hit proximity does not create a
 physical route. A route requires compatible material at the declared anchor.
-A port becomes connected only through compatible external Tubing or Copper
-contact; its own tagged lead alone does not activate it. Focused port coverage
-passes 8/8; see the machine E2E README for coverage.
+A port becomes connected through compatible external Tubing, Copper, or
+conductive electrical wire at the declared anchor; its own tagged lead alone
+does not activate it. Electrical ports accept Copper, Iron, Stainless Steel,
+and Elec, and reject Tubing. Focused port coverage is documented in the machine
+E2E README.
 
 Clicking a placed machine opens its settings or inventory dialog. Machine state
 persists in local Resume Game saves and portable LZString saves. Portable save
@@ -282,6 +299,27 @@ target and launches Cold Rays along the centreline.
 - Temperature: `-60 to 20 C`, default `-60 C`.
 - Power load: `100`.
 - It is inactive without power.
+
+### Electrical machines
+
+Both electrical machines start ON. Their setting is persisted with machine
+state in world saves and blueprints, and each has an ON/OFF switch in its
+settings dialog.
+
+- **Simple Switch** accepts a live signal through its electrical input. ON
+  relays the signal to its electrical output; OFF blocks it. The switch does
+  not create a signal by itself.
+- **Lamp** has one electrical input. ON emits a warm yellow glow only while
+  that input receives power; OFF blocks its input and keeps the glow dark. Its
+  Battery load is `1` per tick, less than one tenth of Heater's `100` load.
+- Both ports use Elec as the protruding connector material and force a
+  two-cell-wide lead regardless of the paint-brush setting. Ports accept
+  Copper, Iron, Elec, Stainless Steel, and other compatible conductive wire.
+  They keep the existing red disconnected and green connected markers.
+
+Live electrical pulses display as moving yellow zig-zag sparks over powered
+wire cells. The signal animation is a visual layer; electrical power and
+machine effects continue to use the conductor network and declared ports.
 
 ### Storage machines
 
@@ -441,14 +479,17 @@ port roles and stable `connectionCell` anchors, not a broad machine icon
 footprint. A route attaches only when compatible Tubing reaches its exact
 anchor. Storage inputs enforce Powder, Liquid, or Gas family compatibility;
 the Sprinkler and Mixer accept the materials allowed by their existing
-inventory rules. Copper is the connector for powered-machine inputs and is
-separate from Tubing routes.
+inventory rules. Copper is the connector for Fan, Heater, and Cooler inputs.
+Electrical ports use Elec connectors and accept conductive wire materials;
+they are separate from Tubing routes.
 
 ### Declared material ports
 
 | Machine | Material ports | Other input/output |
 | --- | --- | --- |
 | Fan, Heater, Cooler | One Copper input | Directional world-effect cone output, opposite the input |
+| Simple Switch | One electrical input and one electrical output; accepts compatible conductive wire | Relays a live signal when ON; blocks the signal when OFF |
+| Lamp | One electrical input; accepts compatible conductive wire | Yellow light while ON and powered; no output when OFF or unpowered |
 | Powder Storage Bin | Powder Tubing input and output | No world-particle intake |
 | Liquid Storage Bin | Liquid Tubing input and output | No world-particle intake |
 | Gas Storage Bin | Gas Tubing input and output | No world-particle intake |
@@ -582,9 +623,12 @@ metal cell's cardinal sides, or when the cell has adjacent air and local
 humidity is at least `98%`; diagonal Water does not count. Each eligible metal
 cell is checked once every four simulation frames. A qualifying check adds `1`
 to its persisted exposure counter; a check without either condition removes
-`2`. At `360` exposure, the original metal cell becomes Corrosion powder. The
-powder can fall away and leave a gap in a wire or metal structure. Molten forms
-do not accumulate this exposure. Corrosion powder melts into Lava at `1000 C`.
+`2`. Copper's default resistance reaches the exposure threshold at `360`, when
+the original cell becomes Corrosion powder. Elec has `corrosionResistance: 4`,
+so it needs `1440` qualifying exposure counts (four times Copper's exposure).
+The powder can fall away and leave a gap in a wire or metal structure. Molten
+forms do not accumulate this exposure. Corrosion powder melts into Lava at
+`1000 C`.
 
 Local humidity, plant health, corrosion exposure, and plant reproduction
 cooldown are stored in per-cell arrays. Base Humidity and Dewpoint are saved as

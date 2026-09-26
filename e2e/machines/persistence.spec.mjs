@@ -51,6 +51,10 @@ async function seedMachineState(page) {
         world.data[collector] = 3;
         world.storageType[collector] = id('Fire');
         world.storageCount[collector] = 5;
+        physics.setCell(65, 20, id('Simple Switch'));
+        world.machineSetting[physics.index(65, 20)] = 0;
+        physics.setCell(70, 20, id('Lamp'));
+        world.machineSetting[physics.index(70, 20)] = 1;
     });
 }
 
@@ -141,6 +145,10 @@ test('machine settings, inventories, tubing, and mixer inputs survive portable S
         const grabbed = game.beginGrab(44, 32, 1);
         const dropped = game.dropGrab(48, 32);
         const droppedIndex = physics.index(48, 32);
+        const electricalBlueprint = game.captureBlueprint(65, 20, 70, 20);
+        game.stampBlueprintAt(electricalBlueprint, 65, 30);
+        const stampedSwitch = physics.getMachineSetting(65, 30);
+        const stampedLamp = physics.getMachineSetting(70, 30);
         return {
             sourceDirection: physics.getWorld().sprinklerLaunchDirection[source],
             sourceAge: physics.getWorld().sprinklerLaunchAge[source],
@@ -148,7 +156,8 @@ test('machine settings, inventories, tubing, and mixer inputs survive portable S
             grabbed,
             dropped,
             droppedDirection: physics.getWorld().sprinklerLaunchDirection[droppedIndex],
-            droppedAge: physics.getWorld().sprinklerLaunchAge[droppedIndex]
+            droppedAge: physics.getWorld().sprinklerLaunchAge[droppedIndex],
+            electricalBlueprint: { switch: stampedSwitch, lamp: stampedLamp }
         };
     });
     expect(copiedLaunchState).toEqual({
@@ -158,7 +167,8 @@ test('machine settings, inventories, tubing, and mixer inputs survive portable S
         grabbed: 1,
         dropped: 1,
         droppedDirection: 7,
-        droppedAge: 5
+        droppedAge: 5,
+        electricalBlueprint: { switch: 0, lamp: 1 }
     });
 
     const legacySprinklerSave = await page.evaluate(async ({ encoded, sprinklerIndex, sprayFields, launchFields }) => {

@@ -452,6 +452,9 @@ export function prepareDefinitions(json) {
             quenchedInto: toId(p.quenchedInto),
             douses: !!p.douses,
             corrodible: !!p.corrodible,
+            // Weathering is accumulated as sustained exposure. A higher
+            // resistance stretches the interval before a metal becomes powder.
+            corrosionResistance: Math.max(1, p.corrosionResistance || 1),
             corrosion: p.corrosion || 0,
             // The fumes given off where it eats something away. They are left
             // in the hole rather than puffed out at random, so a bank being
@@ -1108,6 +1111,7 @@ function defaultMachineSetting(def) {
     if (def?.machine === 'fan') return def.machineWindSpeed ?? 7;
     if (def?.machine === 'sprinkler') return 3;
     if (def?.machine === 'mixer') return 1;
+    if (def?.machine === 'simpleSwitch' || def?.machine === 'lamp') return 1;
     return def?.machineTemp ?? 0;
 }
 
@@ -1123,6 +1127,7 @@ function machineSettingBounds(def) {
     if (def?.machine === 'fan') return { min: 1, max: FAN_WIND_SCALE };
     if (def?.machine === 'heater') return { min: 0, max: 4000 };
     if (def?.machine === 'cooler') return { min: -60, max: 20 };
+    if (def?.machine === 'simpleSwitch' || def?.machine === 'lamp') return { min: 0, max: 1 };
     return null;
 }
 
@@ -1216,6 +1221,16 @@ const MACHINE_PORT_DEFINITIONS = Object.freeze({
             // Keep the logical connection offset unchanged.
             sourceX: 50.6, sourceY: 32, x: 3, y: 0,
             targetRadius: 1.5, stubLength: 6, visualRadius: 4 }
+    ],
+    simpleSwitch: [
+        { id: 'input', role: 'input', material: 'Elec', family: 'electrical',
+            sourceX: 0, sourceY: 18, x: -3, y: 0, targetRadius: 1.6, stubLength: 6, visualRadius: 2.8 },
+        { id: 'output', role: 'output', material: 'Elec', family: 'electrical',
+            sourceX: 48, sourceY: 18, x: 3, y: 0, targetRadius: 1.6, stubLength: 6, visualRadius: 2.8 }
+    ],
+    lamp: [
+        { id: 'input', role: 'input', material: 'Elec', family: 'electrical',
+            sourceX: 0, sourceY: 24, x: -3, y: 0, targetRadius: 1.6, stubLength: 6, visualRadius: 2.8 }
     ]
 });
 
@@ -1232,7 +1247,9 @@ const MACHINE_ARTWORK_LAYOUTS = Object.freeze({
     storageGas: { tileX: 1024, tileY: 341, trimX: 94, trimY: 33, trimWidth: 245, trimHeight: 233 },
     sprinkler: { tileX: 0, tileY: 683, trimX: 146, trimY: 27, trimWidth: 308, trimHeight: 178 },
     splitter: { tileX: 512, tileY: 683, trimX: 118, trimY: 19, trimWidth: 276, trimHeight: 222 },
-    mixer: { tileX: 1024, tileY: 683, trimX: 54, trimY: 39, trimWidth: 324, trimHeight: 221 }
+    mixer: { tileX: 1024, tileY: 683, trimX: 54, trimY: 39, trimWidth: 324, trimHeight: 221 },
+    simpleSwitch: { tileX: 0, tileY: 0, trimX: 0, trimY: 0, trimWidth: 48, trimHeight: 36 },
+    lamp: { tileX: 0, tileY: 0, trimX: 0, trimY: 0, trimWidth: 48, trimHeight: 48 }
 });
 const MACHINE_ARTWORK_FACE_SIZE = 64;
 const MACHINE_ARTWORK_MAX_SIZE = 56;
@@ -1344,6 +1361,7 @@ function portAcceptsMaterial(port, material) {
     if (!port || !particle) return false;
     if (port.family === 'tubing') return !!particle.tubing;
     if (port.family === 'copper') return particle.name === 'Copper';
+    if (port.family === 'electrical') return isElectricalWire(particle);
     if (port.family === 'sprinkler-output') return !particle.tool && !particle.machine && !particle.tubing;
     if (port.family === 'storage') {
         // Storage connectors always use Tubing. Payload category is a separate
@@ -1352,6 +1370,11 @@ function portAcceptsMaterial(port, material) {
         return !!particle.tubing;
     }
     return false;
+}
+
+function isElectricalWire(particle) {
+    return !!particle && particle.category === 'static' && particle.conductive &&
+        particle.wireReach > 0 && !particle.machine;
 }
 
 function rotatedPortOffset(machine, localX, localY) {
@@ -1424,7 +1447,7 @@ function machinePortDescriptors(machine) {
         const centerY = anchorY + offset.y;
         const visual = transformedPortVisual(spec, machineDef.machine);
         const direction = rotatedPortOffset(machine,
-            visual?.directionX || 0, visual?.directionY || -1);
+            visual?.directionX ?? 0, visual?.directionY ?? -1);
         const directionLength = Math.hypot(direction.x, direction.y) || 1;
         const radius = spec.targetRadius;
         const cells = [];
@@ -1468,7 +1491,9 @@ function machinePortDescriptors(machine) {
             directionX: direction.x / directionLength,
             directionY: direction.y / directionLength,
             targetRadius: radius,
-            connectorMaterial: spec.family === 'copper' ? 'Copper' : 'Tubing',
+            connectorMaterial: spec.family === 'electrical' ? 'Elec'
+                : spec.family === 'copper' ? 'Copper' : 'Tubing',
+            connectorBrushWidth: spec.family === 'electrical' ? 2 : 3,
             connected: machinePortHasConnection({ ...spec, slot: order, machineIndex: machine,
                 connectionCell, targetCells: cells }),
             stubLength: spec.stubLength,
@@ -1603,6 +1628,7 @@ function isLegacyPortContact(port, x, y) {
 
 function legacyPortCells(machine, port) {
     const machineType = DEFS[world.type[machine]]?.machine;
+    if (port.family === 'electrical') return [];
     const machineX = machine % COLS;
     const machineY = Math.floor(machine / COLS);
     let candidates = [];
@@ -1641,7 +1667,9 @@ export function getMachinePortTemplates(machineType, direction = 0) {
             (transformedPortVisual(spec, machineType)?.directionY ?? -1) * Math.sin(radians)),
         directionY: ((transformedPortVisual(spec, machineType)?.directionX ?? 0) * Math.sin(radians) +
             (transformedPortVisual(spec, machineType)?.directionY ?? -1) * Math.cos(radians)),
-        connectorMaterial: spec.family === 'copper' ? 'Copper' : 'Tubing',
+        connectorMaterial: spec.family === 'electrical' ? 'Elec'
+            : spec.family === 'copper' ? 'Copper' : 'Tubing',
+        connectorBrushWidth: spec.family === 'electrical' ? 2 : 3,
         connected: false,
         stubLength: spec.stubLength,
         connectionOffset: { x: spec.x, y: spec.y },
@@ -1718,7 +1746,7 @@ export function getMachinePortSnapTarget(x, y, material) {
     const particle = typeof material === 'string'
         ? DEFS.find(def => def?.name?.toLowerCase() === material.toLowerCase())
         : DEFS[material];
-    if (!particle || (!particle.tubing && particle.name !== 'Copper')) return null;
+    if (!particle || (!particle.tubing && particle.name !== 'Copper' && !isElectricalWire(particle))) return null;
     const candidates = [];
     const machineRadius = 12;
     for (let machineY = Math.max(0, y - machineRadius); machineY <= Math.min(ROWS - 1, y + machineRadius); machineY++) {
@@ -1728,7 +1756,9 @@ export function getMachinePortSnapTarget(x, y, material) {
             for (const port of machinePortDescriptors(machine)) {
                 const compatiblePortFamily = particle.tubing
                     ? (port.family === 'tubing' || port.family === 'storage')
-                    : port.family === 'copper';
+                    : port.family === 'copper'
+                        ? particle.name === 'Copper'
+                        : port.family === 'electrical' && isElectricalWire(particle);
                 if (!compatiblePortFamily || !portAcceptsMaterial(port, particle.id) ||
                     machinePortHasConnection(port)) continue;
                 const cell = port.connectionCell;
@@ -2371,11 +2401,51 @@ function forEachConductiveConnection(i, callback) {
 // source. Battery cells are deliberately not traversed here: two separate
 // batteries may touch the same wire grid, but neither battery should become a
 // bridge into the other battery's reservoir.
-function connectedGridConsumption(seeds) {
+function electricalPortWireCells(port) {
+    if (!world || !port?.connectionCell || port.family !== 'electrical') return [];
+    const candidates = new Set();
+    const add = cell => {
+        if (!cell || !inBounds(cell.x, cell.y)) return;
+        const i = index(cell.x, cell.y);
+        if (portAcceptsMaterial(port, world.type[i]) && DEFS[world.type[i]]?.conductive) candidates.add(i);
+    };
+    add(port.connectionCell);
+    const machineX = port.machineIndex % COLS;
+    const machineY = Math.floor(port.machineIndex / COLS);
+    for (let y = Math.max(0, machineY - 24); y <= Math.min(ROWS - 1, machineY + 24); y++) {
+        for (let x = Math.max(0, machineX - 24); x <= Math.min(COLS - 1, machineX + 24); x++) {
+            const i = index(x, y);
+            if (leadOwnerAtCell(x, y) !== port.machineIndex ||
+                world.machinePortLeadSlot[i] !== port.slot + 1) continue;
+            add({ x, y });
+        }
+    }
+    return [...candidates];
+}
+
+function buildElectricalMachineLoads() {
+    const loadsByWire = new Map();
+    for (let machine = 0; machine < world.type.length; machine++) {
+        const def = DEFS[world.type[machine]];
+        if (def?.machine !== 'lamp' || (Math.round(world.machineSetting[machine]) & 1) === 0 ||
+            !(def.powerConsumption > 0)) continue;
+        const input = machinePortDescriptors(machine).find(port => port.family === 'electrical' &&
+            port.role === 'input');
+        for (const wire of electricalPortWireCells(input)) {
+            let loads = loadsByWire.get(wire);
+            if (!loads) loadsByWire.set(wire, loads = []);
+            loads.push(machine);
+        }
+    }
+    return loadsByWire;
+}
+
+function connectedGridConsumption(seeds, electricalLoadsByWire = null) {
     if (seeds.length === 0) return 0;
 
     const visited = new Uint8Array(world.type.length);
     const queue = [];
+    const countedMachineLoads = new Set();
     let consumption = 0;
 
     for (const seed of seeds) {
@@ -2389,6 +2459,11 @@ function connectedGridConsumption(seeds) {
         const def = DEFS[world.type[i]];
         if (!def || !def.conductive) continue;
         consumption += def.powerConsumption;
+        for (const machine of electricalLoadsByWire?.get(i) || []) {
+            if (countedMachineLoads.has(machine)) continue;
+            countedMachineLoads.add(machine);
+            consumption += DEFS[world.type[machine]]?.powerConsumption || 0;
+        }
 
         forEachConductiveConnection(i, ni => {
             const nextDef = DEFS[world.type[ni]];
@@ -2407,6 +2482,7 @@ function connectedGridConsumption(seeds) {
 // simulation frame. Eight-way contact matches electrical wire connectivity.
 function balanceStoredCharge() {
     const visited = new Uint8Array(world.type.length);
+    let electricalLoadsByWire = null;
 
     for (let start = 0; start < world.type.length; start++) {
         const startDef = DEFS[world.type[start]];
@@ -2451,7 +2527,8 @@ function balanceStoredCharge() {
         // amount on every simulation tick. A bare copper wire therefore drains
         // very slowly, while powered machines can make the same grid consume
         // hundreds of charge units per tick.
-        const gridConsumption = connectedGridConsumption(dischargeContacts) /
+        if (!electricalLoadsByWire) electricalLoadsByWire = buildElectricalMachineLoads();
+        const gridConsumption = connectedGridConsumption(dischargeContacts, electricalLoadsByWire) /
             BATTERY_DISCHARGE_SCALE;
         if (totalCharge > 0 && gridConsumption > 0) {
             totalCharge = Math.max(0, totalCharge - gridConsumption);
@@ -2490,6 +2567,20 @@ function updateElectricalPower() {
     }
 
     balanceStoredCharge();
+    relayElectricalSwitches();
+}
+
+function relayElectricalSwitches() {
+    for (let machine = 0; machine < world.type.length; machine++) {
+        if (DEFS[world.type[machine]]?.machine !== 'simpleSwitch' ||
+            (Math.round(world.machineSetting[machine]) & 1) === 0) continue;
+        const ports = machinePortDescriptors(machine);
+        const input = ports.find(port => port.family === 'electrical' && port.role === 'input');
+        const output = ports.find(port => port.family === 'electrical' && port.role === 'output');
+        if (!electricalPortWireCells(input).some(wire => world.power[wire] > 0)) continue;
+        const outputWires = electricalPortWireCells(output);
+        if (outputWires.length) energizeConnectedMetal(outputWires, false);
+    }
 }
 
 // ------------------------------------------------------------------ main step
@@ -3313,7 +3404,8 @@ function applyReactions(x, y, i, def) {
         } else {
             world.corrosionExposure[i] = Math.max(0, world.corrosionExposure[i] - 2);
         }
-        if (world.corrosionExposure[i] >= CORROSION_POWDER_EXPOSURE_REQUIRED) {
+        if (world.corrosionExposure[i] >= CORROSION_POWDER_EXPOSURE_REQUIRED *
+            def.corrosionResistance) {
             transform(i, idOf('Corrosion'));
             return true;
         }
@@ -4990,6 +5082,11 @@ function machineIsPowered(x, y, i) {
                     (world.power[contact] > 0 || world.powerDelay[contact] > 0);
             }));
     if (poweredCopperPort) return true;
+
+    const poweredElectricalPort = machinePortDescriptors(i).some(port =>
+        port.family === 'electrical' && port.role === 'input' &&
+        electricalPortWireCells(port).some(wire => world.power[wire] > 0 || world.powerDelay[wire] > 0));
+    if (poweredElectricalPort) return true;
 
     // A live Spark or a Spark source touching a machine is enough to start it.
     // The source check is deliberate: a source does not need an empty cell on
