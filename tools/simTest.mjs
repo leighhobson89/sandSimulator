@@ -1765,6 +1765,163 @@ function runMachinePortsFlowRegressions() {
     }
 }
 
+function runPlantIlluminationRegressions() {
+    section('Ambient illumination and plant light response');
+    const hasLightApi = typeof physics.setAmbientIlluminationTarget === 'function' &&
+        typeof physics.getAmbientIlluminationTarget === 'function' &&
+        typeof physics.getIlluminationAt === 'function';
+    const hasPlantEnvironmentApi = typeof physics.getPlantEnvironment === 'function';
+    check('ambient illumination and plant environment APIs are exposed', hasLightApi && hasPlantEnvironmentApi);
+
+    const profiles = [
+        ['Moss', 5, 25], ['Grass', 15, 70], ['Daffodil', 15, 65],
+        ['Red Tulip', 20, 70], ['Geranium', 25, 75], ['Blue Flower', 10, 55],
+        ['Banana Plant', 30, 85], ['Water Grass', 10, 60]
+    ];
+    const missingProfiles = profiles.filter(([name, minimum, ideal]) =>
+        defs[ID[name]]?.plantMinIllumination !== minimum ||
+        defs[ID[name]]?.plantIdealIllumination !== ideal);
+    check('all eight species have their specified minimum and ideal light profiles', missingProfiles.length === 0,
+        JSON.stringify(missingProfiles));
+    const bananaPlant = defs[ID['Banana Plant']];
+    const bananaSeed = defs[ID['Banana Seeds']];
+    check('Banana Seeds use the Banana Plant minimum and ideal light profile',
+        bananaSeed?.plantMinIllumination === bananaPlant?.plantMinIllumination &&
+        bananaSeed?.plantIdealIllumination === bananaPlant?.plantIdealIllumination &&
+        bananaPlant?.plantMinIllumination === 30 && bananaPlant?.plantIdealIllumination === 85,
+        JSON.stringify({
+            seed: [bananaSeed?.plantMinIllumination, bananaSeed?.plantIdealIllumination],
+            plant: [bananaPlant?.plantMinIllumination, bananaPlant?.plantIdealIllumination]
+        }));
+    if (!hasLightApi || !hasPlantEnvironmentApi) return;
+
+    createWorld(12, 12);
+    const initialLight = physics.getAmbientIlluminationTarget();
+    physics.setAmbientIlluminationTarget(-1);
+    const lowClamp = physics.getAmbientIlluminationTarget();
+    physics.setAmbientIlluminationTarget(101);
+    const highClamp = physics.getAmbientIlluminationTarget();
+    physics.setAmbientIlluminationTarget(0);
+    setCell(5, 5, ID.Fire);
+    const sourceIndex = index(5, 5);
+    const localEmission = getWorld().illumination[sourceIndex] || physics.getIlluminationAt(5, 5);
+    const effectiveAtSource = physics.getIlluminationAt(5, 5);
+    physics.setAmbientIlluminationTarget(50);
+    const effectiveAmbient = physics.getIlluminationAt(9, 9);
+    check('new worlds default to 50 ambient illumination', initialLight === 50, String(initialLight));
+    check('ambient illumination clamps to 0 through 100', lowClamp === 0 && highClamp === 100,
+        `${lowClamp}, ${highClamp}`);
+    check('effective light is the brighter of ambient and local emission',
+        localEmission > 0 && effectiveAtSource === localEmission && effectiveAmbient === 50,
+        JSON.stringify({ localEmission, effectiveAtSource, effectiveAmbient }));
+
+    physics.setAmbientIlluminationTarget(73);
+    const saved = captureSimulationState();
+    const lightField = Object.keys(saved).find(key => /ambient.*illumination/i.test(key));
+    const serializesDerivedLightField = Object.hasOwn(saved.arrays ?? {}, 'illumination') ||
+        Object.hasOwn(saved, 'illumination');
+    physics.setAmbientIlluminationTarget(10);
+    restoreSimulationState(saved);
+    const restored = physics.getAmbientIlluminationTarget();
+    const legacy = { ...saved };
+    if (lightField) delete legacy[lightField];
+    physics.setAmbientIlluminationTarget(10);
+    restoreSimulationState(legacy);
+    const oldSaveFallback = physics.getAmbientIlluminationTarget();
+    check('ambient target is persisted and legacy state defaults to 50',
+        !!lightField && saved[lightField] === 73 && restored === 73 && oldSaveFallback === 50,
+        JSON.stringify({ lightField, saved: saved[lightField], restored, oldSaveFallback }));
+    check('derived local illumination is not serialized with simulation state', !serializesDerivedLightField);
+
+    function plantFixture(light, { health = 0.5, budget = 255 } = {}) {
+        createWorld(12, 12);
+        physics.setAmbientTarget(14);
+        physics.setAmbientHumidityTarget(68);
+        physics.setAmbientIlluminationTarget(light);
+        getWorld().temp.fill(14);
+        getWorld().humidity.fill(68);
+        setCell(5, 10, ID['Wet Mud']);
+        setCell(5, 9, ID.Daffodil);
+        const plantIndex = index(5, 9);
+        getWorld().temp[plantIndex] = 14;
+        getWorld().humidity[plantIndex] = 68;
+        getWorld().plantHealth[plantIndex] = health;
+        getWorld().data[plantIndex] = budget;
+        return plantIndex;
+    }
+
+    plantFixture(15);
+    const minimumState = physics.getPlantHealth(5, 9);
+    physics.setAmbientIlluminationTarget(6);
+    const floorState = physics.getPlantHealth(5, 9);
+    physics.setAmbientIlluminationTarget(5.9);
+    const belowFloorState = physics.getPlantHealth(5, 9);
+    check('minimum light supports thriving and 40% of minimum is the survival floor',
+        minimumState === 'thriving' && floorState === 'surviving' && belowFloorState === 'dying',
+        `${minimumState}, ${floorState}, ${belowFloorState}`);
+
+    const fitnessReadings = [];
+    for (const light of [15, 40, 65, 80]) {
+        const plantIndex = plantFixture(light);
+        physics.setRandomSource(() => 0.99999);
+        run(240);
+        fitnessReadings.push(getWorld().plantHealth[plantIndex]);
+    }
+    check('light fitness scales plant health linearly to ideal and saturates above it',
+        Math.abs(fitnessReadings[0] - 0.55) < 0.025 &&
+        Math.abs(fitnessReadings[1] - 0.775) < 0.035 &&
+        Math.abs(fitnessReadings[2] - 1) < 0.025 &&
+        Math.abs(fitnessReadings[3] - fitnessReadings[2]) < 0.025,
+        JSON.stringify(fitnessReadings));
+
+    function growsAt(light) {
+        const plantIndex = plantFixture(light, { health: 1, budget: 5 });
+        const chance = defs[ID.Daffodil].growChance;
+        physics.setRandomSource(() => chance * 0.5);
+        let steps = 1;
+        while (((physics.getFrameCount() + steps + plantIndex) & 3) !== 0) steps++;
+        run(steps);
+        return countOf(ID.Daffodil) > 1;
+    }
+    const growsAtMinimum = growsAt(15);
+    const growsAtIdeal = growsAt(65);
+    check('growth chance is quarter strength at minimum and full strength at ideal',
+        !growsAtMinimum && growsAtIdeal, `${growsAtMinimum}, ${growsAtIdeal}`);
+
+    function bananaGerminatesAt(light) {
+        createWorld(16, 12);
+        physics.setAmbientTarget(30);
+        physics.setAmbientHumidityTarget(95);
+        physics.setDewpointTarget(10);
+        physics.setAmbientIlluminationTarget(light);
+        const world = getWorld();
+        world.temp.fill(30);
+        world.humidity.fill(95);
+        for (let x = 0; x < world.cols; x++) setCell(x, world.rows - 1, ID.Wall);
+        setCell(8, 10, ID['Wet Mud']);
+        setCell(8, 9, ID['Banana Seeds']);
+        world.temp[index(8, 9)] = 30;
+        world.humidity[index(8, 9)] = 95;
+        setRandomSeed(7300 + light);
+        physics.setRandomSource(() => 0);
+        for (let frame = 0; frame < 60; frame++) stepSimulation();
+        return countOf(ID['Banana Plant']) > 0;
+    }
+    const bananaGerminatesBelowMinimum = bananaGerminatesAt(29);
+    const bananaGerminatesAtMinimum = bananaGerminatesAt(30);
+    check('Banana Seeds germinate at their 30% light minimum but stay dormant below it',
+        !bananaGerminatesBelowMinimum && bananaGerminatesAtMinimum,
+        `below=${bananaGerminatesBelowMinimum}, atMinimum=${bananaGerminatesAtMinimum}`);
+    physics.setAmbientIlluminationTarget(50);
+    physics.resetRandomSource();
+}
+
+if (process.argv.includes('--focus=plant-illumination')) {
+    runPlantIlluminationRegressions();
+    console.log(`\n${passed} passed, ${failed} failed\n`);
+    process.exit(failed > 0 ? 1 : 0);
+}
+
 if (process.argv.includes('--focus=fan-wind-scale-alignment')) {
     runFanWindScaleAlignmentRegression();
     console.log(`\n${passed} passed, ${failed} failed\n`);
@@ -5112,6 +5269,8 @@ console.log(`  ${perFrame.toFixed(2)} ms per frame  (diagnostic only; 60fps budg
 if (!process.argv.includes('--focus=thermal-chamber')) runThermalChamberRegressions();
 
 if (!process.argv.includes('--focus=ecology-climate')) runEcologyClimateRegressions();
+
+if (!process.argv.includes('--focus=plant-illumination')) runPlantIlluminationRegressions();
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed > 0 ? 1 : 0);
