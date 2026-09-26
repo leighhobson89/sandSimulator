@@ -6,20 +6,18 @@ short [`Archive`](archive/README.md) index and are not current guidance.
 
 ## Active References
 
-- [`METALS_GUIDE.md`](METALS_GUIDE.md) - heat and electrical conduction, metal
-  uses, melting paths, and Water-contact or saturated-air corrosion.
-- [`PLANT_GROWERS_HANDBOOK.md`](PLANT_GROWERS_HANDBOOK.md) - Base Humidity,
-  local humidity sources and sinks, seed temperature/humidity/substrate
-  requirements, and established plant growing ranges.
-
-The mechanics reference also covers Environment controls and display-only
-visualization modes.
+The consolidated mechanics reference includes the former metal and plant
+guides, with material tables and practical setup advice maintained beside the
+corresponding implemented rules. It also covers canvas feedback and the
+Electricals/LOGIC catalog behavior. Environment controls and display-only
+visualization modes are documented there as well.
 
 - [`PROGRAM_OVERVIEW.md`](PROGRAM_OVERVIEW.md) — architecture, behavior, scope,
   and comparison context.
 - [`GAME_MECHANICS.md`](GAME_MECHANICS.md) — material catalogue and glossary
-  maintenance, material behavior, machine controls and capacities, Mixer
-  recipes and lifecycle rules, two-stage machine placement, zoom-aligned ports,
+  maintenance, former metal and plant guides, material behavior, live hover
+  feedback, logic gates and Battery diagnostics, machine controls and
+  capacities, Mixer recipes and lifecycle rules, port contact geometry,
   Collector intake and sealing, Sprinkler release, save migration, and Tubing
   connections and regression maintenance.
 - [`ISSUES.md`](ISSUES.md) — active defects, quality work, and maintenance
@@ -27,8 +25,8 @@ visualization modes.
 - [`FUTURE_IDEAS.md`](FUTURE_IDEAS.md) — unfinished product and technical
   roadmap ideas.
 - [`proposals/LOGIC_GATES_AND_LIGHTING.md`](proposals/LOGIC_GATES_AND_LIGHTING.md)
-  — a not-yet-implemented design proposal for composable electrical logic and
-  a local light field that can affect plant growth.
+  — implemented gate and local illumination behavior, with future proposals
+  for light-responsive plants and additional emitters.
 - [`E2E_TEST_PLAN.md`](E2E_TEST_PLAN.md) — current Playwright architecture,
   commands, maintenance contract, regression policy, and next coverage work.
 - [`PHYSICS_REFACTOR_AUDIT.md`](PHYSICS_REFACTOR_AUDIT.md) — source-backed

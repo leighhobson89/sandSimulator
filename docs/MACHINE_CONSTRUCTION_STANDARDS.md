@@ -17,6 +17,21 @@ behavior, rendering, and tests.
 - Keep connector artwork, port hit targets, lead previews, and the actual
   connection anchor aligned at normal and zoomed cell scales. A port marker
   must communicate disconnected and connected state accessibly.
+- Treat the whole visible port protrusion as a functional connector for its
+  originating port. Compatible Tubing, Copper, or electrical wire touching the
+  protrusion connects directly to that port; an additional drawn extension
+  lead is optional. Keep this separate from pointer hit proximity: a nearby
+  click or hover does not create a physical connection. Preserve Tubing's
+  cardinal terminal/contact rule and electrical/Copper eight-way terminal
+  contacts, with no ambiguous ownership when contacts overlap.
+- Machine-port artwork uses a 15-unit local SVG protrusion (about 15 CSS pixels
+  at default zoom); it scales with the world zoom. Keep this independent of the
+  connector-drag preview's 30-screen-pixel maximum. Use sufficient vertical
+  spacing for adjacent multi-input connectors. Logic-gate connectors protrude
+  straight outward from their faces: one horizontal left-facing connector per
+  signal input, one horizontal right-facing output, and one downward supply
+  connector. The supply marker is blue while inactive and cyan while powered.
+  Hover feedback identifies each port's role, direction, and live state.
 - Use Tubing for material transfer ports and Elec for electrical connector
   material. Electrical lead construction forces a two-cell paint-brush width
   regardless of the selected brush setting. Preserve the established 2-pixel
@@ -77,9 +92,13 @@ Before completing a machine change, verify the owning focused regression area
 covers the applicable contracts:
 
 1. Catalog name, group, stable ID, internal key, declared port roles, material,
-   anchors, and connector brush width.
-2. Artwork and hit projection at normal and zoomed scales, including an
-   exposed sensor marker where applicable and the 2-pixel Elec stub.
+   anchors, connector brush width, direct protrusion contacts, and optional
+   extension-lead behavior.
+2. Artwork and hit projection at normal and zoomed scales, including the
+   15-unit SVG protrusion and separate 30-screen-pixel drag cap, adequate
+   signal-port spacing, straight
+   outward connector direction and per-input count for logic gates, an exposed
+   sensor marker where applicable, and the 2-pixel Elec stub.
 3. Accessible configuration controls, bounds, units, fractional input where
    supported, defaults, and immediate settings updates.
 4. Input/output behavior under logical-current ON and OFF states, including

@@ -47,6 +47,8 @@ const MAX_WATER_INFILTRATION_DEPTH = 50;
 const CORROSION_POWDER_EXPOSURE_REQUIRED = 360;
 const POWER_GLOW_FRAMES = 7;
 const BATTERY_DISCHARGE_SCALE = 100;
+const DEFAULT_LAMP_LIGHT_RADIUS = 25;
+const DEFAULT_LAMP_LIGHT_INTENSITY = 100;
 const ELECTRICAL_NEIGHBOURS = [
     [-1, -1], [0, -1], [1, -1],
     [-1, 0],           [1, 0],
@@ -57,6 +59,10 @@ let COLS = 0;
 let ROWS = 0;
 let world = null;
 let logicalCurrentDirty = true;
+let illuminationDirty = true;
+let illuminationSourceSignature = null;
+let illuminationFieldFrame = -1;
+let illuminationFlashes = [];
 // The flood mask borrows the movement flags before they are cleared for the
 // current tick. Queue views borrow the two temperature buffers, which are
 // overwritten by diffuseHeat immediately after the flood fill completes.
@@ -214,6 +220,7 @@ export function prepareDefinitions(json) {
             description: p.description.trim(),
             alpha: p.alpha === undefined ? 1 : Math.max(0, Math.min(1, p.alpha)),
             group: p.group || 'Other',
+            catalogSubgroup: p.catalogSubgroup || null,
             category: p.category,
             density: p.density || 0,
 
@@ -253,6 +260,17 @@ export function prepareDefinitions(json) {
                 : 0,
             tubing: !!p.tubing,
             machine: p.machine || null,
+            logicGate: p.logicGate || null,
+            lightRadius: Math.max(0, Number(p.lightRadius ??
+                (p.machine === 'lamp' ? DEFAULT_LAMP_LIGHT_RADIUS : 0)) || 0),
+            lightIntensity: Math.max(0, Number(p.lightIntensity ??
+                (p.machine === 'lamp' ? DEFAULT_LAMP_LIGHT_INTENSITY : 0)) || 0),
+            lightTint: p.lightTint === 'orange' ? 1 : 0,
+            lightFalloffDenominator: Math.max(1, Number(p.lightFalloffDenominator) ||
+                (Number(p.lightRadius) > 0 ? Number(p.lightRadius) + 1 : 1)),
+            lightFlashRadius: Math.max(0, Number(p.lightFlashRadius) || 0),
+            lightFlashIntensity: Math.max(0, Number(p.lightFlashIntensity) || 0),
+            lightFlashTicks: Math.max(1, Math.floor(Number(p.lightFlashTicks) || 1)),
             storageCategory: p.storageCategory || null,
             storageCapacity: p.storageCapacity || 0,
             machineWindSpeed: p.machineWindSpeed,
@@ -618,6 +636,108 @@ export function getAmbientHumidityTarget() { return ambientHumidityTarget; }
 export function getHumidityAt(x, y) {
     if (!world || !inBounds(x, y)) return ambientHumidityTarget;
     return humidityNearCell(x, y);
+}
+
+function isIlluminationOccluder(cellIndex) {
+    const def = DEFS[world.type[cellIndex]];
+    return !!def && (def.group === 'Solids' || def.category === 'powder' || def.isPlant || !!def.machine);
+}
+
+function illuminationPathBlocked(sourceX, sourceY, targetX, targetY) {
+    // Bresenham's grid walk gives each cell-center ray a stable, zoom-independent
+    // path. The target cell receives light; opaque material blocks cells behind it.
+    let x = sourceX;
+    let y = sourceY;
+    const dx = Math.abs(targetX - sourceX);
+    const sx = sourceX < targetX ? 1 : -1;
+    const dy = -Math.abs(targetY - sourceY);
+    const sy = sourceY < targetY ? 1 : -1;
+    let error = dx + dy;
+    while (x !== targetX || y !== targetY) {
+        const twiceError = 2 * error;
+        if (twiceError >= dy) {
+            error += dy;
+            x += sx;
+        }
+        if (twiceError <= dx) {
+            error += dx;
+            y += sy;
+        }
+        if (x === targetX && y === targetY) return false;
+        if ((x !== sourceX || y !== sourceY) && isIlluminationOccluder(index(x, y))) return true;
+    }
+    return false;
+}
+
+function rebuildIlluminationField() {
+    if (!world) return;
+    ensureLogicalCurrent();
+    const cells = world.type.length;
+    if (world.illumination.length !== cells) world.illumination = new Float32Array(cells);
+    else world.illumination.fill(0);
+    if (world.illuminationTint.length !== cells) world.illuminationTint = new Uint8Array(cells);
+    else world.illuminationTint.fill(0);
+    if (world.illuminationTintStrength.length !== cells) {
+        world.illuminationTintStrength = new Float32Array(cells);
+    } else world.illuminationTintStrength.fill(0);
+
+    const addEmitter = (sourceX, sourceY, radius, intensity, remaining = 1,
+        falloffDenominator = radius + 1, tint = 0) => {
+        if (radius <= 0 || intensity <= 0) return;
+        const minX = Math.max(0, sourceX - radius);
+        const maxX = Math.min(COLS - 1, sourceX + radius);
+        const minY = Math.max(0, sourceY - radius);
+        const maxY = Math.min(ROWS - 1, sourceY + radius);
+        for (let y = minY; y <= maxY; y++) {
+            for (let x = minX; x <= maxX; x++) {
+                const distance = Math.hypot(x - sourceX, y - sourceY);
+                if (distance > radius || illuminationPathBlocked(sourceX, sourceY, x, y)) continue;
+                // The source itself receives full intensity; the outermost cell
+                // receives one radius-th of it, and the next cell is dark.
+                const falloff = Math.min(1, Math.max(0,
+                    (radius + 1 - distance) / falloffDenominator));
+                const received = Math.min(100, intensity * falloff * remaining);
+                const target = index(x, y);
+                world.illumination[target] = Math.min(100, world.illumination[target] + received);
+                if (received > world.illuminationTintStrength[target]) {
+                    world.illuminationTintStrength[target] = received;
+                    world.illuminationTint[target] = tint;
+                }
+            }
+        }
+    };
+
+    for (let source = 0; source < cells; source++) {
+        const def = DEFS[world.type[source]];
+        if (!def) continue;
+        const sourceX = source % COLS;
+        const sourceY = Math.floor(source / COLS);
+        if (def.lightRadius > 0 && def.lightIntensity > 0) {
+            if (def.machine === 'lamp') {
+                if ((Math.round(world.machineSetting[source] || 0) & 1) === 0) continue;
+                const input = machinePortDescriptors(source).find(port =>
+                    port.family === 'electrical' && port.role === 'input');
+                if (!portHasLogicalSignal(input)) continue;
+            }
+            addEmitter(sourceX, sourceY, def.lightRadius, def.lightIntensity, 1,
+                def.lightFalloffDenominator, def.lightTint);
+        }
+    }
+    for (const flash of illuminationFlashes) {
+        const remainingTicks = flash.expiresAtFrame - frameCount;
+        if (remainingTicks <= 0) continue;
+        addEmitter(flash.x, flash.y, flash.radius, flash.intensity,
+            remainingTicks / flash.durationTicks, flash.radius + 1);
+    }
+    illuminationDirty = false;
+    illuminationFieldFrame = frameCount;
+}
+
+export function getIlluminationAt(x, y) {
+    if (!world || !inBounds(x, y)) return 0;
+    ensureLogicalCurrent();
+    if (illuminationDirty || illuminationFieldFrame !== frameCount) rebuildIlluminationField();
+    return world.illumination[index(x, y)] || 0;
 }
 export function setDewpointTarget(value) {
     if (!Number.isFinite(Number(value))) return;
@@ -1035,6 +1155,13 @@ export function restoreSimulationState(state) {
     generalWindCacheFrame = -1;
     windShelterFrame = -1;
     setAmbientWindOn(!!state.ambientWindOn);
+    // Restored cells and Battery-backed routes are authoritative. Rebuild all
+    // derived signal and light planes from the restored world before reads.
+    logicalCurrentDirty = true;
+    illuminationDirty = true;
+    illuminationSourceSignature = null;
+    illuminationFieldFrame = -1;
+    illuminationFlashes = [];
     machineCollisionMaskDirty = true;
 }
 
@@ -1045,10 +1172,20 @@ export function createWorld(cols, rows) {
     COLS = cols;
     ROWS = rows;
     const n = cols * rows;
+    illuminationDirty = true;
+    illuminationSourceSignature = null;
+    illuminationFieldFrame = -1;
+    illuminationFlashes = [];
     world = {
         cols: cols,
         rows: rows,
         type: new Uint8Array(n),
+        // Illumination, its presentation tint, and tint strength share the
+        // world grid. They are rebuilt from emitters and blockers and are
+        // intentionally omitted from save/blueprint data.
+        illumination: new Float32Array(n),
+        illuminationTint: new Uint8Array(n),
+        illuminationTintStrength: new Float32Array(n),
         temp: new Float32Array(n),
         tempNext: new Float32Array(n),
         life: new Int16Array(n),
@@ -1101,6 +1238,7 @@ export function createWorld(cols, rows) {
         power: new Uint8Array(n),
         powerDelay: new Uint16Array(n),
         logicalPower: new Uint8Array(n),
+        gateOutputState: new Uint8Array(n),
         charge: new Float32Array(n),
         wind: new Uint8Array(n),
         airflowX: new Float32Array(n),
@@ -1153,6 +1291,7 @@ export function getWorld() { return world; }
 // visual power/powerDelay remain independent travelling-pulse fields.
 export function invalidateLogicalCurrent() {
     logicalCurrentDirty = true;
+    illuminationDirty = true;
 }
 
 function ensureLogicalCurrent() {
@@ -1308,6 +1447,73 @@ const MACHINE_PORT_DEFINITIONS = Object.freeze({
             sourceX: 4, sourceY: 24, x: -3, y: 0, targetRadius: 1.6, stubLength: 6, visualRadius: 2.8 },
         { id: 'output', role: 'output', material: 'Elec', family: 'electrical',
             sourceX: 44, sourceY: 24, x: 3, y: 0, targetRadius: 1.6, stubLength: 6, visualRadius: 2.8 }
+    ],
+    notGate: [
+        { id: 'signal-a', role: 'input', material: 'Elec', family: 'electrical',
+            sourceX: 18, sourceY: 28, x: -6, y: 0, directionX: -1, directionY: 0,
+            targetRadius: 1.6, stubLength: 6, visualRadius: 2.8 },
+        { id: 'supply', role: 'input', material: 'Elec', family: 'electrical',
+            sourceX: 28, sourceY: 44, x: 0, y: 6, directionX: 0, directionY: 1,
+            targetRadius: 1.6, stubLength: 6, visualRadius: 2.8 },
+        { id: 'output', role: 'output', material: 'Elec', family: 'electrical',
+            sourceX: 48, sourceY: 28, x: 3, y: 0, directionX: 1, directionY: 0,
+            targetRadius: 1.6, stubLength: 6, visualRadius: 2.8 }
+    ],
+    andGate: [
+        { id: 'signal-a', role: 'input', material: 'Elec', family: 'electrical',
+            sourceX: 18, sourceY: 14, x: -6, y: -4, directionX: -1, directionY: 0,
+            targetRadius: 1.6, stubLength: 6, visualRadius: 2.8 },
+        { id: 'signal-b', role: 'input', material: 'Elec', family: 'electrical',
+            sourceX: 18, sourceY: 42, x: -6, y: 4, directionX: -1, directionY: 0,
+            targetRadius: 1.6, stubLength: 6, visualRadius: 2.8 },
+        { id: 'supply', role: 'input', material: 'Elec', family: 'electrical',
+            sourceX: 28, sourceY: 44, x: 0, y: 6, directionX: 0, directionY: 1,
+            targetRadius: 1.6, stubLength: 6, visualRadius: 2.8 },
+        { id: 'output', role: 'output', material: 'Elec', family: 'electrical',
+            sourceX: 38, sourceY: 28, x: 3, y: 0, directionX: 1, directionY: 0,
+            targetRadius: 1.6, stubLength: 6, visualRadius: 2.8 }
+    ],
+    orGate: [
+        { id: 'signal-a', role: 'input', material: 'Elec', family: 'electrical',
+            sourceX: 18, sourceY: 14, x: -6, y: -4, directionX: -1, directionY: 0,
+            targetRadius: 1.6, stubLength: 6, visualRadius: 2.8 },
+        { id: 'signal-b', role: 'input', material: 'Elec', family: 'electrical',
+            sourceX: 18, sourceY: 42, x: -6, y: 4, directionX: -1, directionY: 0,
+            targetRadius: 1.6, stubLength: 6, visualRadius: 2.8 },
+        { id: 'supply', role: 'input', material: 'Elec', family: 'electrical',
+            sourceX: 28, sourceY: 44, x: 0, y: 6, directionX: 0, directionY: 1,
+            targetRadius: 1.6, stubLength: 6, visualRadius: 2.8 },
+        { id: 'output', role: 'output', material: 'Elec', family: 'electrical',
+            sourceX: 38, sourceY: 28, x: 3, y: 0, directionX: 1, directionY: 0,
+            targetRadius: 1.6, stubLength: 6, visualRadius: 2.8 }
+    ],
+    nandGate: [
+        { id: 'signal-a', role: 'input', material: 'Elec', family: 'electrical',
+            sourceX: 18, sourceY: 14, x: -6, y: -4, directionX: -1, directionY: 0,
+            targetRadius: 1.6, stubLength: 6, visualRadius: 2.8 },
+        { id: 'signal-b', role: 'input', material: 'Elec', family: 'electrical',
+            sourceX: 18, sourceY: 42, x: -6, y: 4, directionX: -1, directionY: 0,
+            targetRadius: 1.6, stubLength: 6, visualRadius: 2.8 },
+        { id: 'supply', role: 'input', material: 'Elec', family: 'electrical',
+            sourceX: 28, sourceY: 44, x: 0, y: 6, directionX: 0, directionY: 1,
+            targetRadius: 1.6, stubLength: 6, visualRadius: 2.8 },
+        { id: 'output', role: 'output', material: 'Elec', family: 'electrical',
+            sourceX: 48, sourceY: 28, x: 3, y: 0, directionX: 1, directionY: 0,
+            targetRadius: 1.6, stubLength: 6, visualRadius: 2.8 }
+    ],
+    xorGate: [
+        { id: 'signal-a', role: 'input', material: 'Elec', family: 'electrical',
+            sourceX: 18, sourceY: 14, x: -6, y: -4, directionX: -1, directionY: 0,
+            targetRadius: 1.6, stubLength: 6, visualRadius: 2.8 },
+        { id: 'signal-b', role: 'input', material: 'Elec', family: 'electrical',
+            sourceX: 18, sourceY: 42, x: -6, y: 4, directionX: -1, directionY: 0,
+            targetRadius: 1.6, stubLength: 6, visualRadius: 2.8 },
+        { id: 'supply', role: 'input', material: 'Elec', family: 'electrical',
+            sourceX: 28, sourceY: 44, x: 0, y: 6, directionX: 0, directionY: 1,
+            targetRadius: 1.6, stubLength: 6, visualRadius: 2.8 },
+        { id: 'output', role: 'output', material: 'Elec', family: 'electrical',
+            sourceX: 38, sourceY: 28, x: 3, y: 0, directionX: 1, directionY: 0,
+            targetRadius: 1.6, stubLength: 6, visualRadius: 2.8 }
     ]
 });
 
@@ -1328,7 +1534,12 @@ const MACHINE_ARTWORK_LAYOUTS = Object.freeze({
     simpleSwitch: { tileX: 0, tileY: 0, trimX: 0, trimY: 0, trimWidth: 48, trimHeight: 36 },
     lamp: { tileX: 0, tileY: 0, trimX: 0, trimY: 0, trimWidth: 48, trimHeight: 48 },
     temperatureSwitch: { tileX: 0, tileY: 0, trimX: 0, trimY: 0, trimWidth: 48, trimHeight: 48 },
-    humiditySwitch: { tileX: 0, tileY: 0, trimX: 0, trimY: 0, trimWidth: 48, trimHeight: 48 }
+    humiditySwitch: { tileX: 0, tileY: 0, trimX: 0, trimY: 0, trimWidth: 48, trimHeight: 48 },
+    notGate: { tileX: 0, tileY: 0, trimX: 0, trimY: 0, trimWidth: 56, trimHeight: 56 },
+    andGate: { tileX: 0, tileY: 0, trimX: 0, trimY: 0, trimWidth: 56, trimHeight: 56 },
+    orGate: { tileX: 0, tileY: 0, trimX: 0, trimY: 0, trimWidth: 56, trimHeight: 56 },
+    nandGate: { tileX: 0, tileY: 0, trimX: 0, trimY: 0, trimWidth: 56, trimHeight: 56 },
+    xorGate: { tileX: 0, tileY: 0, trimX: 0, trimY: 0, trimWidth: 56, trimHeight: 56 }
 });
 const MACHINE_ARTWORK_FACE_SIZE = 64;
 const MACHINE_ARTWORK_MAX_SIZE = 56;
@@ -1508,9 +1719,35 @@ function transformedPortVisual(spec, machineType) {
         x: markerX,
         y: markerY,
         radius: spec.visualRadius || 14.5 * geometry.scale,
-        directionX: (spec.sourceX - (geometry.trimX + geometry.trimWidth / 2)) / length,
-        directionY: (spec.sourceY - (geometry.trimY + geometry.trimHeight / 2)) / length
+        directionX: Number.isFinite(spec.directionX)
+            ? spec.directionX
+            : (spec.sourceX - (geometry.trimX + geometry.trimWidth / 2)) / length,
+        directionY: Number.isFinite(spec.directionY)
+            ? spec.directionY
+            : (spec.sourceY - (geometry.trimY + geometry.trimHeight / 2)) / length
     };
+}
+
+// The visible connector terminates at connectionCell. Wires may touch from any
+// electrically connected neighboring cell; Tubing touches along cardinal cell
+// edges. The ownership stays in world-grid coordinates and does not change
+// with artwork zoom or viewport size.
+function machinePortContactCells(port) {
+    if (!port?.connectionCell) return [];
+    const { x, y } = port.connectionCell;
+    const machineX = port.machineIndex % COLS;
+    const machineY = Math.floor(port.machineIndex / COLS);
+    const cells = [];
+    const neighbours = port.family === 'electrical' || port.family === 'copper'
+        ? [...TUBING_NEIGHBOURS, ...ELECTRICAL_NEIGHBOURS.filter(([dx, dy]) => dx !== 0 && dy !== 0)]
+        : TUBING_NEIGHBOURS;
+    for (const [dx, dy] of [[0, 0], ...neighbours]) {
+        const cellX = x + dx;
+        const cellY = y + dy;
+        if (!inBounds(cellX, cellY) || (cellX === machineX && cellY === machineY)) continue;
+        cells.push({ x: cellX, y: cellY });
+    }
+    return cells;
 }
 
 function machinePortDescriptors(machine) {
@@ -1542,7 +1779,7 @@ function machinePortDescriptors(machine) {
         cells.sort((a, b) => ((a.x - centerX) ** 2 + (a.y - centerY) ** 2) -
             ((b.x - centerX) ** 2 + (b.y - centerY) ** 2) || a.y - b.y || a.x - b.x);
         const connectionCell = { x: Math.round(centerX), y: Math.round(centerY) };
-        return {
+        const port = {
             id: spec.id,
             slot: order,
             order,
@@ -1573,11 +1810,13 @@ function machinePortDescriptors(machine) {
             connectorMaterial: spec.family === 'electrical' ? 'Elec'
                 : spec.family === 'copper' ? 'Copper' : 'Tubing',
             connectorBrushWidth: spec.family === 'electrical' ? 2 : 3,
-            connected: machinePortHasConnection({ ...spec, slot: order, machineIndex: machine,
-                connectionCell, targetCells: cells }),
+            contactCells: machinePortContactCells({ machineIndex: machine, connectionCell, family: spec.family }),
+            connected: false,
             stubLength: spec.stubLength,
             targetCells: cells
         };
+        port.connected = machinePortHasConnection(port);
+        return port;
     });
 }
 
@@ -1760,7 +1999,65 @@ export function getMachinePortTemplates(machineType, direction = 0) {
 
 export function getMachinePorts(x, y) {
     if (!inBounds(x, y)) return [];
-    return machinePortDescriptors(index(x, y));
+    ensureLogicalCurrent();
+    return machinePortDescriptors(index(x, y)).map(port => ({
+        ...port,
+        active: (port.family === 'electrical' || port.family === 'copper') &&
+            portHasLogicalSignal(port)
+    }));
+}
+
+function machinePortDirectionLabel(port) {
+    const x = port.directionX || 0;
+    const y = port.directionY || 0;
+    const horizontal = x < -0.45 ? 'left' : x > 0.45 ? 'right' : '';
+    const vertical = y < -0.45 ? 'up' : y > 0.45 ? 'down' : '';
+    if (horizontal && vertical) return `${vertical}-${horizontal}`;
+    return horizontal || vertical || 'center';
+}
+
+export function getMachineSignalStates(x, y) {
+    if (!world || !inBounds(x, y)) return [];
+    ensureLogicalCurrent();
+    return machinePortDescriptors(index(x, y))
+        .filter(port => port.family === 'electrical' || port.family === 'copper')
+        .map(port => ({
+            id: port.id,
+            role: port.role,
+            family: port.family,
+            direction: machinePortDirectionLabel(port),
+            directionX: port.directionX,
+            directionY: port.directionY,
+            active: port.family === 'copper'
+                ? isMachinePoweredAt(x, y) : portHasLogicalSignal(port),
+            connectionCell: port.connectionCell
+        }));
+}
+
+export function getMachineLiveStatus(x, y) {
+    if (!world || !inBounds(x, y)) return null;
+    ensureLogicalCurrent();
+    const i = index(x, y);
+    const def = DEFS[world.type[i]];
+    if (!def?.machine) return null;
+    const ports = getMachineSignalStates(x, y);
+    const inputPorts = ports.filter(port => port.role === 'input');
+    const signalInputs = inputPorts.filter(port => !/^(?:supply|power)$/i.test(port.id));
+    const inputActive = signalInputs.some(port => port.active);
+    const enabled = (Math.round(world.machineSetting[i] || 0) & 1) !== 0;
+    const sensor = isMachineSensor(def) ? getMachineSensorStatus(x, y) : null;
+    const active = isLogicGate(def) ? world.gateOutputState[i] > 0
+        : sensor ? sensor.passing
+            : def.machine === 'simpleSwitch' || def.machine === 'lamp'
+                ? enabled && inputActive
+                : isMachinePoweredAt(x, y);
+    return {
+        name: def.name,
+        temperature: world.temp[i],
+        active: !!active,
+        ports,
+        sensor
+    };
 }
 
 export function isMachinePortMaterialCompatible(x, y, portId, material) {
@@ -1778,8 +2075,8 @@ export function getMachinePortAt(x, y, material) {
             if (!MACHINE_PORT_DEFINITIONS[DEFS[world.type[machine]]?.machine]) continue;
             for (const port of machinePortDescriptors(machine)) {
                 if (!portAcceptsMaterial(port, material) ||
-                    port.connectionCell.x !== x || port.connectionCell.y !== y) continue;
-                const distance = (x - port.centerX) ** 2 + (y - port.centerY) ** 2;
+                    !port.contactCells.some(cell => cell.x === x && cell.y === y)) continue;
+                const distance = (x - port.connectionCell.x) ** 2 + (y - port.connectionCell.y) ** 2;
                 candidates.push({ port, distance });
             }
         }
@@ -1791,6 +2088,15 @@ export function getMachinePortAt(x, y, material) {
 
 function machinePortHasConnection(port) {
     if (!world || !port?.connectionCell) return false;
+    for (const cell of port.contactCells || machinePortContactCells(port)) {
+        const i = index(cell.x, cell.y);
+        const material = world.type[i];
+        if (material === EMPTY || !portAcceptsMaterial(port, material)) continue;
+        // A tagged extension remains idle until a separate compatible wire
+        // reaches it. Unowned material at the visible terminal is a direct
+        // port connection, even when it occupies a cell beside the anchor.
+        if (leadOwnerAtCell(cell.x, cell.y) !== port.machineIndex) return true;
+    }
     const { x, y } = port.connectionCell;
     if (inBounds(x, y)) {
         const material = world.type[index(x, y)];
@@ -2049,6 +2355,7 @@ export function setMachineSetting(x, y, value) {
     if (!bounds || !Number.isFinite(value)) return false;
     world.machineSetting[i] = Math.max(bounds.min, Math.min(bounds.max, Math.round(value)));
     if (def.machine === 'simpleSwitch') invalidateLogicalCurrent();
+    if (def.machine === 'lamp') illuminationDirty = true;
     return true;
 }
 
@@ -2186,25 +2493,23 @@ export function getStoredCharge(x, y) {
     return inBounds(x, y) ? world.charge[index(x, y)] : 0;
 }
 
-// Returns the shared charge level for the connected Battery entity under the
-// cursor. The UI needs the whole reservoir rather than just one cell, since
-// adding or discharging charge affects every connected Battery cell equally.
-export function getConnectedBatteryCharge(x, y) {
-    if (!inBounds(x, y)) return null;
-
-    const start = index(x, y);
+function connectedBatteryComponent(start) {
+    if (!world || start < 0 || start >= world.type.length) return null;
     const battery = DEFS[world.type[start]];
-    if (!battery || battery.name !== 'Battery') return null;
-
+    if (!(battery?.chargeCapacity > 0)) return null;
     const visited = new Uint8Array(world.type.length);
     const queue = [start];
     visited[start] = 1;
     let totalCharge = 0;
     let totalCapacity = 0;
+    let key = start;
+    const cells = [];
 
     for (let head = 0; head < queue.length; head++) {
         const i = queue[head];
         const def = DEFS[world.type[i]];
+        cells.push(i);
+        key = Math.min(key, i);
         totalCharge += world.charge[i];
         totalCapacity += def.chargeCapacity;
 
@@ -2221,11 +2526,42 @@ export function getConnectedBatteryCharge(x, y) {
         }
     }
 
+    cells.sort((a, b) => a - b);
     return {
+        key,
+        cells,
         charge: totalCharge,
         capacity: totalCapacity,
         ratio: totalCapacity > 0 ? Math.min(1, Math.max(0, totalCharge / totalCapacity)) : 0
     };
+}
+
+// Returns the shared charge level for the connected Battery entity under the
+// cursor. Batteries that touch are one reservoir; they never bridge separate
+// batteries elsewhere on the conductor grid.
+export function getConnectedBatteryCharge(x, y) {
+    if (!world || !inBounds(x, y)) return null;
+    return connectedBatteryComponent(index(x, y));
+}
+
+// Battery feedback uses the same conductive component walk and load arithmetic
+// as discharge. It counts conductive wire cells and each connected powered
+// load once; fan-out branches therefore share one device load and wire cells
+// are charged for each physical conductive cell. The UI samples stored charge
+// over a longer hover window so brief Spark bursts do not swing its ETA.
+export function getBatteryCircuitMetrics(x, y) {
+    const charge = getConnectedBatteryCharge(x, y);
+    if (!charge) return null;
+    ensureLogicalCurrent();
+    const conductorSeeds = new Set();
+    for (const cell of charge.cells) {
+        forEachConductiveConnection(cell, contact => {
+            if (DEFS[world.type[contact]]?.chargeCapacity <= 0) conductorSeeds.add(contact);
+        });
+    }
+    const load = connectedGridConsumption([...conductorSeeds], buildElectricalMachineLoads()) /
+        BATTERY_DISCHARGE_SCALE;
+    return { ...charge, load };
 }
 
 export function clearWorld() {
@@ -2269,6 +2605,11 @@ export function clearWorld() {
     world.power.fill(0);
     world.powerDelay.fill(0);
     world.logicalPower.fill(0);
+    world.gateOutputState.fill(0);
+    world.illumination.fill(0);
+    world.illuminationTint.fill(0);
+    world.illuminationTintStrength.fill(0);
+    illuminationFlashes = [];
     world.charge.fill(0);
     world.wind.fill(0);
     world.airflowX.fill(0);
@@ -2289,6 +2630,9 @@ export function clearWorld() {
     if (machineCollisionMask) machineCollisionMask.fill(0);
     machineCollisionMaskDirty = false;
     logicalCurrentDirty = false;
+    illuminationDirty = false;
+    illuminationSourceSignature = '';
+    illuminationFieldFrame = frameCount;
     tubingFlows = [];
     hasMixerMachine = false;
     windTrailsAlive = 0;
@@ -2618,10 +2962,8 @@ function conductiveNeighbours(x, y) {
     return neighbours;
 }
 
-// Solid Copper and Iron wires can reach two cells beyond their physical end.
-// Empty cells may form that short electrical jump, but any material in the gap
-// stops it. The reach is directional along the eight neighbouring grid lines,
-// matching the simulator's existing eight-way wire connectivity.
+// Electrical connections require occupied neighboring cells. Empty air always
+// interrupts the route; direct diagonal adjacency remains supported.
 function forEachConductiveConnection(i, callback) {
     const source = DEFS[world.type[i]];
     const reach = Math.max(1, source?.wireReach || 0);
@@ -2634,6 +2976,7 @@ function forEachConductiveConnection(i, callback) {
             const ny = y + dy * distance;
             if (!inBounds(nx, ny)) break;
             const ni = ny * COLS + nx;
+            if (world.type[ni] === EMPTY) break;
             const nextDef = DEFS[world.type[ni]];
             if (nextDef && nextDef.conductive) callback(ni);
             if (world.type[ni] !== EMPTY) break;
@@ -2654,6 +2997,7 @@ function electricalPortWireCells(port) {
         if (portAcceptsMaterial(port, world.type[i]) && DEFS[world.type[i]]?.conductive) candidates.add(i);
     };
     add(port.connectionCell);
+    for (const cell of port.contactCells || machinePortContactCells(port)) add(cell);
     const machineX = port.machineIndex % COLS;
     const machineY = Math.floor(port.machineIndex / COLS);
     for (let y = Math.max(0, machineY - 24); y <= Math.min(ROWS - 1, machineY + 24); y++) {
@@ -2667,18 +3011,96 @@ function electricalPortWireCells(port) {
     return [...candidates];
 }
 
+function addElectricalMachineLoad(loadsByWire, wire, machine, load) {
+    let loads = loadsByWire.get(wire);
+    if (!loads) loadsByWire.set(wire, loads = []);
+    loads.push({ machine, load });
+}
+
+function electricalNetworkCells(seeds) {
+    const visited = new Uint8Array(world.type.length);
+    const queue = [];
+    for (const seed of seeds) {
+        if (visited[seed] || DEFS[world.type[seed]]?.chargeCapacity > 0) continue;
+        visited[seed] = 1;
+        queue.push(seed);
+    }
+    for (let head = 0; head < queue.length; head++) {
+        forEachConductiveConnection(queue[head], next => {
+            if (visited[next] || DEFS[world.type[next]]?.chargeCapacity > 0) return;
+            visited[next] = 1;
+            queue.push(next);
+        });
+    }
+    return queue;
+}
+
+function networkHasBatterySource(cells) {
+    for (const cell of cells) {
+        const x = cell % COLS;
+        const y = Math.floor(cell / COLS);
+        for (const [dx, dy] of ELECTRICAL_NEIGHBOURS) {
+            const nx = x + dx;
+            const ny = y + dy;
+            if (inBounds(nx, ny) && DEFS[world.type[index(nx, ny)]]?.chargeCapacity > 0) return true;
+        }
+    }
+    return false;
+}
+
 function buildElectricalMachineLoads() {
     const loadsByWire = new Map();
+    const gateSupplyLoads = [];
+    const activeGateOutputs = new Map();
     for (let machine = 0; machine < world.type.length; machine++) {
         const def = DEFS[world.type[machine]];
-        if (def?.machine !== 'lamp' || (Math.round(world.machineSetting[machine]) & 1) === 0 ||
-            !(def.powerConsumption > 0)) continue;
-        const input = machinePortDescriptors(machine).find(port => port.family === 'electrical' &&
-            port.role === 'input');
-        for (const wire of electricalPortWireCells(input)) {
-            let loads = loadsByWire.get(wire);
-            if (!loads) loadsByWire.set(wire, loads = []);
-            loads.push(machine);
+        if (!def?.machine || !(def.powerConsumption > 0)) continue;
+        const ports = machinePortDescriptors(machine).filter(port => port.family === 'electrical');
+        let loadPort = null;
+        if (def.machine === 'lamp' && (Math.round(world.machineSetting[machine]) & 1) !== 0) {
+            loadPort = ports.find(port => port.role === 'input');
+        } else if (isLogicGate(def)) {
+            loadPort = ports.find(port => port.role === 'input' && /^(?:supply|power)$/i.test(port.id));
+            if (!portHasLogicalSignal(loadPort)) {
+                loadPort = null;
+            } else {
+                gateSupplyLoads.push({ machine, port: loadPort, def });
+                if (world.gateOutputState[machine] > 0) {
+                    const output = ports.find(port => port.role === 'output');
+                    const cells = electricalNetworkCells(electricalPortWireCells(output));
+                    if (cells.length) {
+                        const root = Math.min(...cells);
+                        let group = activeGateOutputs.get(root);
+                        if (!group) activeGateOutputs.set(root, group = { cells, drivers: [] });
+                        group.drivers.push(machine);
+                    }
+                }
+            }
+        }
+        if (!loadPort) continue;
+        if (isLogicGate(def)) continue;
+        for (const wire of electricalPortWireCells(loadPort)) {
+            addElectricalMachineLoad(loadsByWire, wire, machine, def.powerConsumption);
+        }
+    }
+
+    // A gate's output is logically powered by its own supply channel. Attribute
+    // the separate output-network draw (wires and attached devices such as a
+    // Lamp) evenly to the active drivers of that merged network. A Battery on
+    // the output network already pays its physical load directly. Network
+    // traversal is bounded and visited-cell based, so chains/cycles never recurse
+    // through virtual gate loads or count one fan-out device more than once.
+    const outputLoadByGate = new Map();
+    for (const group of activeGateOutputs.values()) {
+        if (networkHasBatterySource(group.cells)) continue;
+        const share = connectedGridConsumption(group.cells, loadsByWire) /
+            Math.max(1, group.drivers.length);
+        for (const driver of group.drivers) outputLoadByGate.set(driver, share);
+    }
+    for (const { machine, port, def } of gateSupplyLoads) {
+        const totalLoad = def.powerConsumption + (outputLoadByGate.get(machine) || 0);
+        for (const wire of electricalPortWireCells(port)) {
+            addElectricalMachineLoad(loadsByWire, wire, machine, totalLoad);
         }
     }
     return loadsByWire;
@@ -2703,10 +3125,10 @@ function connectedGridConsumption(seeds, electricalLoadsByWire = null) {
         const def = DEFS[world.type[i]];
         if (!def || !def.conductive) continue;
         consumption += def.powerConsumption;
-        for (const machine of electricalLoadsByWire?.get(i) || []) {
-            if (countedMachineLoads.has(machine)) continue;
-            countedMachineLoads.add(machine);
-            consumption += DEFS[world.type[machine]]?.powerConsumption || 0;
+        for (const entry of electricalLoadsByWire?.get(i) || []) {
+            if (countedMachineLoads.has(entry.machine)) continue;
+            countedMachineLoads.add(entry.machine);
+            consumption += entry.load;
         }
 
         forEachConductiveConnection(i, ni => {
@@ -2724,6 +3146,42 @@ function machineHasLogicalInput(machine) {
     return machinePortDescriptors(machine).some(port =>
         port.family === 'electrical' && port.role === 'input' &&
         electricalPortWireCells(port).some(wire => world.logicalPower[wire] > 0));
+}
+
+function portHasLogicalSignal(port) {
+    return !!port && electricalPortWireCells(port).some(wire => world.logicalPower[wire] > 0);
+}
+
+function portHasBatterySupply(port) {
+    if (!port) return false;
+    const cells = electricalNetworkCells(electricalPortWireCells(port));
+    for (const cell of cells) {
+        const x = cell % COLS;
+        const y = Math.floor(cell / COLS);
+        for (const [dx, dy] of ELECTRICAL_NEIGHBOURS) {
+            const nx = x + dx;
+            const ny = y + dy;
+            if (!inBounds(nx, ny)) continue;
+            const battery = index(nx, ny);
+            if (DEFS[world.type[battery]]?.chargeCapacity > 0 && world.charge[battery] > 0) return true;
+        }
+    }
+    return false;
+}
+
+function isLogicGate(def) {
+    return !!def?.logicGate;
+}
+
+function logicGateOutput(def, inputs) {
+    switch (def?.logicGate) {
+        case 'not': return !inputs[0];
+        case 'and': return !!inputs[0] && !!inputs[1];
+        case 'or': return !!inputs[0] || !!inputs[1];
+        case 'nand': return !(!!inputs[0] && !!inputs[1]);
+        case 'xor': return !!inputs[0] !== !!inputs[1];
+        default: return false;
+    }
 }
 
 function energizeLogicalConductors(seeds) {
@@ -2746,9 +3204,7 @@ function energizeLogicalConductors(seeds) {
     return changed;
 }
 
-function recomputeLogicalCurrent() {
-    if (!world) return;
-    world.logicalPower.fill(0);
+function seedBatteryLogicalCurrent() {
     const batteryContacts = [];
     for (let battery = 0; battery < world.type.length; battery++) {
         const def = DEFS[world.type[battery]];
@@ -2760,13 +3216,15 @@ function recomputeLogicalCurrent() {
         });
     }
     energizeLogicalConductors(batteryContacts);
+}
 
+function energizeEnabledRelayOutputs() {
     let changed;
     do {
         changed = false;
         for (let machine = 0; machine < world.type.length; machine++) {
             const def = DEFS[world.type[machine]];
-            if (!def?.machine) continue;
+            if (!def?.machine || isLogicGate(def)) continue;
             if (def.machine === 'simpleSwitch') {
                 if ((Math.round(world.machineSetting[machine]) & 1) === 0) continue;
             } else if (isMachineSensor(def)) {
@@ -2781,7 +3239,112 @@ function recomputeLogicalCurrent() {
             if (energizeLogicalConductors(electricalPortWireCells(output))) changed = true;
         }
     } while (changed);
+}
+
+function recomputeLogicalCurrent() {
+    if (!world) return;
+    const gateMachines = [];
+    for (let machine = 0; machine < world.type.length; machine++) {
+        const def = DEFS[world.type[machine]];
+        if (!isLogicGate(def)) continue;
+        const ports = machinePortDescriptors(machine).filter(port => port.family === 'electrical');
+        const supply = ports.find(port => port.role === 'input' && /^(?:supply|power)$/i.test(port.id));
+        const signalInputs = ports.filter(port => port.role === 'input' && port !== supply);
+        const output = ports.find(port => port.role === 'output');
+        gateMachines.push({ machine, def, supply, supplyHasBattery: portHasBatterySupply(supply), signalInputs, output,
+            outputWires: electricalPortWireCells(output) });
+    }
+
+    // Gate output states are solved synchronously from battery sources. This
+    // prevents array scan order from affecting ordinary circuits. A repeated
+    // state indicates an oscillating feedback loop (for example, a NOT gate
+    // feeding itself); gates whose outputs vary in that cycle are forced OFF
+    // for this solve. Fan-out is the shared conductor graph, so each output
+    // simply energizes every connected branch and does not create extra power.
+    let gateOutputState = new Uint8Array(gateMachines.length);
+    const forcedOff = new Uint8Array(gateMachines.length);
+    let history = [];
+    let seenStates = new Map();
+    const signature = state => Array.from(state).join('');
+    const iterationLimit = Math.max(8, gateMachines.length + 2);
+
+    for (let iteration = 0; iteration < iterationLimit; iteration++) {
+        const currentSignature = signature(gateOutputState);
+        if (!seenStates.has(currentSignature)) {
+            seenStates.set(currentSignature, history.length);
+            history.push(gateOutputState.slice());
+        }
+        world.logicalPower.fill(0);
+        seedBatteryLogicalCurrent();
+        for (let g = 0; g < gateMachines.length; g++) {
+            if (gateOutputState[g]) energizeLogicalConductors(gateMachines[g].outputWires);
+        }
+        energizeEnabledRelayOutputs();
+
+        const next = new Uint8Array(gateMachines.length);
+        for (let g = 0; g < gateMachines.length; g++) {
+            if (forcedOff[g]) continue;
+            const gate = gateMachines[g];
+            if (!gate.supplyHasBattery || !portHasLogicalSignal(gate.supply)) continue;
+            const inputs = gate.signalInputs.map(port => portHasLogicalSignal(port));
+            if (logicGateOutput(gate.def, inputs)) next[g] = 1;
+        }
+        if (next.every((value, i) => value === gateOutputState[i])) break;
+
+        const nextSignature = signature(next);
+        if (seenStates.has(nextSignature)) {
+            const cycleStart = seenStates.get(nextSignature);
+            let disabledAny = false;
+            for (let g = 0; g < gateMachines.length; g++) {
+                const first = history[cycleStart]?.[g] || 0;
+                for (let stateIndex = cycleStart + 1; stateIndex < history.length; stateIndex++) {
+                    if (history[stateIndex][g] !== first) {
+                        forcedOff[g] = 1;
+                        disabledAny = true;
+                        break;
+                    }
+                }
+                if (next[g] !== first) {
+                    forcedOff[g] = 1;
+                    disabledAny = true;
+                }
+            }
+            if (!disabledAny) break;
+            gateOutputState = next;
+            for (let g = 0; g < gateMachines.length; g++) if (forcedOff[g]) gateOutputState[g] = 0;
+            history = [];
+            seenStates = new Map();
+            continue;
+        }
+        gateOutputState = next;
+    }
+
+    // Rebuild from the selected final state so the exposed logicalPower plane
+    // always matches gateOutputState, including the iteration-limit path.
+    world.logicalPower.fill(0);
+    world.gateOutputState.fill(0);
+    seedBatteryLogicalCurrent();
+    for (let g = 0; g < gateMachines.length; g++) {
+        if (gateOutputState[g]) {
+            world.gateOutputState[gateMachines[g].machine] = 1;
+            energizeLogicalConductors(gateMachines[g].outputWires);
+        }
+    }
+    energizeEnabledRelayOutputs();
     logicalCurrentDirty = false;
+    const emitterSignature = [];
+    for (let machine = 0; machine < world.type.length; machine++) {
+        if (DEFS[world.type[machine]]?.machine !== 'lamp' ||
+            (Math.round(world.machineSetting[machine] || 0) & 1) === 0) continue;
+        const input = machinePortDescriptors(machine).find(port =>
+            port.family === 'electrical' && port.role === 'input');
+        if (portHasLogicalSignal(input)) emitterSignature.push(machine);
+    }
+    const nextIlluminationSignature = emitterSignature.join(',');
+    if (illuminationSourceSignature !== nextIlluminationSignature) {
+        illuminationSourceSignature = nextIlluminationSignature;
+        illuminationDirty = true;
+    }
 }
 
 // Directly touching storage metals behave as one reservoir. This conserves
@@ -2874,6 +3437,9 @@ function updateElectricalPower() {
         }
     }
 
+    // Resolve a topology edit before collecting device loads for discharge,
+    // then rebuild once more because the discharge may change Battery supply.
+    ensureLogicalCurrent();
     balanceStoredCharge();
     recomputeLogicalCurrent();
     relayElectricalSwitches();
@@ -3092,6 +3658,11 @@ function nearbyClouds(x, y, radius) {
 
 export function stepSimulation() {
     frameCount++;
+    if (illuminationFlashes.length) {
+        illuminationFlashes = illuminationFlashes.filter(flash =>
+            flash.expiresAtFrame > frameCount);
+        illuminationDirty = true;
+    }
     advancePrevailingWindCycle();
     // Ease the air temperature towards whatever the slider is set to. This is
     // deliberately slow, and each material's own "cooling" figure is small, so
@@ -4518,6 +5089,20 @@ function explode(x, y, def) {
     // place the loop below finds it, treats it as more gunpowder to light, and
     // it re-lights itself over and over.
     const source = y * COLS + x;
+    if (def.lightFlashRadius > 0 && def.lightFlashIntensity > 0) {
+        // Capture a transient flash before clearing the gunpowder cell. Absolute
+        // frame expiry keeps its four-tick fade deterministic while particles
+        // move, and flash events are deliberately not part of saved state.
+        const durationTicks = def.lightFlashTicks || 4;
+        illuminationFlashes.push({
+            x, y,
+            radius: def.lightFlashRadius,
+            intensity: def.lightFlashIntensity,
+            durationTicks,
+            expiresAtFrame: frameCount + durationTicks
+        });
+        illuminationDirty = true;
+    }
     removeParticle(source);
 
     for (let dy = -radius; dy <= radius; dy++) {
@@ -5392,12 +5977,12 @@ function machineIsPowered(x, y, i) {
     ensureLogicalCurrent();
     if (world.logicalPower[i] > 0) return true;
 
-    // Broad power-port targets can include copper cells that sit just outside
-    // the ordinary two-cell wire reach. A Battery-backed logical route on any
-    // declared copper contact powers the machine through that port, while bare
-    // copper still cannot activate it.
+    // Power-port targets include the declared copper contact cells. A
+    // Battery-backed logical route on a declared contact powers the machine
+    // through that port, while bare copper still cannot activate it.
     const poweredCopperPort = machinePortDescriptors(i).some(port =>
-        port.family === 'copper' && [port.connectionCell, ...legacyPortCells(i, port)]
+        port.family === 'copper' && [...(port.contactCells || machinePortContactCells(port)),
+            ...legacyPortCells(i, port)]
             .some(cell => {
                 if (!inBounds(cell.x, cell.y)) return false;
                 const contact = index(cell.x, cell.y);
@@ -5458,9 +6043,9 @@ export function getTubingFlows() {
 function buildTubingComponents() {
     const visited = new Uint8Array(world.type.length);
     const components = [];
-    // A route attaches only where a connector physically occupies the stable
-    // logical anchor. Broad pointer targets and visible port markers are UI
-    // affordances; neither creates a tubing connection by proximity.
+    // A route attaches where Tubing occupies the stable terminal cell or one
+    // of the four grid cells that physically touch it. Pointer hit radii and
+    // the artwork's screen-space protrusion do not change this world topology.
     const portForTubeCell = new Map();
     for (let machine = 0; machine < world.type.length; machine++) {
         if (!isTubingEndpoint(DEFS[world.type[machine]])) continue;
@@ -5474,7 +6059,7 @@ function buildTubingComponents() {
                     matches.push({ machine, port });
                 }
             };
-            attach(port.connectionCell);
+            for (const cell of port.contactCells || machinePortContactCells(port)) attach(cell);
             for (const cell of legacyPortCells(machine, port)) attach(cell);
         }
     }

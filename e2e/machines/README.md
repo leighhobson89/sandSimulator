@@ -19,7 +19,20 @@ Exhaustive browser workflows for machines and material transfer.
   logical-current query over long Elec runs while traveling-Spark animation
   has delay-only frames, immediate logical blocking under a false comparison,
   restored passage, and immediate Battery-depletion shutdown despite any
-  remaining visual tail.
+  remaining visual tail. Battery hover diagnostics, circuit load, charge trend,
+  and ETA are covered in [`e2e/feedback/README.md`](../feedback/README.md).
+- `logic-gates.spec.mjs` checks NOT, AND, OR, NAND, and XOR truth-table vectors,
+  no-supply shutdown, separate Battery supply ports, signal/output roles and
+  anchors, blue supply art, hover labels/directions, two-input spacing,
+  straight outward port direction/counts (one left-facing signal port per
+  input, right-facing output, downward supply), and Save/Load/reset behavior.
+  Its routed AND-to-Lamp checks use separate supply, A/B, and output circuits;
+  pairwise eight-neighbor checks keep routes and Battery terminals distinct.
+  The Lamp stays dark for supply-only and one-input states, lights only with
+  both inputs and supply, and switches off when any source path is lost despite
+  residual visual pulses. Battery metrics bill gate/output-network load to the
+  supply source, not either signal source. The supply marker is blue inactive
+  and cyan powered.
 - `storage.spec.mjs` checks storage dialogs, family categories, tubing-only
   intake, capacity, type retention, and purge. It also checks Collector
   two-cell world suction and compatible Tubing transfer to Storage. Its
@@ -39,9 +52,13 @@ Exhaustive browser workflows for machines and material transfer.
   release behavior.
 - `ports.spec.mjs` checks the 64px reference artwork at default and zoomed cell
   scales, including rotated Liquid Storage icon centers, port markers, stubs,
-  and hit projection from world `connectionCell` anchors. It also checks the
-  20 CSS pixel hit distance, declared port roles, near-port Tubing snapping,
-  and rejection of incompatible Copper at Mixer inputs.
+  and hit projection from world `connectionCell` anchors. Compatible direct
+  contact at declared terminal/contact regions and along each visible
+  protrusion attaches to the exact originating port; an extension wire is
+  optional. The spec checks Tubing edge contact, electrical 8-way contact,
+  supported materials, the 20 CSS pixel pointer hit distance, and the 15-unit
+  local SVG artwork protrusion (about 15 CSS pixels at default zoom). It checks
+  zoom scaling and the separate 30-screen-pixel cap on connector-drag previews.
 - `persistence.spec.mjs` checks machine settings, including Simple Switch OFF,
   Lamp ON, and both sensor comparison/threshold pairs. Sensor settings include
   fractional values and are checked through portable Save/Load and blueprint

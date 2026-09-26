@@ -66,7 +66,7 @@ async function sampleOverlayPixel(page, cell) {
         Array.from(canvas.getContext('2d').getImageData(point.x, point.y, 1, 1).data), cell);
 }
 
-test('powered Lamp light follows a 15-cell Euclidean falloff independent of canvas zoom', async ({ page }) => {
+test('powered Lamp light follows a 25-cell Euclidean falloff independent of canvas zoom', async ({ page }) => {
     const game = new GamePage(page);
     await game.openMenu();
     await game.newGame();
@@ -85,19 +85,19 @@ test('powered Lamp light follows a 15-cell Euclidean falloff independent of canv
                 world.illumination[sample] === physics.getIlluminationAt(lamp.x + 3, lamp.y + 4),
             distanceFive: physics.getIlluminationAt(lamp.x + 3, lamp.y + 4),
             distanceFiveCardinal: physics.getIlluminationAt(lamp.x + 5, lamp.y),
-            distanceFourteen: physics.getIlluminationAt(lamp.x + 14, lamp.y),
-            radius: physics.getIlluminationAt(lamp.x + 15, lamp.y),
-            radiusDiagonal: physics.getIlluminationAt(lamp.x + 9, lamp.y + 12),
-            outside: physics.getIlluminationAt(lamp.x + 16, lamp.y)
+            distanceTwentyFour: physics.getIlluminationAt(lamp.x + 24, lamp.y),
+            radius: physics.getIlluminationAt(lamp.x + 25, lamp.y),
+            radiusDiagonal: physics.getIlluminationAt(lamp.x + 15, lamp.y + 20),
+            outside: physics.getIlluminationAt(lamp.x + 26, lamp.y)
         };
     }, { lamp });
     expect(readings.status).toBe(true);
     expect(readings.worldGridAligned).toBe(true);
     expect(readings.center).toBe(100);
-    expect(readings.distanceFive).toBeCloseTo(100 * (16 - 5) / 15, 1);
+    expect(readings.distanceFive).toBeCloseTo(100 * (26 - 5) / 25, 1);
     expect(readings.distanceFiveCardinal).toBeCloseTo(readings.distanceFive, 5);
-    expect(readings.distanceFourteen).toBeCloseTo(100 * (16 - 14) / 15, 1);
-    expect(readings.radius).toBeCloseTo(100 / 15, 5);
+    expect(readings.distanceTwentyFour).toBeCloseTo(100 * (26 - 24) / 25, 1);
+    expect(readings.radius).toBeCloseTo(100 / 25, 5);
     expect(readings.radiusDiagonal).toBeCloseTo(readings.radius, 5);
     expect(readings.outside).toBe(0);
 
@@ -133,7 +133,7 @@ test('powered Lamp light follows a 15-cell Euclidean falloff independent of canv
     expect(noInput.intensity).toBe(0);
 });
 
-test('Fire and Lava emit dim light at radius five and no light at distance six', async ({ page }) => {
+test('Fire, Lava, and Scoria emit at their configured strengths over five cells', async ({ page }) => {
     const game = new GamePage(page);
     await game.openMenu();
     await game.newGame();
@@ -144,7 +144,7 @@ test('Fire and Lava emit dim light at radius five and no light at distance six',
         const id = name => definitions.findIndex(definition => definition?.name === name);
         const source = { x: 90, y: 60 };
         const result = {};
-        for (const name of ['Fire', 'Lava']) {
+        for (const name of ['Fire', 'Lava', 'Scoria']) {
             physics.clearWorld();
             physics.setCell(source.x, source.y, id(name));
             result[name] = {
@@ -155,11 +155,42 @@ test('Fire and Lava emit dim light at radius five and no light at distance six',
         }
         return result;
     });
-    for (const name of ['Fire', 'Lava']) {
-        expect(readings[name].atSource, `${name} is a dim emitter`).toBe(28);
+    for (const [name, intensity] of [['Fire', 50], ['Lava', 50], ['Scoria', 30]]) {
+        expect(readings[name].atSource, `${name} has its configured peak illumination`).toBe(intensity);
         expect(readings[name].atRadius, `${name} reaches distance five`).toBeGreaterThan(0);
-        expect(readings[name].atRadius).toBeLessThan(28);
+        expect(readings[name].atRadius).toBeLessThan(intensity);
         expect(readings[name].outsideRadius, `${name} is dark at distance six`).toBe(0);
+    }
+});
+
+test('Fire, Lava, and Scoria light renders orange', async ({ page }) => {
+    const gamePage = new GamePage(page);
+    await gamePage.openMenu();
+    await gamePage.newGame();
+
+    const colors = await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        const game = await import('/game.js');
+        const view = await import('/constantsAndGlobalVars.js');
+        const definitions = physics.getDefinitions();
+        const id = name => definitions.findIndex(definition => definition?.name === name);
+        const source = { x: 90, y: 60 };
+        const result = {};
+        view.setVisualizationMode('normal');
+        for (const name of ['Fire', 'Lava', 'Scoria']) {
+            physics.clearWorld();
+            physics.setCell(source.x, source.y, id(name));
+            game.renderWorld();
+            result[name] = Array.from(document.querySelector('#illuminationOverlay')
+                .getContext('2d').getImageData(source.x + 1, source.y, 1, 1).data);
+        }
+        return result;
+    });
+    for (const name of ['Fire', 'Lava', 'Scoria']) {
+        expect(colors[name][0], `${name} glow is orange`).toBe(255);
+        expect(colors[name][1], `${name} glow is orange`).toBe(126);
+        expect(colors[name][2], `${name} glow is orange`).toBe(32);
+        expect(colors[name][3], `${name} emits visible light`).toBeGreaterThan(0);
     }
 });
 
@@ -234,7 +265,7 @@ test('Fire produced by burning Oil and Wood keeps emitting its persistent dim li
         expect(fuels[fuel].becameFire, `${fuel} burns into Fire`).toBe(true);
         expect(fuels[fuel].remainsFire, `${fuel}-derived Fire survives several ticks`).toBe(true);
         expect(fuels[fuel].life).toBeGreaterThan(0);
-        expect(fuels[fuel].sourceLight).toBe(28);
+        expect(fuels[fuel].sourceLight).toBe(50);
         expect(fuels[fuel].radiusFive).toBeGreaterThan(0);
         expect(fuels[fuel].distanceSix).toBe(0);
     }
@@ -304,9 +335,9 @@ test('Gunpowder stays dark during its fuse, then leaves a four-tick bright explo
     expect(blast.flash.at(-1).centerLight).toBe(0);
     expect(blast.flash.at(-1).radiusTen).toBe(0);
     expect(blast.fireOnly.fireType).toBeGreaterThan(0);
-    expect(blast.fireOnly.fireSourceLight).toBe(28);
+    expect(blast.fireOnly.fireSourceLight).toBe(50);
     expect(blast.fireOnly.centerLight).toBeGreaterThan(0);
-    expect(blast.fireOnly.centerLight).toBeLessThanOrEqual(28);
+    expect(blast.fireOnly.centerLight).toBeLessThanOrEqual(100);
     expect(blast.fireOnly.flashRadius).toBe(0);
 });
 
@@ -392,7 +423,7 @@ test('Lamp falloff stays bounded and its light layer aligns with the canvas at t
             const cellWidth = canvasRect.width / canvas.width;
             const cellHeight = canvasRect.height / canvas.height;
             const edgePixel = light.getContext('2d').getImageData(lamp.x, lamp.y, 1, 1).data;
-            const radiusPixel = light.getContext('2d').getImageData(lamp.x + 15, lamp.y, 1, 1).data;
+            const radiusPixel = light.getContext('2d').getImageData(lamp.x + 25, lamp.y, 1, 1).data;
             return {
                 layerOrder: follows(canvas, light) && follows(light, machine),
                 layerBackground: getComputedStyle(light).backgroundColor,
@@ -400,8 +431,8 @@ test('Lamp falloff stays bounded and its light layer aligns with the canvas at t
                 lightBounds: { left: lightRect.left, top: lightRect.top, right: lightRect.right, bottom: lightRect.bottom },
                 cellWidth,
                 cellHeight,
-                displayRadiusX: 15 * cellWidth,
-                displayRadiusY: 15 * cellHeight,
+                displayRadiusX: 25 * cellWidth,
+                displayRadiusY: 25 * cellHeight,
                 edgeAlpha: edgePixel[3],
                 radiusAlpha: radiusPixel[3]
             };
@@ -411,8 +442,8 @@ test('Lamp falloff stays bounded and its light layer aligns with the canvas at t
             active: physics.getMachineLiveStatus(lamp.x, lamp.y).active,
             center: physics.getIlluminationAt(lamp.x, lamp.y),
             edgeFalloff: physics.getIlluminationAt(target.x, target.y),
-            radius: physics.getIlluminationAt(lamp.x + 15, lamp.y),
-            outside: physics.getIlluminationAt(lamp.x + 16, lamp.y),
+            radius: physics.getIlluminationAt(lamp.x + 25, lamp.y),
+            outside: physics.getIlluminationAt(lamp.x + 26, lamp.y),
             outsideWorld: physics.getIlluminationAt(-1, lamp.y)
         };
         game.setCanvasZoomLevel(2);
@@ -421,8 +452,8 @@ test('Lamp falloff stays bounded and its light layer aligns with the canvas at t
         const fieldsAtZoomTwo = {
             center: physics.getIlluminationAt(lamp.x, lamp.y),
             edgeFalloff: physics.getIlluminationAt(target.x, target.y),
-            radius: physics.getIlluminationAt(lamp.x + 15, lamp.y),
-            outside: physics.getIlluminationAt(lamp.x + 16, lamp.y)
+            radius: physics.getIlluminationAt(lamp.x + 25, lamp.y),
+            outside: physics.getIlluminationAt(lamp.x + 26, lamp.y)
         };
         return {
             routeInBounds: [...fixture.wireCells, fixture.battery].every(cell =>
@@ -436,8 +467,8 @@ test('Lamp falloff stays bounded and its light layer aligns with the canvas at t
     expect(edge.routeInBounds).toBe(true);
     expect(edge.fieldsAtZoomOne.active).toBe(true);
     expect(edge.fieldsAtZoomOne.center).toBe(100);
-    expect(edge.fieldsAtZoomOne.edgeFalloff).toBeCloseTo(100 * (16 - 5) / 15, 1);
-    expect(edge.fieldsAtZoomOne.radius).toBeCloseTo(100 / 15, 5);
+    expect(edge.fieldsAtZoomOne.edgeFalloff).toBeCloseTo(100 * (26 - 5) / 25, 1);
+    expect(edge.fieldsAtZoomOne.radius).toBeCloseTo(100 / 25, 5);
     expect(edge.fieldsAtZoomOne.outside).toBe(0);
     expect(edge.fieldsAtZoomOne.outsideWorld).toBe(0);
     expect(edge.fieldsAtZoomTwo).toEqual({
@@ -454,7 +485,8 @@ test('Lamp falloff stays bounded and its light layer aligns with the canvas at t
         expect(Math.abs(zoom.lightBounds.right - zoom.canvasBounds.right)).toBeLessThan(1);
         expect(Math.abs(zoom.lightBounds.bottom - zoom.canvasBounds.bottom)).toBeLessThan(1);
         expect(zoom.edgeAlpha).toBeGreaterThan(0);
-        expect(zoom.radiusAlpha).toBe(Math.round(255 / 15));
+        expect(zoom.edgeAlpha).toBe(Math.round(255 * 0.5));
+        expect(zoom.radiusAlpha).toBe(Math.round(255 * 0.5 / 25));
     }
     expect(edge.zoomTwo.edgeAlpha).toBe(edge.zoomOne.edgeAlpha);
     expect(edge.zoomTwo.radiusAlpha).toBe(edge.zoomOne.radiusAlpha);
@@ -475,7 +507,7 @@ test('moving a Lamp or blocker invalidates the previous light field', async ({ p
         const definitions = physics.getDefinitions();
         const id = name => definitions.findIndex(definition => definition?.name === name);
         const world = physics.getWorld();
-        const expected = 100 * (16 - (target.x - lamp.x)) / 15;
+        const expected = 100 * (26 - (target.x - lamp.x)) / 25;
 
         const blocker = { x: lamp.x + 5, y: lamp.y };
         const solid = definitions.find(definition => definition?.group === 'Solids' && !definition.isPlant);
@@ -590,9 +622,9 @@ test('overlapping Lamp fields add and clamp at 100', async ({ page }) => {
     });
     const nearDistance = Math.sqrt(5 ** 2 + 5 ** 2);
     const fartherDistance = Math.sqrt(5 ** 2 + 8 ** 2);
-    expect(result.oneNear).toBeCloseTo(100 * (16 - nearDistance) / 15, 1);
+    expect(result.oneNear).toBeCloseTo(100 * (26 - nearDistance) / 25, 1);
     expect(result.bothNear).toBe(100);
-    expect(result.bothFarther).toBeCloseTo(2 * 100 * (16 - fartherDistance) / 15, 1);
+    expect(result.bothFarther).toBeCloseTo(2 * 100 * (26 - fartherDistance) / 25, 1);
 });
 
 test('solids, plants, and machines block Lamp light while gas, Elec, and Tubing transmit it', async ({ page }) => {
@@ -661,7 +693,7 @@ test('solids, plants, and machines block Lamp light while gas, Elec, and Tubing 
     });
     for (const key of ['solid', 'plant', 'machine']) expect(observations[key], key).toBe(0);
     for (const key of ['gas', 'Elec', 'Tubing']) {
-        expect(observations[key], key).toBeCloseTo(100 * (16 - 12) / 15, 1);
+        expect(observations[key], key).toBeCloseTo(100 * (26 - 12) / 25, 1);
     }
 });
 
@@ -808,7 +840,7 @@ test('portable saves and stamped blueprints rebuild derived Lamp illumination', 
         };
     }, { lamp, target, fixture });
 
-    expect(persistence.illumination).toBeCloseTo(100 * (16 - 10) / 15, 5);
+    expect(persistence.illumination).toBeCloseTo(100 * (26 - 10) / 25, 5);
     expect(persistence.saveHasIlluminationArray).toBe(false);
     expect(persistence.blueprintHasIlluminationPlane).toBe(false);
     expect(persistence.loadedLampActive).toBe(true);
@@ -843,14 +875,14 @@ test('air and Lamp feedback report received light and emission state, range, and
     await expect(feedback).toContainText('Lamp');
     await expect(feedback).toContainText(/emission/i);
     await expect(feedback).toContainText(/ON|active/i);
-    await expect(feedback).toContainText(/15\s*cells/i);
+    await expect(feedback).toContainText(/25\s*cells/i);
     await expect(feedback).toContainText(/100(?:\.0)?/);
 
     await page.getByRole('button', { name: 'Lamp', exact: true }).hover();
     const tooltip = page.locator('#toolTooltip');
     await expect(tooltip).toBeVisible();
     await expect(tooltip).toContainText(/light|illumination/i);
-    await expect(tooltip).toContainText(/15\s*cells/i);
+    await expect(tooltip).toContainText(/25\s*cells/i);
 
     await page.evaluate(async ({ lamp }) => {
         const physics = await import('/physics.js');

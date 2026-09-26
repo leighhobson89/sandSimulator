@@ -171,7 +171,7 @@ test('connected Batteries share one Spark charge while an isolated Battery keeps
     expect(result.isolated.charge).toBe(0);
 });
 
-test('Copper and Iron discharge a Battery and reach a Fan across the documented two-cell gap', async ({ page }) => {
+test('Copper and Iron power a Fan through its protruding input contact', async ({ page }) => {
     const game = new GamePage(page);
     await game.openMenu();
     await game.newGame();
@@ -220,6 +220,37 @@ test('Copper and Iron discharge a Battery and reach a Fan across the documented 
         });
         expect(drained.charge).toBe(0);
         expect(drained.powered).toBe(false);
+    }
+});
+
+test('Electrical wires cannot carry Battery power across one empty cell', async ({ page }) => {
+    const game = new GamePage(page);
+    await game.openMenu();
+    await game.newGame();
+
+    for (const [material, expectedWireLoad] of [['Copper', 1], ['Iron', 0.5]]) {
+        await game.seed(material === 'Copper' ? 505 : 606);
+        await installElectricalFixture(page, {
+            batteries: [[20, 35]],
+            conductors: [[21, 35, material], [23, 35, material]],
+            batteryCharge: 1
+        });
+        const before = await page.evaluate(async () => {
+            const physics = await import('/physics.js');
+            return physics.getStoredCharge(20, 35);
+        });
+        await game.step(1);
+        const state = await page.evaluate(async () => {
+            const physics = await import('/physics.js');
+            return {
+                sourceWirePowered: physics.isLogicallyPowered(21, 35),
+                isolatedWirePowered: physics.isLogicallyPowered(23, 35),
+                remaining: physics.getStoredCharge(20, 35)
+            };
+        });
+        expect(state.sourceWirePowered).toBe(true);
+        expect(state.isolatedWirePowered).toBe(false);
+        expect(before - state.remaining).toBeCloseTo(expectedWireLoad / 100, 3);
     }
 });
 
@@ -1303,7 +1334,7 @@ test('a Copper lead outside the visible machine port rejects connection and inva
     await installElectricalFixture(page, {
         batteries: [[20, 35]],
         conductors: [[21, 35, 'Copper']],
-        machine: [25, 35, 'Fan'],
+        machine: [29, 35, 'Fan'],
         batteryCharge: 2
     });
 

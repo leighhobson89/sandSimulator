@@ -164,6 +164,20 @@ own workflow captures them. See the [Playwright HTML reporter guide](https://pla
   and powered Fan/Heater/Cooler machines. `rendering.spec.mjs` checks local glow
   color interpolation for solid Copper, Battery, Iron, Fan, Cooler, Tubing, and
   Heater, while preserving existing molten gradients.
+- `e2e/feedback/hover.spec.mjs` covers the fixed, non-scrolling feedback panel,
+  preserved FPS/particle-count readout, cleared feedback outside the canvas,
+  empty-air measurements, particle category/environment/state-transition
+  details, and numeric illumination received by material hover. It also checks
+  live machine signals and Battery circuit load, five-second charge trend,
+  elapsed-time ETA, charge icon placement, and status colors. The panel keeps a
+  fixed height on narrow viewports; it does not show cell numbers.
+- `e2e/feedback/illumination.spec.mjs` covers powered-Lamp falloff, zoom
+  independence, OFF/unpowered behavior, exact distance values, cardinal and
+  diagonal readings, additive/clamped sources, Fire/Lava and Oil/Wood-derived
+  Fire, Gunpowder's four-tick flash, blockers and transmitting materials,
+  transparent compositing, Normal-view tint versus diagnostic palettes,
+  edge clipping, zoom registration, stale-field cleanup, save/blueprint rebuild,
+  numeric hover, and Lamp emission feedback/tooltip.
 - `e2e/physics/` covers deterministic, user-visible settling, thermal, and
   reaction behavior. Thermal coverage includes open versus enclosed air,
   chamber breach, local rays/fire/Lava effects, retained Steam, Insulation
@@ -183,6 +197,20 @@ own workflow captures them. See the [Playwright HTML reporter guide](https://pla
   migration and one-time migration of Fan speeds. Fan placement coverage checks
   its 1-50 speed range and default speed 7. The Sprinkler browser coverage lives
   in `e2e/machines/sprinkler.spec.mjs`.
+- `e2e/machines/logic-gates.spec.mjs` covers the five gate truth tables and
+  absent-supply shutdown, declared signal/supply/output port roles, blue supply
+  artwork, hover labels and directions, separated two-input geometry, exactly
+  one straight-outward horizontal input per signal input, a horizontal output,
+  a downward supply, and Save/Load/reset. Its routed AND-to-Lamp cases use
+  distinct supply, A/B, and output circuits; pairwise eight-neighbor checks
+  include charged Battery terminals and the complete output route. The Lamp
+  stays dark with supply only or one active input, lights only with both inputs
+  and supply, and turns off when any source path is lost. Battery metrics bill
+  gate and output-network load to the supply source. `e2e/machines/ports.spec.mjs` checks
+  direct contact at each compatible machine-port protrusion/contact region,
+  exact originating-port ownership, optional extension wires, 15-unit local
+  SVG protrusions (about 15 CSS pixels at default zoom), zoom scaling, and the
+  separate 30-screen-pixel connector-drag cap.
 - `e2e/blueprints/` covers capture, stamping, history, lifecycle, and portable
   persistence.
 - `e2e/scaling/default-world.spec.mjs` covers the two fixed New Game choices
@@ -259,6 +287,18 @@ entry point:
 ```text
 npm test -- --focus=wind-overhaul
 ```
+
+Focused browser coverage for live feedback, gates, ports, and their catalog
+placement can be run together through the documented wrapper:
+
+```text
+npm run test:browser -- e2e/feedback/hover.spec.mjs e2e/machines/logic-gates.spec.mjs e2e/machines/ports.spec.mjs e2e/materials/catalog.spec.mjs --workers=1 --trace=off
+```
+
+The focused feedback/gate/port/illumination verification completed on 26
+September 2026: `e2e/feedback/illumination.spec.mjs`,
+`e2e/machines/logic-gates.spec.mjs`, and `e2e/machines/ports.spec.mjs` passed
+32/32 tests through the npm browser wrapper.
 
 `npm run test:browser -- --workers=1 --trace=off` runs the full browser suite.
 To run a focused functional area or spec, pass its path through the npm wrapper:

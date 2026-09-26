@@ -1,8 +1,9 @@
 # Game mechanics
 
-This is the current reference for material definitions, machine behavior,
-machine ports, Collector intake, Mixer recipes, Tubing, Sprinkler release, and
-their maintenance contracts.
+This is the current reference for material definitions and practical material
+guidance, live canvas feedback, electrical logic, machine behavior and ports,
+Collector intake, Mixer recipes, Tubing, Sprinkler release, and their
+maintenance contracts.
 For machine interface and construction requirements, see
 [`MACHINE_CONSTRUCTION_STANDARDS.md`](MACHINE_CONSTRUCTION_STANDARDS.md).
 The broad simulation model remains in [`PROGRAM_OVERVIEW.md`](PROGRAM_OVERVIEW.md).
@@ -50,6 +51,7 @@ The prepared entries are grouped in the same order as the picker:
 | Seeds | Grass Seeds, Moss Spores, Daffodil Seeds, Red Tulip Seeds, Geranium Seeds, Blue Flower Seeds, Banana Seeds, Water Grass / Lily Seeds |
 | Metals | Copper, Molten Copper, Molten Aluminum, Iron, Molten Iron, Stainless Steel, Tubing |
 | Electricals | Battery, Spark, Spark Dust, Spark Block, Elec, Simple Switch, Lamp, Temperature Switch, Humidity Switch |
+| LOGIC | NOT, AND, OR, NAND, XOR |
 | Machines | Fan, Heater, Cooler, Sprinkler, Mixer, Splitter, Collector |
 | Storage | Powder Storage Bin, Liquid Storage Bin, Gas Storage Bin |
 | Tools | Heat Ray, Cold Ray, Wind |
@@ -99,6 +101,7 @@ simulation description in [`PROGRAM_OVERVIEW.md`](PROGRAM_OVERVIEW.md).
 | Vegetation | Plant, grass, moss, aquatic plants, and flowering species use the environmental viability, growth, flowering, and seed-setting rules declared in `particles.json`; their leaves, pads, blooms, and fruit appear in this group too. |
 | Metals | Copper and Molten Copper, Molten Aluminum, Iron and Molten Iron, Tubing, and Stainless Steel are listed here. Copper, Iron, Battery, and Stainless Steel conduct electrical routes; a charged Battery supplies logical current while connected. Stainless Steel transfers heat more slowly than Iron, draws Battery charge as a wire, and does not rust from Water or humid air. Battery remains a conductive storage metal even though it is listed in the Electricals picker group. Tubing has no electrical conductivity. |
 | Electricals | Battery stores charge; a connected charged Battery supplies logical DC current through conductive wire. Spark charges Battery, and traveling Sparks are a visual effect. Spark Dust and Spark Block emit Sparks. Elec is high-purity copper wire with higher heat and electrical conductivity than Copper. Simple Switch relays logical current while ON; OFF blocks it. Lamp glows only when ON and its logical input is on. Temperature Switch and Humidity Switch compare the mean of five exposed air probes to a configured threshold and relay input current only when the comparison is true. |
+| LOGIC | NOT, AND, OR, NAND, and XOR evaluate sustained ON/OFF signal levels on existing conductive routes. Each gate also needs a separate charged-Battery supply input; this supply powers the gate and is distinct from signal inputs. |
 | Tools | Heat Ray and Cold Ray are short-lived directional brushes. A left-button stroke starts Heat Ray upward or Cold Ray downward; its first non-zero drag selects the nearest cardinal direction, which persists while stationary and changes only when the drag heading changes. Painted ray cells travel as projectiles using that stored heading. Wind moves light materials and stirs air; it stops at solid barriers but passes through plants. |
 
 ### Heat, electrical, and reaction anchors
@@ -114,6 +117,12 @@ simulation description in [`PROGRAM_OVERVIEW.md`](PROGRAM_OVERVIEW.md).
   Scoria above `900 C` returns it to Lava.
 - Battery melts at `660 C` into Molten Aluminum and cools back into Battery.
   Copper and Elec melt into Molten Copper at `1085 C`; Iron uses `1538 C`.
+- Battery charge is shared across cells that touch as one Battery reservoir;
+  newly placed Battery touching a charged reservoir equalizes with its charge.
+  Applying a Spark adds charge. A visible Spark emitted by a charged Battery
+  is only an effect and does not replenish or drain the reservoir. The metal
+  wire loads are `1` per Copper cell, `0.5` per Iron or Stainless Steel cell,
+  and `0.35` per Elec cell. Machine loads use the same power-load units.
 - State changes bank heat over time using each material's latent amount rather
   than changing immediately at a threshold. Water extinguishes Fire on contact,
   Lava chills to Scoria when Water touches it, and water wetting is limited to
@@ -177,8 +186,10 @@ simulation description in [`PROGRAM_OVERVIEW.md`](PROGRAM_OVERVIEW.md).
   A reached wire and machine input are logically ON while a charged Battery
   connects to the route. Traveling Sparks are visual effects and do not
   determine logical power. Copper, Iron, Stainless Steel, and Elec draw charge
-  from a connected Battery through their wire length. Elec uses electrical
-  conductivity `2`, wire reach `2`, and a small per-cell charge draw of `0.35`;
+  from a connected Battery through their wire length. Electrical wires connect
+  only through occupied neighboring cells; even one empty air cell breaks the
+  route. Direct diagonal adjacency is supported. Elec uses electrical
+  conductivity `2`, wire reach `1`, and a small per-cell charge draw of `0.35`;
   its fast thermal-network rate is `0.3`. It behaves like pure copper, melts
   into Molten Copper, and takes four times the qualifying exposure to become
   Corrosion powder compared with ordinary Copper. Tubing has no electrical
@@ -186,8 +197,13 @@ simulation description in [`PROGRAM_OVERVIEW.md`](PROGRAM_OVERVIEW.md).
   conductivity.
 - Stainless Steel has nonzero ordinary heat conductivity and electrical
   conductivity, both lower than Iron's. Its power draw is `0.5` per cell and it
-  reaches conductive machines across up to two empty cells, like Iron. It does
+  connects to conductive machines through occupied neighboring cells. It does
   not join the fast thermal network or rust from Water or humid air.
+- Conductive cells draw `1` power-load unit per tick for Copper, `0.5` for Iron
+  and Stainless Steel, and `0.35` for Elec. One hundred power-load units
+  correspond to one Battery charge unit per simulation tick. Connected
+  conductive machine bodies contribute their declared cell load; active Lamps
+  and supplied logic gates contribute their machine load once per device.
 - Electrical current routes through Copper, Iron, Stainless Steel, and Elec
   wire. Traveling current-effect sparks are a visual layer only; logical ON/OFF
   state comes from the connected charged Battery route. Machine ports retain
@@ -196,6 +212,17 @@ simulation description in [`PROGRAM_OVERVIEW.md`](PROGRAM_OVERVIEW.md).
   painted leads use gold Elec with a forced two-cell width, independent of the
   selected paint-brush size. Their input ports accept compatible conductive
   wire rather than Tubing.
+- Each visible machine-port protrusion identifies and functions as its own
+  connector, ending at its declared port anchor. Compatible material touching
+  that protrusion connects directly to that particular input or output; players
+  do not need to draw an extra lead from it. Electrical ports use Elec
+  connectors and accept Copper, Iron, Stainless Steel, or Elec. Material ports
+  use their declared Copper or Tubing family. Port protrusions use a 15-unit
+  local SVG length (about 15 CSS pixels at default zoom) and scale with the
+  world zoom. The connector-drag preview has a separate 30-screen-pixel cap.
+  Two-input logic gates space their signal-input protrusions vertically. The
+  gate supply protrusion is blue while inactive and cyan while powered;
+  hovering a gate names each connector's role, direction, and live state.
 - Heat Ray and Cold Ray ramp their cells toward `2000 C`
   and `-120 C` over several frames rather than initializing an instant
   temperature source. Both burn out after a few frames instead of collecting as
@@ -206,6 +233,22 @@ simulation description in [`PROGRAM_OVERVIEW.md`](PROGRAM_OVERVIEW.md).
   persists during stationary painting and changes only with a new drag heading.
   Heater/Cooler emissions retain their marked, one-way machine target temperature
   behavior and are not affected by this brush direction rule.
+
+### Metal phase-change reference
+
+Metal state changes bank latent heat after crossing a threshold. Molten metals
+flow until they cool to the configured freeze point and have support; some
+materials return as a related metal rather than their original form.
+
+| Solid | Melts into | Melting point | Supported return path |
+| --- | --- | ---: | --- |
+| Copper | Molten Copper | `1085 C` | Molten Copper becomes Copper at `1085 C`. |
+| Elec | Molten Copper | `1085 C` | Cools as Copper, not Elec. |
+| Battery | Molten Aluminum | `660 C` | Molten Aluminum becomes Battery at `660 C`. |
+| Iron | Molten Iron | `1538 C` | Molten Iron becomes Iron at `1538 C`. |
+| Tubing | Molten Iron | `1538 C` | Cools as Iron, not Tubing. |
+| Fan and Cooler | Molten Iron | `1538 C` | Cool as Iron, not back into a machine. |
+| Heater | Molten Iron | `10000 C` | Cools as Iron, not back into a machine. |
 
 ## 3. Powered, storage, transfer, and connection machines
 
@@ -236,13 +279,15 @@ Machine artwork uses a 64px reference face and scales and repositions with the
 simulation cell zoom. Placed art, ghosts, port markers, 2px stubs, pointer
 hit/snap, connector gestures, and placement previews use the same rotated
 `connectionCell` projection with runtime cell dimensions. The pointer hit
-distance remains 20 CSS pixels as zoom changes; hit proximity does not create a
-physical route. A route requires compatible material at the declared anchor.
-A port becomes connected through compatible external Tubing, Copper, or
-conductive electrical wire at the declared anchor; its own tagged lead alone
-does not activate it. Electrical ports accept Copper, Iron, Stainless Steel,
-and Elec, and reject Tubing. Focused port coverage is documented in the machine
-E2E README.
+distance remains 20 CSS pixels as zoom changes; hit proximity does not create
+a physical route. Compatible Tubing may connect at the declared terminal or
+its four cardinal contact cells. Electrical and Copper ports also accept
+compatible contact through their declared eight-way contact cells. In
+addition, each visible 15-unit protrusion is a functional connector: compatible
+material touching the protrusion connects directly to its originating port.
+An extra drawn lead is optional. Electrical ports accept Copper, Iron,
+Stainless Steel, and Elec, and reject Tubing. Focused port coverage is
+documented in the machine E2E README.
 
 Clicking a placed machine opens its settings or inventory dialog. Machine state
 persists in local Resume Game saves and portable LZString saves. Portable save
@@ -351,6 +396,61 @@ output. Red means it is not passing: the rule is false, the rule is true
 without input current (`RULE TRUE · NO INPUT CURRENT`), or there is no air
 reading (`SIGNAL BLOCKED · NO AIR`). Rule and threshold persist through
 machine state transfers, portable world saves, and blueprints.
+
+### Logic gates and circuit supply
+
+The top-level catalog has a **LOGIC** accordion immediately after Electricals;
+it is a sibling panel rather than part of the Electricals grid. It contains
+NOT, AND, OR, NAND, and XOR gates, drawn with familiar logic symbols in the
+simulator's icon style. Their signal connectors use Elec, with signal inputs on
+the left and output on the right. Two-input gates space the A and B signal
+protrusions apart vertically. Every connector protrudes straight outward from
+its gate face: exactly one horizontal input connector per signal input on the
+left, one horizontal output connector on the right, and a separate supply
+connector pointing down. The supply marker is blue while inactive and cyan
+while powered. Hover feedback identifies each connector's role, direction, and
+current state.
+Every visible protrusion is itself a functional port contact: compatible Elec
+touching it connects directly to that port, so an extra lead is optional.
+
+Existing Copper, Iron, Stainless Steel, and Elec routes carry sustained
+ON/OFF signal levels; there is no dedicated logical-wire material. Each gate
+has one additional, separate Battery supply input as well as its listed signal
+inputs and output. The gate produces no output unless a charged Battery reaches
+its supply. This lets NOT and NAND output ON when their signal inputs are OFF
+without creating power. The blue supply route terminates at the gate; it does
+not directly energize or bridge into the output circuit. Only a valid gate
+result energizes the separate output route. Signal inputs read their declared
+routes and do not back-feed one another. A powered gate output can fan out over
+its connected conductor network. The gate's own load and its output network's
+wire and device consumption are charged to that separate supply, rather than to
+either signal-source Battery. The blue supply route terminates at the gate and
+does not bridge to the output route. Eight-neighbor circuit checks keep the
+supply, signal A/B, and output-to-load routes separate, including their
+Battery terminals. Focused AND-to-Lamp regression verifies the Lamp stays dark
+with supply alone or one active input, lights only with supply and both active
+inputs, and turns off when any of those source routes is lost even while
+decorative wire pulses remain.
+
+| Gate | Signal inputs | Output is ON when |
+| --- | ---: | --- |
+| NOT | 1 | Input A is OFF |
+| AND | 2 | Both A and B are ON |
+| OR | 2 | A or B is ON |
+| NAND | 2 | A and B are not both ON |
+| XOR | 2 | Exactly one of A and B is ON |
+
+All outputs are OFF without a charged Battery supply, regardless of signal
+input states. Every gate draws `1` power-load unit on its separate supply route
+while that supply is active. Gates are combinational and use synchronous
+evaluation so circuit scan order does not change ordinary results. When a
+feedback loop oscillates, gates whose outputs vary around the detected cycle
+are forced OFF for that solve. Gate output state is derived from the current
+supply and signals rather than saved independently; Save/Load preserves the
+gate, conductor layout, and Battery charge, then recomputes the circuit.
+Clearing the world removes the gates and their signal state. The routed
+AND-to-Lamp behavior, path cutoffs, and supply-versus-signal Battery load
+accounting are covered in the passing focused machine regressions.
 
 Battery, Spark, Spark Dust, and Spark Block appear under the Electricals picker
 heading. Battery remains conductive storage metal. Spark charging and
@@ -517,8 +617,12 @@ for the complete QA record.
 Tubing is non-conductive and static. It connects only through shared cell edges;
 diagonal corner contact is not a connection. Machine connections use declared
 port roles and stable `connectionCell` anchors, not a broad machine icon
-footprint. A route attaches only when compatible Tubing reaches its exact
-anchor. Storage inputs enforce Powder, Liquid, or Gas family compatibility;
+footprint. Compatible Tubing connects through a port's declared terminal and
+cardinal contact cells; electrical and Copper connections accept their
+declared eight-way contact cells. A compatible material that touches the
+visible protrusion also connects directly to that specific port, so an
+additional drawn lead is optional. Storage inputs enforce Powder, Liquid, or
+Gas family compatibility;
 the Sprinkler and Mixer accept the materials allowed by their existing
 inventory rules. Copper is the connector for Fan, Heater, and Cooler inputs.
 Electrical ports use Elec connectors and accept conductive wire materials;
@@ -532,6 +636,8 @@ they are separate from Tubing routes.
 | Simple Switch | One electrical input and one electrical output; accepts compatible conductive wire | Relays logical current when ON; blocks it immediately when OFF |
 | Lamp | One electrical input; accepts compatible conductive wire | Yellow light while ON and its logical input is ON |
 | Temperature Switch, Humidity Switch | One electrical input and one electrical output; accepts compatible conductive wire | Relays input current only while its environmental comparison is true; false or unavailable readings block the logical output |
+| NOT gate | One signal input, one separate Battery supply input, and one electrical output | Output is ON only with supply present and signal input OFF |
+| AND, OR, NAND, XOR gates | Two signal inputs, one separate Battery supply input, and one electrical output each | Evaluate their Boolean rules only while the separate supply is present; see [Logic gates and circuit supply](#logic-gates-and-circuit-supply) |
 | Powder Storage Bin | Powder Tubing input and output | No world-particle intake |
 | Liquid Storage Bin | Liquid Tubing input and output | No world-particle intake |
 | Gas Storage Bin | Gas Tubing input and output | No world-particle intake |
@@ -569,16 +675,21 @@ redirecting it.
 
 Machine artwork uses a `64px` reference overlay that scales and repositions
 with the cell zoom. Each material port has its declared marker, connector
-material, role, and stable anchor. Its visible marker and 2px stub project from
-the rotated world `connectionCell`; hit targets remain 20 CSS pixels and
-topology still requires exact compatible contact at the anchor. The Mixer has
-two distinct inputs and no Tubing output; the Splitter has one input and two
-outputs. A missing `machinePortLayoutVersion` identifies legacy connection
-geometry in saves and blueprints; current snapshots use the explicit port
-layout marker. Legacy compatible endpoints migrate to the current declared
-`connectionCell` anchors. Sprinkler's former Vent identity is retained only for
-load migration; its particle ID remains `52`. Focused port coverage passes
-8/8.
+material, role, and stable anchor. The visible protrusion projects from the
+rotated world `connectionCell` and is functional along its exposed length:
+compatible Tubing, Copper, or electrical wire touching it connects directly to
+that specific originating port. An additional drawn extension lead is
+optional. Hit targets remain 20 CSS pixels; hit proximity alone does not
+create a route. Port protrusions use 15 local SVG units (about 15 CSS pixels at
+default zoom) and scale with the world zoom. Connector-drag previews have a
+separate 30-screen-pixel maximum. The Mixer has two distinct inputs and no Tubing
+output; the Splitter has one input and two outputs. A missing
+`machinePortLayoutVersion` identifies legacy connection geometry in saves and
+blueprints; current snapshots use the explicit port layout marker. Legacy
+compatible endpoints migrate to the current declared `connectionCell` anchors.
+Sprinkler's former Vent identity is retained only for load migration; its
+particle ID remains `52`. Focused port coverage and connector construction are
+documented in the machine E2E README.
 
 For user-visible changes, use the focused owning-machine specs through the
 documented npm wrapper. See [`E2E_TEST_PLAN.md`](E2E_TEST_PLAN.md) and
@@ -613,9 +724,25 @@ the surface, spread Water Grass Pads, and can bloom there.
 Seed temperature and humidity fields are minimum germination gates; seeds do
 not define a separate maximum germination temperature. All eight seed types
 ignite above `130 C` and become Fire with a `20`-frame burn life. A mature
-Banana Plant grows `14-32` cells tall. See the
-[Plant Growers Handbook](PLANT_GROWERS_HANDBOOK.md) for the complete per-seed
-threshold and substrate table, plus practical humidity guidance.
+Banana Plant grows `14-32` cells tall.
+
+### Seed requirements
+
+Temperature is checked on the seed cell; humidity is checked in nearby air.
+The values below are minimums, not maximum germination temperatures.
+Substrate moisture is an independent requirement, and germination is
+probabilistic even when all conditions are met.
+
+| Seed | Minimum temperature | Minimum local humidity | Substrate and additional conditions |
+| --- | ---: | ---: | --- |
+| Grass Seeds | `5 C` | `25%` | Wet Mud, Wet Sand, or Wet Ash; Wet Mud gives Grass a richer-soil growth bonus. |
+| Moss Spores | `0 C` | `78%` | Damp Wood, Stone, Wet Sand, Wet Mud, or Wet Ash near the spores. |
+| Daffodil Seeds | `2 C` | `35%` | Wet Mud or Wet Sand. |
+| Red Tulip Seeds | `4 C` | `38%` | Wet Mud or Wet Sand. |
+| Geranium Seeds | `8 C` | `28%` | Wet Mud or Wet Sand. |
+| Blue Flower Seeds | `3 C` | `30%` | Wet Sand or Wet Ash. |
+| Banana Seeds | `18 C` | `75%` | Wet Mud or Water. |
+| Water Grass / Lily Seeds | `8 C` | `65%` | Wet Mud and nearby open water; at a depth of three or more water cells it grows in submerged form. |
 
 Growing cells track health against their species' minimum/maximum and ideal
 temperature and humidity, plus the required root-zone moisture. In-range plants
@@ -626,6 +753,22 @@ healthy plants reproduce; a cooldown and nearby-seed limit prevent a mature
 patch from producing seeds every frame. Existing burn, freeze, and acid
 reactions still apply.
 
+The thriving ranges below apply after germination. Plants may survive in a
+wider climate band but grow more slowly or stop; prolonged unsuitable
+temperature, humidity, or root moisture can reduce health until the plant
+withers into Dry Mud.
+
+| Established plant | Thriving temperature | Thriving humidity | Growing note |
+| --- | ---: | ---: | --- |
+| Grass | `5-34 C` | `25-95%` | Wet Mud is richer and improves growth and health. |
+| Moss | `0-30 C` | `68-100%` | Damp Wood, Stone, Wet Sand, Wet Mud, or Wet Ash supports it. |
+| Daffodil | `2-30 C` | `35-92%` | Grows on damp soil and flowers at maturity. |
+| Red Tulip | `4-28 C` | `38-92%` | Grows on damp soil and flowers at maturity. |
+| Geranium | `10-38 C` | `28-88%` | Grows on damp soil and branches into flower clusters. |
+| Blue Flower | `3-29 C` | `30-96%` | Grows on Wet Sand or Wet Ash. |
+| Banana Plant | `18-42 C` | `76-100%` | Needs wet roots; nearby Water can satisfy the root moisture check. Mature height is `14-32` cells. |
+| Water Grass | `8-36 C` | `65-100%` | Needs nearby open water and forms submerged stems, surface pads, and blooms. |
+
 ### Humidity and condensation
 
 Relative humidity is a local `0-100%` field attached to air locations, not a
@@ -635,6 +778,35 @@ toward the Base Humidity slider. Water above freezing, Steam, Cloud, and growing
 plants raise nearby humidity; exposed Sand and Dry Mud lower it. Plants
 therefore both depend on moisture and contribute humidity as they grow.
 
+Base Humidity is a slow outside-air target, not a value imposed on every cell.
+Sheltered air keeps local conditions longer. For germination, aim for the
+species' local humidity minimum and provide wet substrate separately; high air
+humidity does not turn dry Sand into Wet Sand. Water above freezing, Steam,
+Clouds, and growing plants add local moisture, while Sand and Dry Mud remove
+some. Clusters of plants create a stronger humid pocket than one isolated
+plant. Cloud evaporation above `100 C` can return up to `12` humidity points,
+with a smaller rise when local humidity is already near its `100%` cap.
+
+Plant humidity contributions are relative source strengths applied gradually
+to adjacent air, not immediate percentage-point jumps:
+
+| Growing species | Humidity contribution strength |
+| --- | ---: |
+| Grass | `0.25` |
+| Moss | `0.8` |
+| Daffodil | `0.2` |
+| Red Tulip | `0.2` |
+| Geranium | `0.24` |
+| Blue Flower | `0.22` |
+| Banana Plant | `0.55` |
+| Water Grass | `0.75` |
+
+To establish a humid planting area, set Base Humidity near the seed's minimum,
+provide the required damp ground or open water, and plant moisture-producing
+species nearby. If it stays too dry, inspect the Humidity view for exposed Sand
+or Dry Mud, add a moisture source, or raise Base Humidity; keep the substrate
+wet even when the air is humid.
+
 The Dewpoint slider sets a configurable `0-100 C` threshold, defaulting to
 `10 C`. When exposed upper air is at or below the dewpoint and local humidity
 reaches `88%`, sparse Cloud gas particles can nucleate without an existing
@@ -642,11 +814,13 @@ cloud. Enclosed chambers retain and diffuse humidity but do not spontaneously
 spawn weather. Cloud gas rises/drifts and, at or below the dewpoint in air at
 `88%` or higher humidity, can condense into individual precipitation particles:
 Water when the precipitation temperature is above `0 C`, Snow at or below
-`0 C`. A Cloud above `100 C` evaporates and restores up to `12` percentage
+`0 C`. Each eligible Cloud has a `1.2%` chance on a reaction check to
+precipitate, consuming `18` local humidity points. Clouds placed from the
+material picker also rise and drift and can precipitate under the same
+conditions. A Cloud above `100 C` evaporates and restores up to `12` percentage
 points to humidity at its location, matching the amount consumed when the cloud
 formed. Local humidity is capped at `100%`, so the actual increase can be
 smaller when the air is already humid.
-Clouds are a gas material and can be placed with the material picker.
 
 Steam remains produced by boiling Water and Wet Mud, evaporates above `3000 C`,
 and has no lifetime timer. It adds moisture to nearby air and condenses to Water
@@ -654,6 +828,12 @@ or Snow when the air reaches the configured Dewpoint and local humidity is at
 least `82%`. Boiling, Steam condensation, cloud formation, and rain/snow all
 participate in the same humidity and temperature cycle; changing the dewpoint
 affects both Steam and Cloud.
+
+For more frequent cloud formation and rain, raise Base Humidity toward
+`95-100%` and set Dewpoint a little above the temperature of exposed upper air.
+Natural Cloud formation is sparse, so place several Clouds to build coverage
+sooner. For clouds without rain, keep surrounding air warmer than Dewpoint or
+local humidity below `88%`. Enclosed chambers do not form natural weather.
 
 ### Corrosion and persistence
 
@@ -671,6 +851,11 @@ so it needs `1440` qualifying exposure counts (four times Copper's exposure).
 The powder can fall away and leave a gap in a wire or metal structure. Molten
 forms do not accumulate this exposure. Corrosion powder melts into Lava at
 `1000 C`.
+
+To protect a metal build, keep Water from touching it and avoid adjacent air
+remaining at or above `98%` humidity. Use the Humidity view to inspect local
+air. Base Humidity is a slow outside-air target and does not replace the local
+reading.
 
 Local humidity, plant health, corrosion exposure, and plant reproduction
 cooldown are stored in per-cell arrays. Base Humidity and Dewpoint are saved as
@@ -750,3 +935,93 @@ Portable Save/Load and local Resume Game save both wind strengths under the
 environment settings. Older saves that contain only `tools.windStrength` map
 that legacy value to the new scale and restore both handles to the same value;
 legacy strength `15` therefore restores General Wind and Gust Strength at `50`.
+
+## 9. Canvas feedback and live inspection
+
+FPS and particle count stay in the top readout. The fixed feedback panel sits
+below the canvas, outside its scrolling viewport. It has a fixed height and
+does not resize or scroll when the hovered content changes; the canvas gives
+up `10px` of its allocated height for the panel. No cell numbers are shown.
+Feedback follows the current pointer and simulation state; leaving the canvas
+clears the pointer-specific lines.
+
+Hovering over empty air reports local air temperature, humidity, and wind speed.
+The speed combines local advected airflow, wind-tool display samples, General
+Wind, and gust airflow. Hovering a particle reports its name, catalog group and
+subcategory where present, physical category, temperature, humidity, and
+source-defined state transitions such as `> 100 C Water -> Steam`. Hover
+readings include numeric local illumination; heat glow remains a separate
+rendering effect and is not illumination.
+
+### Local illumination
+
+`world.illumination` stores one derived `0`-to-`100` value per world-grid cell,
+using the same flat indexing as `world.type`. `getIlluminationAt(x, y)` reads
+the field. It is rebuilt from emitters and blockers rather than serialized into
+world saves or blueprints.
+
+An ON Lamp emits only while its electrical input reaches a charged Battery.
+Its omnidirectional 360-degree field is measured in world cells by Euclidean
+distance and is independent of canvas zoom. At distance `d`, Lamp contribution
+is `min(100, max(0, 100 * (26 - d) / 25))`: the source cell is `100`, distance
+`25` receives `100/25`, and distance `26` is dark. Persistent Fire and Lava
+emit at peak intensity `50`; Scoria emits at `30`. Each uses linear falloff
+`max(0, intensity * (6 - d) / 6)`, reaching zero at distance six. Fire created
+when Oil or Wood burns uses the same peak intensity of `50` while it persists.
+Lamp light is yellow; Fire, Lava, and Scoria light is orange. Tint is rendering
+metadata only: it does not alter `world.illumination` or any logical reading.
+
+Gunpowder creates a `100`-intensity, ten-cell explosion flash at `explode()`
+before blast cells are cleared. The flash fades over four simulation ticks; the
+resulting Fire remains as a dim emitter after the flash expires. Sparks and
+fuses do not emit light. Contributions add and clamp at `100`.
+
+Solids, powders, plants, and machine bodies block light along a cell-center
+grid ray. Air, gases, Elec, and Tubing transmit it. Light does not affect
+temperature, reactions, or plant viability; light-responsive plants remain
+future work.
+
+The renderer samples `world.illumination` into a separate one-pixel-per-cell
+canvas overlay above particles and below machine overlays. Yellow and orange
+tints are at most 50% opaque at illumination 100, fade in proportion to
+intensity, and are fully transparent at zero. When emitter colors overlap, the
+strongest local contribution chooses the tint; total illumination still adds
+and clamps independently. The overlay scales with the world canvas; it appears
+only in Normal view, while alternate visualization palettes remain unchanged.
+Clipping at the world/canvas edge does not alter field values. A Lamp icon's
+glow is decorative and separate from the simulated field.
+
+Hovering empty air or a particle reports numeric local illumination alongside
+the ordinary temperature, humidity, and transition details. Machine hover also
+reports received illumination; Lamp hover identifies whether emission is ON
+or OFF, its 360-degree/25-cell reach, and the received value.
+
+Hovering a machine shows its name, temperature, active/inactive status, and the
+live state of its declared inputs and outputs. Gate ports are individually
+labeled by role and direction, including the separate blue Battery supply,
+signal inputs A/B, and signal output. Logical input and output readings use the
+steady ON/OFF circuit state, not the cosmetic traveling-Spark animation.
+
+The Battery icon and charge percentage appear at the bottom of the feedback
+panel only while hovering a Battery. The fill indicator shows charge level in
+red at `25%` or below, orange below `75%`, and green at `75%` or above. The same
+readout reports connected circuit load in Battery charge units per simulation
+tick. Load includes every conductive cell in the connected grid, plus a
+switched-ON Lamp on its input circuit and each logic gate whose supply is
+powered; each device load is counted once even when the circuit branches. Wire
+cells each add their material's configured per-cell load. These are the same
+loads used by Battery discharge.
+For a gate, its output-network wire and device loads are billed back to the
+gate's separate supply, not to either signal-source Battery. The routed AND
+regression verifies this distinction by comparing the supply and signal
+Battery grids.
+
+Charging direction and time estimate use the connected Battery reservoir's
+charge trend across five elapsed seconds. The panel initially says it is
+sampling the trend, then reports `DISCHARGING` in red with an estimated time to
+empty, `CHARGING` in green with an estimated time to full, or `No net charge
+flow`. It calculates the trend rate and estimate from actual elapsed seconds,
+not an assumed tick rate, and re-baselines each five-second sample. Short Spark
+Block bursts therefore do not immediately reverse the displayed trend. The
+estimate is omitted until a full trend sample is available or when there is no
+net charge flow.

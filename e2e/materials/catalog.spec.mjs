@@ -14,7 +14,7 @@ test('catalog groups materials, selects them accessibly, and describes their beh
     const headingOrder = await page.locator('#particleButtons .panel-heading-toggle > span:first-child').allTextContents();
     expect(headingOrder).toEqual([
         'Powders', 'Liquids', 'Gases', 'Solids', 'Seeds',
-        'Metals', 'Electricals', 'Machines', 'Storage', 'Tools', 'Vegetation'
+        'Metals', 'Electricals', 'LOGIC', 'Machines', 'Storage', 'Tools', 'Vegetation'
     ]);
 
     const sand = page.getByRole('button', { name: 'Sand', exact: true });
@@ -183,7 +183,7 @@ test('Stainless Steel is selectable in Metals and describes its conductive rust 
     expect(material.stainless.dischargeBattery).toBe(true);
     expect(material.stainless.powerConsumption).toBe(0.5);
     expect(material.stainless.powerConsumption).toBe(material.iron.powerConsumption);
-    expect(material.stainless.wireReach).toBe(2);
+    expect(material.stainless.wireReach).toBe(1);
     expect(material.stainless.wireReach).toBe(material.iron.wireReach);
     expect(material.stainless.metal).not.toBe(true);
     expect(material.stainless.description).toMatch(/rust|water|humidity/i);
@@ -228,7 +228,7 @@ test('Electricals contains Elec, a copper-like wire with stronger heat and elect
     expect(elec.thermalNetworkRate).toBeGreaterThan(copper.thermalNetworkRate);
     expect(elec.electricalConductivity).toBeGreaterThan(copper.electricalConductivity);
     expect(elec.dischargeBattery).toBe(true);
-    expect(elec.wireReach).toBeGreaterThan(0);
+    expect(elec.wireReach).toBe(1);
     expect(elec.corrosionResistance).toBeGreaterThan(copper.corrosionResistance);
     expect(elec.description).toMatch(/copper/i);
     expect(elec.description).toMatch(/heat|thermal/i);
@@ -261,6 +261,34 @@ test('Battery and Spark materials are grouped under Electricals with the electri
     for (const name of ['Battery', 'Spark', 'Spark Dust', 'Spark Block', 'Temperature Switch', 'Humidity Switch']) {
         expect(groups[name], name).toBe('Electricals');
     }
+});
+
+test('LOGIC is its own panel immediately after Electricals and lists all five electrical gates', async ({ page }) => {
+    const game = new GamePage(page);
+    await game.openMenu();
+    await game.newGame();
+
+    const headings = page.locator('#particleButtons .panel-heading');
+    const headingLabels = await page.locator('#particleButtons .panel-heading-toggle > span:first-child').allTextContents();
+    expect(headingLabels.indexOf('LOGIC')).toBe(headingLabels.indexOf('Electricals') + 1);
+
+    const logicHeading = headings.filter({ hasText: /^LOGIC$/ });
+    const logicPanel = logicHeading.locator('xpath=following-sibling::div[1]');
+    await expect(logicHeading).toBeVisible();
+
+    const gateNames = ['NOT', 'AND', 'OR', 'NAND', 'XOR'];
+    for (const name of gateNames) {
+        const button = logicPanel.getByRole('button', { name: new RegExp(`^${name}(?: Gate)?$`) });
+        await expect(button, `${name} is listed in the LOGIC panel`).toBeVisible();
+    }
+
+    const definitions = await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        return physics.getDefinitions().filter(definition => definition &&
+            /^(?:NOT|AND|OR|NAND|XOR)(?: Gate)?$/.test(definition.name));
+    });
+    expect(definitions.map(definition => definition.name.replace(/ Gate$/, '')).sort()).toEqual(gateNames.sort());
+    expect(definitions.every(definition => definition.group === 'Electricals')).toBe(true);
 });
 
 test('sensor material IDs and machine keys stay stable while sensor APIs and persistence fields keep their names', async ({ page }) => {

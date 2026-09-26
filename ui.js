@@ -41,7 +41,7 @@ import {
     setSprinklerReleaseRate, isSprinklerReleaseEnabled, setSprinklerReleaseEnabled,
     isDrainModeEnabled, setDrainModeEnabled,
     getMachineSensorRule, setMachineSensorRule, getMachineSensorThreshold,
-    setMachineSensorThreshold, getMachineSensorStatus,
+    setMachineSensorThreshold, getMachineSensorStatus, getIlluminationAt,
     getTubingFlows, getSprinklerTubingRate, getMixerInventory, purgeMixerBin,
     isMixerReleaseEnabled, setMixerReleaseEnabled, isMachinePoweredAt,
     migrateLegacyMachinePortEndpointRemap
@@ -1225,7 +1225,7 @@ function buildParticleButtons() {
     const defs = getDefinitions();
     container.innerHTML = '';
 
-    const order = ['Powders', 'Liquids', 'Gases', 'Solids', 'Seeds', 'Metals', 'Electricals', 'Machines', 'Storage', 'Tools', 'Other', 'Vegetation'];
+    const order = ['Powders', 'Liquids', 'Gases', 'Solids', 'Seeds', 'Metals', 'Electricals', 'LOGIC', 'Machines', 'Storage', 'Tools', 'Other', 'Vegetation'];
     const groups = {};
     for (let id = 1; id < defs.length; id++) {
         if (!defs[id]) continue;
@@ -1235,6 +1235,8 @@ function buildParticleButtons() {
     const headings = Object.keys(groups).sort(
         (a, b) => order.indexOf(a) - order.indexOf(b)
     );
+    const logicIds = groups.Electricals?.filter(id => defs[id].catalogSubgroup === 'LOGIC') || [];
+    if (logicIds.length) headings.splice(headings.indexOf('Electricals') + 1, 0, 'LOGIC');
 
     for (const heading of headings) {
         const title = document.createElement('h3');
@@ -1261,7 +1263,14 @@ function buildParticleButtons() {
         grid.className = 'particle-grid';
         grid.id = gridId;
         grid.hidden = !initiallyExpanded;
-        groups[heading].forEach(id => grid.appendChild(makeParticleButton(defs[id], id)));
+        if (heading === 'LOGIC') {
+            logicIds.forEach(id => grid.appendChild(makeParticleButton(defs[id], id)));
+        } else if (heading === 'Electricals') {
+            groups[heading].filter(id => !defs[id].catalogSubgroup)
+                .forEach(id => grid.appendChild(makeParticleButton(defs[id], id)));
+        } else {
+            groups[heading].forEach(id => grid.appendChild(makeParticleButton(defs[id], id)));
+        }
         container.appendChild(grid);
 
         toggle.addEventListener('click', () => {
@@ -1713,6 +1722,9 @@ function machineTooltipText(machine) {
         lines.push(`Switch: ${enabled ? 'ON' : 'OFF'}`);
         lines.push(`Status: ${enabled && isMachinePoweredAt(machine.x, machine.y)
             ? 'Lit' : enabled ? 'No signal at input' : 'Off'}`);
+        lines.push(`Light emission: ${enabled && isMachinePoweredAt(machine.x, machine.y) ? 'ON' : 'OFF'}`);
+        lines.push('Reach: 360° over 15 cells; distance 15 receives 1/15 intensity');
+        lines.push(`Illumination received: ${formatNumber(getIlluminationAt(machine.x, machine.y))}%`);
         lines.push('Click to change Lamp settings');
         return lines.join('\n');
     }
@@ -2286,7 +2298,7 @@ function setUpCanvasInput() {
         stopEdgePan();
         lastPointerEvent = event;
         currentCell = cellFromEvent(event);
-        setHoverCell(currentCell.x, currentCell.y);
+        setHoverCell(currentCell.x, currentCell.y, event.clientX, event.clientY);
         const pointerMachine = machineAtPointer(event);
         updateMachineCursor(currentCell, event);
 
@@ -2383,7 +2395,7 @@ function setUpCanvasInput() {
     canvas.addEventListener('mousemove', event => {
         lastPointerEvent = event;
         currentCell = cellFromEvent(event);
-        setHoverCell(currentCell.x, currentCell.y);
+        setHoverCell(currentCell.x, currentCell.y, event.clientX, event.clientY);
         updateMachineCursor(currentCell, event);
         if (deferredMachinePortGesture || activeMachinePortGesture) {
             updateMachinePortGesture(event);
@@ -2466,7 +2478,7 @@ function setUpCanvasInput() {
         event.preventDefault();
         lastPointerEvent = event.touches[0];
         currentCell = cellFromEvent(event.touches[0]);
-        setHoverCell(currentCell.x, currentCell.y);
+        setHoverCell(currentCell.x, currentCell.y, event.touches[0].clientX, event.touches[0].clientY);
         const pointerMachine = machineAtPointer(event.touches[0]);
         updateMachineCursor(currentCell, event.touches[0]);
         if (activeBlueprintSlot !== null) {
@@ -2535,7 +2547,7 @@ function setUpCanvasInput() {
         event.preventDefault();
         lastPointerEvent = event.touches[0];
         currentCell = cellFromEvent(event.touches[0]);
-        setHoverCell(currentCell.x, currentCell.y);
+        setHoverCell(currentCell.x, currentCell.y, event.touches[0].clientX, event.touches[0].clientY);
         if (deferredMachinePortGesture || activeMachinePortGesture) {
             updateMachinePortGesture(event.touches[0]);
             return;

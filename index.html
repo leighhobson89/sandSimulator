@@ -56,15 +56,6 @@
 
                 <div class="toolbar-group toolbar-end">
                     <span id="readout" class="readout">&nbsp;</span>
-                    <div id="chargeIndicator" class="charge-indicator" hidden role="img"
-                         aria-label="Battery charge" title="Battery charge">
-                        <svg class="charge-battery" viewBox="0 0 26 16" aria-hidden="true">
-                            <rect class="charge-battery-shell" x="1" y="1" width="21" height="14" rx="2"></rect>
-                            <rect class="charge-battery-terminal" x="22" y="5" width="3" height="6" rx="1"></rect>
-                            <rect id="chargeIndicatorFill" class="charge-battery-fill" x="3" y="3" width="0" height="10" rx="1"></rect>
-                        </svg>
-                        <span id="chargeIndicatorValue">0%</span>
-                    </div>
                     <select id="themeSelect" class="select-input tooltip-control" data-tooltip="Change the visual theme"></select>
                 </div>
             </div>
@@ -75,17 +66,32 @@
                 <div id="particleButtons"></div>
             </aside>
 
-            <main id="canvasArea" data-zoom-level="1" tabindex="0"
+            <div class="canvasColumn">
+                <main id="canvasArea" data-zoom-level="1" tabindex="0"
                   aria-label="Simulation canvas viewport. Use arrow keys to scroll when zoomed.">
                 <div id="zoomStatus" class="zoom-status" role="status" aria-live="polite"
                      aria-atomic="true" hidden></div>
                 <div id="canvasStage">
                     <canvas id="canvas"></canvas>
+                    <canvas id="illuminationOverlay" aria-hidden="true"></canvas>
                     <div id="machineOverlay" aria-hidden="true"></div>
                     <div id="marqueeOverlay" aria-hidden="true" hidden></div>
                     <div id="blueprintStampPreview" aria-hidden="true" hidden><canvas></canvas></div>
                 </div>
-            </main>
+                </main>
+                <section id="feedbackPanel" aria-label="Simulation feedback">
+                    <div id="hoverFeedback" role="status" aria-live="polite" aria-atomic="true"></div>
+                    <div id="chargeIndicator" class="charge-indicator" hidden role="img"
+                         aria-label="Battery charge" title="Battery charge">
+                        <svg class="charge-battery" viewBox="0 0 26 16" aria-hidden="true">
+                            <rect class="charge-battery-shell" x="1" y="1" width="21" height="14" rx="2"></rect>
+                            <rect class="charge-battery-terminal" x="22" y="5" width="3" height="6" rx="1"></rect>
+                            <rect id="chargeIndicatorFill" class="charge-battery-fill" x="3" y="3" width="0" height="10" rx="1"></rect>
+                        </svg>
+                        <span id="chargeIndicatorValue">0%</span>
+                    </div>
+                </section>
+            </div>
 
             <aside id="toolsPanel" aria-label="Tools">
                 <div class="workspace-tabs" role="tablist" aria-label="Workspace">
@@ -327,6 +333,7 @@
                 </div>
             </aside>
         </div>
+
     </div>
 
     <div id="toolTooltip" class="tool-tooltip" role="tooltip" hidden></div>

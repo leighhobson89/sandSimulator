@@ -106,6 +106,9 @@ hover or focus any material button for its glossary description, properties and
 implemented reactions. The material and machine mechanics reference, including
 the glossary maintenance contract, is in
 [`docs/GAME_MECHANICS.md`](docs/GAME_MECHANICS.md).
+Powered Lamps, Fire, Lava, Scoria, and Gunpowder blasts also create local
+illumination; the mechanics reference describes its falloff, rendering, and
+hover readings.
 
 **Grabber** moves existing material instead of painting more. Its fairground
 claw button and separate 1-to-60-pixel square size sit in the Tools panel.
@@ -310,8 +313,9 @@ few seconds rather than vanishing, but melts almost at once against a flame.
 
 ### Metals and power
 
-For practical help using metals, heat, power, and corrosion, see the
-[Metals Guide](docs/METALS_GUIDE.md).
+For the consolidated material, heat, power, corrosion, seed, plant, and
+humidity reference, see [Game Mechanics](docs/GAME_MECHANICS.md#2-material-behavior-quick-reference)
+and its [growing and corrosion section](docs/GAME_MECHANICS.md#7-seeds-plants-humidity-dewpoint-weather-and-corrosion).
 
 The **Metals** section contains Copper, Battery, Iron, Stainless Steel, and
 non-conductive Tubing, plus Copper and Iron's molten forms, Molten Aluminum,

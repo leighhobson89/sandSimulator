@@ -33,23 +33,25 @@ already implemented.
 
 The current DC contract provides a stable base for more circuits: machine
 inputs read logical current, and directional switches pass that current only
-when their rule permits it. The proposal for a small gate set, supporting
-controls, and power diagnostics is in
-[Logic gates and lighting](proposals/LOGIC_GATES_AND_LIGHTING.md). Keep future
-timed pulses separate from sustained current so each behavior has a clear
-meaning.
+when their rule permits it. The NOT, AND, OR, NAND, and XOR gates have separate
+Battery-backed supply and signal routes. A focused AND-to-Lamp circuit confirms
+independent source cutoff, eight-neighbor route separation, and output-network
+loads billed to the gate's supply, not either signal Battery. See
+[Game Mechanics](GAME_MECHANICS.md#3-powered-storage-transfer-and-connection-machines)
+and [Canvas feedback](GAME_MECHANICS.md#9-canvas-feedback-and-live-inspection).
+Keep future timed pulses separate from sustained current so each behavior has
+a clear meaning.
 
 | Candidate | What the player could do | Design point to resolve |
 | --- | --- | --- |
-| **Logic gates** | Combine two or more sustained input levels with NOT, AND, OR, or XOR. | Define the supply contact, fan-out, output load, and deterministic feedback behavior. |
 | **Toggle / button** | Manually hold a route ON or trigger a temporary action. | Distinguish saved toggle state from momentary activation duration. |
 | **Latch / timer** | Remember an input or produce repeatable and one-shot timing. | Specify simultaneous set/reset priority, restart rules, timing bounds, and persistence. |
-| **Dedicated wire** | Route power through a visually distinct, paintable wire instead of relying on Copper or Iron material. | Clarify how wire joins existing conductors and whether it has durability or capacity. |
 | **Generator family** | Add a Wind Turbine that turns ambient airflow into stored Battery charge; later consider a Steam Dynamo. | A generator needs a defined output path into the current Battery network and understandable rate feedback. |
 
-Useful feedback includes a logical-current overlay, Battery charge and load
-readouts, and a hover explanation for inactive machines. Keep that diagnostic
-state visibly separate from cosmetic traveling Sparks.
+The hover panel now reports local material/air state, machine signals, Battery
+circuit load, and five-second charge trends with elapsed-time estimates. A
+logical-current overlay remains a possible extension; it should stay separate
+from cosmetic traveling Sparks.
 
 ## Machines that connect the existing loops
 
@@ -74,13 +76,16 @@ model without requiring a continuous fluid solver.
 - **Plant nutrients and compost:** let Ash, Wet Ash, or a new Compost material
   improve growth or seed production. A soil-quality readout could make the
   effect observable without adding a hidden global fertility map.
-- **Light as a local field:** a powered Lamp and selected light-emitting
-  materials could illuminate nearby cells and affect responsive plants. Keep
-  irradiance separate from heat and thermal glow; decide material transmission,
-  shadow updates, rendering, and performance before adding light-dependent
-  elements. The [logic gates and lighting proposal](proposals/LOGIC_GATES_AND_LIGHTING.md)
-  outlines a bounded first version. Solar generation and day/night are later
-  ideas.
+- **Light-responsive plants and additional emitters:** the derived local field
+  already combines powered Lamps, Fire, Lava, Scoria, and brief Gunpowder
+  explosion flashes. Fire, Lava, and Scoria use orange rendering tints with
+  their configured peak intensities; the tint does not change numeric light.
+  The field is separate from heat, thermal glow, and plant viability. Let
+  selected plants respond to light only after defining species ranges and
+  growth behavior; consider other emitters deliberately. The
+  [logic gates and lighting proposal](proposals/LOGIC_GATES_AND_LIGHTING.md)
+  records those remaining ideas. Ambient sunlight, Solar generation, and
+  day/night are later ideas.
 - **Wind Turbine element or machine:** use existing decaying airflow as an
   input to a generator. It would pair naturally with the Wind tool and Fan,
   though a powered Fan feeding its own generator must not create free energy.
@@ -125,9 +130,9 @@ cross-system coupling would make layouts harder to reason about.
 - **Optional goals and challenge rules:** objectives could ask players to
   produce a material, keep a plant alive, or move a target quantity through
   Tubing. Keep the open-ended sandbox as the default.
-- **Power and material inspectors:** show selected-cell temperature, charge,
-  state, and recent transitions; let players inspect machine load and Tubing
-  flow without opening multiple dialogs.
+- **Richer inspectors:** extend the live hover panel with an optional pinned
+  selection, recent-history view, or Tubing flow details without removing its
+  existing temperature, charge, transition, and machine-load feedback.
 - **Reusable local designs:** expand the current Blueprint workflow into a
   named local gallery with folders or tags. Sharing and online discovery can
   wait until storage, moderation, and compatibility rules are designed.
@@ -148,14 +153,14 @@ cross-system coupling would make layouts harder to reason about.
 
 ## Suggested exploration order and guardrails
 
-1. Improve power and machine status overlays using existing state; measure the
-   value before changing the electrical model.
-2. Extend the steady DC model with a small tested gate or control, using the
-   proposal's supply, fan-out, load, and persistence decisions.
+1. Consider a logical-current overlay using the existing signal state, keeping
+   it separate from traveling-Spark animation.
+2. Specify stateful controls such as buttons, latches, and timers separately
+   from the implemented combinational gates.
 3. Prototype a Pump or Valve and extend Tubing only as far as that use case
    needs; add a small scenario to explain the resulting loop.
-4. Explore a local light field only after profiling its simulation and rendering
-   cost at both supported world sizes.
+4. Consider light-responsive species and additional emitters as separate work;
+   profile field updates with dense sources before broadening illumination.
 
 Keep simulations deterministic under the seeded test harness. New machine,
 route, or environmental state must be included in both local resume and

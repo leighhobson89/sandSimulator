@@ -308,6 +308,7 @@ test('Glass paints transparent machine artwork pixels, protects opaque pixels, a
 
         const targets = await page.evaluate(async ({ machine, direction, cell }) => {
             const physics = await import('/physics.js');
+            const game = await import('/game.js');
             const canvas = document.querySelector('#canvas');
             const rect = canvas.getBoundingClientRect();
             const cellWidth = rect.width / canvas.width;
@@ -384,12 +385,15 @@ test('Glass paints transparent machine artwork pixels, protects opaque pixels, a
                 ? { x: cell.x - frontX, y: cell.y - frontY } : null;
             const allowed = candidate => (!output || candidate.x !== output.x || candidate.y !== output.y) &&
                 (!intake || candidate.x !== intake.x || candidate.y !== intake.y);
-            const transparent = candidates.filter(candidate => !candidate.opaque && allowed(candidate))
+            const outsideMachineInteraction = candidate =>
+                !game.getMachineArtworkAtClientPoint(candidate.screenX, candidate.screenY);
+            const transparent = candidates.filter(candidate => !candidate.opaque && allowed(candidate) &&
+                outsideMachineInteraction(candidate))
                 .sort((a, b) => (machine.machine === 'collector' ? a.anchorDistance - b.anchorDistance :
                     a.centreDistance - b.centreDistance))[0];
             const guardedTransparent = machine.machine === 'collector'
                 ? candidates.filter(candidate => !candidate.opaque && allowed(candidate) &&
-                    !physics.isCollectorRimCell(candidate.x, candidate.y))
+                    !physics.isCollectorRimCell(candidate.x, candidate.y) && outsideMachineInteraction(candidate))
                     .sort((a, b) => a.anchorDistance - b.anchorDistance)[0]
                 : transparent;
             const opaque = candidates.filter(candidate => candidate.opaque && allowed(candidate))

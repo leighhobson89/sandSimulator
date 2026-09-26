@@ -19,6 +19,15 @@ in [`../README.md`](../README.md); active findings remain in
 
 ## Executed Plans
 
+- [`plans/2026-09-26-lamp-illumination-and-gate-circuit-regressions.md`](plans/2026-09-26-lamp-illumination-and-gate-circuit-regressions.md)
+  — derived grid illumination, persistent and transient emitters, independent
+  gate circuits and load attribution, port geometry, and the focused 32/32
+  verification record.
+- [`plans/2026-09-26-feedback-and-logic-gates.md`](plans/2026-09-26-feedback-and-logic-gates.md)
+  — fixed canvas feedback and Battery diagnostics, logic-gate catalog and
+  connector behavior, documentation consolidation, and its initial routed-AND
+  verification gap, later closed by the Lamp illumination and gate-circuit
+  regression plan above.
 - [`plans/2026-09-26-electrical-catalog-and-environment-sensors.md`](plans/2026-09-26-electrical-catalog-and-environment-sensors.md)
   — Electricals catalog regrouping, Temperature/Humidity Switches, independent
   Battery-backed DC logic, Vegetation picker behavior, persistence, and focused

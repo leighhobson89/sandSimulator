@@ -154,3 +154,10 @@ forms.
   functional areas. The full browser suite passes in both modes with
   `npx playwright test --workers=1 --trace=off` and
   `npx playwright test --headed --workers=1 --trace=off`.
+
+### Electrical adjacency update — 2026-09-26
+
+The earlier note above that Copper and Iron bridge empty cells is superseded.
+Electrical routes now require occupied neighboring conductor cells; one empty
+air cell breaks the route. Direct diagonal adjacency remains supported. The
+current contract is documented in [`../GAME_MECHANICS.md`](../GAME_MECHANICS.md).

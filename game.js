@@ -14,15 +14,17 @@ import {
     setBeginGameStatus, setGameStateVariable, getBeginGameStatus,
     getMenuState, getGameVisiblePaused, getGameVisibleActive,
     getParticleTypeIdSelected, setParticleDefinitions,
-    getBrushSize, getDrawMode, getEraserOn, getVisualizationMode, getSimulationPaused, getWindStrength,
+    getBrushSize, getEraserOn, getVisualizationMode, getSimulationPaused, getWindStrength,
     getGrabberOn, getGrabberSize
 } from './constantsAndGlobalVars.js';
 import {
     prepareDefinitions, createWorld, getWorld, clearWorld, stepSimulation,
-    setCell, inBounds, index, getDefinitions, getAmbientTemp, getAirTempAt,
-    getAmbientTarget, getTemperature, getHumidityAt, getFrameCount, applyWind, decayWindTrails,
+    setCell, inBounds, index, getDefinitions, getAirTempAt,
+    getAmbientTarget, getHumidityAt, getFrameCount, applyWind, decayWindTrails,
     windStrengthToLegacyScale,
-    getConnectedBatteryCharge, getTubingFlows, isMachinePoweredAt,
+    getBatteryCircuitMetrics, getMachineLiveStatus,
+    getTubingFlows, isMachinePoweredAt,
+    getIlluminationAt,
     getMachinePorts, getMachinePortTemplates, getMachineSetting,
     registerMachinePortLead, getMachinePortLeadOwner,
     getMachineArtworkLayout, isMachinePortMaterialCompatible, EMPTY,
@@ -32,6 +34,8 @@ import {
 let context = null;
 let imageData = null;
 let pixels = null;
+let illuminationContext = null;
+let illuminationImageData = null;
 let frames = 0;
 let lastFpsCheck = 0;
 let fps = 0;
@@ -45,6 +49,8 @@ let machinePlacementPreview = null;
 let machinePortConnectorPreview = null;
 const STANDARD_ZOOM_FACTORS = [1, 1.5, 2, 3];
 const LARGE_WORLD_ZOOM_FACTORS = [1, 2, 3, 4, 6];
+const MACHINE_PORT_PROTRUSION_SCREEN_PX = 30;
+const MACHINE_PORT_PROTRUSION_MAX_LOCAL_PX = 15;
 const WORLD_BOUNDARY_DEPTH = 12;
 const STANDARD_WORLD_COLS = 260;
 const STANDARD_WORLD_ROWS = 150;
@@ -97,6 +103,15 @@ export function startGame({ newWorld = false, alignAtGround = false } = {}) {
     canvas.width = cols;
     canvas.height = rows;
 
+    const illuminationCanvas = getElements().illuminationOverlay;
+    if (illuminationCanvas) {
+        illuminationCanvas.width = cols;
+        illuminationCanvas.height = rows;
+        illuminationContext = illuminationCanvas.getContext('2d');
+        illuminationContext.imageSmoothingEnabled = false;
+        illuminationImageData = illuminationContext.createImageData(cols, rows);
+    }
+
     context = canvas.getContext('2d');
     context.imageSmoothingEnabled = false;
     imageData = context.createImageData(cols, rows);
@@ -111,6 +126,7 @@ export function startGame({ newWorld = false, alignAtGround = false } = {}) {
     if (!scrollRenderAttached) {
         getElements().canvasArea.addEventListener('scroll', () => {
             if (context && imageData) drawWorld();
+            updateFeedback();
         }, { passive: true });
         scrollRenderAttached = true;
     }
@@ -119,11 +135,14 @@ export function startGame({ newWorld = false, alignAtGround = false } = {}) {
         setBeginGameStatus(false);
     }
     drawWorld();
+    frames = 0;
+    fps = 0;
+    lastFpsCheck = performance.now();
+    updateReadout();
     // Going back to the menu stops the loop, so coming back in has to start it
     // again - but only ever one loop at a time.
     if (loopRunning) return;
     loopRunning = true;
-    lastFpsCheck = performance.now();
     if (!window.__E2E_MODE__) requestAnimationFrame(gameLoop);
 }
 
@@ -261,6 +280,11 @@ function applyCanvasZoom() {
     if (machineOverlay) {
         machineOverlay.style.width = `${width}px`;
         machineOverlay.style.height = `${height}px`;
+    }
+    const illuminationOverlay = getElements().illuminationOverlay;
+    if (illuminationOverlay) {
+        illuminationOverlay.style.width = `${width}px`;
+        illuminationOverlay.style.height = `${height}px`;
     }
     drawWorldBoundaryOverlay(width, height, canvasBaseScale * factor);
     area.dataset.zoomLevel = String(canvasZoomLevel);
@@ -410,6 +434,7 @@ export function gameLoop(now) {
     // hanging on the screen.
     decayWindTrails();
     drawWorld();
+    updateFeedback();
 
     frames++;
     if (now - lastFpsCheck >= 250) {
@@ -451,6 +476,32 @@ function visibleCellBounds(margin = 0) {
         right: Math.min(canvas.width, Math.ceil((right - rect.left) * scaleX) + margin),
         bottom: Math.min(canvas.height, Math.ceil((bottom - rect.top) * scaleY) + margin)
     };
+}
+
+function drawIlluminationLayer(world, visualizationMode) {
+    if (!illuminationContext || !illuminationImageData) return;
+    const data = illuminationImageData.data;
+    data.fill(0);
+    if (visualizationMode === 'normal') {
+        for (let i = 0; i < world.type.length; i++) {
+            const intensity = getIlluminationAt(i % world.cols, Math.floor(i / world.cols));
+            if (intensity <= 0) continue;
+            const pixel = i * 4;
+            if (world.illuminationTint[i] === 1) {
+                data[pixel] = 255;
+                data[pixel + 1] = 126;
+                data[pixel + 2] = 32;
+            } else {
+                data[pixel] = 255;
+                data[pixel + 1] = 220;
+                data[pixel + 2] = 64;
+            }
+            data[pixel + 3] = Math.round(255 * 0.5 * Math.min(1, intensity / 100));
+        }
+    }
+    // This is a one-pixel-per-cell transparent surface. CSS scales it with
+    // the world canvas, so intensity and the 25-cell reach stay world-based.
+    illuminationContext.putImageData(illuminationImageData, 0, 0);
 }
 
 function drawWorld() {
@@ -608,6 +659,7 @@ function drawWorld() {
         context.putImageData(imageData, 0, 0, bounds.left, bounds.top,
             bounds.right - bounds.left, bounds.bottom - bounds.top);
     }
+    drawIlluminationLayer(world, visualizationMode);
     if (visualizationMode === 'wind') drawWindVisualization(world, bounds, defs);
     drawMachineOverlays();
     drawGrabberOutline();
@@ -693,7 +745,7 @@ export function preloadMachineArtworkAlpha() {
     return machineArtworkAlphaPromise;
 }
 
-function machineIconContainsArtworkAt(icon, clientX, clientY) {
+function machineIconContainsArtworkAt(icon, clientX, clientY, includePortArtwork = true) {
     const frame = icon?.querySelector(':scope > svg');
     if (!frame) return false;
     let containsArtwork = false;
@@ -743,6 +795,7 @@ function machineIconContainsArtworkAt(icon, clientX, clientY) {
         }
     }
     if (containsArtwork) return true;
+    if (!includePortArtwork) return false;
 
     // Port markers and stubs are visible parts of the machine overlay too.
     // The larger transparent hit circles remain interaction affordances only.
@@ -766,6 +819,18 @@ function machineIconContainsArtworkAt(icon, clientX, clientY) {
 export function getMachineArtworkAtClientPoint(clientX, clientY) {
     const world = getWorld();
     if (!world) return null;
+    // Machine bodies take priority over a neighbouring machine's long port
+    // protrusion when their artwork overlaps. This keeps the center of a
+    // component selectable while retaining direct interaction at its ports.
+    for (let i = machineArtworkIcons.length - 1; i >= 0; i--) {
+        const icon = machineArtworkIcons[i];
+        if (!machineIconContainsArtworkAt(icon, clientX, clientY, false)) continue;
+        const x = Number(icon.getAttribute('data-machine-x'));
+        const y = Number(icon.getAttribute('data-machine-y'));
+        const id = world.type[index(x, y)];
+        const def = getDefinitions()[id];
+        if (def?.machine) return { id, def, x, y, tubing: false };
+    }
     for (let i = machineArtworkIcons.length - 1; i >= 0; i--) {
         const icon = machineArtworkIcons[i];
         if (!machineIconContainsArtworkAt(icon, clientX, clientY)) continue;
@@ -781,6 +846,45 @@ export function getMachineArtworkAtClientPoint(clientX, clientY) {
 function appendMachineSprite(icon, machineType) {
     const layout = getMachineArtworkLayout(machineType);
     if (!layout) return;
+    if (['notGate', 'andGate', 'orGate', 'nandGate', 'xorGate'].includes(machineType)) {
+        const frame = document.createElementNS(MACHINE_ICON_SVG_NS, 'svg');
+        frame.setAttribute('x', '4');
+        frame.setAttribute('y', '4');
+        frame.setAttribute('width', '56');
+        frame.setAttribute('height', '56');
+        frame.setAttribute('viewBox', '0 0 56 56');
+        frame.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+        const add = (tag, attributes) => {
+            const element = document.createElementNS(MACHINE_ICON_SVG_NS, tag);
+            for (const [name, value] of Object.entries(attributes)) element.setAttribute(name, String(value));
+            frame.appendChild(element);
+            return element;
+        };
+        add('rect', { x: 10, y: 9, width: 36, height: 34, rx: 7,
+            fill: '#20313e', stroke: '#101922', 'stroke-width': 2.5 });
+        add('rect', { x: 13, y: 12, width: 30, height: 28, rx: 4,
+            fill: '#314b5b', stroke: '#8da6b4', 'stroke-width': 1.2 });
+        const logic = machineType.replace('Gate', '');
+        const gatePath = logic === 'not'
+            ? 'M18 16 L39 28 L18 40 Z'
+            : logic === 'and' || logic === 'nand'
+                ? 'M18 16 H25 A12 12 0 0 1 25 40 H18 Z'
+                : 'M18 16 Q25 28 18 40 Q33 38 42 28 Q33 18 18 16 Z';
+        add('path', { d: gatePath, fill: '#dce9ee', stroke: '#10212b',
+            'stroke-width': 1.7, 'stroke-linejoin': 'round' });
+        if (logic === 'xor') {
+            add('path', { d: 'M14 16 Q21 28 14 40', fill: 'none', stroke: '#dce9ee',
+                'stroke-width': 1.7, 'stroke-linecap': 'round' });
+        }
+        if (logic === 'not' || logic === 'nand') {
+            add('circle', { cx: '44.5', cy: '28', r: '2.8', fill: '#20313e',
+                stroke: '#dce9ee', 'stroke-width': 1.5 });
+        }
+        // The port overlay below draws each terminal lead once. Keeping leads
+        // out of this symbol layer avoids duplicate/diagonal input strokes.
+        icon.appendChild(frame);
+        return;
+    }
     if (machineType === 'simpleSwitch' || machineType === 'lamp') {
         const frame = document.createElementNS(MACHINE_ICON_SVG_NS, 'svg');
         frame.setAttribute('x', '4');
@@ -907,8 +1011,7 @@ export function getMachinePortAtClientPoint(clientX, clientY, materialId = null,
         const rect = hitTarget.getBoundingClientRect();
         const centerX = rect.left + rect.width / 2;
         const centerY = rect.top + rect.height / 2;
-        const distance = Math.hypot(clientX - centerX, clientY - centerY);
-        if (distance > maxDistanceCss) continue;
+        let distance = Math.hypot(clientX - centerX, clientY - centerY);
         const icon = hitTarget.closest('.machine-overlay-icon');
         if (!icon) continue;
         const machineX = Number(icon.getAttribute('data-machine-x'));
@@ -917,6 +1020,29 @@ export function getMachinePortAtClientPoint(clientX, clientY, materialId = null,
         const port = getMachinePorts(machineX, machineY).find(candidate => candidate.id === portId);
         if (!port || (materialId !== null &&
             !isMachinePortMaterialCompatible(machineX, machineY, portId, materialId))) continue;
+        // The protruding artwork is a visible lead back to the stable grid
+        // terminal. Let users begin a connector gesture anywhere along it;
+        // painting still resolves to connectionCell, so zoom never changes
+        // simulation topology.
+        const protrusion = [...icon.querySelectorAll('[data-port-protrusion]')]
+            .find(path => path.getAttribute('data-port-protrusion') === portId);
+        const matrix = protrusion?.getScreenCTM();
+        if (protrusion && matrix) {
+            const endLength = protrusion.getTotalLength();
+            const start = protrusion.getPointAtLength(0).matrixTransform(matrix);
+            const end = protrusion.getPointAtLength(endLength).matrixTransform(matrix);
+            const lineX = end.x - start.x;
+            const lineY = end.y - start.y;
+            const lineLengthSquared = lineX * lineX + lineY * lineY;
+            const projection = lineLengthSquared > 0
+                ? Math.max(0, Math.min(1,
+                    ((clientX - start.x) * lineX + (clientY - start.y) * lineY) / lineLengthSquared))
+                : 0;
+            const lineDistance = Math.hypot(clientX - (start.x + projection * lineX),
+                clientY - (start.y + projection * lineY));
+            if (lineDistance <= 6) distance = Math.min(distance, lineDistance);
+        }
+        if (distance > maxDistanceCss) continue;
         candidates.push({ ...port, machineX, machineY, markerClientX: centerX,
             markerClientY: centerY, pointerDistanceCss: distance });
     }
@@ -975,9 +1101,9 @@ function machineConnectorCells(port, endClientX, endClientY, allowConnectedBranc
     let dxCss = endClientX - port.markerClientX;
     let dyCss = endClientY - port.markerClientY;
     const lengthCss = Math.hypot(dxCss, dyCss);
-    if (lengthCss > 20) {
-        dxCss *= 20 / lengthCss;
-        dyCss *= 20 / lengthCss;
+    if (lengthCss > MACHINE_PORT_PROTRUSION_SCREEN_PX) {
+        dxCss *= MACHINE_PORT_PROTRUSION_SCREEN_PX / lengthCss;
+        dyCss *= MACHINE_PORT_PROTRUSION_SCREEN_PX / lengthCss;
     }
     const cappedEndX = port.markerClientX + dxCss;
     const cappedEndY = port.markerClientY + dyCss;
@@ -1140,7 +1266,12 @@ function drawMachineOverlays() {
         simpleSwitch: true,
         lamp: true,
         temperatureSwitch: true,
-        humiditySwitch: true
+        humiditySwitch: true,
+        notGate: true,
+        andGate: true,
+        orGate: true,
+        nandGate: true,
+        xorGate: true
     };
 
     const appendPortArtwork = (icon, ports, cellWidth, cellHeight, machineX, machineY) => {
@@ -1168,17 +1299,45 @@ function drawMachineOverlays() {
             const uy = deltaY / distance;
             const startX = cx + ux * (port.visualRadius || 2.5);
             const startY = cy + uy * (port.visualRadius || 2.5);
-            const colour = port.connected ? '#31d979' : '#f04444';
-            const stub = document.createElementNS(MACHINE_ICON_SVG_NS, 'path');
-            stub.setAttribute('class', 'machine-port-stub');
-            stub.setAttribute('d', `M ${startX.toFixed(2)} ${startY.toFixed(2)} L ${anchorX.toFixed(2)} ${anchorY.toFixed(2)}`);
-            stub.setAttribute('stroke', port.connectorMaterial === 'Copper' ? '#d88742'
-                : port.connectorMaterial === 'Elec' ? '#e6ca50' : '#a9b5bf');
-            stub.setAttribute('fill', 'none');
-            stub.setAttribute('stroke-width', '2');
-            stub.setAttribute('stroke-linecap', 'round');
-            stub.setAttribute('data-port-stub', port.id);
-            icon.appendChild(stub);
+            const isBatterySupply = port.id === 'supply';
+            const supplyColour = port.active ? '#20e4ff' : '#4fa6ff';
+            const colour = isBatterySupply ? supplyColour : port.connected ? '#31d979' : '#f04444';
+            const connectorColour = isBatterySupply ? supplyColour
+                : port.connectorMaterial === 'Copper' ? '#d88742'
+                    : port.connectorMaterial === 'Elec' ? '#e6ca50' : '#a9b5bf';
+            const isLogicGatePort = ['notGate', 'andGate', 'orGate', 'nandGate', 'xorGate']
+                .some(machineType => icon.classList.contains(`machine-${machineType}`));
+            if (!isLogicGatePort) {
+                const stub = document.createElementNS(MACHINE_ICON_SVG_NS, 'path');
+                stub.setAttribute('class', 'machine-port-stub machine-port-anchor-link');
+                stub.setAttribute('d', `M ${startX.toFixed(2)} ${startY.toFixed(2)} L ${anchorX.toFixed(2)} ${anchorY.toFixed(2)}`);
+                stub.setAttribute('stroke', connectorColour);
+                stub.setAttribute('fill', 'none');
+                stub.setAttribute('stroke-width', '2');
+                stub.setAttribute('stroke-linecap', 'round');
+                stub.setAttribute('data-port-stub', port.id);
+                icon.appendChild(stub);
+            }
+
+            const directionLength = Math.hypot(port.localDirectionX || 0, port.localDirectionY || 0) || 1;
+            const outwardX = (port.localDirectionX || 0) / directionLength;
+            const outwardY = (port.localDirectionY || 0) / directionLength;
+            const protrusionStartX = cx + outwardX * (port.visualRadius || 2.5);
+            const protrusionStartY = cy + outwardY * (port.visualRadius || 2.5);
+            // The local path length is capped at 15 viewBox pixels. The whole
+            // machine and its leads scale together as the canvas zoom changes.
+            const protrusionLength = MACHINE_PORT_PROTRUSION_MAX_LOCAL_PX;
+            const protrusionEndX = cx + outwardX * ((port.visualRadius || 2.5) + protrusionLength);
+            const protrusionEndY = cy + outwardY * ((port.visualRadius || 2.5) + protrusionLength);
+            const protrusion = document.createElementNS(MACHINE_ICON_SVG_NS, 'path');
+            protrusion.setAttribute('class', 'machine-port-stub machine-port-protruding');
+            protrusion.setAttribute('d', `M ${protrusionStartX.toFixed(2)} ${protrusionStartY.toFixed(2)} L ${protrusionEndX.toFixed(2)} ${protrusionEndY.toFixed(2)}`);
+            protrusion.setAttribute('stroke', connectorColour);
+            protrusion.setAttribute('fill', 'none');
+            protrusion.setAttribute('stroke-width', '2');
+            protrusion.setAttribute('stroke-linecap', 'round');
+            protrusion.setAttribute('data-port-protrusion', port.id);
+            icon.appendChild(protrusion);
 
             const circle = document.createElementNS(MACHINE_ICON_SVG_NS, 'circle');
             circle.setAttribute('class', `machine-port machine-port-${port.role}`);
@@ -1227,6 +1386,7 @@ function drawMachineOverlays() {
         const icon = document.createElementNS(MACHINE_ICON_SVG_NS, 'svg');
         icon.setAttribute('class', `machine-overlay-icon machine-${machine}`);
         icon.setAttribute('viewBox', '0 0 64 64');
+        icon.setAttribute('overflow', 'visible');
         icon.setAttribute('width', String(iconSize));
         icon.setAttribute('height', String(iconSize));
         icon.setAttribute('aria-hidden', 'true');
@@ -1234,6 +1394,7 @@ function drawMachineOverlays() {
         icon.setAttribute('data-machine-y', String(y));
         icon.style.width = `${iconSize}px`;
         icon.style.height = `${iconSize}px`;
+        icon.style.overflow = 'visible';
         icon.style.left = `${(x + 0.5) * cellWidth - iconSize / 2}px`;
         icon.style.top = `${(y + 0.5) * cellHeight - iconSize / 2}px`;
         icon.style.transform = `rotate(${machine === 'sprinkler'
@@ -1322,9 +1483,9 @@ export function setMachinePortConnectorPreview(preview = null) {
         let dx = preview.endClientX - preview.startClientX;
         let dy = preview.endClientY - preview.startClientY;
         const length = Math.hypot(dx, dy);
-        if (length > 20) {
-            dx *= 20 / length;
-            dy *= 20 / length;
+        if (length > MACHINE_PORT_PROTRUSION_SCREEN_PX) {
+            dx *= MACHINE_PORT_PROTRUSION_SCREEN_PX / length;
+            dy *= MACHINE_PORT_PROTRUSION_SCREEN_PX / length;
         }
         machinePortConnectorPreview = {
             ...preview,
@@ -1598,10 +1759,17 @@ function drawWindVisualization(world, bounds, defs) {
 // Where the mouse is, so the readout can show what is under it. Set from ui.js.
 let hoverX = -1;
 let hoverY = -1;
+let hoverClientX = null;
+let hoverClientY = null;
+const BATTERY_TREND_WINDOW_MS = 5000;
+let batteryTrendSample = null;
 
-export function setHoverCell(x, y) {
+export function setHoverCell(x, y, clientX = null, clientY = null) {
     hoverX = x;
     hoverY = y;
+    hoverClientX = Number.isFinite(clientX) ? clientX : null;
+    hoverClientY = Number.isFinite(clientY) ? clientY : null;
+    updateFeedback();
 }
 
 export function setLinePreview(x0, y0, x1, y1) {
@@ -1698,41 +1866,61 @@ function drawGrabberPreview() {
 function updateReadout() {
     const readout = getElements().readout;
     if (!readout) return;
-
-    const type = getWorld().type;
+    const type = getWorld()?.type || [];
     let count = 0;
     for (let i = 0; i < type.length; i++) if (type[i] !== EMPTY) count++;
-
-    const defs = getDefinitions();
-    const selected = getGrabberOn() ? `Claw ${getGrabberSize()}px`
-        : (getEraserOn() ? 'Eraser' : defs[getParticleTypeIdSelected()].name);
-    const drawing = getDrawMode() === 'line' ? 'Line'
-        : getDrawMode() === 'rectangle' ? 'Rectangle'
-            : getDrawMode() === 'ellipse' ? 'Ellipse' : 'Brush';
-
-    let under = '';
-    if (inBounds(hoverX, hoverY)) {
-        const id = type[index(hoverX, hoverY)];
-        under = `   ${defs[id].name} ${Math.round(getTemperature(hoverX, hoverY))}°C`;
-    }
-
-    readout.textContent = `${fps} fps   ${count} particles   air ` +
-        `${Math.round(getAmbientTemp())}°C   ${drawing} ${selected} ${getBrushSize()}px${under}`;
-    updateChargeIndicator(getElements());
+    readout.textContent = `${fps} fps   ${count} particles`;
 }
 
-function updateChargeIndicator(elements) {
+function formatFeedbackNumber(value) {
+    return Number.isFinite(value) ? String(Math.round(value * 10) / 10) : '—';
+}
+
+function transitionLines(def, defs) {
+    const transitions = [];
+    const targetName = id => defs[id]?.name;
+    if (Number.isFinite(def.boilPoint) && targetName(def.boilsInto)) {
+        transitions.push(`> ${formatFeedbackNumber(def.boilPoint)}°C ${def.name} -> ${targetName(def.boilsInto)}`);
+    }
+    if (Number.isFinite(def.meltPoint) && targetName(def.meltsInto)) {
+        transitions.push(`> ${formatFeedbackNumber(def.meltPoint)}°C ${def.name} -> ${targetName(def.meltsInto)}`);
+    }
+    if (Number.isFinite(def.freezePoint) && targetName(def.freezesInto)) {
+        transitions.push(`< ${formatFeedbackNumber(def.freezePoint)}°C ${def.name} -> ${targetName(def.freezesInto)}`);
+    }
+    if (Number.isFinite(def.ignitePoint) && targetName(def.burnsInto)) {
+        transitions.push(`> ${formatFeedbackNumber(def.ignitePoint)}°C ${def.name} -> ${targetName(def.burnsInto)}`);
+    }
+    if (Number.isFinite(def.evaporatesAbove)) {
+        transitions.push(`> ${formatFeedbackNumber(def.evaporatesAbove)}°C: ${def.name} evaporates`);
+    }
+    return transitions;
+}
+
+function appendFeedbackLine(container, text, chargeState = null, fullWidth = false) {
+    const line = document.createElement('div');
+    if (text.startsWith('State changes:')) line.className = 'feedback-state-changes';
+    if (fullWidth) line.classList.add('feedback-full-line');
+    if (chargeState) {
+        const separator = text.indexOf('|');
+        line.append(document.createTextNode(text.slice(0, separator)));
+        const status = document.createElement('span');
+        status.className = `feedback-charge-state charge-${chargeState}`;
+        status.textContent = text.slice(separator + 1);
+        line.appendChild(status);
+    } else {
+        line.textContent = text;
+    }
+    container.appendChild(line);
+}
+
+function updateChargeIndicator(elements, charge = null) {
     const indicator = elements.chargeIndicator;
     if (!indicator) return;
-
-    const charge = inBounds(hoverX, hoverY)
-        ? getConnectedBatteryCharge(hoverX, hoverY)
-        : null;
     if (!charge) {
         indicator.hidden = true;
         return;
     }
-
     const ratio = charge.ratio;
     const percent = Math.round(ratio * 100);
     const state = ratio <= 0.25 ? 'red' : ratio < 0.75 ? 'orange' : 'green';
@@ -1743,6 +1931,145 @@ function updateChargeIndicator(elements) {
     indicator.title = `Battery charge: ${percent}%`;
     elements.chargeIndicatorFill.setAttribute('width', String(ratio * 17));
     elements.chargeIndicatorValue.textContent = `${percent}%`;
+}
+
+function getBatteryTrend(metrics, now) {
+    if (!batteryTrendSample || batteryTrendSample.key !== metrics.key) {
+        batteryTrendSample = {
+            key: metrics.key,
+            sampledAt: now,
+            startingCharge: metrics.charge,
+            display: { ratio: metrics.ratio, state: null, label: 'Sampling 5 s charge trend' }
+        };
+        return batteryTrendSample.display;
+    }
+
+    const elapsedMs = now - batteryTrendSample.sampledAt;
+    if (elapsedMs < BATTERY_TREND_WINDOW_MS) return batteryTrendSample.display;
+
+    const elapsedSeconds = elapsedMs / 1000;
+    const chargePerSecond = (metrics.charge - batteryTrendSample.startingCharge) / elapsedSeconds;
+    let state = null;
+    let label = 'No net charge flow';
+    if (chargePerSecond < -1e-6) {
+        state = 'red';
+        label = `DISCHARGING • ~${formatFeedbackNumber(metrics.charge / -chargePerSecond)} s to empty`;
+    } else if (chargePerSecond > 1e-6) {
+        state = 'green';
+        label = `CHARGING • ~${formatFeedbackNumber((metrics.capacity - metrics.charge) / chargePerSecond)} s to full`;
+    }
+
+    batteryTrendSample = {
+        key: metrics.key,
+        sampledAt: now,
+        startingCharge: metrics.charge,
+        display: { ratio: metrics.ratio, state, label }
+    };
+    return batteryTrendSample.display;
+}
+
+function updateFeedback() {
+    const elements = getElements();
+    const feedback = elements.hoverFeedback;
+    if (!feedback) return;
+    feedback.replaceChildren();
+    if (elements.chargeIndicator) elements.chargeIndicator.hidden = true;
+    const world = getWorld();
+    if (!world) {
+        batteryTrendSample = null;
+        return;
+    }
+    let feedbackX = hoverX;
+    let feedbackY = hoverY;
+    if (hoverClientX !== null && hoverClientY !== null) {
+        const rect = elements.canvas?.getBoundingClientRect();
+        if (!rect || hoverClientX < rect.left || hoverClientX >= rect.right ||
+            hoverClientY < rect.top || hoverClientY >= rect.bottom ||
+            !(rect.width > 0 && rect.height > 0)) {
+            batteryTrendSample = null;
+            return;
+        }
+        feedbackX = Math.floor((hoverClientX - rect.left) / rect.width * world.cols);
+        feedbackY = Math.floor((hoverClientY - rect.top) / rect.height * world.rows);
+    }
+    if (!inBounds(feedbackX, feedbackY)) {
+        batteryTrendSample = null;
+        return;
+    }
+    const defs = getDefinitions();
+
+    const machine = hoverClientX !== null && hoverClientY !== null
+        ? getMachineArtworkAtClientPoint(hoverClientX, hoverClientY) : null;
+    if (machine) {
+        batteryTrendSample = null;
+        const status = getMachineLiveStatus(machine.x, machine.y);
+        if (!status) return;
+        appendFeedbackLine(feedback, status.name);
+        appendFeedbackLine(feedback, `Temperature: ${formatFeedbackNumber(status.temperature)}°C`);
+        appendFeedbackLine(feedback, `Status: ${status.active ? 'Active' : 'Inactive'}`);
+        appendFeedbackLine(feedback,
+            `Illumination received: ${formatFeedbackNumber(getIlluminationAt(machine.x, machine.y))}%`);
+        if (status.name === 'Lamp') {
+            appendFeedbackLine(feedback, `Light emission: ${status.active ? 'ON' : 'OFF'} · 360° · 25 cells`);
+        }
+        for (const port of status.ports) {
+            const label = /^supply$/i.test(port.id) ? 'Battery supply input'
+                : port.id === 'signal-a' ? 'Signal input A'
+                    : port.id === 'signal-b' ? 'Signal input B'
+                        : port.role === 'output' ? 'Signal output'
+                            : /^power$/i.test(port.id) ? 'Power input' : 'Input';
+            const direction = port.direction ? ` (${port.direction})` : '';
+            appendFeedbackLine(feedback, `${label}${direction}: ${port.active ? 'Active' : 'Inactive'}`);
+        }
+        if (status.sensor) appendFeedbackLine(feedback, `Sensor: ${status.sensor.state}`);
+        return;
+    }
+
+    const cellIndex = index(feedbackX, feedbackY);
+    const id = world.type[cellIndex];
+    if (id === EMPTY) {
+        batteryTrendSample = null;
+        const windX = world.airflowX[cellIndex] + world.displayWindX[cellIndex] +
+            world.generalWindX[cellIndex] + world.gustWindX[cellIndex];
+        const windY = world.airflowY[cellIndex] + world.displayWindY[cellIndex] +
+            world.generalWindY[cellIndex] + world.gustWindY[cellIndex];
+        appendFeedbackLine(feedback, `Air temperature: ${formatFeedbackNumber(world.temp[cellIndex])}°C`);
+        appendFeedbackLine(feedback, `Humidity: ${Math.round(world.humidity[cellIndex])}%`);
+        appendFeedbackLine(feedback, `Wind speed: ${formatFeedbackNumber(Math.hypot(windX, windY))}`);
+        appendFeedbackLine(feedback,
+            `Illumination: ${formatFeedbackNumber(getIlluminationAt(feedbackX, feedbackY))}%`);
+        return;
+    }
+    const def = defs[id];
+    if (!def) return;
+    appendFeedbackLine(feedback, def.name);
+    appendFeedbackLine(feedback,
+        `Catalog: ${def.group}${def.catalogSubgroup ? ` / ${def.catalogSubgroup}` : ''} · ${def.category}`);
+    appendFeedbackLine(feedback, `Temperature: ${formatFeedbackNumber(world.temp[cellIndex])}°C`);
+    appendFeedbackLine(feedback,
+        `Illumination: ${formatFeedbackNumber(getIlluminationAt(feedbackX, feedbackY))}%`);
+    appendFeedbackLine(feedback, `Humidity: ${Math.round(world.humidity[cellIndex])}%`);
+    const transitions = transitionLines(def, defs);
+    if (def.name !== 'Battery' || transitions.length) {
+        appendFeedbackLine(feedback,
+            transitions.length ? `State changes: ${transitions.join('; ')}` : 'State changes: None defined');
+    }
+    if (def.name !== 'Battery') {
+        batteryTrendSample = null;
+        return;
+    }
+
+    const battery = getBatteryCircuitMetrics(feedbackX, feedbackY);
+    if (!battery) {
+        batteryTrendSample = null;
+        return;
+    }
+    const trend = getBatteryTrend(battery, performance.now());
+    updateChargeIndicator(elements, { ...battery, ratio: trend.ratio });
+    const load = `Circuit load: ${formatFeedbackNumber(battery.load)}/tick`;
+    const separator = trend.state ? ' |' : ' · ';
+    appendFeedbackLine(feedback,
+        `${load}${separator}${trend.label}`, trend.state, true);
 }
 
 function machineFaceCoversCell(cellX, cellY, exceptMachineIndex = -1, alsoExceptMachineIndex = -1) {

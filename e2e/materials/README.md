@@ -3,8 +3,10 @@ Exhaustive browser contracts for the material catalog and canvas behavior.
 - `catalog.spec.mjs` checks every prepared definition button, category grouping,
   exact IDs/order, hover and keyboard-focus glossary text, and seeded material
   rendering. It checks that Battery, Spark, Spark Dust, Spark Block, Temperature
-  Switch, and Humidity Switch are grouped under Electricals, and protects the
-  switch particle IDs, internal keys, and `machineSensor*` API/field contract.
+  Switch, and Humidity Switch are grouped under Electricals; it checks that
+  LOGIC is the next top-level sibling panel and contains NOT, AND, OR, NAND,
+  and XOR. It protects the switch particle IDs, internal keys, and
+  `machineSensor*` API/field contract.
   It also verifies Vegetation is the last picker group, starts collapsed, and
   collapses again after a second successful new-game start. Existing vegetation
   and all-definition checks expand the initially hidden group before reading

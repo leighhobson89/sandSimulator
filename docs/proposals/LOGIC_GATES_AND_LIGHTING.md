@@ -1,166 +1,81 @@
-# Proposal: composable logic gates and local light for plant growth
+# Proposal: light-responsive plants and additional emitters
 
-**Status: Proposal - not implemented.** This document records design direction
-for future work. It does not describe current game behavior or authorize
-implementation by itself.
+**Status:** Battery-backed NOT, AND, OR, NAND, and XOR gates and the local
+illumination field are implemented. Focused gate, port, and illumination browser
+coverage passed 32/32 on 26 September 2026. The field currently responds to
+powered Lamps, persistent Fire/Lava/Scoria, and short Gunpowder explosion
+flashes.
+Light does not yet affect plant viability. Plant response, additional emitter
+types, ambient sunlight, Solar generation, and day/night remain future work.
+For current behavior, see [Game Mechanics](../GAME_MECHANICS.md#3-powered-storage-transfer-and-connection-machines),
+its [illumination and hover reference](../GAME_MECHANICS.md#9-canvas-feedback-and-live-inspection),
+and [future ideas](../FUTURE_IDEAS.md).
 
-## Design goals
+## Implemented electrical baseline
 
-- Extend the steady, Battery-backed DC model with predictable, composable
-  logic and visible feedback.
-- Add a local light field that can connect powered Lamps and explicitly
-  light-emitting materials to plant growth.
-- Keep light distinct from temperature, humidity, thermal color, and cosmetic
-  traveling-Spark animation.
-- Keep simulation deterministic and affordable in both supported world sizes.
+Existing Copper, Iron, Stainless Steel, and Elec routes carry steady ON/OFF
+signal levels. Every logic gate has separate signal inputs, one output, and a
+Battery-backed supply input. Its blue supply route ends at the gate and does
+not energize or bridge into the separate output route. NOT and NAND can produce
+an ON output from OFF signal inputs while supplied; a gate without supply has
+no output.
 
-## Electrical component recommendations
+The gate and its output-network wire/device loads are billed to the separate
+supply circuit, not either signal-source Battery. Focused AND-to-Lamp coverage
+checks the separate supply, A/B signal, and output circuits under eight-neighbor
+contact rules. The Lamp stays dark with supply alone or one active signal, and
+lights only with both signals and supply. Losing any one source path turns the
+output off even if cosmetic wire pulses remain. Active supply connectors are
+cyan; inactive supply connectors are blue. Gate definitions, truth tables, and
+machine-port geometry are documented in Game Mechanics and the machine E2E
+reference.
 
-### Preserve the current DC contract
+## Implemented local illumination
 
-Treat a conductor as logically ON only while its route reaches a charged
-Battery. Simple Switch and Temperature/Humidity Switch components gate current
-toward their declared outputs. `world.power` and `world.powerDelay` remain
-visual Spark-animation state; they are not inputs to logic. New electrical
-components should use that logical-current contract and expose their ports and
-active state clearly.
+`world.illumination` is a derived `0`-to-`100` value for each world-grid cell,
+indexed like `world.type`. The renderer samples this field into a transparent
+one-pixel-per-cell canvas layer above particles and below machines. Lamp light
+appears yellow; Fire, Lava, and Scoria light appears orange in Normal view.
+Tint is presentation-only and does not change the numeric field or logical
+readings. When emitter colors overlap, the strongest local contribution
+chooses the tint while numeric light continues to add and clamp independently.
+Alternate visualization palettes are unchanged. The field is rebuilt rather
+than saved as per-cell data. Light does not affect temperature, reactions, or
+plant viability.
 
-### Add a small combinational gate set
+- An ON Lamp with a valid Battery-backed input emits omnidirectionally over 25
+  world cells using Euclidean distance. Its contribution at distance `d` is
+  `min(100, max(0, 100 * (26 - d) / 25))`; distance 25 receives `100/25`, and
+  distance 26 is dark.
+- Persistent Fire and Lava emit at peak intensity `50`, and Scoria emits at
+  `30`. Each uses linear falloff `max(0, intensity * (6 - d) / 6)` and reaches
+  zero at distance six. Fire created by burning Oil or Wood uses the same
+  intensity of `50` while it persists.
+- Gunpowder records a peak-100 flash at `explode()` before clearing blast cells.
+  It spans a ten-cell radius and fades over four simulation ticks. After it
+  expires, only resulting Fire remains lit. Sparks and fuses do not emit.
+- Emissions add and clamp at `100`. Solids, powders, plants, and machine bodies
+  block light; air, gases, Elec, and Tubing transmit it. The overlay is fully
+  transparent where there is no emitted light, and viewport clipping does not
+  change world-field values. Lamp icon glow is decorative and separate.
+- Hover feedback reports numeric illumination for air, particles, and machines.
+  Lamp hover reports emission state, its 360-degree/25-cell reach, and received
+  intensity.
 
-Start with four directional, stateless gates:
+## Future plant response and extensions
 
-| Gate | Signal inputs | Output rule |
-| --- | ---: | --- |
-| NOT | 1 | ON when its input is OFF |
-| AND | 2 | ON when both inputs are ON |
-| OR | 2 | ON when either input is ON |
-| XOR | 2 | ON when exactly one input is ON |
+Plant species currently ignore illumination. A future feature could add
+light-neutral defaults plus minimum, ideal, and maximum light requirements, then
+demonstrate the rule with shade-loving and light-seeking plants. Keep that
+viability curve separate from temperature and thermal glow, and preserve
+existing gardens and saves when adding species fields.
 
-Do not add NAND, NOR, or XNOR initially; players can compose them from these
-gates. Outputs should respond to sustained input levels and remain stable for
-as long as the expression and supply remain true. Keep timed pulses as a
-separate family of behavior.
+The current field has no ambient sunlight, day/night, or weather scattering.
+Future emitters may add carefully selected materials or directional sources;
+each needs explicit intensity, radius/range, blockers, and performance costs.
+Solar generation, dynamic colored-light mixing, and light-driven electrical
+generation are also out of scope until separately designed.
 
-Before implementation, specify how a gate receives its power supply and how
-its output load is charged. In particular, NOT must be able to produce an ON
-output when its signal input is OFF without creating free energy. Prefer an
-explicit supply contact or route separate from signal inputs, with output
-current accounted against the connected Battery. Set a modest documented
-gate-load budget, define fan-out, and keep that budget separate from Lamp
-illumination load. Signal inputs should read only their declared routes; the
-body must not create broad hidden contacts or back-feed another input.
-
-Combinational gates should have a clear evaluation order and deterministic
-behavior. Feedback loops, disconnected supplies, overloaded outputs, and
-ambiguous routes need defined outcomes before they are built. Keep memory and
-timing out of the combinational gate definitions so steady logic remains easy
-to predict.
-
-### Add state and timing as separate components
-
-After the basic gates, consider these practical controls:
-
-- A maintained toggle for persistent manual ON/OFF control.
-- A momentary button for a temporary signal while held or during a clearly
-  specified activation window.
-- An SR latch for memory, with an explicit set/reset priority when both inputs
-  are active.
-- An adjustable clock or timer for repeatable intervals.
-- A one-shot, delay, or pulse extender for timing a single transition or
-  lengthening a short trigger.
-
-Keep each component directional where appropriate, make state visible, and
-persist user-configured or latched state through save/load and blueprints.
-Lamp already serves as a useful signal indicator. A later light comparator
-could connect the light field to the same sensor-and-gate system.
-
-Useful player feedback includes a logical-current overlay, a per-cell or
-per-route ON/OFF inspector, and a machine status readout that distinguishes a
-missing Battery route, an OFF input, a blocked rule, and an overloaded output.
-Diagnostics should show logical current independently from visible travelling
-Sparks.
-
-## Local light field proposal
-
-### Represent light separately from heat and appearance
-
-Add a derived scalar `light` value from 0 to 100 per cell. Do not infer light
-from temperature, thermal color, or a material's heat-emission value. Existing
-glow is a rendering treatment, and heat emission remains a thermal behavior.
-Materials that should illuminate the world must be explicitly marked as light
-emitters.
-
-Each emitter should define strength, range, display color, and projection
-shape. A powered ON Lamp emits while it has logical DC current and projects in
-all directions through 360 degrees. Directional emitters can project a cone
-with a configured angle, or a laser-like single line with a defined width and
-range. Orient each directional projection from the component's facing and
-show that facing in its icon. A curated set of materials may emit without
-electrical power; choose those deliberately and document their values. Spark,
-Spark Dust, and Spark Block effects should not automatically count as
-illumination just because they animate or glow in the icon.
-
-Start without ambient sunlight or a day/night cycle. Compute local irradiance
-with deterministic distance attenuation within each emitter's projection.
-For the initial occlusion rule, every solid particle, plant particle, and
-machine body blocks light. Elec wires and Tubing do not block light. Apply
-this rule consistently to omnidirectional, cone, and line projections; the
-emitter's own occupied cell is the source and does not shadow its own output.
-Do not add material-specific translucent transmission in the first version.
-Contributions from multiple emitters should combine deterministically and
-clamp at 100. Source removal, Lamp power-off, moved emitters, and changed
-blockers must update the affected field without leaving stale light behind.
-
-### Connect light to plant viability
-
-Allow species to declare minimum, ideal, and maximum light values alongside
-their existing temperature, humidity, and substrate requirements. Fold light
-fitness into plant viability using a documented curve. Existing species
-should default to light-neutral so adding the field does not invalidate
-existing gardens or saves. Add a small number of shade-loving and
-light-seeking species to demonstrate the new rule.
-
-Provide a Light visualization or inspector that displays the computed field
-and the selected cell's value. Keep it distinct from the Heat view and make
-clear that it shows simulated irradiance, not material temperature.
-
-### State, cost, and edge cases
-
-- Treat the light field as derived state. Rebuild it deterministically after
-  load or blueprint stamping instead of persisting every cell's value.
-- Define source overlap, attenuation order, boundary behavior, projection
-  geometry, and exact shadow updates before implementation. Preserve the
-  initial blocker contract: solids, plants, and machines block; Elec and
-  Tubing transmit light.
-- Prefer source/dirty-region updates or a bounded propagation frontier over
-  rescanning every source against every world cell each frame.
-- Profile both supported world sizes with dense emitters, solid/plant/machine
-  blockers, and transmitting Elec/Tubing routes. Set a measurable frame-time
-  budget.
-- Keep the first version local and static: ambient sun, day/night, weather
-  scattering, dynamic colored-light mixing, Solar Panels, and light-driven
-  electrical generation remain out of scope.
-
-## Suggested implementation order and focused checks
-
-1. Specify gate supply, signal, fan-out, and load semantics; test each truth
-   table, sustained ON/OFF transitions, directionality, disconnection, and
-   deterministic behavior. Check that the NOT gate cannot create power without
-   a charged supply.
-2. Add stateful controls and timing only after the combinational level model is
-   stable; cover set/reset priority, timing boundaries, restart, and
-   persistence.
-3. Implement a deterministic light field with one powered Lamp and a small
-   curated material-emitter set. Check omnidirectional, cone, and line
-   projections; attenuation; solid, plant, and machine occlusion; Elec/Tubing
-   transmission; overlapping sources; source removal; and rebuild after load
-   or blueprint stamping.
-4. Add light-neutral defaults for existing plants, then light-responsive
-   species. Check viability at minimum, ideal, and maximum values and verify
-   that old saves preserve their growth behavior.
-5. Profile the supported world sizes with worst-case source and blocker counts
-   before considering ambient light or solar generation.
-
-This proposal is a starting point for a bounded implementation plan. Update
-current mechanics documentation only after a specific feature is implemented
-and verified.
+Focused regressions live in `e2e/feedback/illumination.spec.mjs`,
+`e2e/machines/logic-gates.spec.mjs`, and `e2e/machines/ports.spec.mjs`. The
+focused browser command for those areas passed 32/32 on 26 September 2026.

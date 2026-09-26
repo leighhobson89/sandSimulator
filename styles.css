@@ -578,6 +578,63 @@ input[type="range"]::-moz-range-thumb {
     min-height: 0;
 }
 
+.canvasColumn {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+}
+
+#feedbackPanel {
+    display: flex;
+    flex: 0 0 calc(3.4rem + 10px);
+    align-items: center;
+    gap: 1rem;
+    height: calc(3.4rem + 10px);
+    min-height: calc(3.4rem + 10px);
+    max-height: calc(3.4rem + 10px);
+    padding: 0.125rem 0.75rem;
+    border-top: var(--border) solid var(--line);
+    background-color: var(--bg-raised);
+    color: var(--text);
+}
+
+#hoverFeedback {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 0.75rem;
+    row-gap: 0.05rem;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    color: var(--text-dim);
+    font: 0.68rem/1 var(--mono);
+    white-space: nowrap;
+}
+
+#hoverFeedback > div {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+#hoverFeedback > .feedback-state-changes {
+    grid-column: 1 / -1;
+    max-height: 2.1em;
+    white-space: normal;
+}
+
+#hoverFeedback > .feedback-full-line {
+    grid-column: 1 / -1;
+}
+
+#hoverFeedback:empty { min-height: 1.1rem; }
+
+.feedback-charge-state { font-weight: 800; }
+.feedback-charge-state.charge-green { color: #43d17a; }
+.feedback-charge-state.charge-red { color: #ef5b5b; }
+
 #floatingContainer {
     display: flex;
     flex-direction: column;
@@ -1221,6 +1278,19 @@ input[type="range"]::-moz-range-thumb {
     margin: auto;
 }
 
+#illuminationOverlay {
+    position: absolute;
+    left: 0;
+    top: 0;
+    z-index: 1;
+    pointer-events: none;
+    image-rendering: pixelated;
+    background-color: transparent;
+    border-color: transparent;
+    box-shadow: none;
+    border-radius: 0;
+}
+
 #canvasArea:not(.zoomed) #canvasStage { margin: auto auto 0; }
 #canvasArea.zoomed #canvasStage { margin: auto; }
 
@@ -1250,6 +1320,7 @@ input[type="range"]::-moz-range-thumb {
 
 #machineOverlay {
     position: absolute;
+    z-index: 2;
     inset: 0;
     overflow: hidden;
     pointer-events: none;
@@ -1365,6 +1436,7 @@ input[type="range"]::-moz-range-thumb {
     display: block;
     width: 64px;
     height: 64px;
+    overflow: visible;
     transform-origin: 50% 50%;
     filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.85));
 }
