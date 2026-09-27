@@ -4,7 +4,10 @@ Exhaustive browser workflows for machines and material transfer.
   stage, two-click machine-plus-connector commit, Collector's output-only lead
   preview, blocked placement, all Fan directions, hit testing, Fan speed
   bounds/default, settings bounds, and tooltip behavior.
-- `powered.spec.mjs` checks powered/unpowered Fan, Heater, and Cooler outcomes.
+- `powered.spec.mjs` checks powered/unpowered Fan, Heater, and Cooler outcomes,
+  including air-only transport near the default 200-cell reach and direct
+  particle or material effects confined to the 28-cell cone. The runtime
+  distance can be adjusted through the Debug features menu.
 - `electrical.spec.mjs` checks Battery charge sharing, steady binary bright
   powered-wire bases, and the runtime-only Electrical effects display switch.
   Electrical effects hides presentation glyphs without changing charge or

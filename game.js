@@ -32,6 +32,7 @@ import {
     getMachineArtworkLayout, isMachinePortMaterialCompatible, EMPTY,
     SPOTLAMP_CONE_ANGLE_DEGREES, invalidateLocalIllumination,
     invalidateLocalIlluminationForTypes,
+    ensureOpenAirClassification,
     invalidateMachineCollisionMask,
     invalidateElectricalTopologyForTypes, ensureElectricalStateCurrent,
     syncElectricalPulseTrackingAt, invalidateAmbientIlluminationForTypes
@@ -567,6 +568,7 @@ function drawWorld() {
     const recorder = activeP0PerformanceRecorder();
     const startedAt = recorder ? performance.now() : 0;
     const world = getWorld();
+    ensureOpenAirClassification();
     const defs = getDefinitions();
     const type = world.type;
     const temp = world.temp;
@@ -608,16 +610,27 @@ function drawWorld() {
         }
 
         if (id === EMPTY) {
-            // The whole air mass takes a subtle tint from the air-temperature
-            // dial, never from a nearby flame or ice cell. The curve is quiet
-            // around ordinary weather and increasingly strong near the two
-            // extremes. Wind adds its pale haze on top.
+            // Outdoor air follows the ambient dial; enclosed air shows its
+            // local temperature. Heat view remains the direct world.temp view.
             const blown = wind[i];
             const f = blown / 255;
+            let tintR = airTint[0];
+            let tintG = airTint[1];
+            let tintB = airTint[2];
+            if (!world.openAir[i]) {
+                const localTemp = temp[i];
+                const cold = Math.pow(Math.max(0, Math.min(1,
+                    (15 - localTemp) / 75)), 1.7);
+                const hot = Math.pow(Math.max(0, Math.min(1,
+                    (localTemp - 35) / 565)), 1.7);
+                tintR = clampByte(8 * cold + 96 * hot);
+                tintG = clampByte(28 * cold + 26 * hot);
+                tintB = clampByte(72 * cold + 6 * hot);
+            }
             // Keep machine cones visible without washing out the air behind them.
-            pixels[p] = clampByte(airTint[0] + 12 * f);
-            pixels[p + 1] = clampByte(airTint[1] + 19 * f);
-            pixels[p + 2] = clampByte(airTint[2] + 28 * f);
+            pixels[p] = clampByte(tintR + 12 * f);
+            pixels[p + 1] = clampByte(tintG + 19 * f);
+            pixels[p + 2] = clampByte(tintB + 28 * f);
             pixels[p + 3] = 255;
             continue;
         }

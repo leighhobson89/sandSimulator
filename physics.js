@@ -101,11 +101,15 @@ let illuminationRebuildCount = 0;
 let illuminationFlashes = [];
 let logicalCurrentRecomputing = false;
 const solvedLightSensorReadings = new Map();
-// The flood mask borrows the movement flags before they are cleared for the
-// current tick. Queue views borrow the two temperature buffers, which are
-// overwritten by diffuseHeat immediately after the flood fill completes.
+// Queue views borrow the two temperature buffers, which are overwritten by
+// diffuseHeat immediately after the outdoor-domain flood fill completes.
 let tempFloodQueue = null;
 let tempNextFloodQueue = null;
+let openAirClassificationDirty = true;
+let calmAirComponentMinX = new Int32Array(0);
+let calmAirComponentMinY = new Int32Array(0);
+let calmAirComponentMaxX = new Int32Array(0);
+let calmAirComponentMaxY = new Int32Array(0);
 
 // DEFS[id] is the definition for that particle. DEFS[0] is air.
 let DEFS = [];
@@ -2140,6 +2144,7 @@ export function createWorld(cols, rows) {
     ROWS = rows;
     ambientIlluminationTarget = 50;
     const n = cols * rows;
+    openAirClassificationDirty = true;
     ambientIlluminationDirty = true;
     ambientIlluminationFieldFrame = -1;
     ambientVisibilityScratch = null;
@@ -2179,6 +2184,48 @@ export function createWorld(cols, rows) {
         illuminationTintStrength: new Float32Array(n),
         temp: new Float32Array(n),
         tempNext: new Float32Array(n),
+        // Outdoor reachability is a stable transient classification used by
+        // ambient relaxation, heat exchange, and normal-mode air tinting.
+        // It is rebuilt from topology and is never serialized.
+        openAir: new Uint8Array(n),
+        // Connected enclosed-air labels used to anchor the calm circulation
+        // roll to each room rather than to world coordinates.
+        calmAirComponent: new Uint32Array(n),
+        calmAirRollPsi: new Float32Array((cols + 1) * (rows + 1)),
+        // Transient air mixing vectors and scalar transport buffers. Air stays
+        // implicit in EMPTY/gas cells and these derived planes are not saved.
+        airMixX: new Float32Array(n),
+        airMixY: new Float32Array(n),
+        airMixActiveMask: new Uint8Array(n),
+        // Reused three-state topology for scalar transport: 0 is non-air, 1
+        // is air behind a storage barrier, and 2 is transfer-eligible air.
+        airScalarCellClass: new Uint8Array(n),
+        // Direct Fan pushes are limited to the active 28-cell cone. This
+        // transient mask prevents the residual momentum field from pushing
+        // material after it has drifted beyond that cone.
+        fanParticleMask: new Uint8Array(n),
+        // Runtime-only thermal face masks for active machine jets. The direct
+        // cone includes air and material through 28 cells; the extension only
+        // marks airspace cells from 29 through 200 cells.
+        machineThermalDirectMask: new Uint8Array(n),
+        machineThermalAirExtensionMask: new Uint8Array(n),
+        // Geometric extension coverage also includes a wind-blocking solid at
+        // the cone endpoint, so its adjacent material face can be suppressed.
+        machineThermalExtensionConeMask: new Uint8Array(n),
+        airMixTempDelta: new Float32Array(n),
+        airMixHumidityDelta: new Float32Array(n),
+        airMixTempOutflow: new Float32Array(n),
+        airMixHumidityOutflow: new Float32Array(n),
+        airMixTempCalmOutflow: new Float32Array(n),
+        airMixHumidityCalmOutflow: new Float32Array(n),
+        airMixTempPositiveGain: new Float32Array(n),
+        airMixTempNegativeGain: new Float32Array(n),
+        airMixHumidityPositiveGain: new Float32Array(n),
+        airMixHumidityNegativeGain: new Float32Array(n),
+        airMixTempPositiveScale: new Float32Array(n),
+        airMixTempNegativeScale: new Float32Array(n),
+        airMixHumidityPositiveScale: new Float32Array(n),
+        airMixHumidityNegativeScale: new Float32Array(n),
         life: new Int16Array(n),
         lifeMax: new Int16Array(n),
         residue: new Uint8Array(n),
@@ -3709,6 +3756,7 @@ export function getElectricalBatteryGroups() {
 
 export function clearWorld() {
     world.type.fill(EMPTY);
+    openAirClassificationDirty = true;
     world.ambientIllumination.fill(0);
     queueFullAmbientRefresh();
     world.life.fill(0);
@@ -3866,6 +3914,7 @@ export function setCell(x, y, id, keepTemp) {
         invalidateElectricalState({ topology: true });
     }
     world.type[i] = id;
+    if (previousType !== id) openAirClassificationDirty = true;
     if (previousType !== id) invalidateAmbientIllumination(i, previousType, id);
     if (def?.machine === 'mixer') hasMixerMachine = true;
     world.residue[i] = EMPTY;
@@ -4893,111 +4942,198 @@ function isAirSpace(id) {
     return AIR_SPACE_BY_TYPE[id] === 1;
 }
 
-// Mark every airspace cell that can reach the canvas edge. The eight-way
-// flood matches gas movement: diagonal openings connect rooms too.
+function ensureCalmAirComponentBoundsCapacity(required) {
+    if (required <= calmAirComponentMinX.length) return;
+    const capacity = Math.max(required, calmAirComponentMinX.length * 2, 16);
+    const minX = new Int32Array(capacity);
+    const minY = new Int32Array(capacity);
+    const maxX = new Int32Array(capacity);
+    const maxY = new Int32Array(capacity);
+    minX.set(calmAirComponentMinX);
+    minY.set(calmAirComponentMinY);
+    maxX.set(calmAirComponentMaxX);
+    maxY.set(calmAirComponentMaxY);
+    calmAirComponentMinX = minX;
+    calmAirComponentMinY = minY;
+    calmAirComponentMaxX = maxX;
+    calmAirComponentMaxY = maxY;
+}
+
+// Mark airspace that can reach the open top or sides of the canvas. The bottom
+// edge is the implicit ground boundary, so it does not expose air to ambient
+// temperature. This lets a room with two insulated sides and a top use the
+// ground as its fourth thermal boundary without drawing a visible floor.
 function markOpenAirCells() {
     const type = world.type;
-    const open = world.moved;
+    const open = world.openAir;
+    const component = world.calmAirComponent;
     const queue = tempNextFloodQueue;
     open.fill(0);
+    component.fill(0);
+    world.calmAirRollPsi.fill(0);
     let head = 0;
     let tail = 0;
     const cellCount = type.length;
-    const lastRowStart = (ROWS - 1) * COLS;
 
-    // Keep horizontal edge flags in the already-reused mask so neighbour
-    // expansion never needs to divide or modulo an index by the world width.
-    for (let y = 0; y < ROWS; y++) {
-        const rowStart = y * COLS;
-        open[rowStart] = 2;
-        open[rowStart + COLS - 1] |= 4;
-    }
-
+    // Seed only the top and side boundaries. The bottom is implicit ground.
     for (let x = 0; x < COLS; x++) {
-        let i = x;
-        if (AIR_SPACE_BY_TYPE[type[i]] && !(open[i] & 1)) {
-            open[i] |= 1;
-            queue[tail++] = i;
-        }
-        i = lastRowStart + x;
-        if (AIR_SPACE_BY_TYPE[type[i]] && !(open[i] & 1)) {
-            open[i] |= 1;
+        const i = x;
+        if (AIR_SPACE_BY_TYPE[type[i]]) {
+            open[i] = 1;
             queue[tail++] = i;
         }
     }
     for (let y = 1; y < ROWS - 1; y++) {
         let i = y * COLS;
-        if (AIR_SPACE_BY_TYPE[type[i]] && !(open[i] & 1)) {
-            open[i] |= 1;
+        if (AIR_SPACE_BY_TYPE[type[i]]) {
+            open[i] = 1;
             queue[tail++] = i;
         }
         i += COLS - 1;
-        if (AIR_SPACE_BY_TYPE[type[i]] && !(open[i] & 1)) {
-            open[i] |= 1;
+        if (AIR_SPACE_BY_TYPE[type[i]]) {
+            open[i] = 1;
             queue[tail++] = i;
         }
     }
 
     while (head < tail) {
         const i = queue[head++];
-        const edgeFlags = open[i];
+        // Keep outdoor connectivity face-connected, like the scalar links.
         if (i >= COLS) {
             const neighbour = i - COLS;
-            if (!(open[neighbour] & 1) && AIR_SPACE_BY_TYPE[type[neighbour]]) {
-                open[neighbour] |= 1;
+            if (!open[neighbour] && AIR_SPACE_BY_TYPE[type[neighbour]]) {
+                open[neighbour] = 1;
                 queue[tail++] = neighbour;
             }
         }
         if (i < cellCount - COLS) {
             const neighbour = i + COLS;
-            if (!(open[neighbour] & 1) && AIR_SPACE_BY_TYPE[type[neighbour]]) {
-                open[neighbour] |= 1;
+            if (!open[neighbour] && AIR_SPACE_BY_TYPE[type[neighbour]]) {
+                open[neighbour] = 1;
                 queue[tail++] = neighbour;
             }
         }
-        if (!(edgeFlags & 2)) {
+        if (i % COLS !== 0) {
             const neighbour = i - 1;
-            if (!(open[neighbour] & 1) && AIR_SPACE_BY_TYPE[type[neighbour]]) {
-                open[neighbour] |= 1;
+            if (!open[neighbour] && AIR_SPACE_BY_TYPE[type[neighbour]]) {
+                open[neighbour] = 1;
                 queue[tail++] = neighbour;
-            }
-            if (i >= COLS) {
-                const diagonal = i - COLS - 1;
-                if (!(open[diagonal] & 1) && AIR_SPACE_BY_TYPE[type[diagonal]]) {
-                    open[diagonal] |= 1;
-                    queue[tail++] = diagonal;
-                }
-            }
-            if (i < cellCount - COLS) {
-                const diagonal = i + COLS - 1;
-                if (!(open[diagonal] & 1) && AIR_SPACE_BY_TYPE[type[diagonal]]) {
-                    open[diagonal] |= 1;
-                    queue[tail++] = diagonal;
-                }
             }
         }
-        if (!(edgeFlags & 4)) {
+        if (i % COLS !== COLS - 1) {
             const neighbour = i + 1;
-            if (!(open[neighbour] & 1) && AIR_SPACE_BY_TYPE[type[neighbour]]) {
-                open[neighbour] |= 1;
+            if (!open[neighbour] && AIR_SPACE_BY_TYPE[type[neighbour]]) {
+                open[neighbour] = 1;
                 queue[tail++] = neighbour;
-            }
-            if (i >= COLS) {
-                const diagonal = i - COLS + 1;
-                if (!(open[diagonal] & 1) && AIR_SPACE_BY_TYPE[type[diagonal]]) {
-                    open[diagonal] |= 1;
-                    queue[tail++] = diagonal;
-                }
-            }
-            if (i < cellCount - COLS) {
-                const diagonal = i + COLS + 1;
-                if (!(open[diagonal] & 1) && AIR_SPACE_BY_TYPE[type[diagonal]]) {
-                    open[diagonal] |= 1;
-                    queue[tail++] = diagonal;
-                }
             }
         }
     }
+
+    // Give every enclosed air component its own roll basis. The labels and
+    // bounds are transient and rebuilt with the outdoor mask after topology
+    // changes; scalar flow then follows each room's own footprint.
+    let componentCount = 0;
+    for (let seed = 0; seed < cellCount; seed++) {
+        if (!AIR_SPACE_BY_TYPE[type[seed]] || open[seed] || component[seed]) continue;
+        const seedX = seed % COLS;
+        const seedY = Math.floor(seed / COLS);
+        if (storageIntakeIsWall(seedX, seedY)) continue;
+
+        const id = ++componentCount;
+        ensureCalmAirComponentBoundsCapacity(id + 1);
+        let minX = seedX;
+        let maxX = seedX;
+        let minY = seedY;
+        let maxY = seedY;
+        component[seed] = id;
+        queue[0] = seed;
+        head = 0;
+        tail = 1;
+
+        while (head < tail) {
+            const current = queue[head++];
+            const x = current % COLS;
+            const y = Math.floor(current / COLS);
+            if (x < minX) minX = x;
+            if (x > maxX) maxX = x;
+            if (y < minY) minY = y;
+            if (y > maxY) maxY = y;
+
+            if (y > 0) {
+                const neighbour = current - COLS;
+                if (!component[neighbour] && !open[neighbour] &&
+                    AIR_SPACE_BY_TYPE[type[neighbour]] &&
+                    !storageIntakeIsWall(x, y - 1)) {
+                    component[neighbour] = id;
+                    queue[tail++] = neighbour;
+                }
+            }
+            if (y < ROWS - 1) {
+                const neighbour = current + COLS;
+                if (!component[neighbour] && !open[neighbour] &&
+                    AIR_SPACE_BY_TYPE[type[neighbour]] &&
+                    !storageIntakeIsWall(x, y + 1)) {
+                    component[neighbour] = id;
+                    queue[tail++] = neighbour;
+                }
+            }
+            if (x > 0) {
+                const neighbour = current - 1;
+                if (!component[neighbour] && !open[neighbour] &&
+                    AIR_SPACE_BY_TYPE[type[neighbour]] &&
+                    !storageIntakeIsWall(x - 1, y)) {
+                    component[neighbour] = id;
+                    queue[tail++] = neighbour;
+                }
+            }
+            if (x < COLS - 1) {
+                const neighbour = current + 1;
+                if (!component[neighbour] && !open[neighbour] &&
+                    AIR_SPACE_BY_TYPE[type[neighbour]] &&
+                    !storageIntakeIsWall(x + 1, y)) {
+                    component[neighbour] = id;
+                    queue[tail++] = neighbour;
+                }
+            }
+        }
+
+        calmAirComponentMinX[id] = minX;
+        calmAirComponentMinY[id] = minY;
+        calmAirComponentMaxX[id] = maxX;
+        calmAirComponentMaxY[id] = maxY;
+
+        const width = maxX - minX + 1;
+        const height = maxY - minY + 1;
+        const streamfunctionScale = CALM_AIR_ROLL_MAX_SPEED *
+            Math.min(width, height) / Math.PI;
+        const vertexStride = COLS + 1;
+        // A streamfunction on interior grid vertices gives a discrete roll.
+        // Its boundary value stays zero, so face fluxes are divergence-free
+        // and cannot push air through an irregular room wall.
+        for (let vertexY = minY + 1; vertexY <= maxY; vertexY++) {
+            const aboveRow = (vertexY - 1) * COLS;
+            const belowRow = vertexY * COLS;
+            const normalizedY = (vertexY - minY) / height;
+            const sinY = Math.sin(Math.PI * normalizedY);
+            for (let vertexX = minX + 1; vertexX <= maxX; vertexX++) {
+                const topLeft = aboveRow + vertexX - 1;
+                const topRight = topLeft + 1;
+                const bottomLeft = belowRow + vertexX - 1;
+                const bottomRight = bottomLeft + 1;
+                if (component[topLeft] !== id || component[topRight] !== id ||
+                    component[bottomLeft] !== id || component[bottomRight] !== id) continue;
+                const normalizedX = (vertexX - minX) / width;
+                world.calmAirRollPsi[vertexY * vertexStride + vertexX] =
+                    streamfunctionScale * Math.sin(Math.PI * normalizedX) * sinY;
+            }
+        }
+    }
+}
+
+export function ensureOpenAirClassification() {
+    if (!world || !openAirClassificationDirty) return;
+    markOpenAirCells();
+    openAirClassificationDirty = false;
 }
 
 // Humidity belongs to the location in the room, not to a particle. Updating
@@ -5043,17 +5179,17 @@ function updateHumidityField() {
 
         let humidity = current;
         if (neighbourCount > 0) {
-            const exchange = world.moved[i] & 1 ? 0.055 : 0.025;
+            const exchange = world.openAir[i] ? 0.055 : 0.025;
             humidity += (neighbourTotal / neighbourCount - humidity) * exchange;
         }
-        if (world.moved[i] & 1) humidity += (ambientHumidityTarget - humidity) * 0.006;
+        if (world.openAir[i]) humidity += (ambientHumidityTarget - humidity) * 0.006;
         humidity += source * 0.6 - sink * 0.04;
         world.humidity[i] = Math.max(0, Math.min(100, humidity));
 
         // Clouds nucleate sparsely in exposed high air at saturation when that
         // air reaches the configured dewpoint. Enclosed chambers cannot spawn
         // weather, though their local humidity is still retained and shared.
-        if (cloud > 0 && world.type[i] === EMPTY && (world.moved[i] & 1) &&
+        if (cloud > 0 && world.type[i] === EMPTY && world.openAir[i] &&
             y < ROWS * 0.42 && world.humidity[i] >= 88 &&
             localAirTemp <= dewpointTarget && random() < 0.00012 && !nearbyClouds(x, y, 3)) {
             transform(i, cloud);
@@ -5096,6 +5232,12 @@ export function stepSimulation() {
         if (Math.abs(ambientTarget - AMBIENT) < 0.05) AMBIENT = ambientTarget;
     }
     markOpenAirCells();
+    openAirClassificationDirty = false;
+    // Thermal masks must be ready before this frame's contact diffusion. The
+    // active-machine update rebuilds them again after electrical power has
+    // refreshed, so changes to topology or storage barriers are reflected in
+    // both the current air flow and the next thermal pass.
+    rebuildMachineThermalMasks();
     if (debugFeatureFlags.humidity) updateHumidityField();
     diffuseHeat();
     radiateHeat();
@@ -5117,6 +5259,7 @@ export function stepSimulation() {
     // Natural wind applies on freshly cleared moved flags, before gravity and
     // particle motion, so a carried item still moves at most once this tick.
     updateAmbientWind();
+    advectAirScalars();
 
     // Bottom row upwards, so a falling particle is not processed again after it
     // lands. The left/right scan order flips every frame, otherwise piles drift
@@ -5197,7 +5340,22 @@ const OPEN_AIR_CONTACT_CONDUCTIVITY = 0.001;
 const THERMAL_NETWORK_SUBSTEPS = 32;
 const thermalNetworkCells = [];
 
-function thermalNetworkPairRate(first, second, firstOpenAir, secondOpenAir) {
+function machineAirMaterialFaceSuppressed(first, second, firstCell, secondCell) {
+    if (!world || firstCell === undefined || secondCell === undefined) return false;
+    if (isAirSpace(first.id) && !isAirSpace(second.id) &&
+        (world.machineThermalAirExtensionMask[firstCell] ||
+            world.machineThermalExtensionConeMask[secondCell]) &&
+        !world.machineThermalDirectMask[secondCell]) return true;
+    if (isAirSpace(second.id) && !isAirSpace(first.id) &&
+        (world.machineThermalAirExtensionMask[secondCell] ||
+            world.machineThermalExtensionConeMask[firstCell]) &&
+        !world.machineThermalDirectMask[firstCell]) return true;
+    return false;
+}
+
+function thermalNetworkPairRate(first, second, firstOpenAir, secondOpenAir,
+    firstCell, secondCell) {
+    if (machineAirMaterialFaceSuppressed(first, second, firstCell, secondCell)) return 0;
     const firstRate = first.thermalNetworkRate;
     const secondRate = second.thermalNetworkRate;
     if (firstRate > 0 && secondRate > 0) {
@@ -5212,10 +5370,13 @@ function thermalNetworkPairRate(first, second, firstOpenAir, secondOpenAir) {
     return 0;
 }
 
-function thermalContactRate(first, second, firstOpenAir, secondOpenAir) {
+function thermalContactRate(first, second, firstOpenAir, secondOpenAir,
+    firstCell, secondCell) {
+    if (machineAirMaterialFaceSuppressed(first, second, firstCell, secondCell)) return 0;
     // Eligible conductor and enclosed-air pairs use the dedicated local
     // network below so their configured rate is not double-counted here.
-    if (thermalNetworkPairRate(first, second, firstOpenAir, secondOpenAir) > 0) return 0;
+    if (thermalNetworkPairRate(first, second, firstOpenAir, secondOpenAir,
+        firstCell, secondCell) > 0) return 0;
     // Open air cells remain coupled to each other so the ambient profile
     // settles at the existing pace. A material exchanging heat with open air
     // uses the weaker air-to-material interface; enclosed air keeps the full
@@ -5240,7 +5401,7 @@ function diffuseHeat() {
     const temp = world.temp;
     const next = world.tempNext;
     const shade = world.shade;
-    const openAir = world.moved;
+    const openAir = world.openAir;
     thermalNetworkCells.length = 0;
 
     for (let y = 0; y < ROWS; y++) {
@@ -5255,7 +5416,7 @@ function diffuseHeat() {
             const enclosedAirCell = airCell && !openAir[i];
             if (def.thermalNetworkRate > 0) {
                 thermalNetworkCells.push(i);
-            } else if (airCell && !(openAir[i] & 1) && (
+            } else if (airCell && !openAir[i] && (
                 (y > 0 && DEFS[type[i - COLS]].thermalNetworkRate > 0) ||
                 (y < ROWS - 1 && DEFS[type[i + COLS]].thermalNetworkRate > 0) ||
                 (x > 0 && DEFS[type[i - 1]].thermalNetworkRate > 0) ||
@@ -5280,22 +5441,26 @@ function diffuseHeat() {
             if (y > 0) {
                 const neighbour = i - COLS;
                 result += (temp[neighbour] - t) * thermalContactRate(
-                    def, DEFS[type[neighbour]], openAir[i], openAir[neighbour]);
+                    def, DEFS[type[neighbour]], openAir[i], openAir[neighbour],
+                    i, neighbour);
             }
             if (y < ROWS - 1) {
                 const neighbour = i + COLS;
                 result += (temp[neighbour] - t) * thermalContactRate(
-                    def, DEFS[type[neighbour]], openAir[i], openAir[neighbour]);
+                    def, DEFS[type[neighbour]], openAir[i], openAir[neighbour],
+                    i, neighbour);
             }
             if (x > 0) {
                 const neighbour = i - 1;
                 result += (temp[neighbour] - t) * thermalContactRate(
-                    def, DEFS[type[neighbour]], openAir[i], openAir[neighbour]);
+                    def, DEFS[type[neighbour]], openAir[i], openAir[neighbour],
+                    i, neighbour);
             }
             if (x < COLS - 1) {
                 const neighbour = i + 1;
                 result += (temp[neighbour] - t) * thermalContactRate(
-                    def, DEFS[type[neighbour]], openAir[i], openAir[neighbour]);
+                    def, DEFS[type[neighbour]], openAir[i], openAir[neighbour],
+                    i, neighbour);
             }
             result = t + (result - t) * conductionScale;
 
@@ -5313,7 +5478,14 @@ function diffuseHeat() {
                 let adjacentAirCount = 0;
                 if (y > 0) {
                     const neighbour = i - COLS;
-                    if (isAirSpace(type[neighbour])) {
+                    if (isAirSpace(type[neighbour]) &&
+                        machineAirMaterialFaceSuppressed(
+                            DEFS[type[neighbour]], def, neighbour, i)) {
+                        if (openAir[neighbour]) {
+                            adjacentAirTotal += getAirTempAt(y - 1);
+                            adjacentAirCount++;
+                        }
+                    } else if (isAirSpace(type[neighbour])) {
                         adjacentAirTotal += openAir[neighbour]
                             ? getAirTempAt(y - 1)
                             : temp[neighbour];
@@ -5322,7 +5494,14 @@ function diffuseHeat() {
                 }
                 if (y < ROWS - 1) {
                     const neighbour = i + COLS;
-                    if (isAirSpace(type[neighbour])) {
+                    if (isAirSpace(type[neighbour]) &&
+                        machineAirMaterialFaceSuppressed(
+                            DEFS[type[neighbour]], def, neighbour, i)) {
+                        if (openAir[neighbour]) {
+                            adjacentAirTotal += getAirTempAt(y + 1);
+                            adjacentAirCount++;
+                        }
+                    } else if (isAirSpace(type[neighbour])) {
                         adjacentAirTotal += openAir[neighbour]
                             ? getAirTempAt(y + 1)
                             : temp[neighbour];
@@ -5331,7 +5510,14 @@ function diffuseHeat() {
                 }
                 if (x > 0) {
                     const neighbour = i - 1;
-                    if (isAirSpace(type[neighbour])) {
+                    if (isAirSpace(type[neighbour]) &&
+                        machineAirMaterialFaceSuppressed(
+                            DEFS[type[neighbour]], def, neighbour, i)) {
+                        if (openAir[neighbour]) {
+                            adjacentAirTotal += rowAir;
+                            adjacentAirCount++;
+                        }
+                    } else if (isAirSpace(type[neighbour])) {
                         adjacentAirTotal += openAir[neighbour]
                             ? rowAir
                             : temp[neighbour];
@@ -5340,7 +5526,14 @@ function diffuseHeat() {
                 }
                 if (x < COLS - 1) {
                     const neighbour = i + 1;
-                    if (isAirSpace(type[neighbour])) {
+                    if (isAirSpace(type[neighbour]) &&
+                        machineAirMaterialFaceSuppressed(
+                            DEFS[type[neighbour]], def, neighbour, i)) {
+                        if (openAir[neighbour]) {
+                            adjacentAirTotal += rowAir;
+                            adjacentAirCount++;
+                        }
+                    } else if (isAirSpace(type[neighbour])) {
                         adjacentAirTotal += openAir[neighbour]
                             ? rowAir
                             : temp[neighbour];
@@ -5421,7 +5614,7 @@ function diffuseHeat() {
 
 function diffuseThermalNetwork() {
     const type = world.type;
-    const openAir = world.moved;
+    const openAir = world.openAir;
     const current = world.temp;
     const next = world.tempNext;
     const width = COLS;
@@ -5438,22 +5631,26 @@ function diffuseThermalNetwork() {
             if (i >= width) {
                 const neighbour = i - width;
                 transfer += (current[neighbour] - t) * thermalNetworkPairRate(
-                    DEFS[id], DEFS[type[neighbour]], openAir[i], openAir[neighbour]);
+                    DEFS[id], DEFS[type[neighbour]], openAir[i], openAir[neighbour],
+                    i, neighbour);
             }
             if (i < length - width) {
                 const neighbour = i + width;
                 transfer += (current[neighbour] - t) * thermalNetworkPairRate(
-                    DEFS[id], DEFS[type[neighbour]], openAir[i], openAir[neighbour]);
+                    DEFS[id], DEFS[type[neighbour]], openAir[i], openAir[neighbour],
+                    i, neighbour);
             }
             if (i % width !== 0) {
                 const neighbour = i - 1;
                 transfer += (current[neighbour] - t) * thermalNetworkPairRate(
-                    DEFS[id], DEFS[type[neighbour]], openAir[i], openAir[neighbour]);
+                    DEFS[id], DEFS[type[neighbour]], openAir[i], openAir[neighbour],
+                    i, neighbour);
             }
             if (i % width !== width - 1) {
                 const neighbour = i + 1;
                 transfer += (current[neighbour] - t) * thermalNetworkPairRate(
-                    DEFS[id], DEFS[type[neighbour]], openAir[i], openAir[neighbour]);
+                    DEFS[id], DEFS[type[neighbour]], openAir[i], openAir[neighbour],
+                    i, neighbour);
             }
             next[i] = t + transfer;
         }
@@ -5495,6 +5692,7 @@ function radiateHeat() {
             if (!(def.radiates > 0)) continue;
 
             const source = temp[i];
+            const machineEmittedRay = def.projectile && (world.data[i] & 8);
             for (let dy = -1; dy <= 1; dy++) {
                 const ny = y + dy;
                 if (ny < 0 || ny >= ROWS) continue;
@@ -5504,6 +5702,11 @@ function radiateHeat() {
                     if (nx < 0 || nx >= COLS) continue;
 
                     const ni = ny * COLS + nx;
+                    // Machine-marked rays keep moving and applying their own
+                    // force, but their broad radiant halo must not extend the
+                    // machine's direct material effect past its active cone.
+                    if (machineEmittedRay &&
+                        !world.machineThermalDirectMask[ni]) continue;
                     if (temp[ni] >= source) continue;
                     const amount = dx === 0 || dy === 0
                         ? def.radiates
@@ -7302,6 +7505,14 @@ function windCanEnter(def, target) {
 
 const FAN_WIND_STRENGTH = 7;
 const FAN_WIND_RANGE = 28;
+// Single customization point for the air-only reach of powered machine jets.
+// Direct particle and material effects continue to use FAN_WIND_RANGE.
+let AIR_MIX_RANGE = 200;
+const HEATER_COOLER_AIR_MIX_STRENGTH = 12;
+let machineThermalBlockedOffsets = new Uint8Array(AIR_MIX_RANGE * 2 + 1);
+let activeMachineThermalMaskCellCount = 0;
+let activeAirMixMachineCount = 0;
+let activeAirJetCellCount = 0;
 // This is the legacy physical reference strength. New Fan settings are mapped
 // to this scale before calculating the trail, airflow, and particle forces.
 const FAN_REFERENCE_STRENGTH = 8;
@@ -7309,6 +7520,92 @@ const FAN_AIR_DECAY = 0.84;
 const FAN_AIR_ADVECT = 0.76;
 const FAN_AIR_STAY = 1 - FAN_AIR_ADVECT;
 const FAN_AIR_PUSH_THRESHOLD = 0.12;
+
+function maximumUsefulMachineAirMixRange() {
+    return Math.max(FAN_WIND_RANGE, Math.ceil(Math.hypot(COLS, ROWS)));
+}
+
+function effectiveMachineAirMixRange() {
+    return Math.max(FAN_WIND_RANGE,
+        Math.min(AIR_MIX_RANGE, maximumUsefulMachineAirMixRange()));
+}
+
+export function getMachineAirMixRange() {
+    return AIR_MIX_RANGE;
+}
+
+export function getMaxMachineAirMixRange() {
+    return maximumUsefulMachineAirMixRange();
+}
+
+export function setMachineAirMixRange(value) {
+    const requested = Number(value);
+    if (!Number.isSafeInteger(requested) || requested < FAN_WIND_RANGE) {
+        return AIR_MIX_RANGE;
+    }
+    const next = Math.min(requested, maximumUsefulMachineAirMixRange());
+    if (next !== AIR_MIX_RANGE) {
+        AIR_MIX_RANGE = next;
+        machineThermalBlockedOffsets = new Uint8Array(AIR_MIX_RANGE * 2 + 1);
+        if (world) rebuildMachineThermalMasks();
+    }
+    return AIR_MIX_RANGE;
+}
+
+function addMachineThermalMasks(x, y, direction) {
+    const direct = world.machineThermalDirectMask;
+    const extension = world.machineThermalAirExtensionMask;
+    const extensionCone = world.machineThermalExtensionConeMask;
+    const [dirX, dirY] = fanDirectionVector(direction);
+    const tangentX = -dirY;
+    const tangentY = dirX;
+    const range = effectiveMachineAirMixRange();
+    machineThermalBlockedOffsets.fill(0);
+
+    for (let distance = 1; distance <= range; distance++) {
+        const halfWidth = Math.floor((distance - 1) * 0.5);
+        for (let offset = -halfWidth; offset <= halfWidth; offset++) {
+            const blockedIndex = offset + range;
+            if (machineThermalBlockedOffsets[blockedIndex]) continue;
+
+            const nx = x + dirX * distance + tangentX * offset;
+            const ny = y + dirY * distance + tangentY * offset;
+            if (!inBounds(nx, ny)) continue;
+
+            const ni = index(nx, ny);
+            if (distance > FAN_WIND_RANGE) extensionCone[ni] = 1;
+            if (stopsWind(world.type[ni]) || storageIntakeIsWall(nx, ny)) {
+                machineThermalBlockedOffsets[blockedIndex] = 1;
+                continue;
+            }
+
+            if (distance <= FAN_WIND_RANGE) {
+                if (!direct[ni]) activeMachineThermalMaskCellCount++;
+                direct[ni] = 1;
+            } else if (AIR_SPACE_BY_TYPE[world.type[ni]]) {
+                if (!extension[ni]) activeMachineThermalMaskCellCount++;
+                extension[ni] = 1;
+            }
+        }
+    }
+}
+
+function rebuildMachineThermalMasks() {
+    if (!world) return;
+    world.machineThermalDirectMask.fill(0);
+    world.machineThermalAirExtensionMask.fill(0);
+    world.machineThermalExtensionConeMask.fill(0);
+    activeMachineThermalMaskCellCount = 0;
+    for (let i = 0; i < world.type.length; i++) {
+        const machine = DEFS[world.type[i]]?.machine;
+        if (machine !== 'fan' && machine !== 'heater' && machine !== 'cooler') continue;
+        const x = i % COLS;
+        const y = Math.floor(i / COLS);
+        if (machineIsPowered(x, y, i)) {
+            addMachineThermalMasks(x, y, world.data[i]);
+        }
+    }
+}
 
 function decayAndAdvectFanAir() {
     const currentX = world.airflowX;
@@ -7358,6 +7655,47 @@ function decayAndAdvectFanAir() {
 function addFanAirflow(i, dirX, dirY, amount) {
     world.airflowX[i] += dirX * amount;
     world.airflowY[i] += dirY * amount;
+}
+
+function addAirMixVector(i, dirX, dirY, amount) {
+    world.airMixX[i] += dirX * amount;
+    world.airMixY[i] += dirY * amount;
+    if (amount > 0 && (dirX !== 0 || dirY !== 0)) markAirMixActive(i);
+}
+
+function markAirMixActive(i) {
+    if (!AIR_SPACE_BY_TYPE[world.type[i]]) return;
+    if (!world.airMixActiveMask[i]) activeAirJetCellCount++;
+    world.airMixActiveMask[i] = 1;
+}
+
+function addObstacleAirMix(blockX, blockY, dirX, dirY, strength, includeWake = true) {
+    const tangentX = -dirY;
+    const tangentY = dirX;
+    const deflection = Math.min(2.5, Math.max(0.45, strength * 0.24));
+    for (const side of [-1, 1]) {
+        const x = blockX - dirX + tangentX * side;
+        const y = blockY - dirY + tangentY * side;
+        if (!inBounds(x, y)) continue;
+        const i = index(x, y);
+        if (!AIR_SPACE_BY_TYPE[world.type[i]] || storageIntakeIsWall(x, y)) continue;
+        addAirMixVector(i, tangentX * side, tangentY * side, deflection);
+    }
+
+    // A small reverse jet in the lee represents the slower recirculating wake.
+    if (!includeWake) return;
+    // Build a short reverse-flow channel immediately behind the obstruction.
+    // The first cell connects the deflected edge stream to the lee; the second
+    // carries it farther back at a slower speed than the incoming jet.
+    for (let step = 1; step <= 2; step++) {
+        const wakeX = blockX + dirX * step;
+        const wakeY = blockY + dirY * step;
+        if (!inBounds(wakeX, wakeY)) continue;
+        const wake = index(wakeX, wakeY);
+        if (!AIR_SPACE_BY_TYPE[world.type[wake]] || storageIntakeIsWall(wakeX, wakeY)) continue;
+        addAirMixVector(wake, -dirX, -dirY,
+            deflection * (step === 1 ? 0.45 : 0.6));
+    }
 }
 
 function fanDirectionVector(direction) {
@@ -8187,10 +8525,7 @@ function applyMachineTemperature(x, y, direction, targetTemp, range, machineRate
             if (!inBounds(nx, ny)) continue;
 
             const ni = index(nx, ny);
-            if (stopsWind(world.type[ni])) {
-                blocked.add(offset);
-                continue;
-            }
+            const blockedBySolid = stopsWind(world.type[ni]);
 
             const rate = Math.max(0, Math.min(1,
                 machineRate * (0.35 + 0.65 * falloff)));
@@ -8198,22 +8533,69 @@ function applyMachineTemperature(x, y, direction, targetTemp, range, machineRate
             // A heater only raises temperatures and a cooler only lowers them.
             // Setting a machine on the already-correct side of a cell is a
             // no-op, rather than an instruction to reverse its job.
-            if ((machine === 'heater' && delta <= 0) ||
-                (machine === 'cooler' && delta >= 0)) continue;
-            world.temp[ni] += delta * rate;
+            if (!((machine === 'heater' && delta <= 0) ||
+                (machine === 'cooler' && delta >= 0))) {
+                const nextTemp = world.temp[ni] + delta * rate;
+                world.temp[ni] = machine === 'heater'
+                    ? Math.min(targetTemp, nextTemp)
+                    : Math.max(targetTemp, nextTemp);
+            }
+
+            // The first solid cell is still inside the direct temperature
+            // cone. Apply the bounded target effect above, then shelter the
+            // rest of this widening lane behind it.
+            if (blockedBySolid) blocked.add(offset);
         }
     }
 }
 
-// A Fan's output is a widening 28-cell cone: power is 21, while reach is four
-// times the original seven-cell cone. It marks the whole cone as a persistent
-// wind trail, injects momentum into the air and gives each movable cell one
-// downwind shove per simulation frame.
+// Powered Heater/Cooler jets circulate air along their widening cone to 200
+// cells. This vector is used only for scalar air mixing; it does not change
+// particle forces or visible wind trails.
+function applyMachineAirMix(x, y, direction, strength) {
+    const [dirX, dirY] = fanDirectionVector(direction);
+    const tangentX = -dirY;
+    const tangentY = dirX;
+    const blocked = new Set();
+    const range = effectiveMachineAirMixRange();
+
+    for (let distance = 1; distance <= range; distance++) {
+        const halfWidth = Math.floor((distance - 1) * 0.5);
+        const progress = (distance - 1) / (range - 1);
+        const falloff = Math.max(0, 1 - progress);
+        for (let offset = -halfWidth; offset <= halfWidth; offset++) {
+            if (blocked.has(offset)) continue;
+
+            const nx = x + dirX * distance + tangentX * offset;
+            const ny = y + dirY * distance + tangentY * offset;
+            if (!inBounds(nx, ny)) continue;
+
+            const ni = index(nx, ny);
+            if (stopsWind(world.type[ni]) || storageIntakeIsWall(nx, ny)) {
+                addObstacleAirMix(nx, ny, dirX, dirY, strength * falloff,
+                    distance < range - 1);
+                blocked.add(offset);
+                continue;
+            }
+
+            const lateral = 1 - Math.abs(offset) / (halfWidth + 1) * 0.35;
+            if (AIR_SPACE_BY_TYPE[world.type[ni]]) {
+                markAirMixActive(ni);
+                const splay = Math.max(-0.28, Math.min(0.28, 1.6 * offset / distance));
+                addAirMixVector(ni, dirX + tangentX * splay,
+                    dirY + tangentY * splay, strength * falloff * lateral);
+            }
+        }
+    }
+}
+
+// A Fan keeps its calibrated 28-cell particle/wind cone. Its separately
+// derived scalar jet widens to 200 cells and never extends particle shoves.
 function applyFanWind(x, y, direction, strength = FAN_WIND_STRENGTH) {
     const [dirX, dirY] = fanDirectionVector(direction);
     const tangentX = -dirY;
     const tangentY = dirX;
-    const range = Math.max(1, Math.round(FAN_WIND_RANGE));
+    const range = effectiveMachineAirMixRange();
     const legacyStrength = windStrengthToLegacyScale(strength);
     const powerScale = legacyStrength / FAN_REFERENCE_STRENGTH;
     const intensity = Math.min(1, powerScale);
@@ -8224,7 +8606,12 @@ function applyFanWind(x, y, direction, strength = FAN_WIND_STRENGTH) {
     // to receive airflow. Walking the other way blocks the near side instead.
     for (let distance = 1; distance <= range; distance++) {
         const halfWidth = Math.floor((distance - 1) * 0.5);
-        const falloff = 1 - (distance - 1) / (range + 1);
+        const falloff = 1 - (distance - 1) / (FAN_WIND_RANGE + 1);
+        const tailProgress = range > FAN_WIND_RANGE
+            ? Math.max(0, (distance - FAN_WIND_RANGE) /
+                (range - FAN_WIND_RANGE))
+            : 1;
+        const tailFalloff = Math.max(0, 1 - tailProgress);
         for (let offset = -halfWidth; offset <= halfWidth; offset++) {
             if (blocked.has(offset)) continue;
 
@@ -8235,17 +8622,42 @@ function applyFanWind(x, y, direction, strength = FAN_WIND_STRENGTH) {
             const ni = index(nx, ny);
             const id = world.type[ni];
             if (stopsWind(id) || storageIntakeIsWall(nx, ny)) {
+                addObstacleAirMix(nx, ny, dirX, dirY,
+                    powerScale * 3.5 * (distance <= FAN_WIND_RANGE ? falloff : tailFalloff),
+                    distance < range - 1);
                 blocked.add(offset);
                 continue;
             }
 
             const lateral = 1 - Math.abs(offset) / (halfWidth + 1) * 0.35;
+            if (distance > FAN_WIND_RANGE) {
+                // The monotone tail moves implicit temperature/humidity only.
+                if (AIR_SPACE_BY_TYPE[id]) {
+                    markAirMixActive(ni);
+                    const splay = Math.max(-0.28,
+                        Math.min(0.28, 1.6 * offset / distance));
+                    addAirMixVector(ni, dirX, dirY,
+                        powerScale * 3.5 * tailFalloff * lateral);
+                    if (splay !== 0) {
+                        addAirMixVector(ni, tangentX * splay, tangentY * splay,
+                            powerScale * 3.5 * tailFalloff * lateral);
+                    }
+                }
+                continue;
+            }
+
             markWind(ni, 16 + 32 * intensity * falloff * lateral);
+            if (AIR_SPACE_BY_TYPE[id]) markAirMixActive(ni);
             // Keep enough momentum in the air to carry a gust beyond the
             // visible cone. The setting still scales this continuously, while
             // the extra transport factor prevents the new default of 7 from
             // stopping abruptly at the cone edge.
-            addFanAirflow(ni, dirX, dirY, powerScale * 3.5 * falloff * lateral);
+            const jet = powerScale * 3.5 * falloff * lateral;
+            addFanAirflow(ni, dirX, dirY, jet);
+            const splay = Math.max(-0.28, Math.min(0.28, 1.6 * offset / distance));
+            addAirMixVector(ni, dirX + tangentX * splay,
+                dirY + tangentY * splay, jet);
+            world.fanParticleMask[ni] = 1;
 
             if (id === EMPTY || world.moved[ni]) continue;
             const def = DEFS[id];
@@ -8263,12 +8675,11 @@ function applyFanWind(x, y, direction, strength = FAN_WIND_STRENGTH) {
     }
 }
 
-// Residual Fan air keeps nudging loose material after it leaves the visible
-// cone. The field itself is spatial air, not particle data, so it decays and
-// travels downwind even when the carried particle has moved to a new cell.
+// Residual Fan air continues to decay and travel through open cells, but only
+// cells inside a currently powered 28-cell cone can receive a material shove.
 function applyFanAirflowToParticles() {
     for (let i = 0; i < world.type.length; i++) {
-        if (world.moved[i] || world.type[i] === EMPTY) continue;
+        if (world.moved[i] || world.type[i] === EMPTY || !world.fanParticleMask[i]) continue;
 
         const vx = world.airflowX[i];
         const vy = world.airflowY[i];
@@ -8296,18 +8707,34 @@ function applyFanAirflowToParticles() {
 }
 
 function updateActiveMachines() {
+    world.airMixX.fill(0);
+    world.airMixY.fill(0);
+    world.airMixActiveMask.fill(0);
+    world.fanParticleMask.fill(0);
+    world.machineThermalDirectMask.fill(0);
+    world.machineThermalAirExtensionMask.fill(0);
+    world.machineThermalExtensionConeMask.fill(0);
+    activeMachineThermalMaskCellCount = 0;
+    activeAirMixMachineCount = 0;
+    activeAirJetCellCount = 0;
     for (let i = 0; i < world.type.length; i++) {
         const def = DEFS[world.type[i]];
         if (!def?.machine) continue;
         const x = i % COLS;
         const y = Math.floor(i / COLS);
         if (!machineIsPowered(x, y, i)) continue;
+        if (def.machine === 'fan' || def.machine === 'heater' ||
+            def.machine === 'cooler') {
+            activeAirMixMachineCount++;
+            addMachineThermalMasks(x, y, world.data[i]);
+        }
         if (def.machine === 'fan') applyFanWind(x, y, world.data[i], world.machineSetting[i]);
         else if ((def.machine === 'heater' || def.machine === 'cooler') &&
             def.machineTemp !== undefined) {
             const targetTemp = world.machineSetting[i];
             applyMachineTemperature(x, y, world.data[i], targetTemp,
                 def.machineRange, def.machineRate, def.machine);
+            applyMachineAirMix(x, y, world.data[i], HEATER_COOLER_AIR_MIX_STRENGTH);
             emitMachineProjectile(x, y, world.data[i], def, targetTemp);
         }
     }
@@ -8845,6 +9272,404 @@ function updateAmbientWind() {
     updateTravellingGustField();
     applyAmbientWindToParticles();
 }
+
+function airScalarFaceRate(face, crossFace) {
+    // The absolute speed term matters at the tapered edge. A direction-only
+    // ratio would keep a tiny residual tail moving scalars almost as strongly
+    // as the core and could pile the whole plume into the zero-speed endpoint.
+    return 0.65 * Math.abs(face) /
+        (1 + Math.abs(face) + Math.abs(crossFace));
+}
+
+// Calm buoyancy gives warm air a slow upward drift and cool air a downward
+// return. The scalar transport pass applies each parcel anomaly as an equal
+// and opposite face transfer, carrying humidity with the same parcel.
+const CALM_AIR_BUOYANCY_RATE = 0.03;
+const CALM_AIR_HUMIDITY_BUOYANCY_RATE = 0.005;
+const CALM_AIR_EQUALIZATION_RATE = 0.1;
+const CALM_AIR_ROLL_MAX_SPEED = 0.12;
+// Vector fields are in legacy air-force units. This conversion lets a parcel
+// advance through a cell at a useful rate; donor and endpoint limits still
+// bound each face transfer to the local air-neighbour range.
+const AIR_SCALAR_ADVECTION_SPEED_SCALE = 2;
+
+function calmAirRollHorizontalFace(x, y) {
+    const stride = COLS + 1;
+    const psi = world.calmAirRollPsi;
+    return psi[(y + 1) * stride + x + 1] - psi[y * stride + x + 1];
+}
+
+function calmAirRollVerticalFace(x, y) {
+    const stride = COLS + 1;
+    const psi = world.calmAirRollPsi;
+    const bottomRow = (y + 1) * stride;
+    return psi[bottomRow + x] - psi[bottomRow + x + 1];
+}
+
+const ACTIVE_AIR_JET_TURBULENT_MIX_RATE = 0.08;
+// Scalar transport runs every other simulation tick at its existing per-run
+// rates. This halves average solver work and makes air respond at 30 Hz while
+// keeping each update's bounded face flux unchanged.
+const AIR_SCALAR_TRANSPORT_INTERVAL_TICKS = 2;
+let airScalarTransportSkipCount = 0;
+
+function processAirScalarFace(field, i, j, face, faceRate,
+    equalizationRate, turbulentRate, unstableVertical, phase) {
+    const values = field.values;
+    const background = field.background;
+    const advectiveDonor = face >= 0 ? i : j;
+    const advectiveFlow = faceRate > 0
+        ? (face > 0 ? values[i] - background : background - values[j]) * faceRate
+        : 0;
+
+    let warmRiseFlow = 0;
+    let coolReturnFlow = 0;
+    if (unstableVertical) {
+        if (world.temp[j] > AMBIENT) {
+            warmRiseFlow = (background - values[j]) * field.buoyancyRate;
+        }
+        if (world.temp[i] < AMBIENT) {
+            coolReturnFlow = (values[i] - background) * field.buoyancyRate;
+        }
+    }
+
+    const calmFlow = (values[i] - values[j]) *
+        (equalizationRate + turbulentRate);
+    const calmDonor = calmFlow >= 0 ? i : j;
+
+    if (phase === 0) {
+        field.outflow[advectiveDonor] += Math.abs(advectiveFlow);
+        field.outflow[j] += Math.abs(warmRiseFlow);
+        field.outflow[i] += Math.abs(coolReturnFlow);
+        field.calmOutflow[calmDonor] += Math.abs(calmFlow);
+        return;
+    }
+
+    const flow = advectiveFlow * field.outflow[advectiveDonor] +
+        warmRiseFlow * field.outflow[j] +
+        coolReturnFlow * field.outflow[i] +
+        calmFlow * field.calmOutflow[calmDonor];
+    if (phase === 1) {
+        if (flow > 0) {
+            field.negativeGain[i] += flow;
+            field.positiveGain[j] += flow;
+        } else if (flow < 0) {
+            field.positiveGain[i] -= flow;
+            field.negativeGain[j] -= flow;
+        }
+        return;
+    }
+
+    const receiverScale = flow > 0
+        ? Math.min(field.negativeScale[i], field.positiveScale[j])
+        : Math.min(field.positiveScale[i], field.negativeScale[j]);
+    const accepted = flow * receiverScale;
+    field.delta[i] -= accepted;
+    field.delta[j] += accepted;
+}
+
+function visitAirScalarFaces(fields, carryHumidity, intervalTicks, phase, work, cellClass) {
+    const activeJet = world.airMixActiveMask;
+    // Cadence changes update frequency only. Do not multiply face rates by the
+    // skipped tick count: each due run retains the original bounded response.
+    const dt = 1;
+    const naturalWindScale = 0.3;
+    const equalizationRate = CALM_AIR_EQUALIZATION_RATE * dt;
+    const turbulentRate = ACTIVE_AIR_JET_TURBULENT_MIX_RATE * dt;
+
+    for (let y = 0; y < ROWS; y++) {
+        const row = y * COLS;
+        for (let x = 0; x < COLS; x++) {
+            const i = row + x;
+            if (cellClass[i] !== 2) continue;
+            work.airCellsVisited++;
+            let horizontalJ = -1;
+            let verticalJ = -1;
+
+            if (x + 1 < COLS) {
+                const j = i + 1;
+                if (cellClass[j] === 2) {
+                    work.horizontalFacesVisited++;
+                    const uniformBackground = world.temp[i] === AMBIENT &&
+                        world.temp[j] === AMBIENT && (!carryHumidity ||
+                            (world.humidity[i] === ambientHumidityTarget &&
+                                world.humidity[j] === ambientHumidityTarget));
+                    if (uniformBackground) {
+                        if (phase === 0) work.uniformBackgroundEdgesSkipped++;
+                    } else {
+                        horizontalJ = j;
+                    }
+                }
+            }
+
+            if (y + 1 < ROWS) {
+                const j = i + COLS;
+                if (cellClass[j] === 2) {
+                    work.verticalFacesVisited++;
+                    const uniformBackground = world.temp[i] === AMBIENT &&
+                        world.temp[j] === AMBIENT && (!carryHumidity ||
+                            (world.humidity[i] === ambientHumidityTarget &&
+                                world.humidity[j] === ambientHumidityTarget));
+                    if (uniformBackground) {
+                        if (phase === 0) work.uniformBackgroundEdgesSkipped++;
+                    } else {
+                        verticalJ = j;
+                    }
+                }
+            }
+
+            if (horizontalJ < 0 && verticalJ < 0) continue;
+
+            const vx = world.airMixX[i] +
+                (world.generalWindX[i] + world.gustWindX[i]) * naturalWindScale;
+            const vy = world.airMixY[i] +
+                (world.generalWindY[i] + world.gustWindY[i]) * naturalWindScale;
+
+            if (horizontalJ >= 0) {
+                const j = horizontalJ;
+                const jvx = world.airMixX[j] +
+                    (world.generalWindX[j] + world.gustWindX[j]) * naturalWindScale;
+                const jvy = world.airMixY[j] +
+                    (world.generalWindY[j] + world.gustWindY[j]) * naturalWindScale;
+                const drivenFace = (vx + jvx) * 0.5;
+                const calmFace = calmAirRollHorizontalFace(x, y);
+                const face = drivenFace + calmFace;
+                const crossFace = (vy + jvy) * 0.5 +
+                    calmAirRollVerticalFace(x, y);
+                const faceRate = Math.abs(face) > 0.01
+                    ? airScalarFaceRate(face, crossFace) *
+                        (Math.abs(drivenFace) > 0.01
+                            ? AIR_SCALAR_ADVECTION_SPEED_SCALE : 1) * dt : 0;
+                const turbulence = activeJet[i] && activeJet[j]
+                    ? turbulentRate : 0;
+                processAirScalarFace(fields.temperature, i, j, face,
+                    faceRate, equalizationRate, turbulence, false, phase);
+                if (carryHumidity) processAirScalarFace(fields.humidity, i, j,
+                    face, faceRate, equalizationRate, turbulence, false, phase);
+            }
+
+            if (verticalJ >= 0) {
+                const j = verticalJ;
+                const jvy = world.airMixY[j] +
+                    (world.generalWindY[j] + world.gustWindY[j]) * naturalWindScale;
+                const jvx = world.airMixX[j] +
+                    (world.generalWindX[j] + world.gustWindX[j]) * naturalWindScale;
+                const drivenFace = (vy + jvy) * 0.5;
+                const calmFace = calmAirRollVerticalFace(x, y);
+                const face = drivenFace + calmFace;
+                const crossFace = (vx + jvx) * 0.5 +
+                    calmAirRollHorizontalFace(x, y);
+                const faceRate = Math.abs(face) > 0.01
+                    ? airScalarFaceRate(face, crossFace) *
+                        (Math.abs(drivenFace) > 0.01
+                            ? AIR_SCALAR_ADVECTION_SPEED_SCALE : 1) * dt : 0;
+                const turbulence = activeJet[i] && activeJet[j]
+                    ? turbulentRate : 0;
+                const unstableVertical = !world.openAir[i] && !world.openAir[j] &&
+                    world.temp[j] > world.temp[i];
+                processAirScalarFace(fields.temperature, i, j, face,
+                    faceRate, equalizationRate, turbulence,
+                    unstableVertical, phase);
+                if (carryHumidity) processAirScalarFace(fields.humidity, i, j,
+                    face, faceRate, equalizationRate, turbulence,
+                    unstableVertical, phase);
+            }
+        }
+    }
+}
+
+function setAirScalarReceiverScales(field, i, x, y, cellClass) {
+    const values = field.values;
+    const value = values[i];
+    let localMin = value;
+    let localMax = value;
+    if (y > 0 && cellClass[i - COLS] === 2) {
+        localMin = Math.min(localMin, values[i - COLS]);
+        localMax = Math.max(localMax, values[i - COLS]);
+    }
+    if (y + 1 < ROWS && cellClass[i + COLS] === 2) {
+        localMin = Math.min(localMin, values[i + COLS]);
+        localMax = Math.max(localMax, values[i + COLS]);
+    }
+    if (x > 0 && cellClass[i - 1] === 2) {
+        localMin = Math.min(localMin, values[i - 1]);
+        localMax = Math.max(localMax, values[i - 1]);
+    }
+    if (x + 1 < COLS && cellClass[i + 1] === 2) {
+        localMin = Math.min(localMin, values[i + 1]);
+        localMax = Math.max(localMax, values[i + 1]);
+    }
+
+    const positiveCapacity = Math.max(0, localMax - value);
+    const negativeCapacity = Math.max(0, value - localMin);
+    const positiveRequest = field.positiveGain[i];
+    const negativeRequest = field.negativeGain[i];
+    field.positiveScale[i] = positiveRequest > positiveCapacity && positiveRequest > 0
+        ? positiveCapacity / positiveRequest : 1;
+    field.negativeScale[i] = negativeRequest > negativeCapacity && negativeRequest > 0
+        ? negativeCapacity / negativeRequest : 1;
+}
+
+function advectAirScalars() {
+    if (!world) return;
+    const recorder = activeP0PerformanceRecorder();
+    const startedAt = recorder ? performance.now() : 0;
+    const intervalTicks = AIR_SCALAR_TRANSPORT_INTERVAL_TICKS;
+    const carryHumidity = debugFeatureFlags.humidity;
+    const ran = frameCount % intervalTicks === 0;
+    let topologyMaskBuildMs = 0;
+    let topologyMaskCells = 0;
+    const work = {
+        airCellsVisited: 0,
+        horizontalFacesVisited: 0,
+        verticalFacesVisited: 0,
+        uniformBackgroundEdgesSkipped: 0
+    };
+
+    if (ran) {
+        const maskBuildStartedAt = recorder ? performance.now() : 0;
+        ensureCollectorMasks();
+        const cellClass = world.airScalarCellClass;
+        const storageWalls = storageBarrierMask;
+        const type = world.type;
+        const count = type.length;
+        for (let i = 0; i < count; i++) {
+            if (!AIR_SPACE_BY_TYPE[type[i]]) cellClass[i] = 0;
+            else cellClass[i] = storageWalls?.[i] ? 1 : 2;
+        }
+        topologyMaskCells = count;
+        if (recorder) topologyMaskBuildMs = performance.now() - maskBuildStartedAt;
+
+        const fields = {
+            temperature: {
+                values: world.temp,
+                delta: world.airMixTempDelta,
+                outflow: world.airMixTempOutflow,
+                calmOutflow: world.airMixTempCalmOutflow,
+                positiveGain: world.airMixTempPositiveGain,
+                negativeGain: world.airMixTempNegativeGain,
+                positiveScale: world.airMixTempPositiveScale,
+                negativeScale: world.airMixTempNegativeScale,
+                background: AMBIENT,
+                buoyancyRate: CALM_AIR_BUOYANCY_RATE,
+                minValue: Infinity
+            },
+            humidity: {
+                values: world.humidity,
+                delta: world.airMixHumidityDelta,
+                outflow: world.airMixHumidityOutflow,
+                calmOutflow: world.airMixHumidityCalmOutflow,
+                positiveGain: world.airMixHumidityPositiveGain,
+                negativeGain: world.airMixHumidityNegativeGain,
+                positiveScale: world.airMixHumidityPositiveScale,
+                negativeScale: world.airMixHumidityNegativeScale,
+                background: ambientHumidityTarget,
+                buoyancyRate: CALM_AIR_HUMIDITY_BUOYANCY_RATE,
+                minValue: Infinity
+            }
+        };
+        const activeFields = carryHumidity
+            ? [fields.temperature, fields.humidity] : [fields.temperature];
+        for (const field of activeFields) {
+            field.delta.fill(0);
+            field.outflow.fill(0);
+            field.calmOutflow.fill(0);
+            field.positiveGain.fill(0);
+            field.negativeGain.fill(0);
+            field.positiveScale.fill(1);
+            field.negativeScale.fill(1);
+        }
+
+        // Establish global scalar ranges for the separate active and calm
+        // donor budgets. This is one cell pass for both transported fields.
+        for (let i = 0; i < count; i++) {
+            if (cellClass[i] === 0) continue;
+            work.airCellsVisited++;
+            for (const field of activeFields) {
+                field.minValue = Math.min(field.minValue, field.values[i]);
+            }
+        }
+
+        // Pass one budgets independent active-flow and calm-mixing requests.
+        visitAirScalarFaces(fields, carryHumidity, intervalTicks, 0, work, cellClass);
+
+        // Preserve separate active and calm donor budgets before reusing the
+        // outflow buffers as their per-cell scale factors.
+        for (let i = 0; i < count; i++) {
+            const air = cellClass[i] !== 0;
+            if (air) work.airCellsVisited++;
+            for (const field of activeFields) {
+                if (!air) {
+                    field.outflow[i] = 0;
+                    field.calmOutflow[i] = 0;
+                    continue;
+                }
+                const available = Math.abs(field.values[i] - field.background);
+                const requestedActive = field.outflow[i];
+                const activeScale = requestedActive > available && requestedActive > 0
+                    ? available / requestedActive : 1;
+                const positiveActive = field.values[i] > field.background
+                    ? Math.min(requestedActive, available) : 0;
+                const calmAvailable = Math.max(0,
+                    field.values[i] - field.minValue - positiveActive);
+                const requestedCalm = field.calmOutflow[i];
+                const calmScale = requestedCalm > calmAvailable && requestedCalm > 0
+                    ? calmAvailable / requestedCalm : 1;
+                field.outflow[i] = activeScale;
+                field.calmOutflow[i] = calmScale;
+            }
+        }
+
+        // Pass two aggregates each cell's gross positive and negative requests.
+        visitAirScalarFaces(fields, carryHumidity, intervalTicks, 1, work, cellClass);
+
+        // One positive/negative endpoint scale per cell keeps every accepted
+        // signed face transfer inside its original cardinal air-neighbor range.
+        for (let y = 0; y < ROWS; y++) {
+            const row = y * COLS;
+            for (let x = 0; x < COLS; x++) {
+                const i = row + x;
+                if (cellClass[i] === 0) continue;
+                work.airCellsVisited++;
+                for (const field of activeFields) {
+                    setAirScalarReceiverScales(field, i, x, y, cellClass);
+                }
+            }
+        }
+
+        // Pass three applies equal and opposite face deltas for both fields.
+        visitAirScalarFaces(fields, carryHumidity, intervalTicks, 2, work, cellClass);
+        for (let i = 0; i < count; i++) {
+            if (cellClass[i] === 0) continue;
+            work.airCellsVisited++;
+            for (const field of activeFields) {
+                const next = field.values[i] + field.delta[i];
+                field.values[i] = field === fields.humidity
+                    ? Math.max(0, Math.min(100, next)) : next;
+            }
+        }
+    } else {
+        airScalarTransportSkipCount++;
+    }
+
+    if (recorder) recorder.record('airScalarTransport',
+        performance.now() - startedAt, {
+            ran: ran ? 1 : 0,
+            intervalTicks,
+            airCellsVisited: work.airCellsVisited,
+            horizontalFacesVisited: work.horizontalFacesVisited,
+            verticalFacesVisited: work.verticalFacesVisited,
+            activeMachineCount: activeAirMixMachineCount,
+            activeMaskCells: activeMachineThermalMaskCellCount,
+            limiterPasses: ran ? 1 : 0,
+            activeJetCells: activeAirJetCellCount,
+            topologyMaskBuildMs,
+            topologyMaskCells,
+            uniformBackgroundEdgesSkipped: work.uniformBackgroundEdgesSkipped,
+            mixSkipCount: airScalarTransportSkipCount
+        });
+}
+
 function isFlame(id) {
     return id > 0 && DEFS[id].emit > 0 && DEFS[id].category === 'gas';
 }

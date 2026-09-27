@@ -54,6 +54,71 @@ test('powered Fan produces directional airflow while an unpowered Fan stays inac
     expect(inactive).toBe(false);
 });
 
+test('powered Fan carries warm, humid air to +198 within its 200-cell air reach', async ({ page }) => {
+    const game = new GamePage(page);
+    await game.openMenu();
+    await game.newGame();
+
+    const simulate = async powered => {
+        await page.evaluate(async powered => {
+            const physics = await import('/physics.js');
+            physics.resetRandomSource();
+            physics.setRandomSeed(7341);
+            physics.setAmbientWindOn(false);
+            physics.setGeneralWindStrength(0);
+            physics.setGustWindStrength(0);
+            physics.setAmbientHumidityTarget(50);
+            physics.clearWorld();
+            const definitions = physics.getDefinitions();
+            const id = name => definitions.findIndex(definition => definition?.name === name);
+            const fanX = 3;
+            const fanY = 22;
+            const world = physics.getWorld();
+            world.temp.fill(20);
+            world.tempNext.fill(20);
+            world.humidity.fill(50);
+            physics.setCell(fanX, fanY, id('Fan'));
+            if (powered) {
+                // Keep the machine powered for the full 180-tick air transport probe.
+                for (let y = fanY; y < fanY + 37; y++) {
+                    physics.setCell(fanX - 1, y, id('Battery'));
+                    world.charge[physics.index(fanX - 1, y)] = definitions[id('Battery')].chargeCapacity;
+                }
+            }
+            physics.setMachineSetting(fanX, fanY, 50);
+            for (let y = fanY - 1; y <= fanY + 1; y++) {
+                for (let x = fanX + 10; x <= fanX + 12; x++) {
+                    const cell = physics.index(x, y);
+                    world.temp[cell] = 120;
+                    world.humidity[cell] = 100;
+                }
+            }
+        }, powered);
+
+        await game.step(180);
+        return page.evaluate(async () => {
+            const physics = await import('/physics.js');
+            const world = physics.getWorld();
+            const x = 3 + 198;
+            const y = 22;
+            return {
+                powered: physics.isMachinePoweredAt(3, 22),
+                ambientTemperature: physics.getAirTempAt(y),
+                temperature: world.temp[physics.index(x, y)],
+                humidity: world.humidity[physics.index(x, y)]
+            };
+        });
+    };
+
+    const active = await simulate(true);
+    const unpowered = await simulate(false);
+    expect(active.powered).toBe(true);
+    expect(unpowered.powered).toBe(false);
+    expect(active.temperature).toBeGreaterThan(unpowered.temperature + 0.01);
+    expect(active.temperature).toBeGreaterThan(active.ambientTemperature + 0.05);
+    expect(active.humidity).toBeGreaterThan(unpowered.humidity + 0.001);
+});
+
 test('powered Heater and Cooler emit directional rays and update their cone', async ({ page }) => {
     const game = new GamePage(page);
     await game.openMenu();

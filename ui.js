@@ -44,6 +44,7 @@ import {
     isDrainModeEnabled, setDrainModeEnabled,
     getMachineSensorRule, setMachineSensorRule, getMachineSensorThreshold,
     setMachineSensorThreshold, getMachineSensorStatus, getIlluminationAt,
+    getMachineAirMixRange, getMaxMachineAirMixRange, setMachineAirMixRange,
     getTubingFlows, getSprinklerTubingRate, getMixerInventory, purgeMixerBin,
     isMixerReleaseEnabled, setMixerReleaseEnabled, isMachinePoweredAt,
     migrateLegacyMachinePortEndpointRemap
@@ -2876,6 +2877,34 @@ function setUpDebugMenu(elements) {
             if (getWorld()) renderWorld();
         });
     }
+    const rangeInput = elements.machineAirMixRangeInput;
+    const rangeButton = elements.setMachineAirMixRangeButton;
+    const rangeStatus = elements.machineAirMixRangeStatus;
+    if (rangeInput && rangeButton) {
+        rangeInput.value = String(getMachineAirMixRange());
+        rangeInput.max = String(getMaxMachineAirMixRange());
+        const applyRange = () => {
+            const requested = Number(rangeInput.value);
+            if (!Number.isInteger(requested) || requested < 28) {
+                rangeStatus.textContent = 'Enter a whole number of at least 28 cells.';
+                rangeInput.focus();
+                return;
+            }
+            const applied = setMachineAirMixRange(requested);
+            rangeInput.value = String(applied);
+            rangeStatus.textContent = applied === requested
+                ? `Machine air-blow distance set to ${applied} cells.`
+                : `Set to ${applied} cells, the maximum useful reach for this world.`;
+            if (getWorld()) renderWorld();
+        };
+        rangeButton.addEventListener('click', applyRange);
+        rangeInput.addEventListener('keydown', event => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                applyRange();
+            }
+        });
+    }
     elements.closeDebugMenuButton?.addEventListener('click', () => {
         setDebugMenuOpen(elements, false);
     });
@@ -2886,6 +2915,9 @@ function setDebugMenuOpen(elements, open) {
     if (!menu) return;
     if (open) {
         debugMenuReturnFocus = document.activeElement;
+        if (elements.machineAirMixRangeInput) {
+            elements.machineAirMixRangeInput.max = String(getMaxMachineAirMixRange());
+        }
         menu.hidden = false;
         elements.closeDebugMenuButton?.focus({ preventScroll: true });
         return;

@@ -364,7 +364,19 @@
             <button id="closeDebugMenu" class="btn btn-ghost debug-menu-close" type="button"
                     aria-label="Close debug features">Close</button>
         </div>
-        <p id="debugMenuHint" class="debug-menu-hint">Press Numpad − to open or close this menu. These switches reset when the page reloads.</p>
+        <p id="debugMenuHint" class="debug-menu-hint">Press Numpad − to open or close this menu. These runtime controls reset when the page reloads.</p>
+        <div class="debug-range-setting">
+            <label for="machineAirMixRange">
+                <strong>Machine air-blow distance</strong>
+                <small>Set the air-only reach in cells. Direct material effects and particle pushes stay at 28 cells.</small>
+            </label>
+            <div class="debug-range-controls">
+                <input id="machineAirMixRange" type="number" min="28" step="1" value="200"
+                       inputmode="numeric" aria-describedby="machineAirMixRangeStatus">
+                <button id="setMachineAirMixRange" class="btn btn-primary" type="button">Set</button>
+            </div>
+            <p id="machineAirMixRangeStatus" class="debug-range-status" role="status" aria-live="polite">Current reach: 200 cells.</p>
+        </div>
         <div class="debug-feature-list">
             <label class="debug-feature-option">
                 <input type="checkbox" data-debug-feature="localLight" checked>

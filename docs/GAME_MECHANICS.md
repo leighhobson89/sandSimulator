@@ -137,16 +137,35 @@ simulation description in [`PROGRAM_OVERVIEW.md`](PROGRAM_OVERVIEW.md).
   cells. This includes slower Wood, Stone, and Wall exchange, along with other
   ineligible contacts. Temperature updates remain bounded; ambient cooling,
   source radiation, and latent state changes remain separate effects.
-- Air spaces are classified by an eight-way perimeter flood fill each frame.
-  Empty cells and gas cells reachable from the world edge are open air; diagonal
-  routes count as routes. Open air continues to follow the shared ambient
-  temperature and its height-dependent profile. Air spaces with no
-  route to the perimeter are enclosed and keep a local temperature instead of
-  being pulled toward global ambient. Enclosed empty air and gases still receive
-  heat or cold from nearby matter, Heat Ray, Cold Ray, fire, Lava, and other
-  normal local sources. Steam in a sealed chamber can therefore remain hot
-  while outside air cools; when the chamber is opened, its air returns to the
+- Air spaces are classified by a four-way, face-connected flood fill from the
+  open top and sides each frame; the bottom world boundary represents implicit
+  ground and is not an ambient-air opening. Empty cells and eligible gases
+  reachable through cardinal faces are open air; diagonal-only routes do not
+  connect domains. Open air follows the shared ambient temperature and its
+  height-dependent profile. Air spaces with no face-connected route to the open
+  top or sides are enclosed and keep a local temperature instead of being
+  pulled toward global ambient. Enclosed empty air and gases still receive heat
+  or cold from nearby matter, Heat Ray, Cold Ray, Fire, Lava, and other normal
+  local sources. Steam in a sealed chamber can therefore remain hot while
+  outside air cools; when the chamber is opened, its air returns to the
   open-air ambient behavior gradually.
+- Air remains implicit in empty and eligible gas cells. Temperature and
+  humidity are carried in the existing world fields; no air material or air
+  particles are created. Calm enclosed air circulates in a slow deterministic
+  two-dimensional roll, and Fan, General Wind, Gust, Heater, and Cooler flows
+  transport those fields through face-connected air routes. The scalar mixing
+  transport pass runs every other simulation tick at its original per-update
+  rate. Direct machine treatment, particle movement, weather, and sources and
+  sinks continue each tick, so the cadence makes air mixing less responsive to
+  very fast changes between transport passes.
+- Each transport pass rebuilds a transient three-state topology mask from the
+  current world: `0` is non-air, `1` is air behind a storage barrier, and `2` is
+  transfer-eligible air. This reuses topology classification across scalar
+  transport phases and the limiter while preserving storage-wall blocking; it
+  does not change active-jet field construction. In the face sweep, an edge is
+  skipped only when both eligible endpoints exactly match the live background
+  for every enabled scalar field. There is no tolerance threshold, so even a
+  small temperature or humidity anomaly remains eligible for transport.
 - Solid chamber walls are not automatically perfect insulators. Their contact
   cooling target averages all adjacent air-space faces: enclosed faces use
   their live local air temperatures, while open faces use height-adjusted
@@ -338,6 +357,9 @@ Fan is an eight-direction powered airflow machine with a widening 28-cell cone.
   to `50`. Simulation saves and blueprint libraries record scale marker `50`
   so already converted values are not migrated again.
 - Power load: `50`.
+- The Fan's air temperature and humidity jet can reach 200 cells along its
+  airflow path, with progressively weaker influence toward the edge. Particle
+  pushes remain inside the 28-cell cone.
 - Airflow is produced only while powered; decaying residual air remains after a
   powered effect.
 
@@ -347,6 +369,9 @@ Heater is an eight-direction powered machine that drives its 28-cell cone
 toward a target temperature and launches Heat Rays along the centreline.
 
 - Temperature: `0-4000 C`, default `2000 C`.
+- Its aimed jet carries heated air and humidity up to 200 cells, with weaker
+  influence toward the edge. Direct material heating remains inside the
+  28-cell cone and respects the configured target.
 - Power load: `100`.
 - It is inactive without power.
 
@@ -356,6 +381,9 @@ Cooler is the cold counterpart to Heater. It drives a 28-cell cone toward its
 target and launches Cold Rays along the centreline.
 
 - Temperature: `-60 to 20 C`, default `-60 C`.
+- Its aimed jet carries cooled air and humidity up to 200 cells, with weaker
+  influence toward the edge. Direct material cooling remains inside the
+  28-cell cone and respects the configured target.
 - Power load: `100`.
 - It is inactive without power.
 
@@ -1112,6 +1140,12 @@ its **Close** button and `Escape` also close it. The shortcut ignores key
 repeat and does not intercept typing in text-entry controls. Its four switches
 start enabled and are runtime-only; reloading the page restores the defaults.
 Changing them does not reset the world.
+
+The **Machine air-blow distance** input starts at 200 cells. Enter a whole
+number and select **Set** to change the maximum air-only reach for powered Fans,
+Heaters, and Coolers. The value is limited to the current world's useful
+diagonal reach. This control resets to 200 on page reload; direct material
+effects and Fan particle pushes remain within 28 cells.
 
 - **Source light off** skips local emitter and explosion-flash field builds,
   clears cached local intensity and tint, and hides the local-light overlay.

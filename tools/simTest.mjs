@@ -66,6 +66,41 @@ function run(frames) {
 function typeAt(x, y) { return getWorld().type[index(x, y)]; }
 function tempAt(x, y) { return getWorld().temp[index(x, y)]; }
 
+function powerMachineForFrames(machineX, machineY, batteryX, batteryY, frames) {
+    const world = getWorld();
+    const capacity = defs[ID.Battery].chargeCapacity;
+    const machineDefinition = defs[world.type[index(machineX, machineY)]];
+    const requiredCells = Math.ceil((machineDefinition.powerConsumption * frames) / capacity) + 1;
+    const ensureBattery = (x, y) => {
+        if (x <= 0 || x >= world.cols - 1 || y <= 0 || y >= world.rows - 1) return false;
+        const cell = index(x, y);
+        if (world.type[cell] !== EMPTY && world.type[cell] !== ID.Battery) return false;
+        if (world.type[cell] !== ID.Battery) setCell(x, y, ID.Battery);
+        world.charge[cell] = capacity;
+        return true;
+    };
+
+    if (!ensureBattery(batteryX, batteryY)) return false;
+    let batteryCount = 1;
+    const stepY = batteryX !== machineX ? 1 : batteryY < machineY ? -1 : 1;
+    let anchorY = batteryY;
+    for (let y = batteryY + stepY;
+        y > 0 && y < world.rows - 1 && batteryCount < requiredCells; y += stepY) {
+        if (!ensureBattery(batteryX, y)) break;
+        batteryCount++;
+        anchorY = y;
+    }
+
+    for (const direction of [1, -1]) {
+        for (let x = batteryX + direction;
+            x > 0 && x < world.cols - 1 && batteryCount < requiredCells; x += direction) {
+            if (!ensureBattery(x, anchorY)) break;
+            batteryCount++;
+        }
+    }
+    return batteryCount >= requiredCells;
+}
+
 function countOf(id) {
     const type = getWorld().type;
     let n = 0;
@@ -945,6 +980,1258 @@ function runFanWindScaleAlignmentRegression() {
             atNewMaximum.powered && Math.abs(frontCellAirflow - legacyMaximumAirflow) < 0.000001,
             `powered ${atNewMaximum.powered}, front airflow ${frontCellAirflow}, legacy maximum ${legacyMaximumAirflow}`);
     } finally {
+        restoreSimulationState(previousState);
+        if (previousSeed !== null) setRandomSeed(previousSeed);
+    }
+}
+
+// Air remains implicit in EMPTY cells. These checks exercise temperature and
+// humidity transport through that airspace without depending on a particle
+// representation or rendering state.
+function runAirCirculationRegressions() {
+    const previousState = captureSimulationState();
+    const previousSeed = getRandomSeed();
+    const resetAir = () => {
+        resetThermalContractFixture(20);
+        physics.setGeneralWindStrength(0);
+        physics.setGustWindStrength(0);
+        setAmbientWindOn(false);
+        getWorld().temp.fill(20);
+        getWorld().tempNext.fill(20);
+        getWorld().humidity.fill(50);
+    };
+    const installPower = (x, y, frames = 1) => {
+        return powerMachineForFrames(x, y, x - 1, y, frames);
+    };
+
+    try {
+        console.log('\nAir circulation carries implicit temperature and humidity');
+
+        const simulateFan = (powered, includeFan = true) => {
+            resetAir();
+            const fanX = 3;
+            const fanY = 22;
+            if (includeFan) {
+                setCell(fanX, fanY, ID.Fan);
+            if (powered) installPower(fanX, fanY, 144);
+                physics.setMachineSetting(fanX, fanY, 50);
+            }
+            const world = getWorld();
+            // A warm, humid air parcel starts inside the current 28-cell cone.
+            for (let y = fanY - 1; y <= fanY + 1; y++) {
+                for (let x = fanX + 10; x <= fanX + 12; x++) {
+                    world.temp[index(x, y)] = 120;
+                    world.humidity[index(x, y)] = 100;
+                }
+            }
+            run(144);
+            const target = index(fanX + 54, fanY);
+            return {
+                powered: physics.isMachinePoweredAt(fanX, fanY),
+                temperature: world.temp[target],
+                humidity: world.humidity[target]
+            };
+        };
+        const poweredFan = simulateFan(true);
+        const idleFan = simulateFan(false);
+        const noFan = simulateFan(false, false);
+        check('powered Fan wind carries warm air near its planned 56-cell reach',
+            poweredFan.powered && poweredFan.temperature > idleFan.temperature + 0.05,
+            `powered ${poweredFan.powered}, active ${poweredFan.temperature.toFixed(3)} C, idle ${idleFan.temperature.toFixed(3)} C`);
+        check('powered Fan wind carries humidity near its planned 56-cell reach',
+            poweredFan.powered && poweredFan.humidity > idleFan.humidity + 0.1,
+            `powered ${poweredFan.powered}, active ${poweredFan.humidity.toFixed(3)}%, idle ${idleFan.humidity.toFixed(3)}%`);
+        check('unpowered Fan leaves distant air near its baseline',
+            !idleFan.powered && Math.abs(idleFan.temperature - noFan.temperature) < 0.05 &&
+                Math.abs(idleFan.humidity - noFan.humidity) < 0.1,
+            `powered ${idleFan.powered}, idle ${idleFan.temperature.toFixed(3)} C / ${idleFan.humidity.toFixed(3)}%, no-machine ${noFan.temperature.toFixed(3)} C / ${noFan.humidity.toFixed(3)}%`);
+
+        for (const machine of ['Heater', 'Cooler']) {
+            resetAir();
+            run(144);
+            const ambientBaseline = getWorld().temp[index(3 + 54, 22 + 8)];
+            const ambientHumidityBaseline = getWorld().humidity[index(3 + 54, 22)];
+
+            const simulateMachine = powered => {
+                resetAir();
+                const x = 3;
+                const y = 22;
+                setCell(x, y, ID[machine]);
+                if (powered) installPower(x, y, 144);
+                const targetTemp = machine === 'Heater' ? 180 : -20;
+                physics.setMachineSetting(x, y, targetTemp);
+                for (let py = y - 1; py <= y + 1; py++) {
+                    for (let px = x + 10; px <= x + 12; px++) {
+                        getWorld().humidity[index(px, py)] = 100;
+                    }
+                }
+                // The unscaled two-tick solver updates scalars half as often;
+                // allow twice the simulation time for the same plume reach.
+                run(144);
+                return {
+                    powered: physics.isMachinePoweredAt(x, y),
+                    temperature: getWorld().temp[index(x + 54, y + 8)],
+                    humidity: getWorld().humidity[index(x + 54, y)]
+                };
+            };
+            const active = simulateMachine(true);
+            const inactive = simulateMachine(false);
+            const heater = machine === 'Heater';
+            check(`powered ${machine} changes air near its planned 56-cell reach`,
+                active.powered && (heater
+                    ? active.temperature > ambientBaseline + 0.05
+                    : active.temperature < ambientBaseline - 0.05),
+                `powered ${active.powered}, far temperature ${active.temperature.toFixed(3)} C, ambient baseline ${ambientBaseline.toFixed(3)} C`);
+            check(`powered ${machine} jet transports humidity near its 56-cell reach`,
+                active.powered && active.humidity > ambientHumidityBaseline + 0.2,
+                `powered ${active.powered}, far humidity ${active.humidity.toFixed(3)}%, ambient baseline ${ambientHumidityBaseline.toFixed(3)}%`);
+            check(`unpowered ${machine} leaves far-field air unchanged`,
+                !inactive.powered && Math.abs(inactive.temperature - ambientBaseline) < 0.05 &&
+                    Math.abs(inactive.humidity - ambientHumidityBaseline) < 0.2,
+                `powered ${inactive.powered}, far air ${inactive.temperature.toFixed(3)} C / ${inactive.humidity.toFixed(3)}%, ambient ${ambientBaseline.toFixed(3)} C / ${ambientHumidityBaseline.toFixed(3)}%`);
+        }
+
+        const simulateChamber = opening => {
+            resetAir();
+            physics.resetRandomSource();
+            setRandomSeed(3701);
+            physics.setGeneralWindStrength(45);
+            physics.setGustWindStrength(45);
+            setAmbientWindOn(true);
+            const direction = physics.getPrevailingWindDirection();
+            const wallX = 30;
+            const chamberSide = direction;
+            const nearWallX = wallX;
+            const farWallX = wallX + chamberSide * 22;
+            const leftX = Math.min(nearWallX, farWallX);
+            const rightX = Math.max(nearWallX, farWallX);
+            const topY = 10;
+            const bottomY = 34;
+            for (let x = leftX; x <= rightX; x++) {
+                setCell(x, topY, ID.Insulation);
+                setCell(x, bottomY, ID.Insulation);
+            }
+            for (let y = topY; y <= bottomY; y++) {
+                if (!(opening && y === 22)) setCell(nearWallX, y, ID.Insulation);
+                setCell(farWallX, y, ID.Insulation);
+            }
+            const sourceX = nearWallX - direction * 4;
+            for (let y = 21; y <= 23; y++) {
+                for (let x = sourceX - 1; x <= sourceX + 1; x++) {
+                    getWorld().temp[index(x, y)] = 100;
+                    getWorld().humidity[index(x, y)] = 100;
+                }
+            }
+            // Sample just inside the doorway before the outdoor vertical
+            // temperature profile can dominate the enclosed-air comparison.
+            run(48);
+            const target = index(nearWallX + direction * 2, 22);
+            return {
+                direction,
+                temperature: getWorld().temp[target],
+                humidity: getWorld().humidity[target]
+            };
+        };
+        const sealed = simulateChamber(false);
+        const connected = simulateChamber(true);
+        check('an opening carries the upwind temperature anomaly farther than a solid wall',
+            connected.direction === sealed.direction && connected.temperature > sealed.temperature + 0.2,
+            `sealed ${sealed.temperature.toFixed(3)} C, opening ${connected.temperature.toFixed(3)} C, direction ${connected.direction}/${sealed.direction}`);
+        check('an opening carries the upwind humidity anomaly farther than a solid wall',
+            connected.direction === sealed.direction && connected.humidity > sealed.humidity + 0.05,
+            `sealed ${sealed.humidity.toFixed(3)}%, opening ${connected.humidity.toFixed(3)}%, direction ${connected.direction}/${sealed.direction}`);
+    } finally {
+        restoreSimulationState(previousState);
+        if (previousSeed !== null) setRandomSeed(previousSeed);
+    }
+}
+
+function runAirflowBoundaryRegressions() {
+    const previousState = captureSimulationState();
+    const previousSeed = getRandomSeed();
+    const originalAshWindLift = defs[ID.Ash].windLift;
+    const resetBox = (cols = 128, rows = 64, ambient = 20) => {
+        physics.resetRandomSource();
+        setRandomSeed(9147);
+        createWorld(cols, rows);
+        setAmbientTarget(ambient);
+        physics.setAmbientHumidityTarget(50);
+        physics.setDewpointTarget(10);
+        physics.setAmbientWindOn(false);
+        physics.setGeneralWindStrength(0);
+        physics.setGustWindStrength(0);
+        for (let x = 0; x < cols; x++) {
+            setCell(x, 0, ID.Glass);
+            setCell(x, rows - 1, ID.Glass);
+        }
+        for (let y = 0; y < rows; y++) {
+            setCell(0, y, ID.Glass);
+            setCell(cols - 1, y, ID.Glass);
+        }
+        const state = captureSimulationState();
+        state.ambient = ambient;
+        state.ambientTarget = ambient;
+        state.ambientHumidity = 50;
+        state.dewpointTarget = 10;
+        state.ambientWindOn = false;
+        state.arrays.temp.fill(ambient);
+        state.arrays.humidity.fill(50);
+        restoreSimulationState(state);
+        getWorld().tempNext.fill(ambient);
+        return getWorld();
+    };
+    const power = (x, y, dx = -1, frames = 1) => {
+        return powerMachineForFrames(x, y, x + dx, y, frames);
+    };
+    const vectorAt = (x, y) => {
+        const i = index(x, y);
+        const world = getWorld();
+        return {
+            x: world.airflowX[i] + world.airMixX[i],
+            y: world.airflowY[i] + world.airMixY[i]
+        };
+    };
+
+    try {
+        console.log('\nAirflow reach, machine limits, and obstacle contracts');
+
+        for (const machine of ['Fan', 'Heater', 'Cooler']) {
+            const x = 4;
+            const y = 32;
+            const measureVectorReach = powered => {
+                const world = resetBox(224, 64);
+                setCell(x, y, ID[machine]);
+                if (powered) power(x, y, -1, 1);
+                if (machine === 'Fan') physics.setMachineSetting(x, y, 50);
+                if (machine === 'Heater') physics.setMachineSetting(x, y, 30);
+                if (machine === 'Cooler') physics.setMachineSetting(x, y, -20);
+                run(1);
+                return {
+                    powered: physics.isMachinePoweredAt(x, y),
+                    airMix54: Math.hypot(world.airMixX[index(x + 54, y)], world.airMixY[index(x + 54, y)]),
+                    airMix198: Math.hypot(world.airMixX[index(x + 198, y)], world.airMixY[index(x + 198, y)]),
+                    airMix200: Math.hypot(world.airMixX[index(x + 200, y)], world.airMixY[index(x + 200, y)])
+                };
+            };
+            const active = measureVectorReach(true);
+            const inactive = measureVectorReach(false);
+            check(`${machine} air-mix vector reaches near 198 cells`,
+                active.powered && active.airMix198 > 0 && inactive.airMix198 === 0,
+                `powered ${active.powered}, active/unpowered vector ${active.airMix198.toFixed(4)}/${inactive.airMix198.toFixed(4)} at +198`);
+            if (machine === 'Fan') {
+                check('Fan air-mix vectors taper across +54, +198, and +200',
+                    active.airMix54 > active.airMix198 && active.airMix198 > active.airMix200,
+                    `vector magnitude +54/+198/+200 ${active.airMix54.toFixed(4)}/${active.airMix198.toFixed(4)}/${active.airMix200.toFixed(4)}`);
+                // The Fan taper reaches exactly zero at +200; scalar influence
+                // is checked just inside that endpoint at +198 below.
+                check('Fan air-mix vector reaches zero at the exact +200 endpoint',
+                    active.airMix200 === 0,
+                    `vector magnitude +198/+200 ${active.airMix198.toFixed(4)}/${active.airMix200.toFixed(4)}`);
+            }
+
+            const measureLocalTailTransfer = powered => {
+                const world = resetBox(224, 64);
+                setCell(x, y, ID[machine]);
+                if (powered) power(x, y, -1, 48);
+                if (machine === 'Fan') physics.setMachineSetting(x, y, 50);
+                if (machine === 'Heater') physics.setMachineSetting(x, y, 30);
+                if (machine === 'Cooler') physics.setMachineSetting(x, y, -20);
+                const tracer = index(x + 197, y);
+                const target = index(x + 198, y);
+                world.temp[tracer] = machine === 'Cooler' ? 0 : 100;
+                world.tempNext[tracer] = world.temp[tracer];
+                world.humidity[tracer] = 100;
+                run(48);
+                return {
+                    powered: physics.isMachinePoweredAt(x, y),
+                    temperature: world.temp[target],
+                    humidity: world.humidity[target]
+                };
+            };
+            const tailActive = measureLocalTailTransfer(true);
+            const tailIdle = measureLocalTailTransfer(false);
+            const temperatureDelta = machine === 'Cooler'
+                ? tailIdle.temperature - tailActive.temperature
+                : tailActive.temperature - tailIdle.temperature;
+            check(`${machine} active vector transports a local temperature tracer at +198`,
+                tailActive.powered && temperatureDelta > 0.05,
+                `powered ${tailActive.powered}, directional temperature delta ${temperatureDelta.toFixed(3)} C (${tailActive.temperature.toFixed(3)} active, ${tailIdle.temperature.toFixed(3)} idle)`);
+            check(`${machine} active vector transports a local humidity tracer at +198`,
+                tailActive.powered && tailActive.humidity > tailIdle.humidity + 0.05,
+                `powered ${tailActive.powered}, humidity ${tailActive.humidity.toFixed(3)}% active vs ${tailIdle.humidity.toFixed(3)}% idle`);
+        }
+
+        defs[ID.Ash].windLift = 100;
+        const fanParticleRun = (distance, frames) => {
+            const world = resetBox(64, 64);
+            const x = 4;
+            const y = 62;
+            setCell(x, y, ID.Fan);
+            power(x, y);
+            physics.setMachineSetting(x, y, 50);
+            setCell(x + distance, y, ID.Ash);
+            run(frames);
+            const at = world.type.indexOf(ID.Ash);
+            return at < 0 ? -1 : at % world.cols;
+        };
+        const ashInside = fanParticleRun(27, 1);
+        const ashOutside = fanParticleRun(29, 2);
+        check('Fan pushes a light particle from inside its 28-cell cone', ashInside === 32,
+            `Ash ended at x=${ashInside}, expected x=32`);
+        check('Fan residual air does not push a particle starting outside 28 cells', ashOutside === 33,
+            `Ash ended at x=${ashOutside}, expected x=33`);
+
+        const machineParticleRun = (machine, powered) => {
+            const world = resetBox(64, 64);
+            const x = 32;
+            const y = 50;
+            setCell(x, y, ID[machine]);
+            world.data[index(x, y)] = 2;
+            if (powered) power(x, y);
+            physics.setMachineSetting(x, y, machine === 'Heater' ? 30 : -20);
+            const insideX = x + 12;
+            const insideY = y - 27;
+            const outsideX = x + 16;
+            const outsideY = y - 29;
+            setCell(insideX, insideY, ID.Ceramic);
+            setCell(outsideX, outsideY, ID.Ceramic);
+            world.temp[index(insideX, insideY)] = 20;
+            world.temp[index(outsideX, outsideY)] = 20;
+            const insideBefore = world.temp[index(insideX, insideY)];
+            const outsideBefore = world.temp[index(outsideX, outsideY)];
+            stepSimulation();
+            return {
+                powered: physics.isMachinePoweredAt(x, y),
+                inside: world.temp[index(insideX, insideY)],
+                outside: world.temp[index(outsideX, outsideY)],
+                insideIsSameMaterial: world.type[index(insideX, insideY)] === ID.Ceramic,
+                outsideIsSameMaterial: world.type[index(outsideX, outsideY)] === ID.Ceramic,
+                insideBefore,
+                outsideBefore
+            };
+        };
+        for (const machine of ['Heater', 'Cooler']) {
+            const active = machineParticleRun(machine, true);
+            const inactive = machineParticleRun(machine, false);
+            const heater = machine === 'Heater';
+            check(`${machine} directly affects non-air material inside 28 cells`,
+                active.powered && active.insideIsSameMaterial && (heater
+                    ? active.inside > active.insideBefore + 0.2
+                    : active.inside < active.insideBefore - 0.2),
+                `powered ${active.powered}, same material ${active.insideIsSameMaterial}, inside material ${active.inside.toFixed(3)} C from ${active.insideBefore.toFixed(3)} C`);
+            check(`${machine} direct effect stops before non-air material at 29 cells`,
+                active.outsideIsSameMaterial && inactive.outsideIsSameMaterial &&
+                    Math.abs(active.outsideBefore - inactive.outsideBefore) < 0.05 &&
+                    Math.abs(active.outside - inactive.outside) < 0.05,
+                `same material ${active.outsideIsSameMaterial}/${inactive.outsideIsSameMaterial}, powered ${active.outside.toFixed(3)} C, control ${inactive.outside.toFixed(3)} C`);
+        }
+
+        const heaterMudAtDistance = (distance, powered) => {
+            const world = resetBox(128, 64);
+            const heaterX = 4;
+            const heaterY = 32;
+            const mudX = heaterX + distance;
+            // Put the outside-cone probe on the implicit bottom boundary so
+            // it has no Glass support that could conduct heat around the
+            // active-air/material face mask.
+            const mudY = distance > 28 ? world.rows - 1 : heaterY;
+            setCell(heaterX, heaterY, ID.Heater);
+            if (powered) power(heaterX, heaterY, -1, distance > 28 ? 360 : 1);
+            physics.setMachineSetting(heaterX, heaterY, 30);
+            if (distance <= 28) {
+                for (let supportX = mudX - 1; supportX <= mudX + 1; supportX++) {
+                    setCell(supportX, mudY + 1, ID.Glass);
+                    world.temp[index(supportX, mudY + 1)] = 20;
+                }
+            }
+            setCell(mudX, mudY, ID['Dry Mud']);
+            world.temp[index(mudX, mudY)] = world.temp[index(mudX, mudY - 1)];
+            run(distance > 28 ? 360 : 1);
+            return {
+                powered: physics.isMachinePoweredAt(heaterX, heaterY),
+                air: world.temp[index(mudX, mudY - 1)],
+                mud: world.temp[index(mudX, mudY)],
+                mudIsStillPresent: world.type[index(mudX, mudY)] === ID['Dry Mud']
+            };
+        };
+        const heaterMudFarActive = heaterMudAtDistance(70, true);
+        const heaterMudFarIdle = heaterMudAtDistance(70, false);
+        check('powered Heater carries a thermal anomaly through open air to +70',
+            heaterMudFarActive.powered && heaterMudFarActive.air > heaterMudFarIdle.air + 0.05,
+            `active air ${heaterMudFarActive.air.toFixed(3)} C, unpowered ${heaterMudFarIdle.air.toFixed(3)} C`);
+        check('machine-air-only heating leaves Dry Mud at +70 at its unpowered temperature',
+            heaterMudFarActive.powered && heaterMudFarActive.mudIsStillPresent && heaterMudFarIdle.mudIsStillPresent &&
+                Math.abs(heaterMudFarActive.mud - heaterMudFarIdle.mud) < 0.05,
+            `powered ${heaterMudFarActive.powered}, same material ${heaterMudFarActive.mudIsStillPresent}/${heaterMudFarIdle.mudIsStillPresent}, active Mud ${heaterMudFarActive.mud.toFixed(3)} C, unpowered ${heaterMudFarIdle.mud.toFixed(3)} C`);
+
+        const heaterMudNearActive = heaterMudAtDistance(27, true);
+        const heaterMudNearIdle = heaterMudAtDistance(27, false);
+        check('powered Heater still heats Dry Mud directly inside the 28-cell cone',
+            heaterMudNearActive.powered && heaterMudNearActive.mudIsStillPresent && heaterMudNearIdle.mudIsStillPresent &&
+                heaterMudNearActive.mud > heaterMudNearIdle.mud + 0.2,
+            `powered ${heaterMudNearActive.powered}, same material ${heaterMudNearActive.mudIsStillPresent}/${heaterMudNearIdle.mudIsStillPresent}, active Mud ${heaterMudNearActive.mud.toFixed(3)} C, unpowered ${heaterMudNearIdle.mud.toFixed(3)} C at +27`);
+
+        {
+            const world = resetBox(64, 64);
+            const mudX = 40;
+            const mudY = 62;
+            setCell(mudX, mudY, ID['Dry Mud']);
+            world.temp[index(mudX, mudY)] = 20;
+            world.temp[index(mudX - 1, mudY)] = 100;
+            stepSimulation();
+            check('ordinary air-to-material conduction still heats Dry Mud outside machine airflow',
+                world.temp[index(mudX, mudY)] > 20.05,
+                `Dry Mud warmed to ${world.temp[index(mudX, mudY)].toFixed(3)} C`);
+        }
+
+        {
+            const world = resetBox(64, 64);
+            const copperX = 40;
+            const copperY = 62;
+            const airCell = index(copperX - 1, copperY);
+            setCell(copperX, copperY, ID.Copper);
+            world.temp[index(copperX, copperY)] = 100;
+            world.temp[airCell] = 20;
+            stepSimulation();
+            check('enclosed air exchanges heat through the conductor network',
+                world.temp[airCell] > 20.05,
+                `enclosed air warmed to ${world.temp[airCell].toFixed(3)} C`);
+        }
+
+        const heaterCopperAt70 = powered => {
+            const world = resetBox(128, 64);
+            const heaterX = 4;
+            const heaterY = 32;
+            const copperX = heaterX + 70;
+            const copperY = heaterY + 8;
+            setCell(heaterX, heaterY, ID.Heater);
+            if (powered) power(heaterX, heaterY, -1, 360);
+            physics.setMachineSetting(heaterX, heaterY, 30);
+            setCell(copperX, copperY, ID.Copper);
+            world.temp[index(copperX, copperY)] = world.temp[index(copperX, copperY - 1)];
+            run(360);
+            return {
+                powered: physics.isMachinePoweredAt(heaterX, heaterY),
+                air: world.temp[index(copperX, copperY - 1)],
+                copper: world.temp[index(copperX, copperY)]
+            };
+        };
+        const networkActive = heaterCopperAt70(true);
+        const networkIdle = heaterCopperAt70(false);
+        check('powered Heater warms enclosed air at +70 beside a conductor',
+            networkActive.powered && networkActive.air > networkIdle.air + 0.05,
+            `active air ${networkActive.air.toFixed(3)} C, unpowered ${networkIdle.air.toFixed(3)} C`);
+        check('machine-air extension suppresses its enclosed-air thermal-network edge to Copper',
+            networkActive.powered && Math.abs(networkActive.copper - networkIdle.copper) < 0.05,
+            `active Copper ${networkActive.copper.toFixed(3)} C, unpowered ${networkIdle.copper.toFixed(3)} C`);
+
+        {
+            const world = resetBox(128, 64);
+            const heaterX = 4;
+            const heaterY = 32;
+            const copperX = heaterX + 70;
+            const copperY = heaterY + 8;
+            const airCell = index(copperX, copperY - 1);
+            const copperCell = index(copperX, copperY);
+            setCell(heaterX, heaterY, ID.Heater);
+            power(heaterX, heaterY, -1, 360);
+            physics.setMachineSetting(heaterX, heaterY, 30);
+            setCell(copperX, copperY, ID.Copper);
+            world.temp[copperCell] = world.temp[airCell];
+            run(360);
+            const copperBeforeOff = world.temp[copperCell];
+            const airBeforeOff = world.temp[airCell];
+            const activeState = captureSimulationState();
+            const persistedMaskFields = [
+                ...Object.keys(activeState),
+                ...Object.keys(activeState.arrays)
+            ].filter(field => /mask|provenance/i.test(field));
+            for (let i = 0; i < world.type.length; i++) {
+                if (world.type[i] === ID.Battery) {
+                    setCell(i % world.cols, Math.floor(i / world.cols), EMPTY);
+                }
+            }
+            run(2);
+            const copperAfterOff = world.temp[copperCell];
+            check('airflow extension masks are transient rather than persisted',
+                persistedMaskFields.length === 0,
+                persistedMaskFields.join(', ') || 'no mask or provenance fields in captured state');
+            check('turning off a Heater clears its mask and restores residual air-to-Copper exchange',
+                !physics.isMachinePoweredAt(heaterX, heaterY) && airBeforeOff > 20.05 &&
+                    world.temp[airCell] > 20.02 && copperAfterOff > copperBeforeOff + 0.005,
+                `powered ${physics.isMachinePoweredAt(heaterX, heaterY)}, air ${airBeforeOff.toFixed(3)}->${world.temp[airCell].toFixed(3)} C, Copper ${copperBeforeOff.toFixed(3)}->${copperAfterOff.toFixed(3)} C`);
+        }
+
+        for (const [machine, target, baseline] of [['Heater', 30, 20], ['Cooler', 20, 30]]) {
+            const world = resetBox(80, 64, baseline);
+            const y = 62;
+            const left = 20;
+            const right = 48;
+            setCell(left, y, ID[machine]);
+            setCell(right, y, ID[machine]);
+            world.data[index(right, y)] = 1;
+            power(left, y, -1, 60);
+            power(right, y, 1, 60);
+            physics.setMachineSetting(left, y, target);
+            physics.setMachineSetting(right, y, target);
+            setCell(34, y, ID.Ash);
+            world.temp[index(34, y)] = baseline;
+            world.temp[index(34, y - 1)] = baseline;
+            run(60);
+            const airValue = world.temp[index(34, y - 1)];
+            const materialValue = world.temp[index(34, y)];
+            const passed = machine === 'Heater'
+                ? airValue <= target + 0.05 && materialValue <= target + 0.05
+                : airValue >= target - 0.05 && materialValue >= target - 0.05;
+            check(`${machine} converging setpoints do not overshoot in air or material`,
+                physics.isMachinePoweredAt(left, y) && physics.isMachinePoweredAt(right, y) && passed,
+                `air ${airValue.toFixed(3)} C, Ash ${materialValue.toFixed(3)} C, target ${target} C`);
+        }
+
+        {
+            const world = resetBox(96, 64);
+            const fans = [
+                { x: 8, y: 32, direction: 0, battery: [7, 32], source: [14, 32] },
+                { x: 88, y: 32, direction: 1, battery: [89, 32], source: [82, 32] },
+                { x: 48, y: 8, direction: 3, battery: [48, 7], source: [48, 14] },
+                { x: 48, y: 56, direction: 2, battery: [48, 57], source: [48, 50] }
+            ];
+            for (const fan of fans) {
+                setCell(fan.x, fan.y, ID.Fan);
+                world.data[index(fan.x, fan.y)] = fan.direction;
+                physics.setMachineSetting(fan.x, fan.y, 50);
+                powerMachineForFrames(fan.x, fan.y, fan.battery[0], fan.battery[1], 80);
+                world.temp[index(fan.source[0], fan.source[1])] = 100;
+            }
+            run(80);
+            let minimum = Infinity;
+            let maximum = -Infinity;
+            let allFinite = true;
+            for (const value of world.temp) {
+                allFinite &&= Number.isFinite(value);
+                minimum = Math.min(minimum, value);
+                maximum = Math.max(maximum, value);
+            }
+            const allPowered = fans.every(fan => physics.isMachinePoweredAt(fan.x, fan.y));
+            check('converging Fan flows keep the whole air field finite and bounded',
+                allPowered && allFinite && minimum > -100 && maximum < 1000,
+                `powered ${allPowered}, finite ${allFinite}, min ${minimum.toFixed(3)} C, max ${maximum.toFixed(3)} C`);
+        }
+
+        {
+            const world = resetBox(64, 64);
+            const fanX = 4;
+            const y = 32;
+            setCell(fanX, y, ID.Fan);
+            power(fanX, y);
+            physics.setMachineSetting(fanX, y, 50);
+            setCell(20, y, ID.Glass);
+            world.temp[index(19, y)] = 100;
+            world.humidity[index(19, y)] = 100;
+            stepSimulation();
+            const incoming = vectorAt(18, y);
+            const upper = vectorAt(19, y - 1);
+            const lower = vectorAt(19, y + 1);
+            const wake = vectorAt(22, y);
+            check('a solid deflects airflow upward and downward around its edge',
+                incoming.x > 0 && upper.y < 0 && lower.y > 0,
+                `incoming ${incoming.x.toFixed(3)}, upper vy ${upper.y.toFixed(3)}, lower vy ${lower.y.toFixed(3)}`);
+            check('the downwind wake is slower and reverses direction',
+                wake.x < 0 && Math.abs(wake.x) < incoming.x,
+                `incoming vx ${incoming.x.toFixed(3)}, wake vx ${wake.x.toFixed(3)}`);
+            check('air scalars do not transfer through the solid cell or wall face',
+                world.humidity[index(20, y)] === 50 && world.humidity[index(21, y)] === 50,
+                `wall humidity ${world.humidity[index(20, y)].toFixed(3)}%, lee humidity ${world.humidity[index(21, y)].toFixed(3)}%`);
+        }
+
+        const obstacleScalarRun = powered => {
+            const world = resetBox(64, 64);
+            const fanX = 12;
+            const y = 32;
+            // Isolate the driven return loop from ordinary outdoor relaxation.
+            for (let x = 7; x <= 38; x++) {
+                setCell(x, 20, ID.Insulation);
+                setCell(x, 44, ID.Insulation);
+            }
+            for (let py = 20; py <= 44; py++) {
+                setCell(7, py, ID.Insulation);
+                setCell(38, py, ID.Insulation);
+            }
+            setCell(fanX, y, ID.Fan);
+            if (powered) power(fanX, y, -1, 240);
+            physics.setMachineSetting(fanX, y, 50);
+            setCell(28, y, ID.Glass);
+            world.temp[index(26, y)] = 100;
+            world.humidity[index(26, y)] = 100;
+            const typesBefore = world.type.slice();
+            run(240);
+            const wake = vectorAt(30, y);
+            return {
+                powered: physics.isMachinePoweredAt(fanX, y),
+                edgeTemperature: world.temp[index(28, y - 1)],
+                edgeHumidity: world.humidity[index(28, y - 1)],
+                wakeTemperature: world.temp[index(30, y)],
+                wakeHumidity: world.humidity[index(30, y)],
+                wallHumidity: world.humidity[index(28, y)],
+                wakeX: wake.x,
+                typesUnchanged: world.type.every((value, i) => value === typesBefore[i])
+            };
+        };
+        {
+            const active = obstacleScalarRun(true);
+            const inactive = obstacleScalarRun(false);
+            check('powered Fan carries warm, humid air around an obstacle edge into its reversed wake',
+                active.powered && active.edgeTemperature > inactive.edgeTemperature + 0.01 &&
+                    active.edgeHumidity > inactive.edgeHumidity + 0.001 &&
+                    active.wakeTemperature > inactive.wakeTemperature + 0.01 &&
+                    active.wakeHumidity > inactive.wakeHumidity + 0.001 &&
+                    active.wakeX < 0 && active.wallHumidity === 50 &&
+                    active.typesUnchanged && inactive.typesUnchanged,
+                `powered ${active.powered}, edge T/RH ${active.edgeTemperature.toFixed(3)}/${active.edgeHumidity.toFixed(3)} vs ${inactive.edgeTemperature.toFixed(3)}/${inactive.edgeHumidity.toFixed(3)}, wake T/RH ${active.wakeTemperature.toFixed(3)}/${active.wakeHumidity.toFixed(3)} vs ${inactive.wakeTemperature.toFixed(3)}/${inactive.wakeHumidity.toFixed(3)}, wake vx ${active.wakeX.toFixed(3)}, wall RH ${active.wallHumidity.toFixed(3)}%, types ${active.typesUnchanged}/${inactive.typesUnchanged}`);
+        }
+
+        {
+            const storageWallRun = includeCollector => {
+                const world = resetBox(64, 64, 20);
+                // Close the chamber and leave one 11-cell gap in an interior
+                // partition. A right-facing Collector puts its virtual
+                // storage-intake wall at x=32, y=27..37.
+                for (let x = 20; x <= 44; x++) {
+                    setCell(x, 10, ID.Insulation);
+                    setCell(x, 54, ID.Insulation);
+                }
+                for (let y = 10; y <= 54; y++) {
+                    setCell(20, y, ID.Insulation);
+                    setCell(44, y, ID.Insulation);
+                    if (y < 27 || y > 37) setCell(32, y, ID.Insulation);
+                }
+                if (includeCollector) setCell(39, 32, ID.Collector);
+                world.temp[index(31, 32)] = 100;
+                world.humidity[index(31, 32)] = 100;
+                run(2);
+                const firstDueWallHumidity = world.humidity[index(32, 32)];
+                run(2);
+                return {
+                    firstDueWallHumidity,
+                    wallHumidity: world.humidity[index(32, 32)],
+                    leeHumidity: world.humidity[index(33, 32)],
+                    wallClass: world.airScalarCellClass?.[index(32, 32)] ?? -1,
+                    storageWallIsAir: world.type[index(32, 32)] === EMPTY
+                };
+            };
+            const openControl = storageWallRun(false);
+            const blocked = storageWallRun(true);
+            const openWallSignal = openControl.firstDueWallHumidity - 50;
+            const openLeeSignal = openControl.leeHumidity - 50;
+            check('Collector storage-intake wall is AIR_SPACE but excluded from face links',
+                blocked.storageWallIsAir && blocked.wallClass === 1 && openControl.wallClass === 2 &&
+                    openWallSignal > 0.05 && openLeeSignal > 0.005,
+                `type is AIR_SPACE ${blocked.storageWallIsAir}, blocked/open class ${blocked.wallClass}/${openControl.wallClass}, measured one-update open wall rise ${openWallSignal.toFixed(4)}%, open lee rise ${openLeeSignal.toFixed(4)}%`);
+            check('storage-intake wall blocks humidity transfer into the wall and lee side',
+                blocked.firstDueWallHumidity < 50 + openWallSignal * 0.25 &&
+                    blocked.leeHumidity < 50 + openLeeSignal * 0.25,
+                `blocked wall RH ${blocked.firstDueWallHumidity.toFixed(4)}% vs open one-update ${openControl.firstDueWallHumidity.toFixed(4)}%, blocked lee RH ${blocked.leeHumidity.toFixed(4)}% vs open ${openControl.leeHumidity.toFixed(4)}% after two updates`);
+            setCell(39, 32, EMPTY);
+            run(2);
+            const world = getWorld();
+            const formerWall = index(32, 32);
+            check('removing Collector restores the former wall face on the next due update',
+                world.type[formerWall] === EMPTY && world.airScalarCellClass?.[formerWall] === 2 &&
+                    world.humidity[formerWall] > blocked.wallHumidity + openWallSignal * 0.25,
+                `former wall class ${world.airScalarCellClass?.[formerWall] ?? -1}, RH ${world.humidity[formerWall].toFixed(4)}% after opening vs blocked ${blocked.wallHumidity.toFixed(4)}%; quarter of measured open signal ${(openWallSignal * 0.25).toFixed(4)}%`);
+        }
+
+        {
+            let world = resetBox(64, 64, 20);
+            physics.setAmbientHumidityTarget(0);
+            // Keep a single top-boundary opening. The diagonal control at
+            // (19,1) is face-connected to it; the target at (20,2) is sealed
+            // on all cardinal faces and can only appear diagonally adjacent.
+            for (let x = 0; x < world.cols; x++) setCell(x, 0, ID.Glass);
+            setCell(19, 0, EMPTY);
+            setCell(19, 2, ID.Insulation);
+            setCell(20, 1, ID.Insulation);
+            setCell(20, 3, ID.Insulation);
+            setCell(21, 2, ID.Insulation);
+            setCell(18, 1, ID.Insulation);
+            world.temp.fill(100);
+            world.tempNext.fill(100);
+            world.humidity.fill(100);
+            const ambient = captureSimulationState();
+            ambient.ambient = -40;
+            ambient.ambientTarget = -40;
+            ambient.ambientHumidity = 0;
+            restoreSimulationState(ambient);
+            world = getWorld();
+            run(240);
+            const cornerTemp = world.temp[index(20, 2)];
+            const cornerHumidity = world.humidity[index(20, 2)];
+            const openControlHumidity = world.humidity[index(19, 1)];
+            const targetEnclosed = world.openAir && world.openAir[index(20, 2)] === 0;
+            const controlConnected = world.openAir && world.openAir[index(19, 1)] !== 0;
+            check('diagonal-only corner exposure stays enclosed from ambient reset',
+                targetEnclosed && controlConnected &&
+                    Math.abs(cornerTemp - 100) < 1 && cornerHumidity > 95 &&
+                    openControlHumidity < 95,
+                `target enclosed ${targetEnclosed}, control connected ${controlConnected}, corner air ${cornerTemp.toFixed(3)} C/${cornerHumidity.toFixed(3)}%, face-connected control ${openControlHumidity.toFixed(3)}%`);
+        }
+
+        const cornerProbe = withFlow => {
+            const world = resetBox(64, 64);
+            const source = index(20, 20);
+            setCell(21, 20, ID.Glass);
+            setCell(20, 21, ID.Glass);
+            world.temp[source] = 100;
+            world.humidity[source] = 100;
+            if (withFlow) {
+                world.airflowX[source] = 4;
+                world.airflowY[source] = 4;
+            }
+            stepSimulation();
+            const target = index(21, 21);
+            return { temperature: world.temp[target], humidity: world.humidity[target] };
+        };
+        const noFlowCorner = cornerProbe(false);
+        const blockedCorner = cornerProbe(true);
+        check('air scalars do not cut diagonally between two solid faces',
+            Math.abs(blockedCorner.humidity - noFlowCorner.humidity) < 0.05,
+            `no-flow humidity ${noFlowCorner.humidity.toFixed(3)}%, flow ${blockedCorner.humidity.toFixed(3)}%`);
+
+        const airStats = world => {
+            let tempTotal = 0;
+            let humidityTotal = 0;
+            let tempSquares = 0;
+            let humiditySquares = 0;
+            let count = 0;
+            for (let y = 1; y < world.rows - 1; y++) {
+                for (let x = 1; x < world.cols - 1; x++) {
+                    const i = index(x, y);
+                    if (world.type[i] !== EMPTY) continue;
+                    tempTotal += world.temp[i];
+                    humidityTotal += world.humidity[i];
+                    tempSquares += world.temp[i] * world.temp[i];
+                    humiditySquares += world.humidity[i] * world.humidity[i];
+                    count++;
+                }
+            }
+            const tempMean = tempTotal / count;
+            const humidityMean = humidityTotal / count;
+            return {
+                tempMean,
+                humidityMean,
+                tempVariance: tempSquares / count - tempMean * tempMean,
+                humidityVariance: humiditySquares / count - humidityMean * humidityMean
+            };
+        };
+        const calmMixRun = (includeAnomalies = true) => {
+            const world = resetBox(64, 64, 20);
+            physics.setAmbientHumidityTarget(0);
+            world.temp.fill(20);
+            world.tempNext.fill(20);
+            world.humidity.fill(50);
+            if (includeAnomalies) {
+                for (let y = 43; y <= 45; y++) {
+                    for (let x = 23; x <= 25; x++) {
+                        world.temp[index(x, y)] = 100;
+                        world.humidity[index(x, y)] = 90;
+                    }
+                }
+                for (let y = 14; y <= 16; y++) {
+                    for (let x = 43; x <= 45; x++) {
+                        world.temp[index(x, y)] = -20;
+                        world.humidity[index(x, y)] = 10;
+                    }
+                }
+            }
+            const materialCell = index(55, 55);
+            setCell(55, 55, ID.Copper);
+            world.temp[materialCell] = 20;
+            const typesBefore = world.type.slice();
+            const materialTempBefore = world.temp[materialCell];
+            const before = airStats(world);
+            run(360);
+            const after = airStats(world);
+            return {
+                world,
+                before,
+                after,
+                typesUnchanged: world.type.every((type, i) => type === typesBefore[i]),
+                materialTemperature: world.temp[materialCell],
+                materialTemperatureBefore: materialTempBefore,
+                warmAbove: world.temp[index(24, 36)],
+                warmLateral: world.temp[index(32, 44)],
+                coolBelow: world.temp[index(44, 23)],
+                coolLateral: world.temp[index(52, 15)],
+                temp: Array.from(world.temp),
+                humidity: Array.from(world.humidity)
+            };
+        };
+        {
+            const first = calmMixRun();
+            const repeat = calmMixRun();
+            const noAnomalyControl = calmMixRun(false);
+            const deterministic = first.temp.every((value, i) => value === repeat.temp[i]) &&
+                first.humidity.every((value, i) => value === repeat.humidity[i]);
+            check('calm sealed-air exchange deterministically reduces temperature and humidity variance',
+                deterministic && first.after.tempVariance < first.before.tempVariance - 0.05 &&
+                    first.after.humidityVariance < first.before.humidityVariance - 0.05 &&
+                    first.after.tempMean > 18 && first.after.tempMean < 22 &&
+                    first.after.humidityMean > 45 && first.after.humidityMean < 55,
+                `deterministic ${deterministic}, T variance ${first.before.tempVariance.toFixed(3)}->${first.after.tempVariance.toFixed(3)}, RH variance ${first.before.humidityVariance.toFixed(3)}->${first.after.humidityVariance.toFixed(3)}, means ${first.after.tempMean.toFixed(3)} C/${first.after.humidityMean.toFixed(3)}%`);
+            check('calm circulation carries warm air upward and cool air downward',
+                first.warmAbove > first.warmLateral + 0.02 &&
+                    first.coolBelow < first.coolLateral - 0.02,
+                `warm above/lateral ${first.warmAbove.toFixed(3)}/${first.warmLateral.toFixed(3)} C, cool below/lateral ${first.coolBelow.toFixed(3)}/${first.coolLateral.toFixed(3)} C`);
+            check('calm air mixing leaves particle occupancy and isolated material temperature unchanged',
+                first.typesUnchanged &&
+                    Math.abs(first.materialTemperature - noAnomalyControl.materialTemperature) < 0.05,
+                `types unchanged ${first.typesUnchanged}, Copper active ${first.materialTemperature.toFixed(3)} C, no-anomaly control ${noAnomalyControl.materialTemperature.toFixed(3)} C`);
+        }
+
+        const calmRollRun = (tracer, frames = 960, anomalyRadius = 1) => {
+            const world = resetBox(64, 64, 20);
+            physics.setAmbientHumidityTarget(50);
+            physics.setDewpointTarget(0);
+            for (let x = 8; x <= 55; x++) {
+                setCell(x, 8, ID.Insulation);
+                setCell(x, 55, ID.Insulation);
+            }
+            for (let y = 9; y < 55; y++) {
+                setCell(8, y, ID.Insulation);
+                setCell(55, y, ID.Insulation);
+            }
+            world.temp.fill(20);
+            world.tempNext.fill(20);
+            world.humidity.fill(50);
+            const warmEnabled = tracer === 'both' || tracer === 'warm';
+            const coolEnabled = tracer === 'both' || tracer === 'cool';
+            if (warmEnabled) {
+                for (let y = 38 - anomalyRadius; y <= 38 + anomalyRadius; y++) {
+                    for (let x = 20 - anomalyRadius; x <= 20 + anomalyRadius; x++) {
+                        world.temp[index(x, y)] = 80;
+                        world.humidity[index(x, y)] = 90;
+                    }
+                }
+            }
+            if (coolEnabled) {
+                for (let y = 26 - anomalyRadius; y <= 26 + anomalyRadius; y++) {
+                    for (let x = 44 - anomalyRadius; x <= 44 + anomalyRadius; x++) {
+                        world.temp[index(x, y)] = -40;
+                        world.humidity[index(x, y)] = 10;
+                    }
+                }
+            }
+            const typesBefore = world.type.slice();
+            const materialTemperaturesBefore = world.temp.slice();
+            const initialTemperature = Array.from(world.temp);
+            const initialHumidity = Array.from(world.humidity);
+            const before = airStats(world);
+            run(frames);
+            const after = airStats(world);
+            const at = (x, y) => index(x, y);
+            return {
+                before,
+                after,
+                typesUnchanged: world.type.every((value, i) => value === typesBefore[i]),
+                materialTemperaturesUnchanged: world.type.every((type, i) =>
+                    type === EMPTY || world.temp[i] === materialTemperaturesBefore[i]),
+                materialTemperatureField: Array.from(world.temp),
+                typeField: Array.from(world.type),
+                temperature: Array.from(world.temp),
+                humidity: Array.from(world.humidity),
+                initialTemperature,
+                initialHumidity,
+                warmRise: world.temp[at(20, 32)],
+                warmRiseSide: world.temp[at(26, 38)],
+                warmUpperLeft: world.temp[at(20, 20)],
+                warmUpperRight: world.temp[at(24, 20)],
+                warmUpperLeftHumidity: world.humidity[at(20, 20)],
+                warmUpperRightHumidity: world.humidity[at(24, 20)],
+                coolDescent: world.temp[at(44, 32)],
+                coolDescentSide: world.temp[at(38, 26)],
+                coolLowerRight: world.temp[at(44, 44)],
+                coolLowerLeft: world.temp[at(40, 44)],
+                coolLowerRightHumidity: world.humidity[at(44, 44)],
+                coolLowerLeftHumidity: world.humidity[at(40, 44)]
+            };
+        };
+        const recordAirTransportWork = callback => {
+            const previousWindow = globalThis.window;
+            const events = [];
+            globalThis.window = {
+                __P0_PERF__: {
+                    enabled: true,
+                    record(name, durationMs, counters = {}) {
+                        events.push({ name, durationMs, counters });
+                    }
+                }
+            };
+            try {
+                return { value: callback(), events };
+            } finally {
+                if (previousWindow === undefined) delete globalThis.window;
+                else globalThis.window = previousWindow;
+            }
+        };
+        {
+            const temperatureBackground = getAmbientTemp();
+            const humidityBackground = 50;
+            const uniformFlowRun = () => {
+                const world = resetBox(64, 64, temperatureBackground);
+                physics.setAmbientHumidityTarget(humidityBackground);
+                physics.setGeneralWindStrength(45);
+                physics.setGustWindStrength(35);
+                setAmbientWindOn(true);
+                world.temp.fill(temperatureBackground);
+                world.tempNext.fill(temperatureBackground);
+                world.humidity.fill(humidityBackground);
+                const fanX = 12;
+                const fanY = 32;
+                setCell(fanX, fanY, ID.Fan);
+                physics.setMachineSetting(fanX, fanY, 50);
+                power(fanX, fanY, -1, 8);
+                const initialTemperature = world.temp.slice();
+                const initialHumidity = world.humidity.slice();
+                const measured = recordAirTransportWork(() => run(8));
+                const transportEvents = measured.events.filter(event => event.name === 'airScalarTransport');
+                const counterPresent = transportEvents.some(event =>
+                    Number.isFinite(event.counters?.uniformBackgroundEdgesSkipped));
+                const skippedEdges = transportEvents.reduce((sum, event) =>
+                    sum + Number(event.counters?.uniformBackgroundEdgesSkipped || 0), 0);
+                const exactBackground = world.type.every((type, i) => type !== EMPTY ||
+                    (world.temp[i] === temperatureBackground &&
+                        world.humidity[i] === humidityBackground));
+                const activeJetCells = transportEvents.reduce((sum, event) =>
+                    sum + Number(event.counters?.activeJetCells || 0), 0);
+                return {
+                    exactBackground,
+                    initialTemperature,
+                    initialHumidity,
+                    counterPresent,
+                    skippedEdges,
+                    activeJetCells,
+                    powered: physics.isMachinePoweredAt(fanX, fanY)
+                };
+            };
+            const uniform = uniformFlowRun();
+            check('uniform live-background air stays exactly uniform under a powered jet',
+                uniform.powered && uniform.activeJetCells > 0 && uniform.exactBackground,
+                `powered ${uniform.powered}, active jet cells ${uniform.activeJetCells}, fields remain exact at T=${temperatureBackground} C/RH=${humidityBackground}%`);
+            check('air scalar solver reports skipped exactly uniform background faces',
+                uniform.counterPresent && uniform.skippedEdges > 0,
+                `counter reported ${uniform.counterPresent}, uniform background edges skipped ${uniform.skippedEdges}`);
+
+            const mixedFieldRun = (field, driven, disableHumidity = false) => {
+                const priorHumidityEnabled = physics.isDebugFeatureEnabled('humidity');
+                try {
+                    if (disableHumidity) physics.setDebugFeatureEnabled('humidity', false);
+                    const world = resetBox(64, 64, temperatureBackground);
+                    physics.setAmbientHumidityTarget(humidityBackground);
+                    world.temp.fill(temperatureBackground);
+                    world.tempNext.fill(temperatureBackground);
+                    world.humidity.fill(humidityBackground);
+                    const fanX = 12;
+                    const fanY = 32;
+                    if (driven) {
+                        setCell(fanX, fanY, ID.Fan);
+                        physics.setMachineSetting(fanX, fanY, 50);
+                        power(fanX, fanY, -1, 12);
+                    }
+                    const sourceX = 24;
+                    const targetX = 25;
+                    const source = index(sourceX, fanY);
+                    const target = index(targetX, fanY);
+                    if (field === 'humidity') {
+                        world.humidity[source] = 90;
+                    } else {
+                        world.temp[source] = 80;
+                        world.tempNext[source] = 80;
+                    }
+                    const initialTemperature = world.temp.slice();
+                    const initialHumidity = world.humidity.slice();
+                    run(12);
+                    return {
+                        temperature: world.temp.slice(),
+                        humidity: world.humidity.slice(),
+                        initialTemperature,
+                        initialHumidity,
+                        targetTemperature: world.temp[target],
+                        targetHumidity: world.humidity[target],
+                        humidityEnabled: physics.isDebugFeatureEnabled('humidity')
+                    };
+                } finally {
+                    if (physics.isDebugFeatureEnabled('humidity') !== priorHumidityEnabled) {
+                        physics.setDebugFeatureEnabled('humidity', priorHumidityEnabled);
+                    }
+                }
+            };
+            const tempUniformHumidityDriven = mixedFieldRun('humidity', true);
+            const tempUniformHumidityControl = mixedFieldRun('humidity', false);
+            const temperatureStayedUniform = tempUniformHumidityDriven.temperature.every((value, i) =>
+                getWorld().type[i] !== EMPTY || value === temperatureBackground);
+            check('temperature-uniform faces do not suppress nonuniform humidity transport',
+                temperatureStayedUniform &&
+                    tempUniformHumidityDriven.targetHumidity !== tempUniformHumidityControl.targetHumidity,
+                `temperature remains exact ${temperatureStayedUniform}, downstream RH ${tempUniformHumidityDriven.targetHumidity.toFixed(6)}% driven vs ${tempUniformHumidityControl.targetHumidity.toFixed(6)}% control`);
+
+            const humidityUniformTemperatureDriven = mixedFieldRun('temperature', true);
+            const humidityUniformTemperatureControl = mixedFieldRun('temperature', false);
+            const humidityStayedUniform = humidityUniformTemperatureDriven.humidity.every((value, i) =>
+                getWorld().type[i] !== EMPTY || value === humidityBackground);
+            check('humidity-uniform faces do not suppress nonuniform temperature transport',
+                humidityStayedUniform &&
+                    humidityUniformTemperatureDriven.targetTemperature !== humidityUniformTemperatureControl.targetTemperature,
+                `humidity remains exact ${humidityStayedUniform}, downstream T ${humidityUniformTemperatureDriven.targetTemperature.toFixed(6)} C driven vs ${humidityUniformTemperatureControl.targetTemperature.toFixed(6)} C control`);
+
+            const humidityDisabledTemperature = mixedFieldRun('temperature', true, true);
+            const disabledHumidityUniform = humidityDisabledTemperature.humidity.every((value, i) =>
+                getWorld().type[i] !== EMPTY || value === humidityBackground);
+            const temperatureMoved = humidityDisabledTemperature.temperature.some((value, i) =>
+                getWorld().type[i] === EMPTY && value !== humidityDisabledTemperature.initialTemperature[i]);
+            check('disabled humidity remains uniform while temperature scalar transport continues',
+                !humidityDisabledTemperature.humidityEnabled && disabledHumidityUniform && temperatureMoved,
+                `humidity disabled ${!humidityDisabledTemperature.humidityEnabled}, stays exact ${disabledHumidityUniform}, temperature moved ${temperatureMoved}`);
+        }
+        {
+            const measuredCombined = recordAirTransportWork(() => calmRollRun('both'));
+            const combined = measuredCombined.value;
+            const repeat = calmRollRun('both');
+            const warmOnly = calmRollRun('warm');
+            const coolOnly = calmRollRun('cool');
+            const noAnomaly = calmRollRun('none');
+            const localBoundRun = calmRollRun('both', 1, 2);
+            const deterministic = combined.temperature.every((value, i) => value === repeat.temperature[i]) &&
+                combined.humidity.every((value, i) => value === repeat.humidity[i]);
+            const materialsMatchControl = combined.materialTemperatureField.every((value, i) =>
+                combined.typeField[i] === EMPTY ||
+                    Math.abs(value - noAnomaly.materialTemperatureField[i]) < 0.05);
+            const transportEvents = measuredCombined.events.filter(event =>
+                event.name === 'airScalarTransport');
+            const counterNames = [
+                'ran', 'intervalTicks', 'airCellsVisited', 'horizontalFacesVisited',
+                'verticalFacesVisited', 'activeMachineCount', 'activeMaskCells',
+                'limiterPasses', 'activeJetCells', 'uniformBackgroundEdgesSkipped'
+            ];
+            const countersPresent = counterNames.every(name => transportEvents.some(event =>
+                Number.isFinite(event.counters?.[name])));
+            const sumTransportCounter = name => transportEvents.reduce((sum, event) =>
+                sum + Number(event.counters?.[name] || 0), 0);
+            const transportRuns = transportEvents.filter(event => event.counters?.ran === 1).length;
+            const explicitSkipEvents = transportEvents.filter(event => event.counters?.ran === 0).length;
+            const cadenceSkips = explicitSkipEvents > 0
+                ? explicitSkipEvents : sumTransportCounter('mixSkipCount');
+            const skipEvidence = explicitSkipEvents > 0 || transportEvents.some(event =>
+                Number.isFinite(event.counters?.mixSkipCount));
+            const reportedIntervals = [...new Set(transportEvents
+                .map(event => event.counters?.intervalTicks)
+                .filter(Number.isFinite))];
+            const intervalTicks = reportedIntervals.length === 1 ? reportedIntervals[0] : 0;
+            const supportedInterval = intervalTicks === 2;
+            const expectedTicks = 960;
+            const expectedRuns = supportedInterval ? expectedTicks / intervalTicks : -1;
+            const expectedSkips = supportedInterval ? expectedTicks - expectedRuns : -1;
+            const cadenceAlternates = transportEvents.length === expectedTicks &&
+                transportEvents.slice(1).every((event, i) =>
+                    (event.counters?.ran === 1) !== (transportEvents[i].counters?.ran === 1));
+            const baselineOneTickLimiterPasses = expectedTicks;
+            const localBoundsDiagnostic = (fieldName, after, before, types, width, height) => {
+                const offsets = [-1, 1, -width, width];
+                let worstViolation = null;
+                for (let y = 1; y < height - 1; y++) {
+                    for (let x = 1; x < width - 1; x++) {
+                        const cell = y * width + x;
+                        if (types[cell] !== EMPTY) continue;
+                        let localMinimum = before[cell];
+                        let localMaximum = before[cell];
+                        for (const offset of offsets) {
+                            const neighbour = cell + offset;
+                            if (types[neighbour] !== EMPTY) continue;
+                            localMinimum = Math.min(localMinimum, before[neighbour]);
+                            localMaximum = Math.max(localMaximum, before[neighbour]);
+                        }
+                        const value = after[cell];
+                        const excess = value < localMinimum
+                            ? localMinimum - value
+                            : value > localMaximum ? value - localMaximum : 0;
+                        if (excess > 0.1 && (!worstViolation || excess > worstViolation.excess)) {
+                            worstViolation = {
+                                field: fieldName,
+                                x,
+                                y,
+                                localMinimum,
+                                localMaximum,
+                                value,
+                                excess
+                            };
+                        }
+                    }
+                }
+                return { withinBounds: worstViolation === null, worstViolation };
+            };
+            check('sealed calm circulation is deterministic and conserves bounded chamber means',
+                deterministic &&
+                    Math.abs(combined.after.tempMean - combined.before.tempMean) < 0.5 &&
+                    Math.abs(combined.after.humidityMean - combined.before.humidityMean) < 0.5 &&
+                    combined.after.tempMean > 19.5 && combined.after.tempMean < 20.5 &&
+                    combined.after.humidityMean > 49.5 && combined.after.humidityMean < 50.5 &&
+                    combined.temperature.every(value => value >= -40 && value <= 80) &&
+                    combined.humidity.every(value => value >= 0 && value <= 100),
+                `deterministic ${deterministic}, means T ${combined.before.tempMean.toFixed(3)}->${combined.after.tempMean.toFixed(3)} C / RH ${combined.before.humidityMean.toFixed(3)}->${combined.after.humidityMean.toFixed(3)}%, bounds T ${Math.min(...combined.temperature).toFixed(2)}..${Math.max(...combined.temperature).toFixed(2)} C`);
+            check('fused scalar transport uses deterministic alternating two-tick cadence',
+                countersPresent && sumTransportCounter('airCellsVisited') > 0 &&
+                    sumTransportCounter('horizontalFacesVisited') > 0 &&
+                    sumTransportCounter('verticalFacesVisited') > 0 &&
+                    supportedInterval && transportEvents.every(event => event.counters.intervalTicks === intervalTicks) &&
+                    cadenceAlternates &&
+                    sumTransportCounter('uniformBackgroundEdgesSkipped') > 0 &&
+                    transportRuns === expectedRuns && cadenceSkips === expectedSkips &&
+                    (expectedSkips === 0 || skipEvidence) &&
+                    sumTransportCounter('limiterPasses') === transportRuns &&
+                    sumTransportCounter('limiterPasses') < baselineOneTickLimiterPasses,
+                `counters present ${countersPresent}, interval ${intervalTicks}, alternates ${cadenceAlternates}, background no-op edges ${sumTransportCounter('uniformBackgroundEdgesSkipped')}, air cells ${sumTransportCounter('airCellsVisited')}, horizontal/vertical faces ${sumTransportCounter('horizontalFacesVisited')}/${sumTransportCounter('verticalFacesVisited')}, transport runs/skips ${transportRuns}/${cadenceSkips} (expected ${expectedRuns}/${expectedSkips}), limiter passes ${sumTransportCounter('limiterPasses')} vs one-tick baseline ${baselineOneTickLimiterPasses} over ${expectedTicks} ticks`);
+            const temperatureBounds = localBoundsDiagnostic('temperature',
+                localBoundRun.temperature, localBoundRun.initialTemperature,
+                localBoundRun.typeField, 64, 64);
+            const humidityBounds = localBoundsDiagnostic('humidity',
+                localBoundRun.humidity, localBoundRun.initialHumidity,
+                localBoundRun.typeField, 64, 64);
+            const worstLocalViolation = [temperatureBounds.worstViolation, humidityBounds.worstViolation]
+                .filter(Boolean)
+                .sort((a, b) => b.excess - a.excess)[0];
+            const localBoundsDetail = worstLocalViolation
+                ? `${worstLocalViolation.field} at (${worstLocalViolation.x},${worstLocalViolation.y}): initial local min/max ${worstLocalViolation.localMinimum.toFixed(3)}/${worstLocalViolation.localMaximum.toFixed(3)}, final ${worstLocalViolation.value.toFixed(3)}, excess ${worstLocalViolation.excess.toFixed(3)} (0.100 tolerance)`
+                : 'no temperature or humidity cell exceeded its initial local range by more than 0.100';
+            check('one-update temperature and humidity stay within their initial local face-neighbour bounds',
+                temperatureBounds.withinBounds && humidityBounds.withinBounds,
+                localBoundsDetail);
+            check('calm sealed-air updraft rises and the upper return carries warm, humid tracers rightward',
+                combined.warmRise > combined.warmRiseSide + 0.02 &&
+                    warmOnly.warmUpperRight > warmOnly.warmUpperLeft + 0.02 &&
+                    warmOnly.warmUpperRightHumidity > warmOnly.warmUpperLeftHumidity + 0.02,
+                `rise/side ${combined.warmRise.toFixed(3)}/${combined.warmRiseSide.toFixed(3)} C; upper T ${warmOnly.warmUpperLeft.toFixed(3)}->${warmOnly.warmUpperRight.toFixed(3)} C, RH ${warmOnly.warmUpperLeftHumidity.toFixed(3)}->${warmOnly.warmUpperRightHumidity.toFixed(3)}%`);
+            check('calm sealed-air downdraft descends and the lower return carries cool, dry tracers leftward',
+                combined.coolDescent < combined.coolDescentSide - 0.02 &&
+                    coolOnly.coolLowerLeft < coolOnly.coolLowerRight - 0.02 &&
+                    coolOnly.coolLowerLeftHumidity < coolOnly.coolLowerRightHumidity - 0.02,
+                `descent/side ${combined.coolDescent.toFixed(3)}/${combined.coolDescentSide.toFixed(3)} C; lower T ${coolOnly.coolLowerRight.toFixed(3)}->${coolOnly.coolLowerLeft.toFixed(3)} C, RH ${coolOnly.coolLowerRightHumidity.toFixed(3)}->${coolOnly.coolLowerLeftHumidity.toFixed(3)}%`);
+            check('full calm circulation leaves particles and material temperatures at the no-anomaly control',
+                combined.typesUnchanged && noAnomaly.typesUnchanged && materialsMatchControl,
+                `particle occupancy unchanged ${combined.typesUnchanged}/${noAnomaly.typesUnchanged}, material temperatures match control ${materialsMatchControl}`);
+        }
+
+        {
+            const doorwayProbe = opening => {
+                const world = resetBox(64, 64, 20);
+                world.temp.fill(20);
+                world.tempNext.fill(20);
+                world.humidity.fill(50);
+                for (let y = 1; y < world.rows - 1; y++) setCell(32, y, ID.Insulation);
+                if (opening) setCell(32, 32, EMPTY);
+                world.temp[index(31, 32)] = 80;
+                world.humidity[index(31, 32)] = 90;
+                const typesBefore = world.type.slice();
+                run(720);
+                return {
+                    temperature: world.temp[index(33, 32)],
+                    humidity: world.humidity[index(33, 32)],
+                    wallHumidity: world.humidity[index(32, 32)],
+                    typesUnchanged: world.type.every((value, i) => value === typesBefore[i])
+                };
+            };
+            const sealed = doorwayProbe(false);
+            const open = doorwayProbe(true);
+            check('calm scalar exchange follows a face-connected opening and stops at a solid partition',
+                open.temperature > sealed.temperature + 0.02 &&
+                    open.humidity > sealed.humidity + 0.02 && sealed.wallHumidity === 50 &&
+                    open.typesUnchanged && sealed.typesUnchanged,
+                `sealed/open target ${sealed.temperature.toFixed(3)}/${open.temperature.toFixed(3)} C and ${sealed.humidity.toFixed(3)}/${open.humidity.toFixed(3)}%, sealed wall RH ${sealed.wallHumidity.toFixed(3)}%, types ${open.typesUnchanged}/${sealed.typesUnchanged}`);
+        }
+
+        {
+            const world = resetBox(64, 64, 20);
+            physics.setAmbientHumidityTarget(0);
+            world.humidity.fill(50);
+            // Trap a Water source and Dry Mud sink in place while leaving an
+            // air face exposed to each one inside the sealed domain.
+            for (const x of [22, 42]) {
+                for (let dy = -1; dy <= 1; dy++) {
+                    for (let dx = -1; dx <= 1; dx++) {
+                        if (dx === 0 && dy === -1) continue;
+                        setCell(x + dx, 40 + dy, ID.Glass);
+                    }
+                }
+            }
+            setCell(22, 40, ID.Water);
+            setCell(42, 40, ID['Dry Mud']);
+            const waterCell = index(22, 40);
+            const mudCell = index(42, 40);
+            const waterAir = index(22, 39);
+            const mudAir = index(42, 39);
+            run(240);
+            check('sealed humidity retains its local field against a dry outdoor target',
+                world.humidity[index(32, 32)] > 35,
+                `room humidity ${world.humidity[index(32, 32)].toFixed(3)}% with ambient target 0%`);
+            check('enclosed Water and Dry Mud continue to act as humidity source and sink',
+                world.type[waterCell] === ID.Water && world.type[mudCell] === ID['Dry Mud'] &&
+                    world.humidity[waterAir] > world.humidity[mudAir] + 0.1,
+                `Water/Mud remain ${world.type[waterCell] === ID.Water}/${world.type[mudCell] === ID['Dry Mud']}, nearby RH ${world.humidity[waterAir].toFixed(3)}/${world.humidity[mudAir].toFixed(3)}%`);
+        }
+
+        {
+            let world = resetBox(64, 64, 20);
+            // Make the outdoor domain reachable from the top and sides, but
+            // expose the chamber itself only through a gap in the bottom edge.
+            for (let x = 1; x < world.cols - 1; x++) setCell(x, 0, EMPTY);
+            for (let y = 1; y < world.rows - 1; y++) {
+                setCell(0, y, EMPTY);
+                setCell(world.cols - 1, y, EMPTY);
+            }
+            const ambient = captureSimulationState();
+            ambient.ambient = -40;
+            ambient.ambientTarget = -40;
+            ambient.ambientHumidity = 0;
+            restoreSimulationState(ambient);
+            world = getWorld();
+            world.temp.fill(-40);
+            world.tempNext.fill(-40);
+            world.humidity.fill(0);
+            const left = 20, right = 40, top = 42, bottom = 63;
+            for (let x = left; x <= right; x++) {
+                setCell(x, top, ID.Glass);
+                setCell(x, bottom, ID.Glass);
+            }
+            for (let y = top; y <= bottom; y++) {
+                setCell(left, y, ID.Glass);
+                setCell(right, y, ID.Glass);
+            }
+            setCell(30, bottom, EMPTY);
+            for (let y = top + 1; y < bottom; y++) {
+                for (let x = left + 1; x < right; x++) {
+                    world.temp[index(x, y)] = 100;
+                    world.humidity[index(x, y)] = 80;
+                }
+            }
+            physics.setGeneralWindStrength(50);
+            physics.setGustWindStrength(50);
+            setAmbientWindOn(true);
+            run(90);
+            const sealedTemp = world.temp[index(30, 52)];
+            const sealedHumidity = world.humidity[index(30, 52)];
+            const sealedDomain = world.openAir && world.openAir[index(30, 52)] === 0;
+            const windwardSide = physics.getPrevailingWindDirection() > 0 ? left : right;
+            setCell(windwardSide, 52, EMPTY);
+            run(240);
+            const connectedDomain = world.openAir && world.openAir[index(30, 52)] !== 0;
+            check('a bottom-only cavity stays isolated from extreme outdoor targets',
+                sealedDomain && sealedTemp > 80 && sealedHumidity > 65,
+                `open classification ${sealedDomain}, center ${sealedTemp.toFixed(3)} C/${sealedHumidity.toFixed(3)}% after 90 ticks`);
+            check('opening a side reconnects the bottom cavity to outdoor air flow',
+                connectedDomain && world.temp[index(30, 52)] < sealedTemp - 2 &&
+                    world.humidity[index(30, 52)] < sealedHumidity - 5,
+                `open classification ${connectedDomain}, center after opening ${world.temp[index(30, 52)].toFixed(3)} C/${world.humidity[index(30, 52)].toFixed(3)}%`);
+        }
+    } finally {
+        defs[ID.Ash].windLift = originalAshWindLift;
         restoreSimulationState(previousState);
         if (previousSeed !== null) setRandomSeed(previousSeed);
     }
@@ -2468,6 +3755,13 @@ if (process.argv.includes('--focus=plant-illumination')) {
 
 if (process.argv.includes('--focus=fan-wind-scale-alignment')) {
     runFanWindScaleAlignmentRegression();
+    console.log(`\n${passed} passed, ${failed} failed\n`);
+    process.exit(failed > 0 ? 1 : 0);
+}
+
+if (process.argv.includes('--focus=air-circulation')) {
+    runAirCirculationRegressions();
+    runAirflowBoundaryRegressions();
     console.log(`\n${passed} passed, ${failed} failed\n`);
     process.exit(failed > 0 ? 1 : 0);
 }
@@ -4407,7 +5701,7 @@ function runWindOverhaulRegressions() {
             check('zero Gust Strength creates no gust event', physics.getActiveGustState() === null);
 
             setWindTestSettings(5, 5, true);
-            run(120);
+            run(240);
             const gentleWind = vectorStats('generalWind');
             const direction = physics.getPrevailingWindDirection();
             const ticksRemaining = physics.getPrevailingWindTicksRemaining();

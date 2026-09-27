@@ -21,7 +21,9 @@ const scenarios = [
     'battery-hover',
     'ambient-visibility-edit',
     'ambient-open',
-    'ambient-occlusion-dense'
+    'ambient-occlusion-dense',
+    'air-calm',
+    'air-driven'
 ];
 const warmupSamples = 10;
 const measuredSamples = 60;
@@ -42,7 +44,8 @@ const hookNames = [
     'machineOverlayRebuild',
     'machineOverlayReuse',
     'electricalStatusOverlay',
-    'illuminationLayer'
+    'illuminationLayer',
+    'airScalarTransport'
 ];
 
 function summarize(values) {
@@ -89,6 +92,26 @@ function summarizeHookCounters(events) {
 function sumHookCounter(events, hookName, counterName) {
     return events.filter(event => event.name === hookName).reduce((sum, event) =>
         sum + Number(event.counters?.[counterName] || 0), 0);
+}
+
+function summarizeAirCadence(events) {
+    const airEvents = events.filter(event => event.name === 'airScalarTransport');
+    const flags = airEvents.map(event => event.counters?.ran);
+    const runIndices = flags.flatMap((ran, index) => ran === 1 ? [index] : []);
+    const intervals = [...new Set(airEvents.map(event => event.counters?.intervalTicks)
+        .filter(Number.isFinite))];
+    const runCount = flags.filter(ran => ran === 1).length;
+    const skipCount = flags.filter(ran => ran === 0).length;
+    return {
+        runs: runCount,
+        skips: skipCount,
+        eventCount: airEvents.length,
+        intervalTicks: intervals.length === 1 ? intervals[0] : 0,
+        alternates: flags.length === airEvents.length && flags.every((ran, index) =>
+            index === 0 || ran !== flags[index - 1]),
+        runEventsTwoCallsApart: runIndices.every((eventIndex, index) =>
+            index === 0 || eventIndex - runIndices[index - 1] === 2)
+    };
 }
 
 function csvCell(value) {
@@ -152,7 +175,7 @@ async function prepareFixture(page, scenario, size) {
         if (!initialWorld || initialWorld.cols !== cols || initialWorld.rows !== rows) {
             throw new Error(`Expected ${cols}x${rows} world; found ${initialWorld?.cols}x${initialWorld?.rows}`);
         }
-        const ids = Object.fromEntries(['Sand', 'Water', 'Fire', 'Elec', 'Spark', 'Battery', 'Lamp', 'Wall', 'Steam']
+        const ids = Object.fromEntries(['Sand', 'Water', 'Fire', 'Elec', 'Copper', 'Spark', 'Battery', 'Lamp', 'Wall', 'Glass', 'Steam', 'Fan', 'Heater', 'Insulation']
             .map(name => [name, id(name)]));
         if (Object.values(ids).some(value => value <= 0)) {
             throw new Error(`Required benchmark material is missing: ${JSON.stringify(ids)}`);
@@ -178,7 +201,7 @@ async function prepareFixture(page, scenario, size) {
         physics.clearWorld();
         physics.setRandomSeed(seed);
 
-        const countScale = !['empty-control', 'ambient-open', 'ambient-occlusion-dense'].includes(scenario);
+        const countScale = !['empty-control', 'ambient-open', 'ambient-occlusion-dense', 'air-calm', 'air-driven'].includes(scenario);
         if (countScale) {
             const firstFilledRow = Math.floor(rows * 0.4);
             for (let y = firstFilledRow; y < rows; y++) {
@@ -208,6 +231,101 @@ async function prepareFixture(page, scenario, size) {
         let ambientEdit = null;
         let ambientProfile = null;
         let expectedLoad = null;
+        let airFixture = null;
+
+        if (scenario === 'air-calm') {
+            physics.setAmbientTarget(20);
+            physics.setAmbientHumidityTarget(50);
+            physics.setDewpointTarget(10);
+            physics.setAmbientWindOn(false);
+            physics.setGeneralWindStrength(0);
+            physics.setGustWindStrength(0);
+            world.temp.fill(20);
+            world.tempNext.fill(20);
+            world.humidity.fill(50);
+            const left = 3;
+            const right = cols - 4;
+            const top = 3;
+            const bottom = rows - 4;
+            for (let x = left; x <= right; x++) {
+                physics.setCell(x, top, ids.Insulation);
+                physics.setCell(x, bottom, ids.Insulation);
+            }
+            for (let y = top; y <= bottom; y++) {
+                physics.setCell(left, y, ids.Insulation);
+                physics.setCell(right, y, ids.Insulation);
+            }
+            const warm = { x: Math.floor(cols * 0.34), y: Math.floor(rows * 0.68) };
+            const cool = { x: Math.floor(cols * 0.66), y: Math.floor(rows * 0.32) };
+            for (let y = -3; y <= 3; y++) {
+                for (let x = -3; x <= 3; x++) {
+                    const warmIndex = physics.index(warm.x + x, warm.y + y);
+                    const coolIndex = physics.index(cool.x + x, cool.y + y);
+                    world.temp[warmIndex] = 80;
+                    world.humidity[warmIndex] = 90;
+                    world.temp[coolIndex] = 0;
+                    world.humidity[coolIndex] = 10;
+                }
+            }
+            airFixture = { kind: 'calm-sealed', warm, cool, shell: { left, right, top, bottom } };
+        } else if (scenario === 'air-driven') {
+            physics.setAmbientTarget(20);
+            physics.setAmbientHumidityTarget(50);
+            physics.setDewpointTarget(10);
+            physics.setAmbientWindOn(true);
+            physics.setGeneralWindStrength(45);
+            physics.setGustWindStrength(12);
+            world.temp.fill(20);
+            world.tempNext.fill(20);
+            world.humidity.fill(50);
+
+            const shell = { left: 4, right: cols - 5, top: 6, bottom: rows - 7 };
+            for (let x = shell.left; x <= shell.right; x++) {
+                physics.setCell(x, shell.top, ids.Insulation);
+                physics.setCell(x, shell.bottom, ids.Insulation);
+            }
+            for (let y = shell.top; y <= shell.bottom; y++) {
+                physics.setCell(shell.left, y, ids.Insulation);
+                physics.setCell(shell.right, y, ids.Insulation);
+            }
+            const opening = { x: Math.floor(cols * 0.72), y: shell.top };
+            physics.setCell(opening.x, opening.y, 0);
+
+            const machine = { x: Math.floor(cols * 0.2), y: Math.floor(rows * 0.5), type: 'Heater' };
+            physics.setCell(machine.x, machine.y, ids.Heater);
+            world.data[physics.index(machine.x, machine.y)] = 0;
+            physics.setMachineSetting(machine.x, machine.y, 30);
+            const batteryCapacity = definitions[ids.Battery].chargeCapacity;
+            const input = physics.getMachinePorts(machine.x, machine.y)
+                .find(port => port.role === 'input');
+            if (!input?.connectionCell || input.material !== 'Copper') {
+                throw new Error(`Air-jet Heater is missing its declared Copper input: ${JSON.stringify(input)}`);
+            }
+            physics.setCell(input.connectionCell.x, input.connectionCell.y, ids.Copper);
+            const batteryX = input.connectionCell.x + Math.sign(input.directionX || -1);
+            const batteryY = input.connectionCell.y + Math.sign(input.directionY || 0);
+            const batteryStartY = machine.y - 16;
+            batteryCells = Array.from({ length: 32 }, (_, offset) => ({
+                x: batteryX,
+                y: batteryStartY + offset + (batteryY - machine.y)
+            }));
+            for (const cell of batteryCells) {
+                physics.setCell(cell.x, cell.y, ids.Battery);
+                world.charge[physics.index(cell.x, cell.y)] = batteryCapacity;
+            }
+            battery = { x: batteryX, y: batteryY };
+            const source = { x: machine.x + 12, y: machine.y };
+            const obstacle = { x: machine.x + 16, y: machine.y };
+            physics.setCell(obstacle.x, obstacle.y, ids.Glass);
+            for (let y = -3; y <= 3; y++) {
+                for (let x = -3; x <= 3; x++) {
+                    const i = physics.index(source.x + x, source.y + y);
+                    world.temp[i] = 80;
+                    world.humidity[i] = 90;
+                }
+            }
+            airFixture = { kind: 'wind-and-heater-jet', machine, source, obstacle, opening, shell };
+        }
         if (wantsSpark) {
             const networkX = Math.floor(cols * 0.62);
             const networkY = Math.floor(rows * 0.2);
@@ -322,6 +440,14 @@ async function prepareFixture(page, scenario, size) {
             if (!(expectedLoad > 0)) throw new Error(`Gate supply has no measured load: ${expectedLoad}`);
         }
 
+        if (airFixture?.machine) {
+            expectedLoad = physics.getBatteryCircuitMetrics(battery.x, battery.y)?.load ?? 0;
+            if (!(expectedLoad > 0)) throw new Error(`Air-jet Heater has no connected Battery load: ${expectedLoad}`);
+            if (!physics.isMachinePoweredAt(airFixture.machine.x, airFixture.machine.y)) {
+                throw new Error('Air-jet Heater was not powered after fixture setup.');
+            }
+        }
+
         if (scenario === 'ambient-visibility-edit') {
             const occluderId = definitions.findIndex(definition => definition?.group === 'Solids' &&
                 definition.category === 'static' && !definition.machine && !definition.isPlant);
@@ -421,6 +547,7 @@ async function prepareFixture(page, scenario, size) {
             worldCells: cols * rows,
             nonEmptyCells: cols * rows - (typeCounts[0] || 0),
             countsByName,
+            airFixture,
             sparkSeed,
             battery,
             batteryCells,
@@ -489,11 +616,13 @@ async function measurePass(page, fixture, { instrumented }) {
             started = performance.now();
             game.gameLoop(performance.now());
             const feedbackFrameMs = performance.now() - started;
+            const completeFrameMs = stepMs + windMs + renderMs + feedbackFrameMs;
             return {
                 stepMs,
                 windMs,
                 renderMs,
                 feedbackFrameMs,
+                completeFrameMs,
                 transientPowerCells: world.power.reduce((count, value) => count + (value > 0 ? 1 : 0), 0),
                 transientDelayCells: world.powerDelay.reduce((count, value) => count + (value > 0 ? 1 : 0), 0)
             };
@@ -512,6 +641,9 @@ async function measurePass(page, fixture, { instrumented }) {
             illuminationFieldRebuilds: illuminationEnd.rebuilds - illuminationStart.rebuilds,
             finalLampActive: fixture.lamp
                 ? Boolean(physics.getMachineLiveStatus(fixture.lamp.x, fixture.lamp.y)?.active)
+                : null,
+            finalAirMachinePowered: fixture.airFixture?.machine
+                ? Boolean(physics.isMachinePoweredAt(fixture.airFixture.machine.x, fixture.airFixture.machine.y))
                 : null,
             finalBatteryLoad: fixture.battery
                 ? physics.getBatteryCircuitMetrics(fixture.battery.x, fixture.battery.y)?.load ?? null
@@ -541,6 +673,10 @@ test('opt-in P0 browser benchmark records deterministic scene and stage timings'
         browserVersion: browser.version(),
         warmupSamples,
         measuredSamples,
+        targetCompleteFrameP95Ms: 1000 / 24,
+        targetFramesPerSecond: 24,
+        feedbackFrameMetric: 'UI feedback only; excludes stepSimulation, decayWindTrails, and renderWorld, which are timed separately.',
+        completeFrameMetric: 'Per-sample sum of stepSimulation, decayWindTrails, renderWorld, and UI feedback timings.',
         scope: fullScaleRun ? 'all-world-sizes' : 'small-worlds',
         seed,
         instrumentationContract: hookNames
@@ -614,18 +750,25 @@ test('opt-in P0 browser benchmark records deterministic scene and stage timings'
                     .toEqual([true, false]);
                 expect(external.finalBatteryLoad, `${scenario}: gate supply has connected load`).toBeGreaterThan(0);
             }
+            if (fixture.airFixture?.machine) {
+                expect(external.finalAirMachinePowered, `${scenario}: Heater stays powered after external pass`).toBe(true);
+                expect(internal.finalAirMachinePowered, `${scenario}: Heater stays powered after instrumented pass`).toBe(true);
+                expect(external.finalBatteryLoad, `${scenario}: Heater has connected load`).toBeGreaterThan(0);
+            }
 
             const externalSummary = {
                 stepSimulation: summarize(external.samples.map(sample => sample.stepMs)),
                 decayWindTrails: summarize(external.samples.map(sample => sample.windMs)),
                 renderWorld: summarize(external.samples.map(sample => sample.renderMs)),
-                feedbackFrame: summarize(external.samples.map(sample => sample.feedbackFrameMs))
+                feedbackFrame: summarize(external.samples.map(sample => sample.feedbackFrameMs)),
+                completeFrame: summarize(external.samples.map(sample => sample.completeFrameMs))
             };
             const instrumentedSummary = {
                 stepSimulation: summarize(internal.samples.map(sample => sample.stepMs)),
                 decayWindTrails: summarize(internal.samples.map(sample => sample.windMs)),
                 renderWorld: summarize(internal.samples.map(sample => sample.renderMs)),
-                feedbackFrame: summarize(internal.samples.map(sample => sample.feedbackFrameMs))
+                feedbackFrame: summarize(internal.samples.map(sample => sample.feedbackFrameMs)),
+                completeFrame: summarize(internal.samples.map(sample => sample.completeFrameMs))
             };
             const hookEvents = internal.events;
             const setupHookNames = [...new Set(fixture.setupEvents.map(event => event.name))];
@@ -634,6 +777,7 @@ test('opt-in P0 browser benchmark records deterministic scene and stage timings'
             const setupHookCounterSummary = summarizeHookCounters(fixture.setupEvents);
             const requiredForScenario = hookNames.filter(name => {
                 if (name === 'machineOverlayRebuild' || name === 'machineOverlayReuse') return false;
+                if (name === 'airScalarTransport') return Boolean(fixture.airFixture);
                 if (name === 'ordinarySparkPropagation') return Boolean(fixture.sparkSeed);
                 if (name === 'batteryLoadTraversal') return Boolean(fixture.battery);
                 if (name === 'electricalStatusOverlay') return Boolean(fixture.battery);
@@ -693,6 +837,54 @@ test('opt-in P0 browser benchmark records deterministic scene and stage timings'
                     counters.chunksSampled !== expectedChunks ||
                     counters.cellsWritten !== fixture.worldCells) {
                     missingHooks.push(`ambient profile chunk/fill counters (classified=${counters.visibilityCells}, chunks=${counters.chunksSampled}, cells=${counters.cellsWritten}; expected ${expectedChunks}/${expectedChunks}/${fixture.worldCells})`);
+                }
+            }
+
+            if (fixture.airFixture) {
+                const airEvents = hookEvents.filter(event => event.name === 'airScalarTransport');
+                const counterNames = [
+                    'ran', 'intervalTicks', 'airCellsVisited', 'horizontalFacesVisited',
+                    'verticalFacesVisited', 'activeMachineCount', 'activeMaskCells',
+                    'limiterPasses', 'activeJetCells', 'topologyMaskBuildMs',
+                    'topologyMaskCells', 'uniformBackgroundEdgesSkipped'
+                ];
+                for (const name of counterNames) {
+                    if (!airEvents.some(event => Number.isFinite(event.counters?.[name]))) {
+                        missingHooks.push(`airScalarTransport.${name} numeric counter`);
+                    }
+                }
+                const cadence = summarizeAirCadence(hookEvents);
+                for (const name of ['airCellsVisited', 'horizontalFacesVisited', 'verticalFacesVisited']) {
+                    if (!(sumHookCounter(hookEvents, 'airScalarTransport', name) > 0)) {
+                        missingHooks.push(`airScalarTransport.${name} positive work/cadence total`);
+                    }
+                }
+                if (!(cadence.runs > 0 && cadence.skips > 0)) {
+                    missingHooks.push('airScalarTransport two-tick run/skip evidence');
+                }
+                if (cadence.intervalTicks !== 2 || airEvents.some(event => event.counters?.intervalTicks !== 2)) {
+                    missingHooks.push('airScalarTransport.intervalTicks fixed at 2');
+                }
+                if (!cadence.alternates || !cadence.runEventsTwoCallsApart) {
+                    missingHooks.push('airScalarTransport run/skip events alternate every two simulation calls');
+                }
+                if (cadence.runs + cadence.skips !== cadence.eventCount ||
+                    Math.abs(cadence.runs - cadence.skips) > 1) {
+                    missingHooks.push(`airScalarTransport two-tick run/skip counts (${cadence.runs}/${cadence.skips} across ${cadence.eventCount} events)`);
+                }
+                if (sumHookCounter(hookEvents, 'airScalarTransport', 'limiterPasses') !== cadence.runs) {
+                    missingHooks.push(`airScalarTransport single limiter aggregation (passes=${sumHookCounter(hookEvents, 'airScalarTransport', 'limiterPasses')}, runs=${cadence.runs})`);
+                }
+                if (sumHookCounter(hookEvents, 'airScalarTransport', 'topologyMaskCells') !==
+                    fixture.worldCells * cadence.runs) {
+                    missingHooks.push('airScalarTransport topology mask rebuilt once per due tick');
+                }
+                if (fixture.airFixture.kind === 'wind-and-heater-jet') {
+                    for (const name of ['activeMachineCount', 'activeMaskCells', 'activeJetCells']) {
+                        if (!(sumHookCounter(hookEvents, 'airScalarTransport', name) > 0)) {
+                            missingHooks.push(`airScalarTransport.${name} positive machine-work total`);
+                        }
+                    }
                 }
             }
 
@@ -775,7 +967,7 @@ test('opt-in P0 browser benchmark records deterministic scene and stage timings'
 
     const csvColumns = [
         'cols', 'rows', 'scenario', 'worldCells', 'nonEmptyCells', 'sand', 'water', 'fire', 'elec',
-        'spark', 'battery', 'lamp', 'logicGates',
+        'spark', 'battery', 'lamp', 'logicGates', 'fan', 'heater',
         'electricalTopologyRefreshEvents', 'electricalTopologyScheduledRefreshes',
         'electricalTopologyForcedRefreshes', 'sparkTouchedCells', 'sparkAllocatedCells',
         'batteryTraversalLoadMachines', 'batteryRefreshLoadMachines',
@@ -790,17 +982,25 @@ test('opt-in P0 browser benchmark records deterministic scene and stage timings'
         'hoverCacheHits', 'hoverExactSvgTests',
         'illuminationLookups', 'illuminationFieldRebuilds',
         'stepMedianMs', 'stepP95Ms', 'windMedianMs', 'windP95Ms',
-        'renderMedianMs', 'renderP95Ms', 'missingHooks',
+        'renderMedianMs', 'renderP95Ms', 'uiFeedbackFrameMedianMs', 'uiFeedbackFrameP95Ms',
+        'completeFrameMedianMs', 'completeFrameP95Ms', 'targetCompleteFrameP95Ms',
+        'airTransportRuns', 'airCadenceSkips', 'airCellsVisited',
+        'airHorizontalFacesVisited', 'airVerticalFacesVisited', 'airLimiterPasses',
+        'airActiveMachineCount', 'airActiveMaskCells', 'airActiveJetCells',
+        'airTopologyMaskBuildMs', 'airTopologyMaskCells',
+        'airUniformBackgroundEdgesSkipped', 'missingHooks',
         ...hookNames.flatMap(name => [`${name}Count`, `${name}MedianMs`, `${name}P95Ms`])
     ];
     const csvRows = [csvColumns.join(',')];
     for (const result of results) {
         const { fixture, size } = result;
+        const airCadence = summarizeAirCadence(result.hookEvents);
         const values = [
             size.cols, size.rows, fixture.scenario, fixture.worldCells, fixture.nonEmptyCells,
             fixture.countsByName.Sand, fixture.countsByName.Water, fixture.countsByName.Fire,
             fixture.countsByName.Elec, fixture.countsByName.Spark, fixture.countsByName.Battery,
             fixture.countsByName.Lamp, fixture.gates?.length || 0,
+            fixture.countsByName.Fan, fixture.countsByName.Heater,
             result.fixture.hookEventCounts.electricalTopologyRefresh,
             sumHookCounter(result.hookEvents, 'electricalTopologyRefresh', 'scheduledRefreshes'),
             sumHookCounter(result.hookEvents, 'electricalTopologyRefresh', 'forcedRefreshes'),
@@ -839,6 +1039,23 @@ test('opt-in P0 browser benchmark records deterministic scene and stage timings'
             result.externalSummary.decayWindTrails.p95Ms,
             result.externalSummary.renderWorld.medianMs,
             result.externalSummary.renderWorld.p95Ms,
+            result.externalSummary.feedbackFrame.medianMs,
+            result.externalSummary.feedbackFrame.p95Ms,
+            result.externalSummary.completeFrame.medianMs,
+            result.externalSummary.completeFrame.p95Ms,
+            runMetadata.targetCompleteFrameP95Ms,
+            airCadence.runs,
+            airCadence.skips,
+            sumHookCounter(result.hookEvents, 'airScalarTransport', 'airCellsVisited'),
+            sumHookCounter(result.hookEvents, 'airScalarTransport', 'horizontalFacesVisited'),
+            sumHookCounter(result.hookEvents, 'airScalarTransport', 'verticalFacesVisited'),
+            sumHookCounter(result.hookEvents, 'airScalarTransport', 'limiterPasses'),
+            sumHookCounter(result.hookEvents, 'airScalarTransport', 'activeMachineCount'),
+            sumHookCounter(result.hookEvents, 'airScalarTransport', 'activeMaskCells'),
+            sumHookCounter(result.hookEvents, 'airScalarTransport', 'activeJetCells'),
+            sumHookCounter(result.hookEvents, 'airScalarTransport', 'topologyMaskBuildMs'),
+            sumHookCounter(result.hookEvents, 'airScalarTransport', 'topologyMaskCells'),
+            sumHookCounter(result.hookEvents, 'airScalarTransport', 'uniformBackgroundEdgesSkipped'),
             fixture.missingHooks.join('; '),
             ...hookNames.flatMap(name => [
                 result.hookSummary[name]?.samples || 0,
@@ -851,12 +1068,17 @@ test('opt-in P0 browser benchmark records deterministic scene and stage timings'
     await writeFile(csvArtifact, `${csvRows.join('\n')}\n`);
     console.log(`P0 performance artifacts: ${jsonArtifact} and ${csvArtifact}`);
     console.log(`P0 sampling: ${warmupSamples} warm-up and ${measuredSamples} measured samples per pass; commit ${runMetadata.commit}.`);
+    console.log(`Complete frame = stepSimulation + decayWindTrails + renderWorld + UI feedback. Complete-frame p95 target: <=${runMetadata.targetCompleteFrameP95Ms.toFixed(1)} ms (${runMetadata.targetFramesPerSecond} FPS); timings are reported without a host-sensitive pass/fail threshold.`);
+    console.log('UI feedback timing is reported separately and covers gameLoop feedback only.');
     console.table(results.map(result => ({
         world: `${result.size.cols}×${result.size.rows}`,
         scenario: result.fixture.scenario,
         stepMedianMs: result.externalSummary.stepSimulation.medianMs.toFixed(3),
         stepP95Ms: result.externalSummary.stepSimulation.p95Ms.toFixed(3),
         renderMedianMs: result.externalSummary.renderWorld.medianMs.toFixed(3),
+        uiFeedbackFrameP95Ms: result.externalSummary.feedbackFrame.p95Ms.toFixed(3),
+        completeFrameMedianMs: result.externalSummary.completeFrame.medianMs.toFixed(3),
+        completeFrameP95Ms: result.externalSummary.completeFrame.p95Ms.toFixed(3),
         missingHooks: result.fixture.missingHooks.join(', ') || 'none'
     })));
     expect(missing, 'Frontend instrumentation hooks required by performance/README.md').toEqual([]);

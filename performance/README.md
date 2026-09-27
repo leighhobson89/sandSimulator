@@ -6,11 +6,11 @@ Run this benchmark only with:
 npm run test:performance
 ```
 
-Run this suite only when a performance-specific test is explicitly requested. It is excluded from `npm test`, the ordinary `npm run test:browser` suite, and routine validation; do not add it to normal test commands. It has no timing thresholds; it records timings so reviewers can compare runs on the same host and commit. The Playwright project starts the repository's normal local server and uses its configured Chromium browser.
+Run this suite only when a performance-specific test is explicitly requested. It is excluded from `npm test`, the ordinary `npm run test:browser` suite, and routine validation; do not add it to normal test commands. It has no timing thresholds; it records timings so reviewers can compare runs on the same host and commit. The 260 x 150 target is a minimum of 24 FPS, or a `completeFrame` p95 no greater than 41.67 ms; this is a reference target, not a wrapper pass/fail threshold. The Playwright project starts the repository's normal local server and uses its configured Chromium browser.
 
-The default benchmark uses deterministic fixtures at 260 x 150 cells, the small-world size relevant to the current FPS investigation. Set `P0_PERFORMANCE_SCOPE=all` before running the same npm command to include the 520 x 300 full-scale fixtures; this longer run has a 60-minute limit. Each selected size covers an empty control, the scaled particle profile, ordinary Spark charging, a Battery-backed Lamp, combined Spark plus Battery workload, an AND-to-NOT gate chain, Battery hover feedback, a repeated solid edit plus target remap for ambient visibility, and mostly open plus occlusion-dense ambient profiles. The ambient fixtures report chunk samples, writes, pending work, ray traces, slider remaps, and fallback counts.
+The default benchmark uses deterministic fixtures at 260 x 150 cells, the small-world size relevant to the current FPS investigation. Set `P0_PERFORMANCE_SCOPE=all` before running the same npm command to include the 520 x 300 full-scale fixtures; this longer run has a 60-minute limit. Each selected size covers an empty control, the scaled particle profile, ordinary Spark charging, a Battery-backed Lamp, combined Spark plus Battery workload, an AND-to-NOT gate chain, Battery hover feedback, a repeated solid edit plus target remap for ambient visibility, mostly open plus occlusion-dense ambient profiles, and calm-sealed (`air-calm`) plus driven-wind/Heater (`air-driven`) circulation. The ambient fixtures report chunk samples, writes, pending work, ray traces, slider remaps, and fallback counts.
 
-For each fixture, the harness restores the same captured simulation state, runs 10 warm-up samples, and collects 60 measured samples. An instrumentation-off pass times `stepSimulation`, `decayWindTrails`, and `renderWorld` externally. A second pass enables optional production timing hooks and records internal stage durations and counters separately. It reports median and p95, along with browser version, user agent, viewport, canvas size and on-screen visibility, world size, host/CPU/RAM, Node version, commit, working-tree dirty status, and WebGL renderer information when the browser exposes it. Wind-decay values below the browser clock's effective resolution appear as `0`; that means the measured duration was below resolution, not that the work is free. Missing browser or GPU details are recorded as unavailable rather than inferred.
+For each fixture, the harness restores the same captured simulation state, runs 10 warm-up samples, and collects 60 measured samples. An instrumentation-off pass times `stepSimulation`, `decayWindTrails`, and `renderWorld` externally, then calculates each sample's `completeFrame` as their sum plus the separately measured UI `feedbackFrame`. The p95 of this per-sample sum is the complete-frame metric; `feedbackFrame` alone is only UI feedback time. A second pass enables optional production timing hooks and records internal stage durations and counters separately. It reports median and p95, along with browser version, user agent, viewport, canvas size and on-screen visibility, world size, host/CPU/RAM, Node version, commit, working-tree dirty status, and WebGL renderer information when the browser exposes it. Wind-decay values below the browser clock's effective resolution appear as `0`; that means the measured duration was below resolution, not that the work is free. Missing browser or GPU details are recorded as unavailable rather than inferred.
 
 The fixtures contain no plants, so they do not measure plant-heavy simulation behavior. The ambient edit case measures visibility-cache updates; all scenes also measure the local illumination layer.
 
@@ -38,8 +38,41 @@ The harness installs `window.__P0_PERF__` with `enabled`, `events`, `record(name
 | `machineOverlayReuse` | `game.js`, retained machine overlay and Battery status update | `machineCount`, `staticSvgReuse`, `batteryGroupsVisited`, `trendGlyphsCreated` |
 | `electricalStatusOverlay` | `game.js`, one cached charge-trend glyph per Battery group | `batteryGroupsVisited`, `trendGlyphsCreated` |
 | `illuminationLayer` | `game.js`, `drawIlluminationLayer()` | `cellsScanned`, `litCells` |
+| `airScalarTransport` | `physics.js`, bounded air-temperature/humidity mixing pass | `ran`, `intervalTicks`, `airCellsVisited`, `horizontalFacesVisited`, `verticalFacesVisited`, `limiterPasses`, `topologyMaskBuildMs`, `topologyMaskCells`, `uniformBackgroundEdgesSkipped`, `activeMachineCount`, `activeMaskCells`, `activeJetCells`, `mixSkipCount` |
 
 The recorder is deliberately an optional hook rather than a permanent profiler. Hook duration distributions include only the instrumented measured pass; setup events are used only to confirm a hook can fire (for example, an SVG overlay rebuild may happen only once). `allocatedCells` is a scratch-array cell-slot proxy counting the world-sized distance buffer plus queue/touched indices; it is not bytes, total allocation volume, or garbage-collection data. The benchmark also requires positive numeric `touchedCells` for measured ordinary Spark propagation and positive `loadMachines` for measured Battery load traversal. Missing hooks or workload counters are listed in the artifacts and fail the benchmark after the JSON and CSV have been written. The harness does not patch or wrap production functions, so instrumentation overhead is not mixed into the external timing pass.
+
+## Air-scalar transport and current results
+
+Calm and driven air-scalar transport runs every other simulation tick at its
+original per-update rate. This reduces solver work but also makes air-field
+mixing less responsive to changes between due transport ticks; direct machine
+treatment, particle movement, weather, and sources/sinks continue on the normal
+simulation cadence.
+
+Each due transport tick builds a transient three-state topology mask from the
+current world: `0` is non-air, `1` is air behind a storage barrier, and `2` is
+transfer-eligible air. Scalar transport phases and the limiter reuse this mask;
+active-jet field construction occurs earlier in the tick. The classification
+preserves storage-wall blocking and is rebuilt on each due tick. The face sweep
+skips an edge only when both eligible cells exactly equal the live background
+for every enabled scalar field. It uses strict equality without a tolerance, so
+small temperature or humidity anomalies and mixed-field cases remain active.
+The `uniformBackgroundEdgesSkipped` counter records these no-op edges.
+
+The latest P0 wrapper run at 260 x 150 passed its benchmark checks and recorded
+the following complete-frame timings:
+
+| Fixture | Median | p95 | 41.67 ms p95 target |
+| --- | ---: | ---: | --- |
+| `air-calm` | 32.05 ms | 46.0 ms | Above target |
+| `air-driven` | 27.95 ms | 38.3 ms | Within target |
+
+These timings are fixture-specific. The calm-air p95 and other heavier
+scenarios remain above the 41.67 ms reference target, so this run does not
+establish 24 FPS across all scenes. The JSON and CSV artifacts report
+`completeFrameMedianMs` and `completeFrameP95Ms` alongside the solver-work
+counters for same-host comparisons.
 
 ## Electrical rendering and refresh comparison
 

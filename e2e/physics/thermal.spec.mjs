@@ -144,6 +144,87 @@ test('sealed air retains heat until a breach reconnects it to ambient', async ({
     expect(samples.afterBreach).toBeLessThan(samples.sealed - 40);
 });
 
+test('normal air tint follows local sealed-room temperature while outdoor tint follows the slider', async ({ page }) => {
+    const game = new GamePage(page); await game.openMenu(); await game.newGame();
+    const colours = await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        const rendering = await import('/game.js');
+        const view = await import('/constantsAndGlobalVars.js');
+        const world = physics.getWorld();
+        const definitions = physics.getDefinitions();
+        const glass = definitions.findIndex(definition => definition?.name === 'Glass');
+        physics.clearWorld();
+        physics.setAmbientTarget(-40);
+        physics.setAmbientWindOn(false);
+        physics.setGeneralWindStrength(0);
+        physics.setGustWindStrength(0);
+
+        const rooms = [
+            { left: 40, right: 52, temp: 20 },
+            { left: 60, right: 72, temp: 120 },
+            { left: 80, right: 92, temp: -20 }
+        ];
+        for (const room of rooms) {
+            for (let x = room.left; x <= room.right; x++) {
+                physics.setCell(x, 40, glass);
+                physics.setCell(x, 54, glass);
+            }
+            for (let y = 41; y < 54; y++) {
+                physics.setCell(room.left, y, glass);
+                physics.setCell(room.right, y, glass);
+            }
+            for (let y = 41; y < 54; y++) {
+                for (let x = room.left + 1; x < room.right; x++) {
+                    world.temp[physics.index(x, y)] = room.temp;
+                }
+            }
+        }
+        // Refresh the outdoor/enclosed classification before asking the normal
+        // renderer for pixels, then derive expectations from the live values.
+        physics.stepSimulation();
+        const ambientTemp = physics.getAmbientTarget();
+        const samples = [
+            { name: 'neutral', x: 46, y: 47 },
+            { name: 'hot', x: 66, y: 47 },
+            { name: 'cold', x: 86, y: 47 },
+            { name: 'outdoor', x: 110, y: 47 }
+        ];
+        const pixel = ({ x, y }) => Array.from(
+            document.querySelector('#canvas').getContext('2d').getImageData(x, y, 1, 1).data
+        ).slice(0, 3);
+        view.setVisualizationMode('normal');
+        rendering.renderWorld();
+        const normal = Object.fromEntries(samples.map(sample => [sample.name, pixel(sample)]));
+        const temperatures = Object.fromEntries(samples.slice(0, 3).map(sample => [
+            sample.name, world.temp[physics.index(sample.x, sample.y)]
+        ]));
+        view.setVisualizationMode('heat');
+        rendering.renderWorld();
+        const heat = Object.fromEntries(samples.slice(1, 3).map(sample => [sample.name, pixel(sample)]));
+        return {
+            ambientTemp,
+            temperatures,
+            normal,
+            heat,
+            expected: {
+                neutral: rendering.airTintForTemperature(temperatures.neutral),
+                hot: rendering.airTintForTemperature(temperatures.hot),
+                cold: rendering.airTintForTemperature(temperatures.cold),
+                outdoor: rendering.airTintForTemperature(ambientTemp)
+            }
+        };
+    });
+
+    expect(colours.normal.neutral).toEqual(colours.expected.neutral);
+    expect(colours.normal.hot).toEqual(colours.expected.hot);
+    expect(colours.normal.cold).toEqual(colours.expected.cold);
+    expect(colours.normal.outdoor).toEqual(colours.expected.outdoor);
+    expect(colours.normal.hot).not.toEqual(colours.normal.outdoor);
+    expect(colours.normal.cold).not.toEqual(colours.normal.outdoor);
+    expect(colours.heat.hot[0]).toBeGreaterThan(colours.heat.hot[2]);
+    expect(colours.heat.cold[2]).toBeGreaterThan(colours.heat.cold[0]);
+});
+
 test('Insulation has the specified definition and melts into Lava above 5000C', async ({ page }) => {
     const game = new GamePage(page); await game.openMenu(); await game.newGame();
     const result = await page.evaluate(async () => {
