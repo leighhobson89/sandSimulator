@@ -7,7 +7,7 @@
 block. The user confirmed the permanent coarse approximation and center
 sampling. Focused simulation/browser checks and the opt-in performance run
 passed; results are recorded in
-[`2026-09-27-ambient-illumination-chunk-performance-results.md`](../../reviews/2026-09-27-ambient-illumination-chunk-performance-results.md).
+[`2026-09-27-ambient-illumination-chunk-performance-results.md`](../reviews/2026-09-27-ambient-illumination-chunk-performance-results.md).
 
 The chunk dimension has one easy-to-change implementation endpoint,
 `AMBIENT_ILLUMINATION_CHUNK_SIZE`, set to 30 simulation cells in `physics.js`.

@@ -1439,6 +1439,11 @@ input[type="range"]::-moz-range-thumb {
     fill: #80c9d7;
 }
 
+.machine-cone-spotLamp {
+    color: #ffe25b;
+    fill: #ffe25b;
+}
+
 .machine-cone-preview {
     stroke-opacity: 0.14;
     fill-opacity: 0.06;

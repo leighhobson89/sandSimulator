@@ -315,7 +315,7 @@ cover the following:
   for many Batteries, repeated Spark hits on shared conductor routes, gate
   chains, and ambient-visibility changes. Record raw artifact location, timing
   medians/p95, workload counters, environment, and limitations in a dated
-  `docs/reviews/` report. Include a readable chart in the report, with a
+  `docs/archive/reviews/` report. Include a readable chart in the report, with a
   standalone SVG (or another repo-native visual artifact) linked from the
   Markdown. The chart must compare baseline and after measurements for
   comparable stages, group results by functional area/process, label axes in
@@ -347,7 +347,7 @@ separate from `npm test` and ordinary browser runs.
 - `performance/p0-browser.spec.mjs` and `performance/README.md`: opt-in stress
   fixtures and counter documentation; keep before/after methodology matched.
 - After the authorized benchmark, create a dated Markdown report and standalone
-  chart under `docs/reviews/` (for example,
+  chart under `docs/archive/reviews/` (for example,
   `2026-09-27-electrical-hover-and-battery-optimization-results.md` and
   `2026-09-27-electrical-hover-and-battery-optimization.svg`). Embed or link the
   chart in the report and describe its method and environment.
@@ -396,5 +396,5 @@ isolated Battery-static-artwork regression (1). The authorized
 `npm run test:performance` run passed all eight small-world fixtures with 10
 warm-ups and 60 measured samples per pass. The full-size 520×300 matrix timed
 out before completion and has no new results; see the dated
-[performance report](../../reviews/2026-09-27-electrical-hover-and-battery-optimization-results.md)
+[performance report](../reviews/2026-09-27-electrical-hover-and-battery-optimization-results.md)
 and its linked SVG chart for measurements, limits, and follow-up work.

@@ -170,4 +170,4 @@ explicit user authorization.
   output or introducing ambient-light tint.
 - Focused regressions pass, current mechanics/E2E documentation is updated, and
   any performance comparison is recorded as machine-specific measurements
-  under `docs/reviews/`.
+  under `docs/archive/reviews/`.

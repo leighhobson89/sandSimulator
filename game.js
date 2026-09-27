@@ -30,6 +30,8 @@ import {
     getMachinePorts, getMachinePortTemplates, getMachineSetting,
     registerMachinePortLead, getMachinePortLeadOwner,
     getMachineArtworkLayout, isMachinePortMaterialCompatible, EMPTY,
+    SPOTLAMP_CONE_ANGLE_DEGREES, invalidateLocalIllumination,
+    invalidateLocalIlluminationForTypes,
     invalidateMachineCollisionMask,
     invalidateElectricalTopologyForTypes, ensureElectricalStateCurrent,
     syncElectricalPulseTrackingAt, invalidateAmbientIlluminationForTypes
@@ -1012,7 +1014,7 @@ function appendMachineSprite(icon, machineType) {
         icon.appendChild(frame);
         return;
     }
-    if (machineType === 'simpleSwitch' || machineType === 'lamp') {
+    if (machineType === 'simpleSwitch' || machineType === 'lamp' || machineType === 'spotLamp') {
         const frame = document.createElementNS(MACHINE_ICON_SVG_NS, 'svg');
         frame.setAttribute('x', '4');
         frame.setAttribute('y', '8');
@@ -1042,7 +1044,7 @@ function appendMachineSprite(icon, machineType) {
                 'data-switch-contact': 'true' });
             add('path', { d: 'M25 44 H31', fill: 'none', stroke: '#d8e0e5',
                 'stroke-width': 1.8, 'stroke-linecap': 'round' });
-        } else {
+        } else if (machineType === 'lamp') {
             const lit = enabled && isMachinePoweredAt(machineX, machineY);
             add('circle', { class: 'machine-lamp-glow', cx: 28, cy: 24, r: 18,
                 fill: '#ffe25b', opacity: lit ? 0.82 : 0, 'data-lit': String(lit),
@@ -1057,6 +1059,17 @@ function appendMachineSprite(icon, machineType) {
                 fill: 'none', stroke: lit ? '#d18a19' : '#899197',
                 'stroke-width': 2, 'stroke-linecap': 'round', 'stroke-linejoin': 'round',
                 'data-lamp-filament': 'true' });
+        } else {
+            const lit = enabled && isMachinePoweredAt(machineX, machineY);
+            add('path', { d: 'M30 20 L55 14 L55 34 L30 28 Z', fill: '#ffe25b',
+                opacity: lit ? 0.66 : 0.14, 'data-spotlamp-beam': 'true' });
+            add('rect', { x: 13, y: 17, width: 22, height: 16, rx: 5,
+                fill: '#465b66', stroke: '#15252e', 'stroke-width': 2.5 });
+            add('rect', { x: 29, y: 19, width: 7, height: 12, rx: 2,
+                fill: lit ? '#fff2a6' : '#7f8c91', stroke: '#18232b', 'stroke-width': 1.5,
+                'data-spotlamp-lens': 'true' });
+            add('path', { d: 'M17 33v5h14v-5', fill: '#283943', stroke: '#15252e',
+                'stroke-width': 2, 'stroke-linejoin': 'round' });
         }
         icon.appendChild(frame);
         return;
@@ -1066,7 +1079,8 @@ function appendMachineSprite(icon, machineType) {
     frame.setAttribute('y', String(layout.y));
     frame.setAttribute('width', String(layout.width));
     frame.setAttribute('height', String(layout.height));
-    if (machineType === 'temperatureSwitch' || machineType === 'humiditySwitch') {
+    if (machineType === 'temperatureSwitch' || machineType === 'humiditySwitch' ||
+        machineType === 'lightSwitch') {
         frame.setAttribute('viewBox', '0 0 64 64');
         frame.setAttribute('preserveAspectRatio', 'xMidYMid meet');
         const add = (tag, attributes) => {
@@ -1078,18 +1092,31 @@ function appendMachineSprite(icon, machineType) {
         add('rect', { x: 9, y: 14, width: 46, height: 40, rx: 8,
             fill: '#263744', stroke: '#101922', 'stroke-width': 3 });
         add('rect', { x: 13, y: 17, width: 38, height: 31, rx: 4,
-            fill: machineType === 'temperatureSwitch' ? '#a85a36' : '#287e9d',
+            fill: machineType === 'temperatureSwitch' ? '#a85a36'
+                : machineType === 'humiditySwitch' ? '#287e9d' : '#8d7c28',
             stroke: '#b9d7df', 'stroke-width': 1.5 });
         if (machineType === 'temperatureSwitch') {
             add('path', { d: 'M30 24v13a6 6 0 1 0 8 0V24a4 4 0 0 0-8 0Z',
                 fill: 'none', stroke: '#fff0d2', 'stroke-width': 3, 'stroke-linejoin': 'round' });
             add('path', { d: 'M34 28v12', fill: 'none', stroke: '#ffb04e',
                 'stroke-width': 3.2, 'stroke-linecap': 'round' });
-        } else {
+        } else if (machineType === 'humiditySwitch') {
             add('path', { d: 'M32 22C28 28 26 31 26 35a6 6 0 0 0 12 0c0-4-2-7-6-13Z',
                 fill: '#a6e9f2', stroke: '#e6fbff', 'stroke-width': 1.6 });
             add('path', { d: 'M22 43h20', fill: 'none', stroke: '#d4f2f5',
                 'stroke-width': 2, 'stroke-linecap': 'round' });
+        } else {
+            add('circle', { cx: 32, cy: 32, r: 8, fill: '#ffe35a', stroke: '#fff0a8',
+                'stroke-width': 1.5 });
+            for (const angle of [0, 45, 90, 135]) {
+                const radians = angle * Math.PI / 180;
+                const x1 = 32 + Math.cos(radians) * 13;
+                const y1 = 32 + Math.sin(radians) * 13;
+                const x2 = 32 + Math.cos(radians) * 19;
+                const y2 = 32 + Math.sin(radians) * 19;
+                add('path', { d: `M${x1} ${y1}L${x2} ${y2}`, fill: 'none', stroke: '#ffdf43',
+                    'stroke-width': 2, 'stroke-linecap': 'round' });
+            }
         }
         add('path', { d: 'M6 32h8M50 32h8', fill: 'none', stroke: '#d3b34d',
             'stroke-width': 2, 'stroke-linecap': 'round' });
@@ -1410,8 +1437,10 @@ function drawMachineOverlays() {
         collector: true,
         simpleSwitch: true,
         lamp: true,
+        spotLamp: true,
         temperatureSwitch: true,
         humiditySwitch: true,
+        lightSwitch: true,
         notGate: true,
         andGate: true,
         orGate: true,
@@ -1546,7 +1575,7 @@ function drawMachineOverlays() {
 
     const updateMachineLiveArtwork = (icon, machine, x, y, ports) => {
         const enabled = (Math.round(getMachineSetting(x, y) || 0) & 1) !== 0;
-        const lit = machine === 'lamp' && enabled && isMachinePoweredAt(x, y);
+        const lit = (machine === 'lamp' || machine === 'spotLamp') && enabled && isMachinePoweredAt(x, y);
         const arm = icon.querySelector('[data-switch-arm]');
         if (arm) {
             arm.setAttribute('d', enabled ? 'M20 26 L34 16' : 'M22 17 L36 27');
@@ -1567,6 +1596,10 @@ function drawMachineOverlays() {
         if (bulb) bulb.setAttribute('fill', lit ? '#fff2a6' : '#59636b');
         const filament = icon.querySelector('[data-lamp-filament]');
         if (filament) filament.setAttribute('stroke', lit ? '#d18a19' : '#899197');
+        const spotBeam = icon.querySelector('[data-spotlamp-beam]');
+        if (spotBeam) spotBeam.setAttribute('opacity', lit ? '0.66' : '0.14');
+        const spotLens = icon.querySelector('[data-spotlamp-lens]');
+        if (spotLens) spotLens.setAttribute('fill', lit ? '#fff2a6' : '#7f8c91');
 
         for (const element of icon.querySelectorAll('.machine-port, .machine-port-stub')) {
             const portId = element.getAttribute('data-port-id') ||
@@ -1594,7 +1627,14 @@ function drawMachineOverlays() {
     for (let recordIndex = 0; recordIndex < machineRecords.length; recordIndex++) {
         const record = machineRecords[recordIndex];
         const { x, y, i, machine, def, ports } = record;
-        if ((machine === 'fan' || machine === 'heater' || machine === 'cooler') &&
+        if (machine === 'spotLamp' && (Math.round(getMachineSetting(x, y) || 0) & 1) !== 0 &&
+            isMachinePoweredAt(x, y)) {
+            const cone = document.createElementNS(MACHINE_ICON_SVG_NS, 'path');
+            cone.setAttribute('class', 'machine-cone machine-cone-spotLamp');
+            cone.setAttribute('d', machineConePath(x, y, world.data[i] & 7,
+                cellWidth, cellHeight, def.lightRadius || 45, SPOTLAMP_CONE_ANGLE_DEGREES));
+            coneLayer.appendChild(cone);
+        } else if ((machine === 'fan' || machine === 'heater' || machine === 'cooler') &&
             isMachinePoweredAt(x, y)) {
             const cone = document.createElementNS(MACHINE_ICON_SVG_NS, 'path');
             cone.setAttribute('class', `machine-cone machine-cone-${machine}`);
@@ -1621,7 +1661,7 @@ function drawMachineOverlays() {
             icon.style.transform = `rotate(${machine === 'sprinkler'
                 ? 0 : rotations[world.data[i] & 7]}deg)`;
             appendMachineSprite(icon, machine);
-            if (machine === 'temperatureSwitch' || machine === 'humiditySwitch') {
+            if (machine === 'temperatureSwitch' || machine === 'humiditySwitch' || machine === 'lightSwitch') {
                 const sensor = document.createElementNS(MACHINE_ICON_SVG_NS, 'circle');
                 sensor.setAttribute('cx', '32');
                 sensor.setAttribute('cy', '14');
@@ -1644,7 +1684,13 @@ function drawMachineOverlays() {
         const preview = machinePlacementPreview;
         const def = getDefinitions().find(candidate => candidate?.machine === preview.machine);
         if (def && icons[preview.machine] && inBounds(preview.x, preview.y)) {
-            if (preview.machine === 'fan' || preview.machine === 'heater' || preview.machine === 'cooler') {
+            if (preview.machine === 'spotLamp') {
+                const cone = document.createElementNS(MACHINE_ICON_SVG_NS, 'path');
+                cone.setAttribute('class', 'machine-cone machine-cone-spotLamp machine-cone-preview');
+                cone.setAttribute('d', machineConePath(preview.x, preview.y, preview.direction,
+                    cellWidth, cellHeight, def.lightRadius || 45, SPOTLAMP_CONE_ANGLE_DEGREES));
+                coneLayer.appendChild(cone);
+            } else if (preview.machine === 'fan' || preview.machine === 'heater' || preview.machine === 'cooler') {
                 const cone = document.createElementNS(MACHINE_ICON_SVG_NS, 'path');
                 cone.setAttribute('class', `machine-cone machine-cone-${preview.machine} machine-cone-preview`);
                 cone.setAttribute('d', machineConePath(preview.x, preview.y, preview.direction,
@@ -1870,7 +1916,7 @@ function machineDirectionVector(direction) {
 // Draw the same expanding 28-cell cone used by Heater and Cooler. The visual
 // is intentionally translucent: it shows the affected area without hiding the
 // particles and temperature view underneath it.
-function machineConePath(x, y, direction, cellWidth, cellHeight, range) {
+function machineConePath(x, y, direction, cellWidth, cellHeight, range, halfAngleDegrees = null) {
     const [dirX, dirY] = machineDirectionVector(direction);
     const centreX = (x + 0.5) * cellWidth;
     const centreY = (y + 0.5) * cellHeight;
@@ -1881,14 +1927,29 @@ function machineConePath(x, y, direction, cellWidth, cellHeight, range) {
     const unitY = stepY / stepLength;
     const tangentX = -unitY;
     const tangentY = unitX;
-    const reach = Math.max(1, Math.round(range));
+    const reach = Math.max(1, range);
     const cellSize = Math.min(cellWidth, cellHeight);
+    if (Number.isFinite(halfAngleDegrees)) {
+        const reachPx = cellSize * reach;
+        const halfAngleRadians = halfAngleDegrees * Math.PI / 180;
+        const arcSegments = 32;
+        const points = [[centreX, centreY]];
+        for (let segment = 0; segment <= arcSegments; segment++) {
+            const angle = -halfAngleRadians +
+                2 * halfAngleRadians * segment / arcSegments;
+            const rayX = unitX * Math.cos(angle) + tangentX * Math.sin(angle);
+            const rayY = unitY * Math.cos(angle) + tangentY * Math.sin(angle);
+            points.push([centreX + rayX * reachPx, centreY + rayY * reachPx]);
+        }
+        return `M ${points.map(([px, py]) => `${px.toFixed(2)} ${py.toFixed(2)}`).join(' L ')} Z`;
+    }
+    const roundedReach = Math.round(reach);
     const nearX = centreX + stepX * 0.5;
     const nearY = centreY + stepY * 0.5;
-    const farX = centreX + stepX * reach;
-    const farY = centreY + stepY * reach;
+    const farX = centreX + stepX * roundedReach;
+    const farY = centreY + stepY * roundedReach;
     const nearHalf = cellSize * 0.35;
-    const farHalf = cellSize * (reach - 1) * 0.5;
+    const farHalf = cellSize * (roundedReach - 1) * 0.5;
     const points = [
         [nearX + tangentX * nearHalf, nearY + tangentY * nearHalf],
         [farX + tangentX * farHalf, farY + tangentY * farHalf],
@@ -2347,8 +2408,24 @@ function updateFeedbackContent() {
     }
     const def = defs[id];
     if (!def) return;
+    const seedPlantProfile = def.isSeed && def.plantSpecies
+        ? defs.find(candidate => candidate?.isPlant && candidate.plantSpecies === def.plantSpecies)
+        : null;
     const plantEnvironment = def.isPlant && def.plantSpecies
-        ? getPlantEnvironment(feedbackX, feedbackY) : null;
+        ? getPlantEnvironment(feedbackX, feedbackY)
+        : seedPlantProfile ? {
+            temperature: world.temp[cellIndex],
+            minTemperature: seedPlantProfile.plantMinTemp,
+            idealTemperature: seedPlantProfile.plantIdealTemp,
+            maxTemperature: seedPlantProfile.plantMaxTemp,
+            humidity: getHumidityAt(feedbackX, feedbackY),
+            minHumidity: seedPlantProfile.plantMinHumidity,
+            idealHumidity: seedPlantProfile.plantIdealHumidity,
+            maxHumidity: seedPlantProfile.plantMaxHumidity,
+            illumination: getIlluminationAt(feedbackX, feedbackY),
+            minIllumination: seedPlantProfile.plantMinIllumination,
+            idealIllumination: seedPlantProfile.plantIdealIllumination
+        } : null;
     appendFeedbackLine(feedback, def.name);
     appendFeedbackLine(feedback,
         `Catalog: ${def.group}${def.catalogSubgroup ? ` / ${def.catalogSubgroup}` : ''} \u00b7 ${def.category}`);
@@ -2472,6 +2549,7 @@ export function paintCell(centreX, centreY, dragX, dragY, rayDirection = null, p
                 const previousType = world.type[i];
                 world.type[i] = EMPTY;
                 invalidateAmbientIlluminationForTypes(previousType, EMPTY, i);
+                invalidateLocalIlluminationForTypes(previousType, EMPTY);
                 world.machineSensorRule[i] = 0;
                 world.machineSensorThreshold[i] = 0;
                 world.life[i] = 0;
@@ -2548,6 +2626,7 @@ export function faceMachine(x, y, machine, direction = 0) {
     if ((world.data[i] & 7) !== nextDirection) {
         world.data[i] = nextDirection;
         invalidateElectricalTopologyForTypes(world.type[i], world.type[i]);
+        if (machine === 'spotLamp') invalidateLocalIllumination();
     }
     return true;
 }
@@ -2624,6 +2703,7 @@ function paintSingleCell(x, y, id, fillLooseMaterial = false, rayDirection = nul
         const previousType = world.type[i];
         world.type[i] = EMPTY;
         invalidateAmbientIlluminationForTypes(previousType, EMPTY, i);
+        invalidateLocalIlluminationForTypes(previousType, EMPTY);
         world.machineSensorRule[i] = 0;
         world.machineSensorThreshold[i] = 0;
         world.life[i] = 0;
@@ -2712,6 +2792,7 @@ export function stampBlueprintAt(blueprint, startX, startY) {
                 world[field][destination] = blueprint.cells[field]?.[source] ?? 0;
             }
             invalidateAmbientIlluminationForTypes(previousType, world.type[destination], destination);
+            invalidateLocalIlluminationForTypes(previousType, world.type[destination]);
             invalidateElectricalTopologyForTypes(previousType, world.type[destination]);
             syncElectricalPulseTrackingAt(destination);
             world.tempNext[destination] = world.temp[destination];
@@ -2848,6 +2929,7 @@ function clearGrabbedCell(world, i, y) {
     const previousType = world.type[i];
     world.type[i] = EMPTY;
     invalidateAmbientIlluminationForTypes(previousType, EMPTY, i);
+    invalidateLocalIlluminationForTypes(previousType, EMPTY);
     invalidateElectricalTopologyForTypes(previousType, EMPTY);
     world.temp[i] = getAirTempAt(y);
     world.life[i] = 0;
@@ -2891,6 +2973,7 @@ function restoreGrabbedCell(world, i, cell) {
     const previousType = world.type[i];
     world.type[i] = cell.type;
     invalidateAmbientIlluminationForTypes(previousType, cell.type, i);
+    invalidateLocalIlluminationForTypes(previousType, cell.type);
     invalidateElectricalTopologyForTypes(previousType, cell.type);
     world.temp[i] = cell.temp;
     world.life[i] = cell.life;

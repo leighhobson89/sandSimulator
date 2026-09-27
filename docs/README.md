@@ -26,19 +26,15 @@ visualization modes are documented there as well.
   roadmap ideas.
 - [`archive/plans/2026-09-26-plant-illumination-and-world-light.md`](archive/plans/2026-09-26-plant-illumination-and-world-light.md)
   — completed ambient-light, plant-response, and opt-in performance-test plan.
-- [`reviews/2026-09-26-p0-performance-results.md`](reviews/2026-09-26-p0-performance-results.md)
-  — P0 browser benchmark method, measurements, limitations, and follow-up.
-- [`reviews/2026-09-27-electrical-hover-and-battery-optimization-results.md`](reviews/2026-09-27-electrical-hover-and-battery-optimization-results.md)
-  — latest electrical, hover, and ambient-light performance measurements with
-  a visual breakdown by functional area.
-- [`reviews/2026-09-27-ambient-illumination-chunk-performance-results.md`](reviews/2026-09-27-ambient-illumination-chunk-performance-results.md)
-  — center-sampled ambient-light benchmark history, including the rollback
-  comparisons, test results, and limitations.
+- [`archive/reviews/`](archive/reviews/) — completed performance reviews,
+  investigation reports, benchmark results, and their charts.
 - [`archive/plans/2026-09-27-ambient-illumination-chunk-approximation.md`](archive/plans/2026-09-27-ambient-illumination-chunk-approximation.md)
   — completed implementation plan for the tuneable 30-cell ambient-light
   approximation.
 - [`archive/plans/2026-09-27-ambient-illumination-adaptive-refinement-rollback.md`](archive/plans/2026-09-27-ambient-illumination-adaptive-refinement-rollback.md)
   - completed rollback from adaptive refinement to uniform center-sampled chunks, with focused verification and benchmark comparison.
+- [`archive/plans/2026-09-27-spotlamp-and-light-switch.md`](archive/plans/2026-09-27-spotlamp-and-light-switch.md)
+  - completed Spotlamp directional illumination and single-cell Light Switch comparator implementation, with focused simulation, browser, and port verification.
 - [`archive/plans/2026-09-26-logic-gates-and-local-illumination.md`](archive/plans/2026-09-26-logic-gates-and-local-illumination.md)
   — historical gate and initial local-illumination implementation record;
   current values and behavior are in Game Mechanics.

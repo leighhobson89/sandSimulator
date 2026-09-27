@@ -2243,6 +2243,223 @@ function runPlantIlluminationRegressions() {
     physics.resetRandomSource();
 }
 
+function runSpotlampLightSwitchRegressions() {
+    section('Spotlamp directional illumination and Light Switch comparator');
+    const callerState = captureSimulationState();
+    try {
+        const spotId = ID.Spotlamp;
+        const switchId = ID['Light Switch'];
+        const spotDef = spotId ? defs[spotId] : null;
+        const switchDef = switchId ? defs[switchId] : null;
+        check('Spotlamp is defined in Electricals with its directional light profile',
+            !!spotDef && spotDef.group === 'Electricals' && spotDef.machine === 'spotLamp' &&
+            spotDef.lightRadius === 45 && spotDef.lightIntensity === 100 &&
+            spotDef.lightFalloffFloor === 0.4,
+            JSON.stringify(spotDef && {
+                name: spotDef.name, group: spotDef.group, machine: spotDef.machine,
+                lightRadius: spotDef.lightRadius, lightIntensity: spotDef.lightIntensity,
+                lightFalloffFloor: spotDef.lightFalloffFloor
+            }));
+        check('Light Switch is defined in Electricals with a >=50 illumination comparator',
+            !!switchDef && switchDef.group === 'Electricals' && switchDef.machine === 'lightSwitch' &&
+            switchDef.machineSensorDefaultRule === 3 && switchDef.machineSensorDefaultThreshold === 50,
+            JSON.stringify(switchDef && {
+                name: switchDef.name, group: switchDef.group, machine: switchDef.machine,
+                rule: switchDef.machineSensorDefaultRule,
+                threshold: switchDef.machineSensorDefaultThreshold
+            }));
+        if (!spotDef || !switchDef || typeof physics.getMachinePorts !== 'function') return;
+
+        const batteryId = ID.Battery;
+        const elecId = ID.Elec;
+        const powerAtInput = (x, y) => {
+            const ports = physics.getMachinePorts(x, y);
+            const input = ports.find(port => port.role === 'input');
+            if (!input) return { input, ports, battery: null };
+            const dx = Math.sign(input.connectionCell.x - x) || Math.sign(input.directionX);
+            const dy = Math.sign(input.connectionCell.y - y) || Math.sign(input.directionY);
+            for (let offset = 0; offset <= 2; offset++) {
+                setCell(input.connectionCell.x + dx * offset,
+                    input.connectionCell.y + dy * offset, elecId);
+            }
+            const battery = { x: input.connectionCell.x + dx * 3,
+                y: input.connectionCell.y + dy * 3 };
+            setCell(battery.x, battery.y, batteryId);
+            getWorld().charge[index(battery.x, battery.y)] = defs[batteryId]?.chargeCapacity || 100;
+            return { input, ports, battery };
+        };
+        const facing = [
+            [1, 0], [-1, 0], [0, -1], [0, 1],
+            [Math.SQRT1_2, -Math.SQRT1_2], [-Math.SQRT1_2, -Math.SQRT1_2],
+            [-Math.SQRT1_2, Math.SQRT1_2], [Math.SQRT1_2, Math.SQRT1_2]
+        ];
+        const orientationReadings = [];
+        for (let direction = 0; direction < 8; direction++) {
+            createWorld(180, 120);
+            physics.setAmbientIlluminationTarget(0);
+            const x = 90, y = 60;
+            setCell(x, y, spotId);
+            const source = index(x, y);
+            getWorld().data[source] = direction;
+            const power = powerAtInput(x, y);
+            const settingAccepted = physics.setMachineSetting(x, y, 1);
+            stepSimulation();
+            const [vx, vy] = facing[direction];
+            const tx = (forward, side) => ({
+                x: x + Math.round(vx * forward - vy * side),
+                y: y + Math.round(vy * forward + vx * side)
+            });
+            const forward = tx(10, 0);
+            const inside = tx(12, 2);
+            const outside = tx(12, 10);
+            const behind = tx(-8, 0);
+            const distance = Math.hypot(forward.x - x, forward.y - y);
+            const liveStatus = physics.getMachineLiveStatus(x, y)?.active;
+            const centerLight = physics.getIlluminationAt(x, y);
+            const forwardLight = physics.getIlluminationAt(forward.x, forward.y);
+            const insideLight = physics.getIlluminationAt(inside.x, inside.y);
+            const outsideLight = physics.getIlluminationAt(outside.x, outside.y);
+            const behindLight = physics.getIlluminationAt(behind.x, behind.y);
+            orientationReadings.push({
+                direction,
+                settingAccepted,
+                inputCount: power.ports.length,
+                active: liveStatus,
+                center: centerLight,
+                forward: forwardLight,
+                forwardExpected: 100 * Math.max(0.4, 1 - 0.6 * distance / 45),
+                inside: insideLight,
+                outside: outsideLight,
+                behind: behindLight
+            });
+        }
+        check('Spotlamp rotates its powered cone through all eight facings with linear Euclidean falloff',
+            orientationReadings.length === 8 && orientationReadings.every(reading =>
+                reading.settingAccepted && reading.active && reading.center === 100 &&
+                Math.abs(reading.forward - reading.forwardExpected) < 0.05 &&
+                reading.inside > 0 && reading.outside === 0 && reading.behind === 0),
+            JSON.stringify(orientationReadings));
+
+        createWorld(180, 120);
+        physics.setAmbientIlluminationTarget(0);
+        const spot = { x: 80, y: 60 };
+        setCell(spot.x, spot.y, spotId);
+        getWorld().data[index(spot.x, spot.y)] = 0;
+        const spotPower = powerAtInput(spot.x, spot.y);
+        physics.setMachineSetting(spot.x, spot.y, 1);
+        stepSimulation();
+        const range45 = physics.getIlluminationAt(spot.x + 45, spot.y);
+        const range46 = physics.getIlluminationAt(spot.x + 46, spot.y);
+        for (const port of physics.getMachinePorts(spot.x, spot.y)) {
+            if (port.role === 'input') {
+                for (let offset = 0; offset <= 2; offset++) {
+                    const dx = Math.sign(port.connectionCell.x - spot.x) || Math.sign(port.directionX);
+                    const dy = Math.sign(port.connectionCell.y - spot.y) || Math.sign(port.directionY);
+                    setCell(port.connectionCell.x + dx * offset,
+                        port.connectionCell.y + dy * offset, ID.Empty ?? 0);
+                }
+            }
+        }
+        setCell(spotPower.battery.x, spotPower.battery.y, ID.Empty ?? 0);
+        physics.setMachineSetting(spot.x, spot.y, 1);
+        stepSimulation();
+        const noInput = physics.getIlluminationAt(spot.x, spot.y);
+        physics.setMachineSetting(spot.x, spot.y, 0);
+        const switchedOff = physics.getIlluminationAt(spot.x, spot.y);
+        check('Spotlamp reaches 45 cells at 40% and emits only when ON with a live input',
+            Math.abs(range45 - 40) < 0.05 && range46 === 0 &&
+            noInput === 0 && switchedOff === 0,
+            JSON.stringify({ range45, range46, noInput, switchedOff }));
+
+        createWorld(120, 100);
+        physics.setAmbientIlluminationTarget(0);
+        const sensor = { x: 60, y: 60 };
+        setCell(sensor.x, sensor.y, switchId);
+        const sensorPorts = physics.getMachinePorts(sensor.x, sensor.y);
+        const sensorIndex = index(sensor.x, sensor.y);
+        const probe = { x: sensor.x, y: sensor.y - 3 };
+        const roleCheck = sensorPorts.map(port => port.role).join(',') === 'input,output' &&
+            sensorPorts.every(port => port.family === 'electrical' && port.material === 'Elec' &&
+                port.connectorBrushWidth === 2);
+        const output = sensorPorts.find(port => port.role === 'output');
+        if (output) setCell(output.connectionCell.x, output.connectionCell.y, elecId);
+        physics.getIlluminationAt(probe.x, probe.y); // build ambient/local planes before the exact-cell fixture
+        const world = getWorld();
+        world.ambientIllumination.fill(0);
+        world.illumination.fill(0);
+        const probeCells = [-2, -1, 0, 1, 2].map(offset => ({ x: probe.x + offset, y: probe.y }));
+        for (const [offset, value] of [-2, -1, 0, 1, 2].map((offset, i) => [offset, [100, 90, 62.5, 20, 10][i]])) {
+            world.ambientIllumination[index(probe.x + offset, probe.y)] = value;
+        }
+        world.illumination[index(probe.x, probe.y)] = 80;
+        const defaultRule = physics.getMachineSensorRule(sensor.x, sensor.y);
+        const defaultThreshold = physics.getMachineSensorThreshold(sensor.x, sensor.y);
+        const selectedReading = physics.getMachineSensorReading(sensor.x, sensor.y);
+        physics.setMachineSensorRule(sensor.x, sensor.y, 3);
+        physics.setMachineSensorThreshold(sensor.x, sensor.y, 80);
+        // Setting edits invalidate the derived local-light plane. Keep the
+        // exact-cell comparison stable as ambient input after that rebuild.
+        world.ambientIllumination[index(probe.x, probe.y)] = 80;
+        let status = physics.getMachineSensorStatus(sensor.x, sensor.y);
+        const exactEquality = status?.conditionMet;
+        physics.setMachineSensorRule(sensor.x, sensor.y, 4);
+        status = physics.getMachineSensorStatus(sensor.x, sensor.y);
+        const strictGreaterAtEquality = status?.conditionMet;
+        const averageOfFaceRow = probeCells.reduce((sum, cell) =>
+            sum + physics.getIlluminationAt(cell.x, cell.y), 0) / probeCells.length;
+        const sensorBattery = powerAtInput(sensor.x, sensor.y).battery;
+        status = physics.getMachineSensorStatus(sensor.x, sensor.y);
+        const outputActive = physics.getMachinePorts(sensor.x, sensor.y)
+            .find(port => port.role === 'output')?.active;
+        check('Light Switch uses one exposed cell, compares effective max light, and gates powered input',
+            roleCheck && probe.y === sensor.y - 3 && defaultRule === 3 && defaultThreshold === 50 &&
+            selectedReading === 80 && averageOfFaceRow !== selectedReading &&
+            exactEquality === true && strictGreaterAtEquality === false &&
+            status?.inputActive === true && status?.passing === false && outputActive === false,
+            JSON.stringify({ roleCheck, defaultRule, defaultThreshold, selectedReading,
+                averageOfFaceRow, exactEquality, strictGreaterAtEquality, status, outputActive,
+                battery: sensorBattery }));
+
+        physics.setMachineSensorRule(sensor.x, sensor.y, 3);
+        physics.setMachineSensorThreshold(sensor.x, sensor.y, 79.5);
+        const passingStatus = physics.getMachineSensorStatus(sensor.x, sensor.y);
+        const passingOutput = physics.getMachinePorts(sensor.x, sensor.y)
+            .find(port => port.role === 'output')?.active;
+        setCell(sensorBattery.x, sensorBattery.y, ID.Empty ?? 0);
+        const unpoweredStatus = physics.getMachineSensorStatus(sensor.x, sensor.y);
+        check('Light Switch relays only while both its illumination comparison and input pass',
+        passingStatus?.conditionMet === true && passingStatus?.inputActive === true &&
+            passingStatus?.passing === true && passingOutput === true &&
+            unpoweredStatus?.inputActive === false && unpoweredStatus?.passing === false,
+            JSON.stringify({ passingStatus, passingOutput, unpoweredStatus }));
+
+        // Comparator and machine settings use the already-persisted machine
+        // planes; derived light remains a cache and is not part of this check.
+        setCell(spot.x, spot.y, spotId);
+        physics.setMachineSetting(spot.x, spot.y, 0);
+        physics.setMachineSensorRule(sensor.x, sensor.y, 2);
+        physics.setMachineSensorThreshold(sensor.x, sensor.y, 67.25);
+        const saved = captureSimulationState();
+        createWorld(120, 100);
+        restoreSimulationState(saved);
+        check('Spotlamp toggle and Light Switch comparator settings survive simulation state round trip',
+            physics.getMachineSetting(spot.x, spot.y) === 0 &&
+            physics.getMachineSensorRule(sensor.x, sensor.y) === 2 &&
+            physics.getMachineSensorThreshold(sensor.x, sensor.y) === 67.25,
+            JSON.stringify({ spot: physics.getMachineSetting(spot.x, spot.y),
+                rule: physics.getMachineSensorRule(sensor.x, sensor.y),
+                threshold: physics.getMachineSensorThreshold(sensor.x, sensor.y) }));
+    } finally {
+        restoreSimulationState(callerState);
+    }
+}
+
+if (process.argv.includes('--focus=spotlamp-light-switch')) {
+    runSpotlampLightSwitchRegressions();
+    console.log(`\n${passed} passed, ${failed} failed\n`);
+    process.exit(failed > 0 ? 1 : 0);
+}
+
 if (process.argv.includes('--focus=plant-illumination')) {
     runPlantIlluminationRegressions();
     console.log(`\n${passed} passed, ${failed} failed\n`);

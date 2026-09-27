@@ -608,11 +608,12 @@ const MACHINE_CONTROL_SPECS = {
     cooler: { label: 'Temperature', min: -60, max: 20, unit: '°C' },
     sprinkler: { label: 'Release rate', min: 1, max: 100, unit: 'particles/s', defaultValue: 10 },
     temperatureSwitch: { label: 'Temperature', unit: '°C' },
-    humiditySwitch: { label: 'Humidity', min: 0, max: 100, unit: '%' }
+    humiditySwitch: { label: 'Humidity', min: 0, max: 100, unit: '%' },
+    lightSwitch: { label: 'Illumination', min: 0, max: 100, unit: '%' }
 };
 
 function isElectricalMachine(machine) {
-    return machine === 'simpleSwitch' || machine === 'lamp';
+    return machine === 'simpleSwitch' || machine === 'lamp' || machine === 'spotLamp';
 }
 
 function isStorageMachineDefinition(def) {
@@ -780,7 +781,8 @@ function openMachineDialog(x, y, machine = machineAtCell({ x, y })) {
     const storage = isStorageMachineDefinition(machine.def);
     const sprinkler = machine.def.machine === 'sprinkler';
     const electrical = isElectricalMachine(machine.def.machine);
-    const sensor = machine.def.machine === 'temperatureSwitch' || machine.def.machine === 'humiditySwitch';
+    const sensor = machine.def.machine === 'temperatureSwitch' || machine.def.machine === 'humiditySwitch' ||
+        machine.def.machine === 'lightSwitch';
     if (machine.def.machine === 'mixer') return openMixerDialog(x, y);
     if (!spec && !storage && !sprinkler && !electrical && !sensor) return false;
 
@@ -790,11 +792,15 @@ function openMachineDialog(x, y, machine = machineAtCell({ x, y })) {
     editingMachine = { x, y, machine: machine.def.machine, fallback: current, storage, sprinkler, electrical, sensor };
     elements.machineDialogTitle.textContent = storage ? `${machine.def.name} contents` : `${machine.def.name} settings`;
     elements.machineDialogDescription.textContent = sensor
-        ? `Measures the ${machine.def.machine === 'temperatureSwitch' ? 'temperature' : 'humidity'} of air along its exposed sensor face. A steady electrical level reaches the output only when the selected comparison is true.`
+        ? machine.def.machine === 'lightSwitch'
+            ? 'Measures illumination in the single exposed cell at its sensor face. A steady electrical level reaches the output only when the selected comparison is true.'
+            : `Measures the ${machine.def.machine === 'temperatureSwitch' ? 'temperature' : 'humidity'} of air along its exposed sensor face. A steady electrical level reaches the output only when the selected comparison is true.`
         : electrical
         ? machine.def.machine === 'simpleSwitch'
             ? 'ON relays steady electrical current from the input port to the output port. OFF blocks the signal.'
-            : 'ON lights the Lamp when its input receives electrical power. OFF blocks the input and keeps the Lamp dark.'
+            : machine.def.machine === 'spotLamp'
+                ? 'ON emits a focused light cone when the electrical input is powered. OFF blocks the input and keeps the Spotlamp dark.'
+                : 'ON lights the Lamp when its input receives electrical power. OFF blocks the input and keeps the Lamp dark.'
         : storage
         ? machine.def.machine === 'splitter'
             ? 'Receives one compatible Tubing material and buffers it while dividing flow evenly between its two outputs. Purge the buffer to accept a different material.'
@@ -839,11 +845,11 @@ function openMachineDialog(x, y, machine = machineAtCell({ x, y })) {
     status.hidden = !electrical;
     elements.machineDialogInput.setAttribute('aria-label', spec?.label || 'Contents');
     if (spec) {
-        const humiditySwitch = machine.def.machine === 'humiditySwitch';
-        elements.machineDialogInput.min = sensor && !humiditySwitch ? '' : String(spec.min ?? '');
+        const boundedSensor = machine.def.machine === 'humiditySwitch' || machine.def.machine === 'lightSwitch';
+        elements.machineDialogInput.min = sensor && !boundedSensor ? '' : String(spec.min ?? '');
         const sprinklerRate = sprinkler ? getSprinklerTubingRate(x, y) : null;
         const inputMax = sprinkler ? sprinklerRate : spec.max;
-        elements.machineDialogInput.max = sensor && !humiditySwitch ? '' : String(inputMax || spec.max || '');
+        elements.machineDialogInput.max = sensor && !boundedSensor ? '' : String(inputMax || spec.max || '');
         elements.machineDialogInput.step = sensor ? 'any' : '1';
         elements.machineDialogInput.placeholder = sprinkler && !sprinklerRate ? 'Not Connected' : '';
         elements.machineDialogInput.disabled = storage || (sprinkler && !sprinklerRate);
@@ -1036,16 +1042,18 @@ function machineSensorUnit(machineType) {
 function renderMachineSensorStatus(surface, status, machineType) {
     if (!surface || !status) return;
     const unit = machineSensorUnit(machineType);
+    const unavailable = machineType === 'lightSwitch' ? 'No sensor cell' : 'No air detected';
     const reading = status.reading === null
-        ? 'No air detected' : `${formatNumber(status.reading)}${unit}`;
+        ? unavailable : `${formatNumber(status.reading)}${unit}`;
     surface.dataset.signalState = status.state;
     const stateLabel = surface.querySelector('[data-sensor-live-state]');
     const readingLabel = surface.querySelector('[data-sensor-live-reading]');
     const comparisonLabel = surface.querySelector('[data-sensor-live-comparison]');
     const inputLabel = surface.querySelector('[data-sensor-live-input]');
     const signalLabel = surface.querySelector('[data-sensor-live-signal]');
-    if (stateLabel) stateLabel.textContent = MACHINE_SENSOR_STATE_LABELS[status.state] || 'Signal blocked';
-    if (readingLabel) readingLabel.textContent = `Current reading: ${reading}`;
+    if (stateLabel) stateLabel.textContent = status.state === 'no-air' ? unavailable
+        : MACHINE_SENSOR_STATE_LABELS[status.state] || 'Signal blocked';
+    if (readingLabel) readingLabel.textContent = `${machineType === 'lightSwitch' ? 'Current illumination' : 'Current reading'}: ${reading}`;
     if (comparisonLabel) comparisonLabel.textContent =
         `Comparison: ${status.ruleLabel} ${formatMachineSensorThreshold(status.threshold)}${unit}`;
     if (inputLabel) inputLabel.textContent = `Input power: ${status.inputActive ? 'ON' : 'OFF'}`;
@@ -1119,7 +1127,7 @@ function validateMachineInput() {
     const numeric = Number(raw);
     if (!Number.isFinite(numeric)) return null;
     if (editingMachine.sensor) {
-        const value = editingMachine.machine === 'humiditySwitch'
+        const value = editingMachine.machine === 'humiditySwitch' || editingMachine.machine === 'lightSwitch'
             ? Math.max(0, Math.min(100, numeric)) : numeric;
         if (String(value) !== raw) input.value = String(value);
         setMachineSensorThreshold(editingMachine.x, editingMachine.y, value);
@@ -1331,6 +1339,39 @@ function selectParticleType(id) {
 // text is assembled from the prepared definition so thresholds and reaction
 // targets cannot drift away from the rules that actually run the simulation.
 function formatMaterialTooltip(def) {
+    if (def.isSeed) {
+        const definitions = getDefinitions();
+        const plant = definitions.find(candidate =>
+            candidate?.isPlant && candidate.plantSpecies === def.plantSpecies);
+        const temperatureRange = plant
+            ? `${formatNumber(plant.plantMinTemp)}–${formatNumber(plant.plantMaxTemp)} C`
+            : `at least ${formatTemperature(def.germinationMinTemp)}`;
+        const humidityRange = plant
+            ? `${formatNumber(plant.plantMinHumidity)}–${formatNumber(plant.plantMaxHumidity)}%`
+            : `at least ${formatNumber(def.germinationMinHumidity)}%`;
+        const idealTemperature = plant ? formatTemperature(plant.plantIdealTemp) : 'not specified';
+        const idealHumidity = plant ? `${formatNumber(plant.plantIdealHumidity)}%` : 'not specified';
+        const idealLight = plant ? plant.plantIdealIllumination : def.plantIdealIllumination;
+        const minimumLight = plant ? plant.plantMinIllumination : def.plantMinIllumination;
+        const substrates = [...new Set((def.sprouts || [])
+            .map(rule => definitions[rule.on]?.name)
+            .filter(Boolean))];
+        const substrateText = substrates.length ? substrates.join(', ') : 'species-specific damp substrate';
+        const submergedGrowth = (def.sprouts || []).some(rule => rule.submergedInto !== 0);
+        const extraSubstrate = submergedGrowth ? '; open water enables submerged growth' : '';
+
+        return [
+            def.name,
+            def.description,
+            '',
+            'Germination',
+            `Temperature: ${temperatureRange} · ideal ${idealTemperature} · seed minimum ${formatTemperature(def.germinationMinTemp)}`,
+            `Humidity: ${humidityRange} · ideal ${idealHumidity} · seed minimum ${formatNumber(def.germinationMinHumidity)}%`,
+            `Light: minimum ${formatNumber(minimumLight)}% · ideal ${formatNumber(idealLight)}%`,
+            `Substrate: ${substrateText}${extraSubstrate}`
+        ].join('\n');
+    }
+
     const lines = [def.name, def.description, '', `${titleCase(def.category)} | density ${formatNumber(def.density)}`];
     const properties = [];
 
@@ -1751,15 +1792,18 @@ function machineTooltipText(machine) {
             ? 'Signal passing' : 'Signal blocked or no input'}`);
         lines.push('Click to change Simple Switch settings');
         return lines.join('\n');
-    } else if (def.machine === 'lamp') {
+    } else if (def.machine === 'lamp' || def.machine === 'spotLamp') {
         const enabled = (Math.round(setting || 0) & 1) !== 0;
+        const deviceName = def.machine === 'spotLamp' ? 'Spotlamp' : 'Lamp';
         lines.push(`Switch: ${enabled ? 'ON' : 'OFF'}`);
         lines.push(`Status: ${enabled && isMachinePoweredAt(machine.x, machine.y)
-            ? 'Lit' : enabled ? 'No signal at input' : 'Off'}`);
+            ? 'Emitting' : enabled ? 'No signal at input' : 'Off'}`);
         lines.push(`Light emission: ${enabled && isMachinePoweredAt(machine.x, machine.y) ? 'ON' : 'OFF'}`);
-        lines.push('Reach: 360° over 15 cells; distance 15 receives 1/15 intensity');
+        lines.push(def.machine === 'spotLamp'
+            ? 'Reach: focused cone over 45 cells; 40% illumination at edge'
+            : 'Reach: 360° over 25 cells; Lamp-style linear falloff');
         lines.push(`Illumination received: ${formatNumber(getIlluminationAt(machine.x, machine.y))}%`);
-        lines.push('Click to change Lamp settings');
+        lines.push(`Click to change ${deviceName} settings`);
         return lines.join('\n');
     }
     lines.push(`Status: ${isMachinePoweredAt(machine.x, machine.y) ? 'Powered / active' : 'Not powered'}`);
@@ -1769,7 +1813,8 @@ function machineTooltipText(machine) {
 function renderMachineTooltip(machine, event) {
     const tooltip = document.getElementById('toolTooltip');
     if (!tooltip) return;
-    if (!machine.tubing && (machine.def.machine === 'temperatureSwitch' || machine.def.machine === 'humiditySwitch')) {
+    if (!machine.tubing && (machine.def.machine === 'temperatureSwitch' ||
+        machine.def.machine === 'humiditySwitch' || machine.def.machine === 'lightSwitch')) {
         tooltip.textContent = '';
         tooltip.appendChild(createMachineSensorTooltip(machine,
             getMachineSensorStatus(machine.x, machine.y)));

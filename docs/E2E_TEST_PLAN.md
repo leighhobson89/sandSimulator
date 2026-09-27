@@ -167,7 +167,7 @@ own workflow captures them. See the [Playwright HTML reporter guide](https://pla
 - `e2e/feedback/hover.spec.mjs` covers the fixed, non-scrolling feedback panel,
   preserved FPS/particle-count readout, cleared feedback outside the canvas,
   empty-air measurements, particle category/environment/state-transition
-  details, and numeric illumination received by material hover. It also checks
+  details and numeric illumination received by material hover. It also checks
   live machine signals and Battery circuit load, five-second charge trend,
   elapsed-time ETA, charge icon placement, and status colors. The panel keeps a
   fixed height on narrow viewports; it does not show cell numbers.
@@ -177,7 +177,10 @@ own workflow captures them. See the [Playwright HTML reporter guide](https://pla
   Fire, Gunpowder's four-tick flash, blockers and transmitting materials,
   transparent compositing, Normal-view tint versus diagnostic palettes,
   edge clipping, zoom registration, stale-field cleanup, save/blueprint rebuild,
-  numeric hover, and Lamp emission feedback/tooltip.
+  numeric hover, and Lamp emission feedback/tooltip. Its Spotlamp cases check
+  the 45-cell powered cone, 40%-at-edge falloff, all eight facings, OFF/unpowered
+  behavior, the active cone overlay, and immediate local-field invalidation on
+  a Grabber move.
 - `e2e/physics/` covers deterministic, user-visible settling, thermal, and
   reaction behavior. Thermal coverage includes open versus enclosed air,
   chamber breach, local rays/fire/Lava effects, retained Steam, Insulation
@@ -191,8 +194,11 @@ own workflow captures them. See the [Playwright HTML reporter guide](https://pla
   reading and logical-current status, and all four sensor status states. The
   Battery-to-switch-to-Lamp regression checks dedicated DC-current state
   independently of traveling-Spark animation, including delay-only visual
-  frames, immediate switch blocking, and Battery-depletion shutdown. Machine
-  persistence checks sensor comparison/threshold values through portable
+  frames, immediate switch blocking, and Battery-depletion shutdown. The
+  Spotlamp/Light Switch cases check Electricals metadata, Elec input/output
+  ports, ON and comparator settings, the exact single-cell effective-light
+  reading without averaging, comparison boundaries, and powered output gating.
+  Machine persistence checks sensor comparison/threshold values through portable
   Save/Load and blueprints, as well as legacy Sprinkler mode and endpoint
   migration and one-time migration of Fan speeds. Fan placement coverage checks
   its 1-50 speed range and default speed 7. The Sprinkler browser coverage lives
@@ -360,6 +366,24 @@ and gate specs:
 
 ```text
 npm run test:browser -- e2e/machines/electrical.spec.mjs e2e/machines/logic-gates.spec.mjs --workers=1 --trace=off
+```
+
+Spotlamp and Light Switch focused verification (27 September 2026):
+
+```text
+npm.cmd test -- --focus=spotlamp-light-switch
+npm.cmd run test:browser -- --grep "Spotlamp|Light Switch" --workers=1 --trace=off
+```
+
+The deterministic section passed **7/7**. The focused browser selection passed
+**4/4** across `e2e/feedback/illumination.spec.mjs` and
+`e2e/machines/electrical.spec.mjs`.
+
+The related machine-port selection passed **2/2**, covering compatible direct
+Elec contact at its declared port and the 15 CSS px protrusion:
+
+```text
+npm.cmd run test:browser -- e2e/machines/ports.spec.mjs --grep "direct contact at compatible Elec|every machine port has a visible 15 CSS px protrusion" --workers=1 --trace=off
 ```
 
 The scale profile's allocation and pure math/CLI checks are headless Node tests

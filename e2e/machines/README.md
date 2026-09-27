@@ -27,7 +27,11 @@ Exhaustive browser workflows for machines and material transfer.
   collision. The Battery-to-switch-to-Lamp regression checks a separate
   logical-current query over long Elec runs, immediate logical blocking under
   a false comparison, restored passage, and immediate Battery-depletion
-  shutdown. Battery hover diagnostics, circuit load, charge trend,
+  shutdown. The new Spotlamp and Light Switch cases check Electricals
+  definitions, Elec port roles, ON/comparator dialog defaults, a single-cell
+  effective-illumination reading without the five-cell average, comparator
+  boundaries, and Battery-backed output gating. Battery hover diagnostics,
+  circuit load, charge trend,
   and ETA are covered in [`e2e/feedback/README.md`](../feedback/README.md).
 - `logic-gates.spec.mjs` checks NOT, AND, OR, NAND, and XOR truth-table vectors,
   no-supply shutdown, separate Battery supply ports, signal/output roles and
@@ -90,3 +94,16 @@ placement, dialogs, toggles, tooltips, and canvas interaction use Playwright.
 Engine-level flow-rate and reaction matrices remain in `tools/simTest.mjs`; they
 are not duplicated as slow browser tests when no additional user-visible
 contract exists.
+
+Spotlamp's eight-facing 45-cell field, 40%-at-edge falloff, powered gating, and
+visible cone are covered by `e2e/feedback/illumination.spec.mjs`. The focused
+machine/browser cases passed 4/4 with
+`npm.cmd run test:browser -- --grep "Spotlamp|Light Switch" --workers=1 --trace=off`;
+the deterministic Spotlamp/Light Switch section passed 7/7 with
+`npm.cmd test -- --focus=spotlamp-light-switch`.
+The related direct-contact and 15 CSS px protrusion checks in `ports.spec.mjs`
+passed 2/2 with:
+
+```text
+npm.cmd run test:browser -- e2e/machines/ports.spec.mjs --grep "direct contact at compatible Elec|every machine port has a visible 15 CSS px protrusion" --workers=1 --trace=off
+```

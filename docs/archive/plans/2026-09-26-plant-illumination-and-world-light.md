@@ -119,7 +119,7 @@ Current local-emitter behavior remains documented in
 - The suite does not measure ambient-grid rebuilds or plant-rich scenes. The
   recorded browser used SwiftShader, so GPU/render timings need
   hardware-accelerated follow-up. Results and interpretation are in the
-  [P0 performance results report](../../reviews/2026-09-26-p0-performance-results.md).
+  [P0 performance results report](../reviews/2026-09-26-p0-performance-results.md).
 - Run `npm run test:performance` only when a performance-specific test is
   explicitly requested. The suite is excluded from `npm test`, routine
   validation, and the ordinary `npm run test:browser` suite.

@@ -134,6 +134,202 @@ test('powered Lamp light follows a 25-cell Euclidean falloff independent of canv
     expect(noInput.intensity).toBe(0);
 });
 
+test('powered Spotlamp follows its 45-cell cone and retains 40% intensity at the edge', async ({ page }) => {
+    const game = new GamePage(page);
+    await game.openMenu();
+    await game.newGame();
+
+    const result = await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        const definitions = physics.getDefinitions();
+        const id = name => definitions.findIndex(definition => definition?.name === name);
+        const spotId = id('Spotlamp');
+        if (spotId < 0) return { hasMachine: false };
+        const spotDefinition = definitions[spotId];
+        const world = physics.getWorld();
+        const x = 110, y = 75;
+        const vectors = [
+            [1, 0], [-1, 0], [0, -1], [0, 1],
+            [Math.SQRT1_2, -Math.SQRT1_2], [-Math.SQRT1_2, -Math.SQRT1_2],
+            [-Math.SQRT1_2, Math.SQRT1_2], [Math.SQRT1_2, Math.SQRT1_2]
+        ];
+        const observations = [];
+        for (let direction = 0; direction < 8; direction++) {
+            physics.clearWorld();
+            physics.setAmbientIlluminationTarget(0);
+            physics.setCell(x, y, spotId);
+            world.data[physics.index(x, y)] = direction;
+            const input = physics.getMachinePorts(x, y).find(port => port.role === 'input');
+            if (!input) return { hasMachine: true, error: `missing Spotlamp input at facing ${direction}` };
+            const dx = Math.sign(input.connectionCell.x - x) || Math.sign(input.directionX);
+            const dy = Math.sign(input.connectionCell.y - y) || Math.sign(input.directionY);
+            for (let offset = 0; offset <= 2; offset++) {
+                physics.setCell(input.connectionCell.x + dx * offset,
+                    input.connectionCell.y + dy * offset, id('Elec'));
+            }
+            const battery = { x: input.connectionCell.x + dx * 3,
+                y: input.connectionCell.y + dy * 3 };
+            physics.setCell(battery.x, battery.y, id('Battery'));
+            world.charge[physics.index(battery.x, battery.y)] =
+                definitions[id('Battery')].chargeCapacity;
+            const settingAccepted = physics.setMachineSetting(x, y, 1);
+            physics.stepSimulation();
+
+            const [vx, vy] = vectors[direction];
+            const sample = (forward, side) => ({
+                x: x + Math.round(vx * forward - vy * side),
+                y: y + Math.round(vy * forward + vx * side)
+            });
+            const forward = sample(10, 0);
+            const inside = sample(12, 2);
+            const outside = sample(12, 10);
+            const behind = sample(-8, 0);
+            const distance = Math.hypot(forward.x - x, forward.y - y);
+            observations.push({
+                direction,
+                settingAccepted,
+                active: physics.getMachineLiveStatus(x, y)?.active,
+                center: physics.getIlluminationAt(x, y),
+                forward: physics.getIlluminationAt(forward.x, forward.y),
+                expectedForward: 100 * Math.max(0.4, 1 - 0.6 * distance / 45),
+                inside: physics.getIlluminationAt(inside.x, inside.y),
+                outside: physics.getIlluminationAt(outside.x, outside.y),
+                behind: physics.getIlluminationAt(behind.x, behind.y)
+            });
+        }
+
+        physics.clearWorld();
+        physics.setAmbientIlluminationTarget(0);
+        physics.setCell(x, y, spotId);
+        world.data[physics.index(x, y)] = 0;
+        const input = physics.getMachinePorts(x, y).find(port => port.role === 'input');
+        const dx = Math.sign(input.connectionCell.x - x) || Math.sign(input.directionX);
+        const dy = Math.sign(input.connectionCell.y - y) || Math.sign(input.directionY);
+        for (let offset = 0; offset <= 2; offset++) {
+            physics.setCell(input.connectionCell.x + dx * offset,
+                input.connectionCell.y + dy * offset, id('Elec'));
+        }
+        const battery = { x: input.connectionCell.x + dx * 3,
+            y: input.connectionCell.y + dy * 3 };
+        physics.setCell(battery.x, battery.y, id('Battery'));
+        world.charge[physics.index(battery.x, battery.y)] =
+            definitions[id('Battery')].chargeCapacity;
+        physics.setMachineSetting(x, y, 1);
+        physics.stepSimulation();
+        const range45 = physics.getIlluminationAt(x + 45, y);
+        const range46 = physics.getIlluminationAt(x + 46, y);
+        const liveStatus = physics.getMachineLiveStatus(x, y);
+        physics.setMachineSetting(x, y, 0);
+        const switchedOff = physics.getIlluminationAt(x, y);
+        physics.setMachineSetting(x, y, 1);
+        for (let offset = 0; offset <= 2; offset++) {
+            physics.setCell(input.connectionCell.x + dx * offset,
+                input.connectionCell.y + dy * offset, 0);
+        }
+        physics.setCell(battery.x, battery.y, 0);
+        physics.stepSimulation();
+        const noInput = physics.getIlluminationAt(x, y);
+        return { hasMachine: true, spotDefinition, observations, range45, range46,
+            liveStatus, switchedOff, noInput };
+    });
+
+    expect(result.hasMachine, 'Spotlamp definition is present').toBe(true);
+    expect(result.error).toBeUndefined();
+    expect(result.spotDefinition).toMatchObject({
+        name: 'Spotlamp', machine: 'spotLamp', group: 'Electricals',
+        lightRadius: 45, lightIntensity: 100, lightFalloffFloor: 0.4
+    });
+    expect(result.observations).toHaveLength(8);
+    for (const reading of result.observations) {
+        expect(reading.settingAccepted, `facing ${reading.direction} accepts ON`).toBe(true);
+        expect(reading.active, `facing ${reading.direction} is Battery powered`).toBe(true);
+        expect(reading.center).toBe(100);
+        expect(reading.forward, `facing ${reading.direction} follows the 40%-floor falloff`)
+            .toBeCloseTo(reading.expectedForward, 1);
+        expect(reading.inside, `facing ${reading.direction} lights inside its cone`).toBeGreaterThan(0);
+        expect(reading.outside, `facing ${reading.direction} leaves the outside-angle sample dark`).toBe(0);
+        expect(reading.behind, `facing ${reading.direction} leaves the rear dark`).toBe(0);
+    }
+    expect(result.range45).toBeCloseTo(40, 2);
+    expect(result.range46).toBe(0);
+    expect(result.liveStatus.active).toBe(true);
+    expect(result.switchedOff).toBe(0);
+    expect(result.noInput).toBe(0);
+
+    // Rebuild the powered instance for the visible cone assertion.
+    await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        const definitions = physics.getDefinitions();
+        const id = name => definitions.findIndex(definition => definition?.name === name);
+        const x = 110, y = 75;
+        physics.clearWorld();
+        physics.setAmbientIlluminationTarget(0);
+        physics.setCell(x, y, id('Spotlamp'));
+        const world = physics.getWorld();
+        const input = physics.getMachinePorts(x, y).find(port => port.role === 'input');
+        const dx = Math.sign(input.connectionCell.x - x) || Math.sign(input.directionX);
+        const dy = Math.sign(input.connectionCell.y - y) || Math.sign(input.directionY);
+        for (let offset = 0; offset <= 2; offset++) {
+            physics.setCell(input.connectionCell.x + dx * offset,
+                input.connectionCell.y + dy * offset, id('Elec'));
+        }
+        const battery = { x: input.connectionCell.x + dx * 3,
+            y: input.connectionCell.y + dy * 3 };
+        physics.setCell(battery.x, battery.y, id('Battery'));
+        world.charge[physics.index(battery.x, battery.y)] =
+            definitions[id('Battery')].chargeCapacity;
+        physics.setMachineSetting(x, y, 1);
+        physics.stepSimulation();
+    });
+    await game.step(0);
+    const cone = page.locator('#machineOverlay .machine-cone-spotLamp');
+    await expect(cone).toHaveCount(1);
+    const conePath = await cone.getAttribute('d');
+    expect(conePath).toMatch(/^M /);
+    await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        physics.setMachineSetting(110, 75, 0);
+    });
+    await game.step(0);
+    await expect(cone).toHaveCount(0);
+});
+
+test('moving a Spotlamp with the Grabber immediately rebuilds local illumination', async ({ page }) => {
+    const game = new GamePage(page);
+    await game.openMenu();
+    await game.newGame();
+
+    const result = await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        const gameModule = await import('/game.js');
+        const definitions = physics.getDefinitions();
+        const spotId = definitions.findIndex(definition => definition?.name === 'Spotlamp');
+        if (spotId < 0) return { hasSpotlamp: false };
+        physics.setDebugFeatureEnabled('localLight', true);
+        physics.setDebugFeatureEnabled('worldIllumination', true);
+        physics.setDebugFeatureEnabled('electricity', false);
+        physics.setAmbientIlluminationTarget(0);
+        physics.clearWorld();
+        const source = { x: 110, y: 75 };
+        const destination = { x: 140, y: 75 };
+        physics.setCell(source.x, source.y, spotId);
+        const beforeMove = physics.getIlluminationAt(source.x, source.y);
+        const grabbed = gameModule.beginGrab(source.x, source.y, 1);
+        const movedCount = gameModule.dropGrab(destination.x, destination.y);
+        const oldLight = physics.getIlluminationAt(source.x, source.y);
+        const newLight = physics.getIlluminationAt(destination.x, destination.y);
+        physics.setDebugFeatureEnabled('electricity', true);
+        return { hasSpotlamp: true, beforeMove, grabbed, movedCount, oldLight, newLight };
+    });
+
+    expect(result.hasSpotlamp, 'Spotlamp definition is present').toBe(true);
+    expect(result.beforeMove).toBe(100);
+    expect(result.grabbed).toBe(1);
+    expect(result.movedCount).toBe(1);
+    expect(result.oldLight).toBe(0);
+    expect(result.newLight).toBe(100);
+});
+
 test('Fire, Lava, and Scoria emit at their configured strengths over five cells', async ({ page }) => {
     const game = new GamePage(page);
     await game.openMenu();

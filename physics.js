@@ -42,6 +42,8 @@ export const EMPTY = 0;
 // Single tuning point for the ambient-light approximation, measured in
 // simulation cells (independent of rendered pixel size and zoom).
 export const AMBIENT_ILLUMINATION_CHUNK_SIZE = 30;
+// Shared half-angle for the simulation cone and its rendered outline.
+export const SPOTLAMP_CONE_ANGLE_DEGREES = 26.56505117707799;
 const OUT_OF_BOUNDS = -1;
 const STORAGE_VIRTUAL_WALL = -2;
 const NO_SURFACE = 32000;
@@ -97,6 +99,8 @@ let ambientPendingGeneration = 0;
 let illuminationLookupCount = 0;
 let illuminationRebuildCount = 0;
 let illuminationFlashes = [];
+let logicalCurrentRecomputing = false;
+const solvedLightSensorReadings = new Map();
 // The flood mask borrows the movement flags before they are cleared for the
 // current tick. Queue views borrow the two temperature buffers, which are
 // overwritten by diffuseHeat immediately after the flood fill completes.
@@ -196,6 +200,7 @@ function resetElectricalStateCache() {
     lastElectricalRefreshFrame = -ELECTRICAL_REFRESH_INTERVAL;
     electricalTopologyCache = null;
     electricalLoadLogicSignature = null;
+    solvedLightSensorReadings.clear();
     electricalVisitStamps = new Uint32Array(0);
     electricalQueueScratch = new Int32Array(0);
     electricalVisitGeneration = 0;
@@ -378,6 +383,7 @@ export function prepareDefinitions(json) {
             lightTint: p.lightTint === 'orange' ? 1 : 0,
             lightFalloffDenominator: Math.max(1, Number(p.lightFalloffDenominator) ||
                 (Number(p.lightRadius) > 0 ? Number(p.lightRadius) + 1 : 1)),
+            lightFalloffFloor: Math.max(0, Math.min(1, Number(p.lightFalloffFloor) || 0)),
             lightFlashRadius: Math.max(0, Number(p.lightFlashRadius) || 0),
             lightFlashIntensity: Math.max(0, Number(p.lightFlashIntensity) || 0),
             lightFlashTicks: Math.max(1, Math.floor(Number(p.lightFlashTicks) || 1)),
@@ -1338,6 +1344,17 @@ function isIlluminationOccluderByDef(def) {
 
 function isAmbientGasByDef(def) { return def?.category === 'gas'; }
 
+export function invalidateLocalIlluminationForTypes(previousType, nextType) {
+    if (!debugFeatureFlags.localLight || previousType === nextType) return;
+    const previous = DEFS[previousType];
+    const next = DEFS[nextType];
+    if (previous?.lightRadius > 0 || next?.lightRadius > 0 ||
+        previous?.lightFlashRadius > 0 || next?.lightFlashRadius > 0 ||
+        isIlluminationOccluderByDef(previous) || isIlluminationOccluderByDef(next)) {
+        invalidateLocalIllumination();
+    }
+}
+
 function flushAmbientPendingChanges() {
     if (!world || ambientPendingIndices.length === 0) return;
     const pending = ambientPendingIndices;
@@ -1523,20 +1540,35 @@ function rebuildIlluminationField() {
     } else world.illuminationTintStrength.fill(0);
 
     const addEmitter = (sourceX, sourceY, radius, intensity, remaining = 1,
-        falloffDenominator = radius + 1, tint = 0) => {
+        falloffDenominator = radius + 1, tint = 0, direction = null, falloffFloor = 0) => {
         if (radius <= 0 || intensity <= 0) return;
-        const minX = Math.max(0, sourceX - radius);
-        const maxX = Math.min(COLS - 1, sourceX + radius);
-        const minY = Math.max(0, sourceY - radius);
-        const maxY = Math.min(ROWS - 1, sourceY + radius);
+        const coneTangent = direction
+            ? Math.tan(SPOTLAMP_CONE_ANGLE_DEGREES * Math.PI / 180) : 0;
+        // Rasterize the fractional radius onto integer cell coordinates before
+        // ray tracing; Bresenham requires integer endpoints to terminate.
+        const minX = Math.max(0, Math.floor(sourceX - radius));
+        const maxX = Math.min(COLS - 1, Math.ceil(sourceX + radius));
+        const minY = Math.max(0, Math.floor(sourceY - radius));
+        const maxY = Math.min(ROWS - 1, Math.ceil(sourceY + radius));
         for (let y = minY; y <= maxY; y++) {
             for (let x = minX; x <= maxX; x++) {
-                const distance = Math.hypot(x - sourceX, y - sourceY);
-                if (distance > radius || illuminationPathBlocked(sourceX, sourceY, x, y)) continue;
-                // The source itself receives full intensity; the outermost cell
-                // receives one radius-th of it, and the next cell is dark.
-                const falloff = Math.min(1, Math.max(0,
-                    (radius + 1 - distance) / falloffDenominator));
+                const offsetX = x - sourceX;
+                const offsetY = y - sourceY;
+                const distance = Math.hypot(offsetX, offsetY);
+                if (distance > radius) continue;
+                if (direction) {
+                    const forward = offsetX * direction.x + offsetY * direction.y;
+                    const side = Math.abs(offsetX * direction.y - offsetY * direction.x);
+                    if (forward < 0 || side > forward * coneTangent) continue;
+                }
+                if (illuminationPathBlocked(sourceX, sourceY, x, y)) continue;
+                // Most sources reach zero at their edge. Directional Spotlamp
+                // light retains its configured minimum there, then stops at
+                // the radius. Its source cell still receives full intensity.
+                const falloff = direction && falloffFloor > 0
+                    ? Math.max(falloffFloor, 1 - (1 - falloffFloor) * distance / radius)
+                    : Math.min(1, Math.max(0,
+                        (radius + 1 - distance) / falloffDenominator));
                 const received = Math.min(100, intensity * falloff * remaining);
                 const target = index(x, y);
                 world.illumination[target] = Math.min(100, world.illumination[target] + received);
@@ -1554,16 +1586,24 @@ function rebuildIlluminationField() {
         const sourceX = source % COLS;
         const sourceY = Math.floor(source / COLS);
         if (def.lightRadius > 0 && def.lightIntensity > 0) {
-            if (def.machine === 'lamp') {
+            let coneDirection = null;
+            if (def.machine === 'lamp' || def.machine === 'spotLamp') {
                 if ((Math.round(world.machineSetting[source] || 0) & 1) === 0) continue;
                 if (debugFeatureFlags.electricity) {
                     const input = machinePortDescriptors(source).find(port =>
                         port.family === 'electrical' && port.role === 'input');
                     if (!portHasLogicalSignal(input)) continue;
                 }
+                if (def.machine === 'spotLamp') {
+                    coneDirection = rotatedPortOffset(source, 1, 0);
+                    const length = Math.hypot(coneDirection.x, coneDirection.y) || 1;
+                    coneDirection.x /= length;
+                    coneDirection.y /= length;
+                }
             }
             addEmitter(sourceX, sourceY, def.lightRadius, def.lightIntensity, 1,
-                def.lightFalloffDenominator, def.lightTint);
+                def.lightFalloffDenominator, def.lightTint, coneDirection,
+                def.lightFalloffFloor);
         }
     }
     for (const flash of illuminationFlashes) {
@@ -1601,6 +1641,11 @@ export function getIlluminationAt(x, y) {
         ? world.ambientIllumination[i] || 0 : ambientIlluminationTarget;
     const local = debugFeatureFlags.localLight ? world.illumination[i] || 0 : 0;
     return Math.max(ambient, local);
+}
+
+export function invalidateLocalIllumination() {
+    illuminationDirty = true;
+    illuminationSourceSignature = null;
 }
 export function getIlluminationCacheStats() {
     return { lookups: illuminationLookupCount, rebuilds: illuminationRebuildCount };
@@ -1956,7 +2001,7 @@ export function restoreSimulationState(state) {
                 ? 'machineSensorDefaultRule' : 'machineSensorDefaultThreshold';
             for (let i = 0; i < cells; i++) {
                 const def = DEFS[world.type[i]];
-                if (def?.machine === 'temperatureSwitch' || def?.machine === 'humiditySwitch') {
+                if (isMachineSensor(def)) {
                     world[field][i] = def[defaultKey];
                 }
             }
@@ -1983,7 +2028,7 @@ export function restoreSimulationState(state) {
                 } else {
                     const value = Number(source[i]);
                     const safeValue = Number.isFinite(value) ? value : defaultMachineSensorThreshold(def);
-                    world.machineSensorThreshold[i] = def.machine === 'humiditySwitch'
+                    world.machineSensorThreshold[i] = def.machine === 'humiditySwitch' || def.machine === 'lightSwitch'
                         ? Math.max(0, Math.min(100, safeValue)) : safeValue;
                 }
             }
@@ -2320,12 +2365,13 @@ function defaultMachineSetting(def) {
     if (def?.machine === 'fan') return def.machineWindSpeed ?? 7;
     if (def?.machine === 'sprinkler') return 3;
     if (def?.machine === 'mixer') return 1;
-    if (def?.machine === 'simpleSwitch' || def?.machine === 'lamp') return 1;
+    if (def?.machine === 'simpleSwitch' || def?.machine === 'lamp' || def?.machine === 'spotLamp') return 1;
     return def?.machineTemp ?? 0;
 }
 
 function isMachineSensor(def) {
-    return def?.machine === 'temperatureSwitch' || def?.machine === 'humiditySwitch';
+    return def?.machine === 'temperatureSwitch' || def?.machine === 'humiditySwitch' ||
+        def?.machine === 'lightSwitch';
 }
 
 function defaultMachineSensorRule(def) {
@@ -2349,7 +2395,7 @@ function machineSettingBounds(def) {
     if (def?.machine === 'fan') return { min: 1, max: FAN_WIND_SCALE };
     if (def?.machine === 'heater') return { min: 0, max: 4000 };
     if (def?.machine === 'cooler') return { min: -60, max: 20 };
-    if (def?.machine === 'simpleSwitch' || def?.machine === 'lamp') return { min: 0, max: 1 };
+    if (def?.machine === 'simpleSwitch' || def?.machine === 'lamp' || def?.machine === 'spotLamp') return { min: 0, max: 1 };
     return null;
 }
 
@@ -2466,6 +2512,16 @@ const MACHINE_PORT_DEFINITIONS = Object.freeze({
         { id: 'output', role: 'output', material: 'Elec', family: 'electrical',
             sourceX: 44, sourceY: 24, x: 3, y: 0, targetRadius: 1.6, stubLength: 6, visualRadius: 2.8 }
     ],
+    lightSwitch: [
+        { id: 'input', role: 'input', material: 'Elec', family: 'electrical',
+            sourceX: 4, sourceY: 24, x: -3, y: 0, targetRadius: 1.6, stubLength: 6, visualRadius: 2.8 },
+        { id: 'output', role: 'output', material: 'Elec', family: 'electrical',
+            sourceX: 44, sourceY: 24, x: 3, y: 0, targetRadius: 1.6, stubLength: 6, visualRadius: 2.8 }
+    ],
+    spotLamp: [
+        { id: 'input', role: 'input', material: 'Elec', family: 'electrical',
+            sourceX: 0, sourceY: 24, x: -3, y: 0, targetRadius: 1.6, stubLength: 6, visualRadius: 2.8 }
+    ],
     notGate: [
         { id: 'signal-a', role: 'input', material: 'Elec', family: 'electrical',
             sourceX: 18, sourceY: 28, x: -6, y: 0, directionX: -1, directionY: 0,
@@ -2551,8 +2607,10 @@ const MACHINE_ARTWORK_LAYOUTS = Object.freeze({
     mixer: { tileX: 1024, tileY: 683, trimX: 54, trimY: 39, trimWidth: 324, trimHeight: 221 },
     simpleSwitch: { tileX: 0, tileY: 0, trimX: 0, trimY: 0, trimWidth: 48, trimHeight: 36 },
     lamp: { tileX: 0, tileY: 0, trimX: 0, trimY: 0, trimWidth: 48, trimHeight: 48 },
+    spotLamp: { tileX: 0, tileY: 0, trimX: 0, trimY: 0, trimWidth: 48, trimHeight: 48 },
     temperatureSwitch: { tileX: 0, tileY: 0, trimX: 0, trimY: 0, trimWidth: 48, trimHeight: 48 },
     humiditySwitch: { tileX: 0, tileY: 0, trimX: 0, trimY: 0, trimWidth: 48, trimHeight: 48 },
+    lightSwitch: { tileX: 0, tileY: 0, trimX: 0, trimY: 0, trimWidth: 48, trimHeight: 48 },
     notGate: { tileX: 0, tileY: 0, trimX: 0, trimY: 0, trimWidth: 56, trimHeight: 56 },
     andGate: { tileX: 0, tileY: 0, trimX: 0, trimY: 0, trimWidth: 56, trimHeight: 56 },
     orGate: { tileX: 0, tileY: 0, trimX: 0, trimY: 0, trimWidth: 56, trimHeight: 56 },
@@ -3073,8 +3131,9 @@ export function getMachineLiveStatus(x, y) {
     const sensor = isMachineSensor(def) ? getMachineSensorStatus(x, y) : null;
     const active = isLogicGate(def) ? world.gateOutputState[i] > 0
         : sensor ? sensor.passing
-            : def.machine === 'simpleSwitch' || def.machine === 'lamp'
-                ? enabled && (def.machine === 'lamp' && !debugFeatureFlags.electricity || inputActive)
+            : def.machine === 'simpleSwitch' || def.machine === 'lamp' || def.machine === 'spotLamp'
+                ? enabled && ((def.machine === 'lamp' || def.machine === 'spotLamp') &&
+                    !debugFeatureFlags.electricity || inputActive)
                 : isMachinePoweredAt(x, y);
     return {
         name: def.name,
@@ -3383,7 +3442,7 @@ export function setMachineSetting(x, y, value) {
     if (previous !== world.machineSetting[i] && participatesInElectricalNetwork(def)) {
         invalidateElectricalState({ loads: true });
     }
-    if (def.machine === 'lamp') illuminationDirty = true;
+    if (def.machine === 'lamp' || def.machine === 'spotLamp') invalidateLocalIllumination();
     return true;
 }
 
@@ -3421,17 +3480,38 @@ export function setMachineSensorThreshold(x, y, threshold) {
     const i = index(x, y);
     const def = DEFS[world.type[i]];
     if (!isMachineSensor(def)) return false;
-    world.machineSensorThreshold[i] = def.machine === 'humiditySwitch'
+    world.machineSensorThreshold[i] = def.machine === 'humiditySwitch' || def.machine === 'lightSwitch'
         ? Math.max(0, Math.min(100, threshold)) : threshold;
     invalidateLogicalCurrent();
     return true;
+}
+
+function ensureLightSwitchIlluminationCurrent() {
+    if (!world || logicalCurrentRecomputing) return;
+    if (debugFeatureFlags.worldIllumination && !ambientFieldBuilt) rebuildAmbientIlluminationField();
+    if (debugFeatureFlags.localLight) ensureLocalIlluminationCurrent();
 }
 
 export function getMachineSensorReading(x, y) {
     if (!world || !inBounds(x, y)) return null;
     const machine = index(x, y);
     if (!isMachineSensor(DEFS[world.type[machine]])) return null;
-    const humiditySwitch = DEFS[world.type[machine]].machine === 'humiditySwitch';
+    const sensorType = DEFS[world.type[machine]].machine;
+    if (sensorType === 'lightSwitch') {
+        if (!logicalCurrentRecomputing) ensureLightSwitchIlluminationCurrent();
+        const probe = rotatedPortOffset(machine, 0, -3);
+        const px = x + Math.round(probe.x);
+        const py = y + Math.round(probe.y);
+        if (!inBounds(px, py)) return null;
+        const cell = index(px, py);
+        const ambient = debugFeatureFlags.worldIllumination
+            ? world.ambientIllumination[cell] || 0 : ambientIlluminationTarget;
+        const local = debugFeatureFlags.localLight ? world.illumination[cell] || 0 : 0;
+        const reading = Math.max(ambient, local);
+        if (logicalCurrentRecomputing) solvedLightSensorReadings.set(machine, reading);
+        return reading;
+    }
+    const humiditySwitch = sensorType === 'humiditySwitch';
     let total = 0;
     let count = 0;
     const sampled = new Set();
@@ -3478,10 +3558,22 @@ function machineSensorComparisonAt(machine, def, reading) {
 
 export function getMachineSensorStatus(x, y) {
     if (!world || !inBounds(x, y)) return null;
-    ensureLogicalCurrent();
     const machine = index(x, y);
     const def = DEFS[world.type[machine]];
     if (!isMachineSensor(def)) return null;
+
+    if (def.machine === 'lightSwitch') {
+        ensureLightSwitchIlluminationCurrent();
+        const sampled = getMachineSensorReading(x, y);
+        const previous = solvedLightSensorReadings.get(machine);
+        if (previous === undefined || Math.abs(previous - sampled) > 1e-5) {
+            if (debugFeatureFlags.electricity) {
+                electricalStateDirty = true;
+                logicalCurrentDirty = true;
+            }
+        }
+    }
+    ensureLogicalCurrent();
 
     const reading = getMachineSensorReading(x, y);
     const comparison = machineSensorComparisonAt(machine, def, reading);
@@ -3769,12 +3861,7 @@ export function setCell(x, y, id, keepTemp) {
         machineCollisionMaskDirty = true;
     }
     const wasSameRay = previousType === id && def?.forceRate > 0;
-    if (previousType !== id && debugFeatureFlags.localLight &&
-        (previousDef?.lightRadius > 0 || def?.lightRadius > 0 ||
-            previousDef?.lightFlashRadius > 0 || def?.lightFlashRadius > 0 ||
-            isIlluminationOccluderByDef(previousDef) || isIlluminationOccluderByDef(def))) {
-        illuminationDirty = true;
-    }
+    if (previousType !== id) invalidateLocalIlluminationForTypes(previousType, id);
     if (participatesInElectricalNetwork(previousDef) || participatesInElectricalNetwork(def)) {
         invalidateElectricalState({ topology: true });
     }
@@ -3827,6 +3914,7 @@ function transform(i, id, life, residue) {
     const def = DEFS[id];
     const previousDef = DEFS[world.type[i]];
     const previousType = world.type[i];
+    if (previousType !== id) invalidateLocalIlluminationForTypes(previousType, id);
     if (participatesInElectricalNetwork(previousDef) || participatesInElectricalNetwork(def)) {
         invalidateElectricalState({ topology: true });
     }
@@ -3876,6 +3964,7 @@ function defaultBulkInsulation(category) {
 function removeParticle(i) {
     const previousDef = DEFS[world.type[i]];
     const previousType = world.type[i];
+    if (previousType !== EMPTY) invalidateLocalIlluminationForTypes(previousType, EMPTY);
     if (participatesInElectricalNetwork(previousDef)) invalidateElectricalState({ topology: true });
     if (isCollectorMachine(DEFS[world.type[i]])) collectorMasksDirty = true;
     if (DEFS[world.type[i]]?.machineCollisionWidth) machineCollisionMaskDirty = true;
@@ -4148,7 +4237,7 @@ function buildElectricalMachineLoads() {
         const ports = machinePortDescriptors(machine).filter(port =>
             port.family === 'electrical' || port.family === 'copper');
         let loadPort = null;
-        if (def.machine === 'lamp') {
+        if (def.machine === 'lamp' || def.machine === 'spotLamp') {
             if ((Math.round(world.machineSetting[machine]) & 1) !== 0) {
                 loadPort = ports.find(port => port.role === 'input');
             }
@@ -4157,8 +4246,8 @@ function buildElectricalMachineLoads() {
                     addElectricalMachineLoad(loadsByWire, wire, machine, def.powerConsumption);
                 }
             }
-            // Lamp input current remains available to the rest of the circuit
-            // while the Lamp is off, but the device itself draws no load.
+            // The lamp input current remains available to the rest of the
+            // circuit while the emitter is off, but the device draws no load.
             continue;
         } else if (isLogicGate(def)) {
             loadPort = ports.find(port => port.role === 'input' && /^(?:supply|power)$/i.test(port.id));
@@ -4615,6 +4704,8 @@ function energizeEnabledRelayOutputs() {
 
 function recomputeLogicalCurrent() {
     if (!debugFeatureFlags.electricity || !world) return;
+    logicalCurrentRecomputing = true;
+    solvedLightSensorReadings.clear();
     const recorder = activeP0PerformanceRecorder();
     const startedAt = recorder ? performance.now() : 0;
     const gateMachines = [];
@@ -4723,17 +4814,20 @@ function recomputeLogicalCurrent() {
     electricalLoadLogicSignature = loadStateSignature;
     const emitterSignature = [];
     for (let machine = 0; machine < world.type.length; machine++) {
-        if (DEFS[world.type[machine]]?.machine !== 'lamp' ||
+        const machineType = DEFS[world.type[machine]]?.machine;
+        if ((machineType !== 'lamp' && machineType !== 'spotLamp') ||
             (Math.round(world.machineSetting[machine] || 0) & 1) === 0) continue;
         const input = machinePortDescriptors(machine).find(port =>
             port.family === 'electrical' && port.role === 'input');
-        if (portHasLogicalSignal(input)) emitterSignature.push(machine);
+        if (portHasLogicalSignal(input)) emitterSignature.push(`${machine}:${machineType === 'spotLamp'
+            ? world.data[machine] & 7 : 0}`);
     }
     const nextIlluminationSignature = emitterSignature.join(',');
     if (illuminationSourceSignature !== nextIlluminationSignature) {
         illuminationSourceSignature = nextIlluminationSignature;
         illuminationDirty = true;
     }
+    logicalCurrentRecomputing = false;
     if (recorder) recorder.record('logicalGateSolve', performance.now() - startedAt, {
         gateCount: gateMachines.length,
         iterations: solverIterations,
@@ -8013,11 +8107,12 @@ function refreshMachineCollisionMask() {
             const py = y + Math.round(offset.y);
             if (inBounds(px, py)) explicitOpenCells.add(index(px, py));
         }
-        // Sensors sample five air cells at the exposed face, three cells above
-        // the anchor before orientation is applied. This face and all declared
-        // port anchors remain open even if a future body size overlaps them.
+        // Temperature and humidity sensors sample five cells at the exposed
+        // face; Light Switch samples only the centered face cell.
         if (isMachineSensor(def)) {
-            for (let offset = -2; offset <= 2; offset++) {
+            const first = def.machine === 'lightSwitch' ? 0 : -2;
+            const last = def.machine === 'lightSwitch' ? 0 : 2;
+            for (let offset = first; offset <= last; offset++) {
                 const probe = rotatedPortOffset(machine, offset, -3);
                 const px = x + Math.round(probe.x);
                 const py = y + Math.round(probe.y);

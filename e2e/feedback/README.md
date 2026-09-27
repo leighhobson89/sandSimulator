@@ -13,7 +13,10 @@ Browser regressions for the fixed canvas feedback panel and live hover details.
   Oil/Wood, Gunpowder's dark fuse and four-tick flash, overlap/clamping, blocker and
   transmission rules, world-edge clipping, stale-field cleanup, Normal-view
   rendering, transparent no-light compositing, hover readings, and derived
-  state after Save/Load and blueprint stamping.
+  state after Save/Load and blueprint stamping. Its Spotlamp case checks the
+  45-cell powered cone, 40%-at-edge linear falloff, all eight facings, dark
+  outside/rear samples, OFF/unpowered cutoff, the active cone overlay, and
+  immediate local-field invalidation when the Spotlamp is moved with Grabber.
 
 Run the feedback regression through the repository wrapper:
 
@@ -24,3 +27,6 @@ npm run test:browser -- e2e/feedback --workers=1 --trace=off
 The Playwright configuration starts the local server automatically. Keep
 browser-visible feedback assertions here rather than in the deterministic
 physics harness.
+
+The focused Spotlamp and Light Switch browser selection passed 4/4 through
+`npm.cmd run test:browser -- --grep "Spotlamp|Light Switch" --workers=1 --trace=off`.

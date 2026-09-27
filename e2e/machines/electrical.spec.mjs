@@ -1004,6 +1004,175 @@ test('Lamp glows yellow only when ON and powered, and draws a small Battery load
     expect(active.charge - off).toBeLessThan(source.startingCharge - active.charge);
 });
 
+test('Spotlamp and Light Switch have Electricals definitions, declared ports, and settings defaults', async ({ page }) => {
+    const game = new GamePage(page);
+    await game.openMenu();
+    await game.newGame();
+
+    const machines = await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        const definitions = physics.getDefinitions();
+        const find = name => definitions.findIndex(definition => definition?.name === name);
+        const spotId = find('Spotlamp');
+        const switchId = find('Light Switch');
+        if (spotId < 0 || switchId < 0) return {
+            spot: definitions.find(definition => definition?.name === 'Spotlamp') || null,
+            lightSwitch: definitions.find(definition => definition?.name === 'Light Switch') || null
+        };
+
+        physics.clearWorld();
+        const spot = { x: 65, y: 48 };
+        const lightSwitch = { x: 105, y: 48 };
+        physics.setCell(spot.x, spot.y, spotId);
+        physics.setCell(lightSwitch.x, lightSwitch.y, switchId);
+        const spotDefinition = definitions[spotId];
+        const switchDefinition = definitions[switchId];
+        return {
+            spot: {
+                ...spotDefinition,
+                ports: physics.getMachinePorts(spot.x, spot.y),
+                setting: physics.getMachineSetting(spot.x, spot.y),
+                status: physics.getMachineLiveStatus(spot.x, spot.y)
+            },
+            lightSwitch: {
+                ...switchDefinition,
+                ports: physics.getMachinePorts(lightSwitch.x, lightSwitch.y),
+                rule: physics.getMachineSensorRule(lightSwitch.x, lightSwitch.y),
+                threshold: physics.getMachineSensorThreshold(lightSwitch.x, lightSwitch.y),
+                status: physics.getMachineLiveStatus(lightSwitch.x, lightSwitch.y)
+            },
+            spotCell: spot,
+            switchCell: lightSwitch
+        };
+    });
+
+    expect(machines.spot, 'Spotlamp definition is present').not.toBeNull();
+    expect(machines.lightSwitch, 'Light Switch definition is present').not.toBeNull();
+    expect(machines.spot).toMatchObject({ name: 'Spotlamp', machine: 'spotLamp', group: 'Electricals' });
+    expect(machines.spot.lightRadius).toBe(45);
+    expect(machines.spot.lightFalloffFloor).toBe(0.4);
+    expect(machines.spot.lightIntensity).toBe(100);
+    expect(machines.spot.ports.map(port => port.role)).toEqual(['input']);
+    expect(machines.spot.ports.every(port => port.family === 'electrical' &&
+        port.material === 'Elec' && port.connectorBrushWidth === 2)).toBe(true);
+    expect(machines.spot.setting).toBe(1);
+    expect(machines.lightSwitch).toMatchObject({
+        name: 'Light Switch', machine: 'lightSwitch', group: 'Electricals',
+        machineSensorDefaultRule: 3, machineSensorDefaultThreshold: 50
+    });
+    expect(machines.lightSwitch.ports.map(port => port.role)).toEqual(['input', 'output']);
+    expect(machines.lightSwitch.ports.every(port => port.family === 'electrical' &&
+        port.material === 'Elec' && port.connectorBrushWidth === 2)).toBe(true);
+    expect(machines.lightSwitch.rule).toBe(3);
+    expect(machines.lightSwitch.threshold).toBe(50);
+
+    await game.step(0);
+    await page.mouse.click(...Object.values(await canvasPoint(page, machines.spotCell)));
+    const spotDialog = page.getByRole('dialog', { name: 'Spotlamp settings' });
+    const spotToggle = page.getByRole('switch', { name: 'Spotlamp', exact: true });
+    await expect(spotDialog).toBeVisible();
+    await expect(spotToggle).toBeChecked();
+    await spotToggle.click();
+    await expect(spotToggle).not.toBeChecked();
+    await page.locator('#machineDialogCancel').click();
+
+    await page.mouse.click(...Object.values(await canvasPoint(page, machines.switchCell)));
+    const sensorDialog = page.getByRole('dialog', { name: 'Light Switch settings' });
+    await expect(sensorDialog).toBeVisible();
+    await expect(sensorDialog.getByLabel('Comparison')).toHaveValue('3');
+    await expect(sensorDialog.getByRole('spinbutton', { name: 'Illumination', exact: true }))
+        .toHaveValue('50');
+    await expect(sensorDialog.getByLabel('Comparison').locator('option'))
+        .toHaveText(['Less than', 'Less than or equal to', 'Equal to', 'Greater than or equal to', 'Greater than']);
+    await page.locator('#machineDialogCancel').click();
+});
+
+test('Light Switch samples one exposed illumination cell and relays only a powered passing input', async ({ page }) => {
+    const game = new GamePage(page);
+    await game.openMenu();
+    await game.newGame();
+
+    const result = await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        const definitions = physics.getDefinitions();
+        const id = name => definitions.findIndex(definition => definition?.name === name);
+        const switchId = id('Light Switch');
+        if (switchId < 0) return { hasMachine: false };
+        physics.clearWorld();
+        physics.setAmbientIlluminationTarget(0);
+        const x = 110, y = 60;
+        physics.setCell(x, y, switchId);
+        const world = physics.getWorld();
+        const ports = physics.getMachinePorts(x, y);
+        const input = ports.find(port => port.role === 'input');
+        const output = ports.find(port => port.role === 'output');
+        if (!input || !output) return { hasMachine: true, ports };
+
+        physics.setCell(output.connectionCell.x, output.connectionCell.y, id('Elec'));
+        const sensorCell = { x, y: y - 3 };
+        physics.getIlluminationAt(sensorCell.x, sensorCell.y);
+        world.ambientIllumination.fill(0);
+        world.illumination.fill(0);
+        for (const [offset, value] of [[-2, 100], [-1, 90], [0, 62.5], [1, 20], [2, 10]]) {
+            world.ambientIllumination[physics.index(sensorCell.x + offset, sensorCell.y)] = value;
+        }
+        world.illumination[physics.index(sensorCell.x, sensorCell.y)] = 80;
+
+        const dx = Math.sign(input.connectionCell.x - x) || Math.sign(input.directionX);
+        const dy = Math.sign(input.connectionCell.y - y) || Math.sign(input.directionY);
+        for (let offset = 0; offset <= 2; offset++) {
+            physics.setCell(input.connectionCell.x + dx * offset,
+                input.connectionCell.y + dy * offset, id('Elec'));
+        }
+        const battery = { x: input.connectionCell.x + dx * 3,
+            y: input.connectionCell.y + dy * 3 };
+        physics.setCell(battery.x, battery.y, id('Battery'));
+        world.charge[physics.index(battery.x, battery.y)] = definitions[id('Battery')].chargeCapacity;
+        physics.setMachineSensorRule(x, y, 3);
+        physics.setMachineSensorThreshold(x, y, 80);
+        // Comparator edits invalidate the derived local-light field; keep the
+        // sampled value stable as ambient illumination for the relay checks.
+        world.ambientIllumination[physics.index(sensorCell.x, sensorCell.y)] = 80;
+        const powered = physics.getMachineLiveStatus(x, y);
+        const reading = physics.getMachineSensorReading(x, y);
+        const outputActive = physics.getMachinePorts(x, y).find(port => port.role === 'output')?.active;
+
+        physics.setMachineSensorRule(x, y, 4);
+        const strictGreater = physics.getMachineLiveStatus(x, y);
+        physics.setMachineSensorRule(x, y, 3);
+        physics.setMachineSensorThreshold(x, y, 79.5);
+        physics.setCell(battery.x, battery.y, 0);
+        const unpowered = physics.getMachineLiveStatus(x, y);
+        return {
+            hasMachine: true,
+            roles: ports.map(port => port.role),
+            reading,
+            sampledCell: sensorCell,
+            expectedCellLight: physics.getIlluminationAt(sensorCell.x, sensorCell.y),
+            neighborAverage: [-2, -1, 0, 1, 2].reduce((sum, offset) =>
+                sum + physics.getIlluminationAt(sensorCell.x + offset, sensorCell.y), 0) / 5,
+            powered,
+            outputActive,
+            strictGreater: strictGreater.sensor,
+            unpowered: unpowered.sensor
+        };
+    });
+
+    expect(result.hasMachine, 'Light Switch definition is present').toBe(true);
+    expect(result.roles).toEqual(['input', 'output']);
+    expect(result.sampledCell).toEqual({ x: 110, y: 57 });
+    expect(result.reading).toBe(80);
+    expect(result.expectedCellLight).toBe(80);
+    expect(result.neighborAverage).not.toBe(result.reading);
+    expect(result.powered.sensor).toMatchObject({
+        reading: 80, rule: 3, threshold: 80, conditionMet: true,
+        inputActive: true, passing: true, state: 'passing'
+    });
+    expect(result.outputActive).toBe(true);
+    expect(result.strictGreater).toMatchObject({ reading: 80, conditionMet: false, passing: false });
+    expect(result.unpowered).toMatchObject({ conditionMet: true, inputActive: false, passing: false });
+});
+
 test('Battery-backed long Elec runs keep a Temperature Switch and Lamp active until charge is depleted', async ({ page }) => {
     const game = new GamePage(page);
     await game.openMenu();

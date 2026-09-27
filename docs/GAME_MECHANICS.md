@@ -26,6 +26,10 @@ properties, and implemented
 reactions. The tooltip is assembled from the prepared definition used by the
 physics engine, so temperatures and target materials come from the rules that
 actually run.
+Seed tooltips replace the general property and reaction lists with a compact
+Germination section. A blank line separates it from the seed description; it
+shows the grown species' temperature and humidity ranges and ideals, the seed's
+minimum germination thresholds, light minimum and ideal, and suitable substrate.
 
 ### Source of truth
 
@@ -50,7 +54,7 @@ The prepared entries are grouped in the same order as the picker:
 | Solids | Ice, Stone, Wood, Glass, Wall, Clay, Ceramic, Insulation |
 | Seeds | Grass Seeds, Moss Spores, Daffodil Seeds, Red Tulip Seeds, Geranium Seeds, Blue Flower Seeds, Banana Seeds, Water Grass / Lily Seeds |
 | Metals | Copper, Molten Copper, Molten Aluminum, Iron, Molten Iron, Stainless Steel, Tubing |
-| Electricals | Battery, Spark, Spark Dust, Spark Block, Elec, Simple Switch, Lamp, Temperature Switch, Humidity Switch |
+| Electricals | Battery, Spark, Spark Dust, Spark Block, Elec, Simple Switch, Lamp, Spotlamp, Temperature Switch, Humidity Switch, Light Switch |
 | LOGIC | NOT, AND, OR, NAND, XOR |
 | Machines | Fan, Heater, Cooler, Sprinkler, Mixer, Splitter, Collector |
 | Storage | Powder Storage Bin, Liquid Storage Bin, Gas Storage Bin |
@@ -357,7 +361,7 @@ target and launches Cold Rays along the centreline.
 
 ### Electrical machines
 
-Simple Switch and Lamp start ON. Their setting is persisted with machine
+Simple Switch, Lamp, and Spotlamp start ON. Their setting is persisted with machine
 state in world saves and blueprints, and each has an ON/OFF switch in its
 settings dialog.
 
@@ -367,6 +371,11 @@ settings dialog.
 - **Lamp** has one electrical input. ON emits a warm yellow glow only while
   that logical input is ON; OFF blocks its input and keeps the glow dark. Its
   Battery load is `1` per tick, less than one tenth of Heater's `100` load.
+- **Spotlamp** has one electrical input and uses the same ON setting, live
+  Battery-backed logical input, and `1`-unit powered-device load as Lamp. It
+  projects a directional local-light cone in its selected eight-way facing;
+  the range, falloff, and shared field/render angle are described under
+  [Ambient and local illumination](#ambient-and-local-illumination).
 - Both ports use Elec as the protruding connector material and force a
   two-cell-wide lead regardless of the paint-brush setting; the visible stub
   is 2px wide. Ports accept
@@ -397,6 +406,20 @@ output. Red means it is not passing: the rule is false, the rule is true
 without input current (`RULE TRUE · NO INPUT CURRENT`), or there is no air
 reading (`SIGNAL BLOCKED · NO AIR`). Rule and threshold persist through
 machine state transfers, portable world saves, and blueprints.
+
+**Light Switch** uses the same five comparison choices, live status, and
+input/output logic, but samples exactly one exposed cell centered on its sensor
+face. Its reading is the cell's effective illumination on the `0`-to-`100`
+scale (`max(ambient, local emitters)`), not a five-cell mean and not only light
+from a Lamp. It defaults to `>= 50`; its threshold accepts fractional values
+from `0` through `100`. A true comparison passes a live logical input to its
+output; a false comparison or absent input leaves the output OFF. The settings
+dialog shows current illumination, the rule and threshold, input state, and
+whether the output is passing. Sampling reads the illumination field without
+recursively refreshing electrical state. If its comparison changes a light
+emitter's power, the new light level is observed at a subsequent logical
+refresh, rather than during the same sensor read. The one-cell sensor face is
+exposed for the light read while remaining sealed to particle movement.
 
 ### Logic gates and circuit supply
 
@@ -642,7 +665,9 @@ they are separate from Tubing routes.
 | Fan, Heater, Cooler | One Copper input | Directional world-effect cone output, opposite the input |
 | Simple Switch | One electrical input and one electrical output; accepts compatible conductive wire | Relays logical current when ON; blocks it immediately when OFF |
 | Lamp | One electrical input; accepts compatible conductive wire | Yellow light while ON and its logical input is ON |
+| Spotlamp | One electrical input; accepts compatible conductive wire | Directional local light while ON and its logical input is ON |
 | Temperature Switch, Humidity Switch | One electrical input and one electrical output; accepts compatible conductive wire | Relays input current only while its environmental comparison is true; false or unavailable readings block the logical output |
+| Light Switch | One electrical input and one electrical output; accepts compatible conductive wire | Relays input current when the single exposed cell's effective illumination meets its comparator |
 | NOT gate | One signal input, one separate Battery supply input, and one electrical output | Output is ON only with supply present and signal input OFF |
 | AND, OR, NAND, XOR gates | Two signal inputs, one separate Battery supply input, and one electrical output each | Evaluate their Boolean rules only while the separate supply is present; see [Logic gates and circuit supply](#logic-gates-and-circuit-supply) |
 | Powder Storage Bin | Powder Tubing input and output | No world-particle intake |
@@ -734,6 +759,12 @@ not define a separate maximum germination temperature. All eight seed types
 ignite above `130 C` and become Fire with a `20`-frame burn life. A mature
 Banana Plant grows `14-32` cells tall.
 
+The seed catalog's Germination tooltip pairs the species' established-plant
+temperature and humidity ranges with their ideal values, then shows the seed's
+actual minimum temperature and humidity gates separately. Light is shown as a
+minimum and ideal percentage; the minimum is also required for germination.
+Suitable substrate materials are listed in the same section.
+
 ### Seed requirements
 
 Temperature is checked on the seed cell; humidity is checked in nearby air.
@@ -801,11 +832,11 @@ and the substrate are suitable. Below this light floor, they are in the dying
 state. Light fitness contributes to vigor and scales the usual growth chance by
 `0.25 + 0.75 * fitness`, so growth can still occur at minimum light.
 
-Hovering any plant part reports its current temperature, humidity, and effective
-illumination alongside its species' ideal temperature and humidity, temperature
-and humidity bounds, and minimum/ideal illumination. This lets the player
-compare actual conditions with each species' needs while accounting for its
-local air, light sources, and substrate.
+Hovering any plant part or seed reports its current temperature, humidity, and
+effective illumination alongside the species' ideal temperature and humidity,
+temperature and humidity bounds, and minimum/ideal illumination. Seeds use the
+profile of the plant they can grow into, so players can compare the seed's
+current conditions with that species' needs before it sprouts.
 
 ### Humidity and condensation
 
@@ -1036,6 +1067,20 @@ when Oil or Wood burns uses the same peak intensity of `50` while it persists.
 Lamp light is yellow; Fire, Lava, and Scoria light is orange. Tint is rendering
 metadata only: it does not alter `world.illumination` or any logical reading.
 
+An ON Spotlamp emits only while its electrical input reaches a charged
+Battery. Its eight-way facing is independent of zoom. The cone field and its
+powered/placement outline use the shared half-angle
+`SPOTLAMP_CONE_ANGLE_DEGREES` (`26.565...°`) so the displayed and simulated
+boundaries agree. Its Euclidean reach is `45` world cells; at distance `d` up
+to that edge, its intensity is `100 × (1 - 0.6 × d / 45)`, reaching `40` at
+the edge and zero contribution past it. Spotlamp light is yellow, adds to
+other local emitters up to the `100` cap, and obeys the same
+line-of-sight blockers and transmitting materials as Lamp light. Changing its
+facing, ON setting, logical input, or world cells invalidates the derived
+local-light field. Direct cell edits and Grabber moves rebuild the affected
+field so the old source location goes dark and the new location lights without
+waiting for a later simulation tick.
+
 Gunpowder creates a `100`-intensity, ten-cell explosion flash at `explode()`
 before blast cells are cleared. The flash fades over four simulation ticks; the
 resulting Fire remains as a dim emitter after the flash expires. Sparks and
@@ -1096,7 +1141,9 @@ electrical renderer no longer animates current.
 Hovering empty air or a particle reports numeric local illumination alongside
 the ordinary temperature, humidity, and transition details. Machine hover also
 reports received illumination; Lamp hover identifies whether emission is ON
-or OFF, its 360-degree/25-cell reach, and the received value.
+or OFF, its 360-degree/25-cell reach, and the received value. Spotlamp hover
+reports its current active state, input state, and received value; its powered
+cone is drawn over the world, and the placement preview uses the same angle.
 
 Hovering a machine shows its name, temperature, active/inactive status, and the
 live state of its declared inputs and outputs. Gate ports are individually

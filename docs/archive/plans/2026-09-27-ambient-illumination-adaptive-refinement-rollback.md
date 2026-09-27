@@ -152,5 +152,5 @@ remain incremental, local illumination remains unchanged, and the browser
 regression confirms convergence within 120 simulation ticks. The benchmark
 compares open, occlusion-dense, and ambient-edit scenarios without adaptive
 counters. See
-`docs/reviews/2026-09-27-ambient-illumination-chunk-performance-results.md`
+`docs/archive/reviews/2026-09-27-ambient-illumination-chunk-performance-results.md`
 for the dated comparison and measurement limits.
