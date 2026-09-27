@@ -918,16 +918,24 @@ test('ambient illumination follows the low-light floor, top/bottom visibility, a
         const physics = await import('/physics.js');
         const definitions = physics.getDefinitions();
         const id = name => definitions.findIndex(definition => definition?.name === name);
+        // Keep the test gas fixed while the budgeted visibility field catches
+        // up across multiple simulation ticks.
+        definitions[id('Steam')].moves = false;
+        const chunkSize = physics.AMBIENT_ILLUMINATION_CHUNK_SIZE;
+        const center = (start, extent) => start + Math.floor((extent - 1) / 2);
+        const cols = chunkSize * 3;
+        const rows = chunkSize * 3;
+        physics.createWorld(cols, rows);
         const world = physics.getWorld();
-        const sample = { x: 120, y: 80 };
+        // Ambient geometry is sampled once per configured tile at its center.
+        const sample = { x: center(chunkSize, chunkSize), y: center(chunkSize, chunkSize) };
         const setRow = (y, material) => {
             for (let x = 0; x < world.cols; x++) physics.setCell(x, y, material);
         };
 
-        physics.clearWorld();
         physics.setAmbientIlluminationTarget(10);
-        const lowOpenTop = physics.getIlluminationAt(20, 30);
-        const lowOpenBottom = physics.getIlluminationAt(30, 120);
+        const lowOpenTop = physics.getIlluminationAt(center(0, chunkSize), sample.y);
+        const lowOpenBottom = physics.getIlluminationAt(center(chunkSize, chunkSize), center(chunkSize * 2, chunkSize));
         setRow(sample.y - 1, id('Wall'));
         setRow(sample.y + 1, id('Wall'));
         const lowEnclosed = physics.getIlluminationAt(sample.x, sample.y);
@@ -935,17 +943,27 @@ test('ambient illumination follows the low-light floor, top/bottom visibility, a
         const zeroEnclosed = physics.getIlluminationAt(sample.x, sample.y);
 
         physics.setAmbientIlluminationTarget(80);
-        const topAndBottomVisible = physics.getIlluminationAt(200, 60);
+        setRow(sample.y - 1, 0);
         setRow(sample.y + 1, 0);
+        for (let tick = 0; tick < 120; tick++) physics.stepSimulation();
+        const topAndBottomVisible = physics.getIlluminationAt(sample.x, sample.y);
+        setRow(sample.y - 1, id('Wall'));
+        for (let tick = 0; tick < 120; tick++) physics.stepSimulation();
+        setRow(sample.y + 1, 0);
+        for (let tick = 0; tick < 120; tick++) physics.stepSimulation();
         const bottomOnly = physics.getIlluminationAt(sample.x, sample.y);
         setRow(sample.y + 1, id('Wall'));
+        for (let tick = 0; tick < 120; tick++) physics.stepSimulation();
         const neitherBoundaryVisible = physics.getIlluminationAt(sample.x, sample.y);
-        const topOnly = physics.getIlluminationAt(sample.x, sample.y - 2);
+        setRow(sample.y - 1, 0);
+        for (let tick = 0; tick < 120; tick++) physics.stepSimulation();
+        const topOnly = physics.getIlluminationAt(sample.x, sample.y);
 
         setRow(sample.y - 1, 0);
         setRow(sample.y + 1, 0);
-        physics.setCell(sample.x, 20, id('Steam'));
-        physics.setCell(sample.x, 40, id('Steam'));
+        physics.setCell(sample.x, sample.y - Math.floor(chunkSize / 3), id('Steam'));
+        physics.setCell(sample.x, sample.y - 2, id('Steam'));
+        for (let tick = 0; tick < 120; tick++) physics.stepSimulation();
         const twoGasCellsOnRay = physics.getIlluminationAt(sample.x, sample.y);
         const steamIsGas = definitions[id('Steam')]?.category === 'gas';
         return {
@@ -967,6 +985,398 @@ test('ambient illumination follows the low-light floor, top/bottom visibility, a
     expect(field.twoGasCellsOnRay, 'multiple gas cells attenuate the chosen ambient ray only once').toBe(60);
 });
 
+test('ambient values in a mixed chunk use its center sample across the former wall split', async ({ page }) => {
+    const game = new GamePage(page);
+    await game.openMenu();
+    await game.newGame();
+
+    const result = await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        const definitions = physics.getDefinitions();
+        const id = name => definitions.findIndex(definition => definition?.name === name);
+        const chunkSize = physics.AMBIENT_ILLUMINATION_CHUNK_SIZE;
+        if (!Number.isInteger(chunkSize) || chunkSize < 3) {
+            throw new Error(`Expected a configurable chunk size of at least 3 cells, found ${chunkSize}.`);
+        }
+        const center = Math.floor((chunkSize - 1) / 2);
+        physics.createWorld(chunkSize, chunkSize);
+        const grid = physics.getWorld();
+        const wall = id('Wall');
+        const steam = id('Steam');
+        definitions[steam].moves = false;
+        grid.type.fill(wall);
+
+        // Leave one straight channel above the left target and one below the
+        // right target, separated by a solid vertical wall at the center.
+        const left = { x: center - 1, y: center };
+        const right = { x: center + 1, y: center };
+        for (let y = 0; y <= center; y++) grid.type[physics.index(left.x, y)] = 0;
+        for (let y = center; y < chunkSize; y++) grid.type[physics.index(right.x, y)] = 0;
+        grid.type[physics.index(left.x, Math.floor(center / 2))] = steam;
+        grid.type[physics.index(right.x, center + Math.floor((chunkSize - 1 - center) / 2))] = steam;
+        physics.setAmbientIlluminationTarget(80);
+        const centerValue = physics.getIlluminationAt(center, center);
+        let nonUniformCells = 0;
+        for (let y = 0; y < chunkSize; y++) {
+            for (let x = 0; x < chunkSize; x++) {
+                const actual = physics.getIlluminationAt(x, y);
+                if (actual !== centerValue) nonUniformCells++;
+            }
+        }
+        return {
+            chunkSize,
+            center: { x: center, y: center },
+            left,
+            right,
+            solidDivider: grid.type[physics.index(center, center)] === wall,
+            centerValue,
+            leftValue: physics.getIlluminationAt(left.x, left.y),
+            rightValue: physics.getIlluminationAt(right.x, right.y),
+            nonUniformCells
+        };
+    });
+
+    expect(result.solidDivider).toBe(true);
+    expect(result.centerValue).toBe(10);
+    expect(result.leftValue).toBe(result.centerValue);
+    expect(result.rightValue).toBe(result.centerValue);
+    expect(result.nonUniformCells, JSON.stringify(result)).toBe(0);
+});
+
+test('ambient light remaps center samples without rays and converges after edits', async ({ page }) => {
+    const game = new GamePage(page);
+    await game.openMenu();
+    await game.newGame();
+
+    const result = await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        const definitions = physics.getDefinitions();
+        const id = name => definitions.findIndex(definition => definition?.name === name);
+        const chunkSize = physics.AMBIENT_ILLUMINATION_CHUNK_SIZE;
+        if (!Number.isInteger(chunkSize) || chunkSize < 3) {
+            throw new Error('physics.AMBIENT_ILLUMINATION_CHUNK_SIZE must be an integer of at least 3.');
+        }
+        const cols = chunkSize * 3 + 5;
+        const rows = chunkSize * 2 + 1;
+        const worldCells = cols * rows;
+        const center = (start, extent) => start + Math.floor((extent - 1) / 2);
+        const topSample = { x: center(0, chunkSize), y: center(0, chunkSize) };
+        const groundSample = { x: center(chunkSize, chunkSize), y: topSample.y };
+        const gasSample = { x: topSample.x, y: center(chunkSize, chunkSize) };
+        const fallbackSample = { x: center(chunkSize * 2, chunkSize), y: gasSample.y };
+        const edgeSample = { x: center(chunkSize * 3, 5), y: center(chunkSize * 2, 1) };
+        const gasY = chunkSize + Math.floor((gasSample.y - chunkSize) / 2);
+        const mutation = { x: gasSample.x, y: gasY };
+        const chunkCols = Math.ceil(cols / chunkSize);
+        const editedChunkId = Math.floor(mutation.y / chunkSize) * chunkCols +
+            Math.floor(mutation.x / chunkSize);
+        definitions[id('Steam')].moves = false;
+
+        const recorder = {
+            enabled: true,
+            events: [],
+            record(name, durationMs, counters = {}) {
+                if (this.enabled) this.events.push({ name, durationMs, counters });
+            },
+            reset() { this.events.length = 0; },
+            snapshot() { return this.events.slice(); }
+        };
+        window.__P0_PERF__ = recorder;
+
+        physics.createWorld(cols, rows);
+        let world = physics.getWorld();
+        world.type.fill(id('Wall'));
+        const clearVertical = (x, firstY, lastY) => {
+            for (let y = firstY; y <= lastY; y++) world.type[physics.index(x, y)] = 0;
+        };
+        // The final 5x1 tile uses the center of its actual partial extent.
+        clearVertical(topSample.x, 0, rows - 1);
+        world.type[physics.index(gasSample.x, gasY)] = id('Steam');
+        clearVertical(groundSample.x, topSample.y, rows - 1);
+        clearVertical(edgeSample.x, 0, edgeSample.y);
+        physics.setAmbientIlluminationTarget(80);
+
+        const getField = () => physics.getWorld().ambientIllumination;
+        const read = (x, y) => physics.getIlluminationAt(x, y);
+        const tileSummaries = () => {
+            const field = getField();
+            const tiles = [];
+            for (let y0 = 0; y0 < rows; y0 += chunkSize) {
+                for (let x0 = 0; x0 < cols; x0 += chunkSize) {
+                    const width = Math.min(chunkSize, cols - x0);
+                    const height = Math.min(chunkSize, rows - y0);
+                    const centerX = x0 + Math.floor((width - 1) / 2);
+                    const centerY = y0 + Math.floor((height - 1) / 2);
+                    const value = field[physics.index(centerX, centerY)];
+                    let uniform = true;
+                    for (let y = y0; y < y0 + height; y++) {
+                        for (let x = x0; x < x0 + width; x++) {
+                            if (Math.abs(field[physics.index(x, y)] - value) > 1e-5) uniform = false;
+                        }
+                    }
+                    tiles.push({ x0, y0, width, height,
+                        centerValue: value, uniform });
+                }
+            }
+            return tiles;
+        };
+
+        const initialValues = [
+            read(topSample.x, topSample.y),
+            read(groundSample.x, groundSample.y),
+            read(gasSample.x, gasSample.y),
+            read(fallbackSample.x, fallbackSample.y),
+            read(edgeSample.x, edgeSample.y)
+        ];
+        const initialTiles = tileSummaries();
+        const initialFullEvent = recorder.snapshot().find(event =>
+            event.name === 'ambientIlluminationFullBuild');
+
+        recorder.reset();
+        for (let tick = 0; tick < 4; tick++) {
+            read(topSample.x, topSample.y);
+            read(groundSample.x, groundSample.y);
+            physics.stepSimulation();
+        }
+        const stableEvents = recorder.snapshot().filter(event =>
+            /^ambientIllumination(?:FullBuild|IncrementalUpdate)$/.test(event.name));
+
+        recorder.reset();
+        physics.setAmbientIlluminationTarget(60);
+        const remappedValues = [
+            read(topSample.x, topSample.y), read(groundSample.x, groundSample.y),
+            read(gasSample.x, gasSample.y), read(fallbackSample.x, fallbackSample.y),
+            read(edgeSample.x, edgeSample.y)
+        ];
+        const remapEvents = recorder.snapshot().filter(event =>
+            event.name === 'ambientIlluminationSliderRemap');
+        const remapFullBuilds = recorder.snapshot().filter(event =>
+            event.name === 'ambientIlluminationFullBuild').length;
+        const remapIncrementalUpdates = recorder.snapshot().filter(event =>
+            event.name === 'ambientIlluminationIncrementalUpdate').length;
+
+        physics.setAmbientIlluminationTarget(10);
+        const lowTargetUniform = getField().every(value => value === 10);
+        physics.setAmbientIlluminationTarget(0);
+        const zeroTargetUniform = getField().every(value => value === 0);
+        physics.setAmbientIlluminationTarget(80);
+        physics.setDebugFeatureEnabled('worldIllumination', false);
+        // With the feature disabled, public reads use the slider target directly;
+        // the derived backing plane is intentionally not rewritten.
+        const debugOffValues = [
+            read(topSample.x, topSample.y), read(groundSample.x, groundSample.y),
+            read(gasSample.x, gasSample.y), read(fallbackSample.x, fallbackSample.y),
+            read(edgeSample.x, edgeSample.y)
+        ];
+        const debugOffUniform = debugOffValues.every(value => value === 80);
+        physics.setDebugFeatureEnabled('worldIllumination', true);
+        // Re-enable and drain any refresh before measuring isolated mutations.
+        for (let tick = 0; tick < 120; tick++) {
+            physics.stepSimulation();
+            read(topSample.x, topSample.y);
+        }
+        const reenabledValues = [
+            read(topSample.x, topSample.y), read(groundSample.x, groundSample.y),
+            read(gasSample.x, gasSample.y), read(fallbackSample.x, fallbackSample.y),
+            read(edgeSample.x, edgeSample.y)
+        ];
+        let fallbackCountBaseline = recorder.snapshot()
+            .filter(event => event.name === 'ambientIlluminationIncrementalUpdate')
+            .reduce((count, event) => Math.max(count, Number(event.counters?.fallbackCount || 0)), 0);
+
+        const settleAndCompare = () => {
+            const beforeImmediateRead = recorder.snapshot().length;
+            read(gasSample.x, gasSample.y);
+            const immediateEvents = recorder.snapshot().slice(beforeImmediateRead).filter(event =>
+                event.name === 'ambientIlluminationFullBuild' ||
+                event.name === 'ambientIlluminationIncrementalUpdate');
+            const immediateFullBuilds = immediateEvents.filter(event =>
+                event.name === 'ambientIlluminationFullBuild').length;
+            const immediateChunksSampled = immediateEvents.reduce((sum, event) =>
+                sum + Number(event.counters?.chunksSampled || 0), 0);
+            for (let tick = 0; tick < 120; tick++) {
+                physics.stepSimulation();
+                read(gasSample.x, gasSample.y);
+            }
+            const incremental = getField().slice();
+            const types = physics.getWorld().type.slice();
+            const events = recorder.snapshot().filter(event =>
+                event.name === 'ambientIlluminationIncrementalUpdate');
+            const observedFallbackCount = events.reduce((count, event) =>
+                Math.max(count, Number(event.counters?.fallbackCount || 0)), fallbackCountBaseline);
+            const counters = events.reduce((summary, event) => ({
+                chunksSampled: summary.chunksSampled + Number(event.counters?.chunksSampled || 0),
+                cellsWritten: summary.cellsWritten + Number(event.counters?.cellsWritten || 0),
+                maxChunksSampled: Math.max(summary.maxChunksSampled,
+                    Number(event.counters?.chunksSampled || 0)),
+                sampledChunkIds: [...summary.sampledChunkIds,
+                    ...(Array.isArray(event.counters?.sampledChunkIds) ? event.counters.sampledChunkIds : [])],
+                pendingChunks: event.counters?.pendingChunks ?? summary.pendingChunks
+            }), { chunksSampled: 0, cellsWritten: 0, fallbackCount: 0, maxChunksSampled: 0,
+                sampledChunkIds: [], pendingChunks: null });
+            counters.fallbackCount = observedFallbackCount - fallbackCountBaseline;
+            fallbackCountBaseline = observedFallbackCount;
+
+            recorder.enabled = false;
+            physics.createWorld(cols, rows);
+            // The fresh-build differential starts a new world and resets its
+            // fallback counter, so the next edit stage starts from zero too.
+            fallbackCountBaseline = 0;
+            world = physics.getWorld();
+            world.type.set(types);
+            physics.setAmbientIlluminationTarget(80);
+            read(gasSample.x, gasSample.y);
+            const reference = getField().slice();
+            recorder.enabled = true;
+            let mismatches = 0;
+            let maxError = 0;
+            for (let cell = 0; cell < worldCells; cell++) {
+                const error = Math.abs(incremental[cell] - reference[cell]);
+                if (error > 1e-5) mismatches++;
+                maxError = Math.max(maxError, error);
+            }
+            const uniform = tileSummaries().every(tile => tile.uniform);
+            return {
+                value: read(gasSample.x, gasSample.y), counters, mismatches, maxError, uniform,
+                immediateFullBuilds, immediateChunksSampled
+            };
+        };
+
+        recorder.reset();
+        physics.setCell(mutation.x, mutation.y, id('Wall'));
+        const afterBlocker = settleAndCompare();
+        recorder.reset();
+        physics.setCell(mutation.x, mutation.y, id('Steam'));
+        const afterGas = settleAndCompare();
+        recorder.reset();
+        physics.setCell(mutation.x, mutation.y, 0);
+        const afterRemoval = settleAndCompare();
+
+        // Plants query the same effective chunk field that material feedback uses.
+        // Put the plant on the known open center ray so its environment reads
+        // the uniform value sampled for that chunk.
+        const plantCell = { x: topSample.x, y: topSample.y };
+        physics.setCell(plantCell.x, plantCell.y, id('Daffodil'));
+        physics.setCell(plantCell.x, plantCell.y + 1, id('Wet Mud'));
+        physics.setCell(plantCell.x, plantCell.y + 2, id('Wall'));
+        const plantEnvironment = physics.getPlantEnvironment(plantCell.x, plantCell.y);
+        const plantCellValue = physics.getIlluminationAt(plantCell.x, plantCell.y);
+
+        return {
+            chunkSize, cols, rows, worldCells, edgeSample, plantCell, editedChunkId, initialValues, initialTiles,
+            initialCounters: initialFullEvent?.counters ?? null,
+            stableEventCount: stableEvents.length,
+            remappedValues,
+            remapEventCount: remapEvents.length,
+            remapRayTraces: remapEvents[0]?.counters?.rayTraces ?? null,
+            remapFullBuilds, remapIncrementalUpdates,
+            lowTargetUniform, zeroTargetUniform, debugOffUniform, debugOffValues, reenabledValues,
+            afterBlocker, afterGas, afterRemoval,
+            plantValue: plantEnvironment?.illumination ?? null,
+            plantCellValue
+        };
+    });
+
+    expect(result.initialValues).toEqual([80, 40, 60, 10, 80]);
+    expect(result.initialTiles).toHaveLength(12);
+    expect(result.initialTiles.every(tile => tile.uniform),
+        'all cells in each tile use its in-bounds center sample, including partial edges').toBe(true);
+    const partialEdge = result.initialTiles.find(tile =>
+        tile.x0 === result.chunkSize * 3 && tile.y0 === result.chunkSize * 2);
+    expect(partialEdge).toMatchObject({ width: 5, height: 1 });
+    expect(result.initialCounters?.chunksSampled).toBe(12);
+    expect(result.initialCounters?.cellsWritten).toBe(result.worldCells);
+    expect(result.initialCounters?.pendingChunks).toBe(0);
+    expect(result.stableEventCount, 'stable reads and ticks do not resample chunks').toBe(0);
+    expect(result.remappedValues).toEqual([60, 30, 45, 10, 60]);
+    expect(result.remapEventCount, 'slider changes report a no-ray remap').toBe(1);
+    expect(result.remapRayTraces).toBe(0);
+    expect(result.remapFullBuilds).toBe(0);
+    expect(result.remapIncrementalUpdates).toBe(0);
+    expect(result.lowTargetUniform).toBe(true);
+    expect(result.zeroTargetUniform).toBe(true);
+    expect(result.debugOffUniform, 'debug-off mode is exactly uniform at the target').toBe(true);
+    expect(result.reenabledValues).toEqual([80, 40, 60, 10, 80]);
+
+    for (const [label, stage, expected] of [
+        ['solid blocker', result.afterBlocker, 40],
+        ['gas on selected witness', result.afterGas, 60],
+        ['removed gas', result.afterRemoval, 80]
+    ]) {
+        expect(stage.value, `${label}: updated chunk sample`).toBe(expected);
+        expect(stage.counters.chunksSampled, `${label}: incremental update samples chunks`).toBeGreaterThan(0);
+        expect(stage.counters.sampledChunkIds, `${label}: the edited cell's tile is recomputed`)
+            .toContain(result.editedChunkId);
+        expect(stage.counters.maxChunksSampled, `${label}: one edit stays below a full 12-chunk rebuild`)
+            .toBeLessThan(12);
+        if (stage.counters.fallbackCount > 0) {
+            expect(stage.counters.fallbackCount, `${label}: broad invalidation records its full-refresh fallback`)
+                .toBeGreaterThan(0);
+            expect(stage.counters.pendingChunks, `${label}: fallback queue drains within 120 ticks`).toBe(0);
+        } else {
+            expect(stage.counters.cellsWritten, `${label}: incremental path rewrites fewer than all world cells`)
+                .toBeLessThan(result.worldCells);
+        }
+        expect(stage.counters.pendingChunks, `${label}: converges within 120 ticks`).toBe(0);
+        expect(stage.immediateFullBuilds, `${label}: a cached getter never starts a synchronous full rebuild`).toBe(0);
+        expect(stage.immediateChunksSampled, `${label}: cached getters do not synchronously sample dirty chunks`).toBe(0);
+        expect(stage.mismatches, `${label}: incremental field matches a fresh chunk build`).toBe(0);
+        expect(stage.maxError).toBeLessThanOrEqual(1e-5);
+        expect(stage.uniform, `${label}: recomputed chunks remain center-sampled and uniform`).toBe(true);
+    }
+    expect(result.plantValue).toBe(80);
+    expect(result.plantCellValue).toBe(80);
+
+    await page.evaluate(async ({ plantCell }) => {
+        const physics = await import('/physics.js');
+        const definitions = physics.getDefinitions();
+        const id = name => definitions.findIndex(definition => definition?.name === name);
+        physics.createWorld(260, 150);
+        physics.setAmbientIlluminationTarget(80);
+        physics.setCell(plantCell.x, plantCell.y, id('Daffodil'));
+        physics.setCell(plantCell.x, plantCell.y + 1, id('Wet Mud'));
+        physics.setCell(plantCell.x, plantCell.y + 2, id('Wall'));
+
+        const game = await import('/game.js');
+        window.__GAME_INSTANCE__.step(0);
+        game.renderWorld();
+    }, { plantCell: result.plantCell });
+    await hoverCell(page, result.plantCell);
+    await expect(page.locator('#hoverFeedback')).toContainText('Daffodil');
+    await expect(page.locator('#hoverFeedback')).toContainText(/Illumination\s*:\s*80/i);
+
+    const standardSizes = await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        const recorder = window.__P0_PERF__;
+        const sizes = [];
+        for (const [cols, rows] of [[260, 150], [520, 300]]) {
+            recorder.reset();
+            physics.createWorld(cols, rows);
+            physics.setAmbientIlluminationTarget(80);
+            physics.getIlluminationAt(0, 0);
+            const event = recorder.snapshot().find(item => item.name === 'ambientIlluminationFullBuild');
+            sizes.push({
+                cols, rows,
+                chunksSampled: event?.counters?.chunksSampled ?? null,
+                cellsWritten: event?.counters?.cellsWritten ?? null
+            });
+        }
+        return sizes;
+    });
+    expect(standardSizes).toEqual([
+        {
+            cols: 260, rows: 150,
+            chunksSampled: Math.ceil(260 / result.chunkSize) * Math.ceil(150 / result.chunkSize),
+            cellsWritten: 260 * 150
+        },
+        {
+            cols: 520, rows: 300,
+            chunksSampled: Math.ceil(520 / result.chunkSize) * Math.ceil(300 / result.chunkSize),
+            cellsWritten: 520 * 300
+        }
+    ]);
+});
+
 test('ambient light uses the brighter local source and refreshes after slider, solid, gas, and tick changes', async ({ page }) => {
     const game = new GamePage(page);
     await game.openMenu();
@@ -975,8 +1385,17 @@ test('ambient light uses the brighter local source and refreshes after slider, s
     const lamp = { x: 70, y: 55 };
     await seedPoweredLamp(page, { lamp, target: { x: 80, y: 55 } });
     const slider = page.getByRole('slider', { name: /ambient light/i });
-    const ambientOnly = { x: 20, y: 60 };
+    const ambientOnly = await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        const size = physics.AMBIENT_ILLUMINATION_CHUNK_SIZE;
+        const center = (start, extent) => start + Math.floor((extent - 1) / 2);
+        return { x: center(0, size), y: center(size * 2, size) };
+    });
     await slider.fill('80');
+    await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        for (let tick = 0; tick < 30; tick++) physics.stepSimulation();
+    });
 
     const brighterLocalAndTransparentAmbient = await page.evaluate(async ({ lamp, ambientOnly }) => {
         const physics = await import('/physics.js');
@@ -1011,21 +1430,29 @@ test('ambient light uses the brighter local source and refreshes after slider, s
         const world = physics.getWorld();
         const wall = physics.getDefinitions().findIndex(definition => definition?.name === 'Wall');
         const steam = physics.getDefinitions().findIndex(definition => definition?.name === 'Steam');
+        physics.getDefinitions()[steam].moves = false;
         const setRow = (y, material) => {
             for (let x = 0; x < world.cols; x++) physics.setCell(x, y, material);
         };
-        const target = { x: ambientOnly.x, y: 80 };
+        const settle = () => {
+            for (let tick = 0; tick < 120; tick++) physics.stepSimulation();
+        };
+        // Use the center of this tile so edits affect its representative ray.
+        const target = { x: ambientOnly.x, y: ambientOnly.y };
         const openField = physics.getIlluminationAt(target.x, target.y);
         setRow(target.y - 1, wall);
+        settle();
         const afterSolidEdit = physics.getIlluminationAt(target.x, target.y);
         physics.setCell(target.x, target.y + 2, steam);
         physics.setCell(target.x, target.y + 3, steam);
+        settle();
         const afterGasEdit = physics.getIlluminationAt(target.x, target.y);
         physics.setCell(target.x, target.y + 2, 0);
         physics.setCell(target.x, target.y + 3, 0);
-        physics.stepSimulation();
+        settle();
         const afterTick = physics.getIlluminationAt(target.x, target.y);
         setRow(target.y - 1, 0);
+        settle();
         const afterOpeningSolidBarrier = physics.getIlluminationAt(target.x, target.y);
         return { openField, afterSolidEdit, afterGasEdit, afterTick, afterOpeningSolidBarrier };
     }, { ambientOnly });
@@ -1039,4 +1466,240 @@ test('ambient light uses the brighter local source and refreshes after slider, s
     await expect.poll(async () => page.evaluate(async ({ ambientOnly }) =>
         (await import('/physics.js')).getIlluminationAt(ambientOnly.x, ambientOnly.y), { ambientOnly }))
         .toBe(40);
+});
+
+test('ambient visibility builds once, stays idle in stable worlds, and incrementally converges after cell edits', async ({ page }) => {
+    const game = new GamePage(page);
+    await game.openMenu();
+    await game.newGame();
+
+    const result = await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        const definitions = physics.getDefinitions();
+        const id = name => definitions.findIndex(definition => definition?.name === name);
+        const chunkSize = physics.AMBIENT_ILLUMINATION_CHUNK_SIZE;
+        const cols = chunkSize + 10;
+        const rows = chunkSize;
+        const target = { x: Math.floor((chunkSize - 1) / 2), y: Math.floor((chunkSize - 1) / 2) };
+        const blockerY = Math.floor(target.y / 2);
+        physics.createWorld(cols, rows);
+        const world = physics.getWorld();
+        world.type.fill(id('Wall'));
+        // One clear cell-center ray from the top reaches the target. The rest
+        // of the boundary is opaque, so a blocker or gas change has a stable,
+        // deterministic expected value.
+        for (let y = 0; y <= target.y; y++) world.type[physics.index(target.x, y)] = 0;
+        definitions[id('Steam')].moves = false;
+        physics.setAmbientIlluminationTarget(80);
+
+        const recorder = {
+            enabled: true,
+            events: [],
+            record(name, durationMs, counters = {}) {
+                if (this.enabled) this.events.push({ name, durationMs, counters });
+            },
+            reset() { this.events.length = 0; },
+            snapshot() { return this.events.slice(); }
+        };
+        window.__P0_PERF__ = recorder;
+        const names = {
+            full: 'ambientIlluminationFullBuild',
+            incremental: 'ambientIlluminationIncrementalUpdate'
+        };
+        const isAmbientEvent = event => Object.values(names).includes(event.name);
+        const settle = () => {
+            // 120 simulation ticks bound convergence to two simulated seconds.
+            for (let tick = 0; tick < 120; tick++) {
+                physics.stepSimulation();
+                physics.getIlluminationAt(target.x, target.y);
+            }
+            return physics.getIlluminationAt(target.x, target.y);
+        };
+        const compareAgainstFreshFullBuild = () => {
+            const incrementalWorld = physics.getWorld();
+            const incremental = incrementalWorld.ambientIllumination.slice();
+            const types = incrementalWorld.type.slice();
+            physics.createWorld(cols, rows);
+            const referenceWorld = physics.getWorld();
+            referenceWorld.type.set(types);
+            physics.setAmbientIlluminationTarget(80);
+            physics.getIlluminationAt(target.x, target.y);
+            let mismatches = 0;
+            let maxError = 0;
+            for (let cell = 0; cell < worldCells; cell++) {
+                const error = Math.abs(incremental[cell] - referenceWorld.ambientIllumination[cell]);
+                if (error > 1e-5) mismatches++;
+                maxError = Math.max(maxError, error);
+            }
+            return { mismatches, maxError };
+        };
+        const worldCells = cols * rows;
+
+        const initial = physics.getIlluminationAt(target.x, target.y);
+        const initialEvents = recorder.snapshot().filter(isAmbientEvent);
+        recorder.reset();
+        for (let tick = 0; tick < 8; tick++) {
+            physics.getIlluminationAt(target.x, target.y);
+            physics.stepSimulation();
+            physics.getIlluminationAt(target.x, target.y);
+        }
+        const stableEvents = recorder.snapshot().filter(isAmbientEvent);
+
+        recorder.reset();
+        physics.setCell(target.x, blockerY, id('Wall'));
+        const afterSolid = settle();
+        const solidEvents = recorder.snapshot().filter(isAmbientEvent);
+        const solidDifferential = compareAgainstFreshFullBuild();
+
+        recorder.reset();
+        physics.setCell(target.x, blockerY, id('Steam'));
+        const afterSolidToGas = settle();
+        const gasEvents = recorder.snapshot().filter(isAmbientEvent);
+        const gasDifferential = compareAgainstFreshFullBuild();
+
+        recorder.reset();
+        physics.setCell(target.x, blockerY, 0);
+        const afterGasRemoval = settle();
+        const removalEvents = recorder.snapshot().filter(isAmbientEvent);
+        const removalDifferential = compareAgainstFreshFullBuild();
+
+        const eventStats = events => ({
+            fullBuilds: events.filter(event => event.name === names.full).length,
+            incrementalUpdates: events.filter(event => event.name === names.incremental).length,
+            durationSamples: events.filter(event => Number.isFinite(event.durationMs)).length,
+            chunksSampled: events.reduce((sum, event) => sum + Number(event.counters?.chunksSampled || 0), 0),
+            cellsWritten: events.reduce((sum, event) => sum + Number(event.counters?.cellsWritten || 0), 0),
+            maxChunksSampled: events.reduce((maximum, event) => Math.max(maximum,
+                Number(event.counters?.chunksSampled || 0)), 0),
+            lastPendingChunks: events.at(-1)?.counters?.pendingChunks ?? null
+        });
+        return {
+            worldCells,
+            initial,
+            afterSolid,
+            afterSolidToGas,
+            afterGasRemoval,
+            initialStats: eventStats(initialEvents),
+            stableStats: eventStats(stableEvents),
+            solidStats: eventStats(solidEvents),
+            gasStats: eventStats(gasEvents),
+            removalStats: eventStats(removalEvents),
+            differentials: { solidDifferential, gasDifferential, removalDifferential }
+        };
+    });
+
+    expect(result.initial).toBe(80);
+    expect(result.initialStats.fullBuilds, 'the first ambient query performs one full field build').toBe(1);
+    expect(result.initialStats.incrementalUpdates).toBe(0);
+    expect(result.initialStats.durationSamples).toBe(1);
+    expect(result.initialStats.chunksSampled, 'the first build samples both chunks').toBe(2);
+    expect(result.initialStats.cellsWritten, 'the first build writes every cell in the world').toBe(result.worldCells);
+    expect(result.stableStats.fullBuilds, 'stable ticks and repeated reads do not rebuild the field').toBe(0);
+    expect(result.stableStats.incrementalUpdates).toBe(0);
+
+    for (const [label, stats] of [
+        ['solid insertion', result.solidStats],
+        ['solid-to-gas change', result.gasStats],
+        ['gas removal', result.removalStats]
+    ]) {
+        expect(stats.fullBuilds, `${label} uses incremental work rather than a whole-field rebuild`).toBe(0);
+        expect(stats.incrementalUpdates, `${label} records incremental work`).toBeGreaterThan(0);
+        expect(stats.durationSamples, `${label} work reports timings`).toBe(stats.incrementalUpdates);
+        expect(stats.chunksSampled, `${label} resamples a nonempty chunk region`).toBeGreaterThan(0);
+        expect(stats.maxChunksSampled, `${label} samples no more than the two chunks in this world`)
+            .toBeLessThanOrEqual(2);
+        expect(stats.lastPendingChunks, `${label} converges inside the 120-tick bound`).toBe(0);
+    }
+    expect(result.afterSolid).toBe(10);
+    expect(result.afterSolidToGas).toBe(60);
+    expect(result.afterGasRemoval).toBe(80);
+    for (const [label, differential] of Object.entries(result.differentials)) {
+        expect(differential.mismatches, `${label}: incremental values match a fresh full build`).toBe(0);
+        expect(differential.maxError, `${label}: no per-cell value differs from a fresh full build`).toBeLessThanOrEqual(1e-5);
+    }
+});
+
+test('ambient incremental fields match full builds for top/bottom visibility, overlapping wedges, and world edges', async ({ page }) => {
+    const game = new GamePage(page);
+    await game.openMenu();
+    await game.newGame();
+
+    const comparisons = await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        const wall = physics.getDefinitions().find(definition => definition?.name === 'Wall').id;
+        const cases = [
+            {
+                name: 'top blocker leaves bottom witness', target: { x: 5, y: 5 },
+                openColumns: [5], initialWalls: [], mutation: [{ x: 5, y: 3 }], expected: 40
+            },
+            {
+                name: 'bottom blocker after top is already blocked', target: { x: 5, y: 5 },
+                openColumns: [5], initialWalls: [{ x: 5, y: 3 }],
+                mutation: [{ x: 5, y: 9 }], expected: 10
+            },
+            {
+                name: 'overlapping top shadow wedges', target: { x: 5, y: 5 },
+                openColumns: [5, 6], initialWalls: [{ x: 5, y: 3 }],
+                mutation: [{ x: 6, y: 3 }], expected: 40
+            },
+            {
+                name: 'left world boundary ray', target: { x: 5, y: 5 },
+                openColumns: [], openDiagonalFromLeft: true, openBottom: true,
+                initialWalls: [], mutation: [{ x: 2, y: 2 }], expected: 40
+            }
+        ];
+        const cols = 12;
+        const rows = 12;
+        const results = [];
+        for (const fixture of cases) {
+            physics.createWorld(cols, rows);
+            physics.getWorld().type.fill(wall);
+            const world = physics.getWorld();
+            for (const x of fixture.openColumns) {
+                for (let y = 0; y < rows; y++) world.type[physics.index(x, y)] = 0;
+            }
+            if (fixture.openDiagonalFromLeft) {
+                for (let offset = 0; offset <= fixture.target.x; offset++) {
+                    world.type[physics.index(offset, offset)] = 0;
+                }
+            }
+            if (fixture.openBottom) {
+                for (let y = fixture.target.y; y < rows; y++) {
+                    world.type[physics.index(fixture.target.x, y)] = 0;
+                }
+            }
+            for (const cell of fixture.initialWalls) physics.setCell(cell.x, cell.y, wall);
+            physics.setAmbientIlluminationTarget(80);
+            physics.getIlluminationAt(fixture.target.x, fixture.target.y);
+            for (const cell of fixture.mutation) physics.setCell(cell.x, cell.y, wall);
+            for (let tick = 0; tick < 120; tick++) {
+                physics.stepSimulation();
+                physics.getIlluminationAt(fixture.target.x, fixture.target.y);
+            }
+            const settledValue = physics.getIlluminationAt(fixture.target.x, fixture.target.y);
+            const incremental = world.ambientIllumination.slice();
+            const types = world.type.slice();
+
+            physics.createWorld(cols, rows);
+            const referenceWorld = physics.getWorld();
+            referenceWorld.type.set(types);
+            physics.setAmbientIlluminationTarget(80);
+            physics.getIlluminationAt(fixture.target.x, fixture.target.y);
+            let mismatches = 0;
+            let maxError = 0;
+            for (let cell = 0; cell < cols * rows; cell++) {
+                const error = Math.abs(incremental[cell] - referenceWorld.ambientIllumination[cell]);
+                if (error > 1e-5) mismatches++;
+                maxError = Math.max(maxError, error);
+            }
+            results.push({ name: fixture.name, expected: fixture.expected, settledValue, mismatches, maxError });
+        }
+        return results;
+    });
+
+    for (const result of comparisons) {
+        expect(result.settledValue, `${result.name}: expected visibility value`).toBe(result.expected);
+        expect(result.mismatches, `${result.name}: every incremental cell matches the full reference`).toBe(0);
+        expect(result.maxError, `${result.name}: field values agree within floating-point tolerance`).toBeLessThanOrEqual(1e-5);
+    }
 });

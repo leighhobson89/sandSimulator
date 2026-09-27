@@ -26,8 +26,8 @@
     "ambientCooling  set false to let a material retain its stored temperature instead of drifting toward adjacent air",
     "cooling       how fast it drifts back to the air temperature on its own, as a fraction of the gap",
     "coolingVariance  +/- fraction applied to each particle's cooling speed, using its fixed variation",
-    "conductive    whether Sparks can send a power pulse through this material",
-    "electricalConductivity  relative pulse speed through a conductor; higher values move pulses faster",
+    "conductive    whether this material can carry steady binary electrical current from a charged Battery or active gate",
+    "electricalConductivity  legacy material rating; electrical wires now carry steady binary ON/OFF state without propagation delay",
     "machine       specialized machine behavior, such as the directional Fan, Heater or Cooler",
     "machineTemp   target temperature emitted by a powered directional machine",
     "machineRange  number of cells reached by a powered directional machine",
@@ -40,9 +40,8 @@
     "lightFalloffDenominator  controls linear illumination falloff through the configured radius",
     "lightTint     presentation-only glow tint; it does not affect logical illumination values",
     "alpha         normal-view opacity, from 0 (invisible) to 1 (solid)",
-    "chargeCapacity  stored electrical charge; 0 means it cannot retain charge between pulses",
+    "chargeCapacity  stored electrical charge; 0 means it cannot retain charge between simulation ticks",
     "chargePerSpark  total charge one Spark adds, shared by the connected storage-metal mass",
-    "chargeSparkChance  chance per frame at full charge of emitting a visual-only Spark",
     "dischargeBattery  draws stored charge from touching battery material and conducts its power",
     "powerConsumption  charge units this conductive cell draws from its connected Battery grid each tick",
     "wireReach     maximum occupied grid-cell distance for a wire connection; empty air always breaks the route",
@@ -1036,7 +1035,6 @@
       "electricalConductivity": 0.82,
       "chargeCapacity": 255,
       "chargePerSpark": 28,
-      "chargeSparkChance": 0.0004,
       "corrodible": true
     },
     "40": {
@@ -1958,7 +1956,7 @@
     },
     "79": {
       "name": "Stainless Steel",
-      "description": "Rust-resistant alloy that conducts heat and carries electrical pulses more slowly than Iron.",
+      "description": "Rust-resistant alloy that conducts heat and carries steady binary ON/OFF electrical current.",
       "group": "Metals",
       "color": "rgb(190, 198, 207)",
       "category": "static",
@@ -2002,7 +2000,7 @@
     },
     "82": {
       "name": "Elec",
-      "description": "High-purity copper electrical wire that conducts heat and electrical pulses exceptionally well, draws a small amount of Battery charge, and resists Corrosion longer than ordinary Copper.",
+      "description": "High-purity copper electrical wire that carries steady binary ON/OFF current, draws a small amount of Battery charge, and resists Corrosion longer than ordinary Copper.",
       "group": "Electricals",
       "color": "rgb(218, 153, 91)",
       "category": "static",
@@ -2042,7 +2040,7 @@
     },
     "84": {
       "name": "Lamp",
-      "description": "Electrical machine that emits a warm yellow 360-degree light field while switched ON and receiving a live electrical pulse. Light is calculated per grid cell over 25 cells, with 1/25 intensity at distance 25 and none at distance 26; the connected Battery supply powers the Lamp.",
+      "description": "Electrical machine that emits a warm yellow 360-degree light field while switched ON and receiving a live logical current signal. Light is calculated per grid cell over 25 cells, with 1/25 intensity at distance 25 and none at distance 26; the connected Battery supply powers the Lamp.",
       "group": "Electricals",
       "color": "rgb(242, 209, 112)",
       "category": "static",

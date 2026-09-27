@@ -5,17 +5,19 @@ Exhaustive browser workflows for machines and material transfer.
   preview, blocked placement, all Fan directions, hit testing, Fan speed
   bounds/default, settings bounds, and tooltip behavior.
 - `powered.spec.mjs` checks powered/unpowered Fan, Heater, and Cooler outcomes.
-- `electrical.spec.mjs` checks Battery charge sharing, bright powered-wire
-  bases, bounded moving Z-bolt rendering, and the **No wire sparks** preference
-  stored in `localStorage` as `sandSimulator.noWireSparks`. The preference hides
-  only moving bolts; Battery cells never receive bolts, and their own charge
-  glow remains visible. It also checks the centered green charging/red
-  discharging Battery glyph and static machine artwork reuse. The 30-tick
-  electrical-refresh regression verifies that Battery drain and finite pulse
-  countdown still advance each tick. The spec also checks electrical wire
+- `electrical.spec.mjs` checks Battery charge sharing, steady binary bright
+  powered-wire bases, and the runtime-only Electrical effects display switch.
+  Electrical effects hides presentation glyphs without changing charge or
+  logical power. Battery cells never emit Spark particles. One centered green
+  charging/red discharging glyph appears per connected Battery group, and
+  static machine artwork is reused. The 30-tick electrical-refresh regression
+  verifies that Battery drain still advances each tick while electrical graph
+  and logical state refresh on the slower cadence. Legacy `world.power` and
+  `world.powerDelay` remain empty. The spec also checks electrical wire
   compatibility at Simple Switch and Lamp ports,
   ON/OFF logical-current relay behavior, Lamp glow and its small Battery load,
-  two-cell Elec leads, animation expiry, and electrical-state reset.
+  two-cell Elec leads, static Battery artwork without Spark/bolt animation, and
+  electrical-state reset.
   Temperature Switch and Humidity
   Switch coverage checks their declared input/output ports, 2-cell Elec leads,
   exposed yellow sensor-marker geometry, accessible comparison controls,
@@ -23,10 +25,9 @@ Exhaustive browser workflows for machines and material transfer.
   boundaries, no-air behavior, logical-current gating, live dialog/hover
   reading and current-status transitions/colors, and the sealed 5-by-5 body
   collision. The Battery-to-switch-to-Lamp regression checks a separate
-  logical-current query over long Elec runs while traveling-Spark animation
-  has delay-only frames, immediate logical blocking under a false comparison,
-  restored passage, and immediate Battery-depletion shutdown despite any
-  remaining visual tail. Battery hover diagnostics, circuit load, charge trend,
+  logical-current query over long Elec runs, immediate logical blocking under
+  a false comparison, restored passage, and immediate Battery-depletion
+  shutdown. Battery hover diagnostics, circuit load, charge trend,
   and ETA are covered in [`e2e/feedback/README.md`](../feedback/README.md).
 - `logic-gates.spec.mjs` checks NOT, AND, OR, NAND, and XOR truth-table vectors,
   no-supply shutdown, separate Battery supply ports, signal/output roles and
@@ -36,8 +37,8 @@ Exhaustive browser workflows for machines and material transfer.
   Its routed AND-to-Lamp checks use separate supply, A/B, and output circuits;
   pairwise eight-neighbor checks keep routes and Battery terminals distinct.
   The Lamp stays dark for supply-only and one-input states, lights only with
-  both inputs and supply, and switches off when any source path is lost despite
-  residual visual pulses. Battery metrics bill gate/output-network load to the
+  both inputs and supply, and switches off when any source path is lost.
+  Battery metrics bill gate/output-network load to the
   supply source, not either signal source. The supply marker is blue inactive
   and cyan powered.
 - `storage.spec.mjs` checks storage dialogs, family categories, tubing-only

@@ -22,15 +22,17 @@ import {
     setCell, inBounds, index, getDefinitions, getAirTempAt,
     getAmbientTarget, getHumidityAt, getFrameCount, applyWind, decayWindTrails,
     windStrengthToLegacyScale,
-    getBatteryCircuitMetrics, getMachineLiveStatus,
+    getBatteryCircuitMetrics, getElectricalBatteryGroups, getElectricalBatteryGroupCharge,
+    getMachineLiveStatus,
     getTubingFlows, isMachinePoweredAt,
     getIlluminationAt, ensureLocalIlluminationCurrent, getPlantEnvironment,
+    isDebugFeatureEnabled,
     getMachinePorts, getMachinePortTemplates, getMachineSetting,
     registerMachinePortLead, getMachinePortLeadOwner,
     getMachineArtworkLayout, isMachinePortMaterialCompatible, EMPTY,
     invalidateMachineCollisionMask,
     invalidateElectricalTopologyForTypes, ensureElectricalStateCurrent,
-    syncElectricalPulseTrackingAt
+    syncElectricalPulseTrackingAt, invalidateAmbientIlluminationForTypes
 } from './physics.js';
 
 let context = null;
@@ -67,96 +69,24 @@ let machineDynamicLayer = null;
 let machineStaticSignature = '';
 let cachedMachineRecords = [];
 const batteryChargeTrendSamples = new Map();
+const batteryTrendActiveScratch = new Set();
 let batteryTrendWorld = null;
-let wirePoweredGeneration = new Uint32Array(0);
-let wireVisitedGeneration = new Uint32Array(0);
-let wireRouteGeneration = 0;
-const electricalBoltCandidatesScratch = [];
-const electricalBoltRouteScratch = [];
-const electricalBoltBestRouteScratch = [];
-const electricalBoltWalkCellsScratch = [];
-const electricalBoltWalkDirectionsScratch = [];
-const ELECTRICAL_BOLT_NEIGHBOURS = [
-    [-1, -1], [0, -1], [1, -1],
-    [-1, 0],           [1, 0],
-    [-1, 1],  [0, 1],  [1, 1]
-];
-const ELECTRICAL_BOLT_CANDIDATE_CAP = 256;
-const ELECTRICAL_BOLT_ROUTE_STEP_CAP = 96;
+let machineHitGeometryVersion = 0;
+let machinePointerHitCache = null;
+let machineSpatialIndex = new Map();
+let machineSpatialIndexSignature = '';
+const MACHINE_HIT_BUCKET_SIZE = 96;
 
 function activeP0PerformanceRecorder() {
     const recorder = typeof window !== 'undefined' ? window.__P0_PERF__ : null;
     return recorder?.enabled && typeof recorder.record === 'function' ? recorder : null;
 }
 
-function buildOrderedPoweredWireRoute(world, poweredCells) {
-    if (wirePoweredGeneration.length !== world.type.length) {
-        wirePoweredGeneration = new Uint32Array(world.type.length);
-        wireVisitedGeneration = new Uint32Array(world.type.length);
-        wireRouteGeneration = 0;
-    }
-    wireRouteGeneration = (wireRouteGeneration + 1) >>> 0;
-    if (wireRouteGeneration === 0) {
-        wirePoweredGeneration.fill(0);
-        wireVisitedGeneration.fill(0);
-        wireRouteGeneration = 1;
-    }
-    const generation = wireRouteGeneration;
-    for (const cell of poweredCells) wirePoweredGeneration[cell] = generation;
-
-    electricalBoltBestRouteScratch.length = 0;
-    for (const start of poweredCells) {
-        if (wireVisitedGeneration[start] === generation) continue;
-        electricalBoltRouteScratch.length = 0;
-        electricalBoltWalkCellsScratch.length = 0;
-        electricalBoltWalkDirectionsScratch.length = 0;
-        wireVisitedGeneration[start] = generation;
-        electricalBoltRouteScratch.push(start);
-        electricalBoltWalkCellsScratch.push(start);
-        electricalBoltWalkDirectionsScratch.push(0);
-
-        while (electricalBoltWalkCellsScratch.length &&
-            electricalBoltRouteScratch.length < ELECTRICAL_BOLT_ROUTE_STEP_CAP) {
-            const stackIndex = electricalBoltWalkCellsScratch.length - 1;
-            const cell = electricalBoltWalkCellsScratch[stackIndex];
-            let nextCell = -1;
-            while (electricalBoltWalkDirectionsScratch[stackIndex] < ELECTRICAL_BOLT_NEIGHBOURS.length) {
-                const [dx, dy] = ELECTRICAL_BOLT_NEIGHBOURS[
-                    electricalBoltWalkDirectionsScratch[stackIndex]++];
-                const x = cell % world.cols + dx;
-                const y = Math.floor(cell / world.cols) + dy;
-                if (x < 0 || y < 0 || x >= world.cols || y >= world.rows) continue;
-                const candidate = y * world.cols + x;
-                if (wirePoweredGeneration[candidate] !== generation ||
-                    wireVisitedGeneration[candidate] === generation) continue;
-                nextCell = candidate;
-                break;
-            }
-            if (nextCell >= 0) {
-                wireVisitedGeneration[nextCell] = generation;
-                electricalBoltRouteScratch.push(nextCell);
-                electricalBoltWalkCellsScratch.push(nextCell);
-                electricalBoltWalkDirectionsScratch.push(0);
-                continue;
-            }
-
-            electricalBoltWalkCellsScratch.pop();
-            electricalBoltWalkDirectionsScratch.pop();
-            if (electricalBoltWalkCellsScratch.length) {
-                // Walking back along the spanning tree keeps every consecutive
-                // sample adjacent, including when a circuit branches.
-                electricalBoltRouteScratch.push(
-                    electricalBoltWalkCellsScratch[electricalBoltWalkCellsScratch.length - 1]);
-            }
-        }
-
-        if (electricalBoltRouteScratch.length > electricalBoltBestRouteScratch.length) {
-            electricalBoltBestRouteScratch.length = 0;
-            for (const cell of electricalBoltRouteScratch) electricalBoltBestRouteScratch.push(cell);
-        }
-        if (electricalBoltBestRouteScratch.length >= ELECTRICAL_BOLT_ROUTE_STEP_CAP) break;
-    }
-    return electricalBoltBestRouteScratch;
+function invalidateMachineHitCache() {
+    machineHitGeometryVersion++;
+    machinePointerHitCache = null;
+    machineSpatialIndexSignature = '';
+    machineSpatialIndex.clear();
 }
 
 // A blueprint is a compact, rectangular copy of the persistent cell state.
@@ -196,6 +126,7 @@ export function startGame({ newWorld = false, alignAtGround = false } = {}) {
         batteryChargeTrendSamples.clear();
         machineStaticSignature = '';
     }
+    invalidateMachineHitCache();
 
     expandedZoomProfile = hasLargeZoomProfile(cols, rows);
     canvasBaseScale = fitCellScaleForWorld(cols, rows);
@@ -227,6 +158,7 @@ export function startGame({ newWorld = false, alignAtGround = false } = {}) {
     }
     if (!scrollRenderAttached) {
         getElements().canvasArea.addEventListener('scroll', () => {
+            invalidateMachineHitCache();
             if (context && imageData) drawWorld();
             updateFeedback();
         }, { passive: true });
@@ -581,6 +513,12 @@ function visibleCellBounds(margin = 0) {
 }
 
 function drawIlluminationLayer(world, visualizationMode) {
+    const overlay = getElements()?.illuminationOverlay;
+    if (!isDebugFeatureEnabled('localLight')) {
+        if (overlay) overlay.style.display = 'none';
+        return;
+    }
+    if (overlay) overlay.style.display = '';
     if (!illuminationContext || !illuminationImageData) return;
     const recorder = typeof window !== 'undefined' ? window.__P0_PERF__ : null;
     const profiling = !!recorder?.enabled && typeof recorder.record === 'function';
@@ -634,9 +572,9 @@ function drawWorld() {
     const shade = world.shade;
     const data = world.data;
     const plantHealth = world.plantHealth;
-    const power = world.power;
-    const logicalPower = world.logicalPower;
-    const charge = world.charge;
+    const electricityEnabled = isDebugFeatureEnabled('electricity');
+    const logicalPower = electricityEnabled ? world.logicalPower : null;
+    const charge = electricityEnabled ? world.charge : null;
     const wind = world.wind;
     const visualizationMode = getVisualizationMode();
     const bounds = visibleCellBounds();
@@ -741,17 +679,16 @@ function drawWorld() {
             b += (def.glowRgb[2] - b) * mix;
         }
 
-        // Stored charge gives Battery a persistent yellow tint. A live power
-        // pulse is brighter, producing the moving yellow dots/line along any
-        // connected conductor.
-        if (def.chargeCapacity > 0 && charge[i] > 0) {
+        // Stored charge gives Battery a persistent yellow tint. Conductors
+        // use the steady binary logical-current plane.
+        if (electricityEnabled && def.chargeCapacity > 0 && charge[i] > 0) {
             const f = (charge[i] / def.chargeCapacity) * 0.65;
             r += (255 - r) * f;
             g += (214 - g) * f;
             b += (42 - b) * f;
         }
-        if (def.conductive && (power[i] > 0 || logicalPower?.[i] > 0)) {
-            const f = power[i] > 0 ? 0.68 + (power[i] / 7) * 0.25 : 0.7;
+        if (electricityEnabled && def.conductive && logicalPower[i] > 0) {
+            const f = 0.7;
             r += (255 - r) * f;
             g += (232 - g) * f;
             b += (48 - b) * f;
@@ -944,31 +881,93 @@ function machineIconContainsArtworkAt(icon, clientX, clientY, includePortArtwork
     return false;
 }
 
+function machineSpatialContext() {
+    const canvas = getElements().canvas;
+    const area = getElements().canvasArea;
+    const rect = canvas?.getBoundingClientRect();
+    if (!canvas || !rect || !(rect.width > 0 && rect.height > 0)) return null;
+    const signature = [machineHitGeometryVersion, rect.left, rect.top, rect.width, rect.height,
+        area?.scrollLeft || 0, area?.scrollTop || 0].join(':');
+    if (signature !== machineSpatialIndexSignature) {
+        machineSpatialIndex.clear();
+        for (const icon of machineArtworkIcons) {
+            const bounds = icon.getBoundingClientRect();
+            const pad = Math.max(12, Math.max(bounds.width, bounds.height) * 0.55);
+            const left = bounds.left - rect.left - pad;
+            const right = bounds.right - rect.left + pad;
+            const top = bounds.top - rect.top - pad;
+            const bottom = bounds.bottom - rect.top + pad;
+            const firstX = Math.floor(left / MACHINE_HIT_BUCKET_SIZE);
+            const lastX = Math.floor(right / MACHINE_HIT_BUCKET_SIZE);
+            const firstY = Math.floor(top / MACHINE_HIT_BUCKET_SIZE);
+            const lastY = Math.floor(bottom / MACHINE_HIT_BUCKET_SIZE);
+            for (let bucketY = firstY; bucketY <= lastY; bucketY++) {
+                for (let bucketX = firstX; bucketX <= lastX; bucketX++) {
+                    const key = `${bucketX},${bucketY}`;
+                    let bucket = machineSpatialIndex.get(key);
+                    if (!bucket) machineSpatialIndex.set(key, bucket = []);
+                    bucket.push(icon);
+                }
+            }
+        }
+        machineSpatialIndexSignature = signature;
+    }
+    return { rect, signature };
+}
+
+function machineCandidatesAt(clientX, clientY, spatial = machineSpatialContext()) {
+    if (!spatial) return [];
+    const bucketX = Math.floor((clientX - spatial.rect.left) / MACHINE_HIT_BUCKET_SIZE);
+    const bucketY = Math.floor((clientY - spatial.rect.top) / MACHINE_HIT_BUCKET_SIZE);
+    return machineSpatialIndex.get(`${bucketX},${bucketY}`) || [];
+}
+
 export function getMachineArtworkAtClientPoint(clientX, clientY) {
+    const startedAt = activeP0PerformanceRecorder() ? performance.now() : 0;
+    const recorder = activeP0PerformanceRecorder();
     const world = getWorld();
     if (!world) return null;
-    // Machine bodies take priority over a neighbouring machine's long port
-    // protrusion when their artwork overlaps. This keeps the center of a
-    // component selectable while retaining direct interaction at its ports.
-    for (let i = machineArtworkIcons.length - 1; i >= 0; i--) {
-        const icon = machineArtworkIcons[i];
-        if (!machineIconContainsArtworkAt(icon, clientX, clientY, false)) continue;
-        const x = Number(icon.getAttribute('data-machine-x'));
-        const y = Number(icon.getAttribute('data-machine-y'));
-        const id = world.type[index(x, y)];
-        const def = getDefinitions()[id];
-        if (def?.machine) return { id, def, x, y, tubing: false };
+    const spatial = machineSpatialContext();
+    if (!spatial) return null;
+    const area = getElements().canvasArea;
+    const rect = spatial.rect;
+    const cached = machinePointerHitCache;
+    if (cached && cached.clientX === clientX && cached.clientY === clientY &&
+        cached.world === world && cached.signature === spatial.signature) {
+        if (recorder) recorder.record('hoverHitTest', performance.now() - startedAt, {
+            exactSvgTests: 0, cacheHits: 1, candidateCount: 0, hit: cached.result ? 1 : 0
+        });
+        return cached.result;
     }
-    for (let i = machineArtworkIcons.length - 1; i >= 0; i--) {
-        const icon = machineArtworkIcons[i];
-        if (!machineIconContainsArtworkAt(icon, clientX, clientY)) continue;
-        const x = Number(icon.getAttribute('data-machine-x'));
-        const y = Number(icon.getAttribute('data-machine-y'));
-        const id = world.type[index(x, y)];
-        const def = getDefinitions()[id];
-        if (def?.machine) return { id, def, x, y, tubing: false };
-    }
-    return null;
+
+    let exactSvgTests = 0;
+    const candidates = machineCandidatesAt(clientX, clientY, spatial);
+    let result = null;
+    const findHit = includePorts => {
+        for (let i = candidates.length - 1; i >= 0; i--) {
+            const icon = candidates[i];
+            exactSvgTests++;
+            if (!machineIconContainsArtworkAt(icon, clientX, clientY, includePorts)) continue;
+            const x = Number(icon.getAttribute('data-machine-x'));
+            const y = Number(icon.getAttribute('data-machine-y'));
+            const id = world.type[index(x, y)];
+            const def = getDefinitions()[id];
+            if (def?.machine) return { id, def, x, y, tubing: false };
+        }
+        return null;
+    };
+    // Preserve body-before-port priority when art overlaps.
+    result = findHit(false) || findHit(true);
+    machinePointerHitCache = {
+        clientX, clientY, world, signature: spatial.signature, result
+    };
+    if (recorder) recorder.record('hoverHitTest', performance.now() - startedAt, {
+        exactSvgTests,
+        cacheHits: 0,
+        candidateCount: candidates.length,
+        hit: result ? 1 : 0
+    });
+    return result;
 }
 
 function appendMachineSprite(icon, machineType) {
@@ -1367,7 +1366,7 @@ function drawMachineOverlays() {
     flowLayer.setAttribute('aria-hidden', 'true');
     machineDynamicLayer.appendChild(flowLayer);
     const electricalLayer = document.createElementNS(MACHINE_ICON_SVG_NS, 'svg');
-    electricalLayer.setAttribute('class', 'electrical-signal-overlay');
+    electricalLayer.setAttribute('class', 'electrical-status-overlay');
     electricalLayer.setAttribute('viewBox', `0 0 ${canvasBounds.width} ${canvasBounds.height}`);
     electricalLayer.setAttribute('width', '100%');
     electricalLayer.setAttribute('height', '100%');
@@ -1442,6 +1441,7 @@ function drawMachineOverlays() {
     ]);
     const staticRebuild = nextStaticSignature !== machineStaticSignature;
     if (staticRebuild) {
+        invalidateMachineHitCache();
         machineStaticLayer.replaceChildren();
         machineStaticSignature = nextStaticSignature;
         cachedMachineRecords = machineRecords;
@@ -1587,7 +1587,7 @@ function drawMachineOverlays() {
     };
 
     drawTubingFlowOverlay(flowLayer, getTubingFlows(), cellWidth, cellHeight, viewport);
-    const boltCount = drawElectricalSignalOverlay(electricalLayer, world, defs, viewport,
+    const electricalOverlayStats = drawElectricalStatusOverlay(electricalLayer, world, viewport,
         cellWidth, cellHeight);
 
     let machineCount = machineRecords.length;
@@ -1710,7 +1710,8 @@ function drawMachineOverlays() {
         recorder.record('machineOverlayReuse', performance.now() - startedAt, {
             machineCount,
             staticSvgReuse: staticRebuild ? 0 : machineCount,
-            boltCount
+            batteryGroupsVisited: electricalOverlayStats.groupsVisited,
+            trendGlyphsCreated: electricalOverlayStats.glyphsCreated
         });
     }
 }
@@ -1735,110 +1736,84 @@ export function setMachinePortConnectorPreview(preview = null) {
     drawMachineOverlays();
 }
 
-function drawElectricalSignalOverlay(layer, world, definitions, visible, cellWidth, cellHeight) {
+function drawElectricalStatusOverlay(layer, world, visible, cellWidth, cellHeight) {
     const recorder = activeP0PerformanceRecorder();
     const startedAt = recorder ? performance.now() : 0;
-    const frame = getFrameCount();
-    const noWireSparks = getElements().noWireSparksToggle?.checked === true;
-    const poweredCells = electricalBoltCandidatesScratch;
-    poweredCells.length = 0;
-    let poweredConductiveCells = 0;
-    const now = performance.now();
-    const trendWindowMs = 5000;
+    const groups = getElectricalBatteryGroups();
     if (batteryTrendWorld !== world) {
         batteryChargeTrendSamples.clear();
         batteryTrendWorld = world;
     }
-
-    for (let y = visible.top; y < visible.bottom; y++) {
-        for (let x = visible.left; x < visible.right; x++) {
-            const i = y * world.cols + x;
-            const def = definitions[world.type[i]];
-            if (def?.conductive && (world.power[i] > 0 || world.logicalPower?.[i] > 0)) {
-                poweredConductiveCells++;
-                if (!noWireSparks && !(def.chargeCapacity > 0) &&
-                    poweredCells.length < ELECTRICAL_BOLT_CANDIDATE_CAP) poweredCells.push(i);
-            }
-            if (!(def?.chargeCapacity > 0)) continue;
-
-            // This inexpensive per-Battery sample also works when the Battery
-            // is outside the pointer hover. It reads the stored charge plane
-            // only; circuit metrics/load traversal stay on the physics cache.
-            const charge = world.charge[i];
-            let trend = batteryChargeTrendSamples.get(i);
-            if (!trend) {
-                trend = { sampledAt: now, startingCharge: charge, state: null };
-                batteryChargeTrendSamples.set(i, trend);
-            } else if (now - trend.sampledAt >= trendWindowMs) {
-                const delta = charge - trend.startingCharge;
-                trend.state = delta > 1e-6 ? 'charging' : delta < -1e-6 ? 'discharging' : null;
-                trend.sampledAt = now;
-                trend.startingCharge = charge;
-            }
-            if (trend.state) {
-                const direction = trend.state === 'charging' ? '+' : '−';
-                const glyph = document.createElementNS(MACHINE_ICON_SVG_NS, 'text');
-                glyph.setAttribute('class', 'battery-charge-trend');
-                glyph.setAttribute('data-state', trend.state);
-                glyph.setAttribute('data-cell-x', String(x));
-                glyph.setAttribute('data-cell-y', String(y));
-                glyph.setAttribute('x', String((x + 0.5) * cellWidth));
-                glyph.setAttribute('y', String((y + 0.5) * cellHeight));
-                glyph.setAttribute('text-anchor', 'middle');
-                glyph.setAttribute('dominant-baseline', 'central');
-                glyph.setAttribute('font-size', String(Math.max(8, Math.min(16,
-                    Math.min(cellWidth, cellHeight) * 0.72))));
-                glyph.setAttribute('font-weight', '800');
-                glyph.setAttribute('fill', trend.state === 'charging' ? '#36e89a' : '#ff5367');
-                glyph.textContent = direction;
-                layer.appendChild(glyph);
-            }
+    const activeGroups = batteryTrendActiveScratch;
+    activeGroups.clear();
+    const now = performance.now();
+    let trendGlyphCount = 0;
+    for (const group of groups) {
+        // Electrical topology is periodically rebuilt even when the Battery
+        // entity did not change. Key the five-second sample by its first cell
+        // so those refreshes do not restart the trend window every 30 ticks.
+        const trendKey = group.cells[0];
+        activeGroups.add(trendKey);
+        let trend = batteryChargeTrendSamples.get(trendKey);
+        if (!trend) {
+            const charge = getElectricalBatteryGroupCharge(group);
+            trend = { sampledAt: now, startingCharge: charge, state: null };
+            batteryChargeTrendSamples.set(trendKey, trend);
+        } else if (now - trend.sampledAt >= 5000) {
+            const charge = getElectricalBatteryGroupCharge(group);
+            const delta = charge - trend.startingCharge;
+            trend.state = delta > 1e-6 ? 'charging' : delta < -1e-6 ? 'discharging' : null;
+            trend.sampledAt = now;
+            trend.startingCharge = charge;
         }
-    }
-    for (const cell of batteryChargeTrendSamples.keys()) {
-        if (!(definitions[world.type[cell]]?.chargeCapacity > 0)) batteryChargeTrendSamples.delete(cell);
-    }
-
-    let boltCount = 0;
-    if (!noWireSparks && poweredCells.length) {
-        const orderedRoute = buildOrderedPoweredWireRoute(world, poweredCells);
-        const cap = Math.min(8, orderedRoute.length);
-        // Keep each rendered group on one contiguous route segment. Wrapping
-        // from the DFS route's final branch back to its first cell can jump
-        // across the circuit even though every intermediate route step is
-        // adjacent.
-        const lastStart = Math.max(0, orderedRoute.length - cap);
-        const start = lastStart > 0 ? (frame * 3) % (lastStart + 1) : 0;
-        for (let offset = 0; offset < cap; offset++) {
-            const cell = orderedRoute[start + offset];
-            const x = cell % world.cols;
-            const y = Math.floor(cell / world.cols);
-            const px = (x + 0.5) * cellWidth;
-            const py = (y + 0.5) * cellHeight;
-            const halfWidth = Math.max(1.5, Math.min(5, cellWidth * 0.3));
-            const halfHeight = Math.max(1.5, Math.min(5, cellHeight * 0.34));
-            const bolt = document.createElementNS(MACHINE_ICON_SVG_NS, 'path');
-            bolt.setAttribute('class', 'electrical-signal-spark electrical-z-bolt');
-            bolt.setAttribute('data-cell-x', String(x));
-            bolt.setAttribute('data-cell-y', String(y));
-            bolt.setAttribute('d', `M ${px - halfWidth} ${py - halfHeight} L ${px - halfWidth * 0.3} ${py + halfHeight} L ${px + halfWidth * 0.25} ${py - halfHeight * 0.75} L ${px + halfWidth} ${py + halfHeight * 0.55}`);
-            bolt.setAttribute('stroke', '#fff4a3');
-            bolt.setAttribute('stroke-width', String(Math.max(1, Math.min(2.2, Math.min(cellWidth, cellHeight) * 0.13))));
-            bolt.setAttribute('stroke-linecap', 'round');
-            bolt.setAttribute('stroke-linejoin', 'round');
-            bolt.setAttribute('fill', 'none');
-            bolt.setAttribute('opacity', '0.88');
-            layer.appendChild(bolt);
-            boltCount++;
+        if (!trend.state || !isDebugFeatureEnabled('electricalEffects')) continue;
+        let anchor = group.anchorCell ?? group.cells[0];
+        let x = anchor % world.cols;
+        let y = Math.floor(anchor / world.cols);
+        if (x < visible.left || x >= visible.right || y < visible.top || y >= visible.bottom) {
+            const bounds = group.bounds;
+            if (!bounds || bounds.minX >= visible.right || bounds.maxX < visible.left ||
+                bounds.minY >= visible.bottom || bounds.maxY < visible.top) continue;
+            let foundVisibleCell = false;
+            for (const cell of group.cells) {
+                const cellX = cell % world.cols;
+                const cellY = Math.floor(cell / world.cols);
+                if (cellX >= visible.left && cellX < visible.right &&
+                    cellY >= visible.top && cellY < visible.bottom) {
+                    anchor = cell;
+                    x = cellX;
+                    y = cellY;
+                    foundVisibleCell = true;
+                    break;
+                }
+            }
+            if (!foundVisibleCell) continue;
         }
+        const glyph = document.createElementNS(MACHINE_ICON_SVG_NS, 'text');
+        glyph.setAttribute('class', 'battery-charge-trend');
+        glyph.setAttribute('data-state', trend.state);
+        glyph.setAttribute('data-cell-x', String(x));
+        glyph.setAttribute('data-cell-y', String(y));
+        glyph.setAttribute('x', String((x + 0.5) * cellWidth));
+        glyph.setAttribute('y', String((y + 0.5) * cellHeight));
+        glyph.setAttribute('text-anchor', 'middle');
+        glyph.setAttribute('dominant-baseline', 'central');
+        glyph.setAttribute('font-size', String(Math.max(8, Math.min(16,
+            Math.min(cellWidth, cellHeight) * 0.72))));
+        glyph.setAttribute('font-weight', '800');
+        glyph.setAttribute('fill', trend.state === 'charging' ? '#36e89a' : '#ff5367');
+        glyph.textContent = trend.state === 'charging' ? '+' : '\u2212';
+        layer.appendChild(glyph);
+        trendGlyphCount++;
     }
-
-    if (recorder) recorder.record('electricalWireAnimation', performance.now() - startedAt, {
-        poweredConductiveCells,
-        boltCount,
-        animationSuppressed: noWireSparks ? 1 : 0
+    for (const trendKey of batteryChargeTrendSamples.keys()) {
+        if (!activeGroups.has(trendKey)) batteryChargeTrendSamples.delete(trendKey);
+    }
+    if (recorder) recorder.record('electricalStatusOverlay', performance.now() - startedAt, {
+        batteryGroupsVisited: groups.length,
+        trendGlyphsCreated: trendGlyphCount
     });
-    return boltCount;
+    return { groupsVisited: groups.length, glyphsCreated: trendGlyphCount };
 }
 
 // Animate discrete bands along the same ordered tubing-cell route which moves
@@ -2189,26 +2164,26 @@ function updateReadout() {
 }
 
 function formatFeedbackNumber(value) {
-    return Number.isFinite(value) ? String(Math.round(value * 10) / 10) : '—';
+    return Number.isFinite(value) ? String(Math.round(value * 10) / 10) : '\u2014';
 }
 
 function transitionLines(def, defs) {
     const transitions = [];
     const targetName = id => defs[id]?.name;
     if (Number.isFinite(def.boilPoint) && targetName(def.boilsInto)) {
-        transitions.push(`> ${formatFeedbackNumber(def.boilPoint)}°C ${def.name} -> ${targetName(def.boilsInto)}`);
+        transitions.push(`> ${formatFeedbackNumber(def.boilPoint)}\u00b0C ${def.name} -> ${targetName(def.boilsInto)}`);
     }
     if (Number.isFinite(def.meltPoint) && targetName(def.meltsInto)) {
-        transitions.push(`> ${formatFeedbackNumber(def.meltPoint)}°C ${def.name} -> ${targetName(def.meltsInto)}`);
+        transitions.push(`> ${formatFeedbackNumber(def.meltPoint)}\u00b0C ${def.name} -> ${targetName(def.meltsInto)}`);
     }
     if (Number.isFinite(def.freezePoint) && targetName(def.freezesInto)) {
-        transitions.push(`< ${formatFeedbackNumber(def.freezePoint)}°C ${def.name} -> ${targetName(def.freezesInto)}`);
+        transitions.push(`< ${formatFeedbackNumber(def.freezePoint)}\u00b0C ${def.name} -> ${targetName(def.freezesInto)}`);
     }
     if (Number.isFinite(def.ignitePoint) && targetName(def.burnsInto)) {
-        transitions.push(`> ${formatFeedbackNumber(def.ignitePoint)}°C ${def.name} -> ${targetName(def.burnsInto)}`);
+        transitions.push(`> ${formatFeedbackNumber(def.ignitePoint)}\u00b0C ${def.name} -> ${targetName(def.burnsInto)}`);
     }
     if (Number.isFinite(def.evaporatesAbove)) {
-        transitions.push(`> ${formatFeedbackNumber(def.evaporatesAbove)}°C: ${def.name} evaporates`);
+        transitions.push(`> ${formatFeedbackNumber(def.evaporatesAbove)}\u00b0C: ${def.name} evaporates`);
     }
     return transitions;
 }
@@ -2269,10 +2244,10 @@ function getBatteryTrend(metrics, now) {
     let label = 'No net charge flow';
     if (chargePerSecond < -1e-6) {
         state = 'red';
-        label = `DISCHARGING • ~${formatFeedbackNumber(metrics.charge / -chargePerSecond)} s to empty`;
+        label = `DISCHARGING \u2022 ~${formatFeedbackNumber(metrics.charge / -chargePerSecond)} s to empty`;
     } else if (chargePerSecond > 1e-6) {
         state = 'green';
-        label = `CHARGING • ~${formatFeedbackNumber((metrics.capacity - metrics.charge) / chargePerSecond)} s to full`;
+        label = `CHARGING \u2022 ~${formatFeedbackNumber((metrics.capacity - metrics.charge) / chargePerSecond)} s to full`;
     }
 
     batteryTrendSample = {
@@ -2285,6 +2260,20 @@ function getBatteryTrend(metrics, now) {
 }
 
 function updateFeedback() {
+    const recorder = activeP0PerformanceRecorder();
+    if (!recorder) {
+        updateFeedbackContent();
+        return;
+    }
+    const startedAt = performance.now();
+    updateFeedbackContent();
+    recorder.record('updateFeedback', performance.now() - startedAt, {
+        hasPointer: hoverClientX !== null && hoverClientY !== null ? 1 : 0,
+        machineCount: machineArtworkIcons.length
+    });
+}
+
+function updateFeedbackContent() {
     const elements = getElements();
     const feedback = elements.hoverFeedback;
     if (!feedback) return;
@@ -2321,12 +2310,12 @@ function updateFeedback() {
         const status = getMachineLiveStatus(machine.x, machine.y);
         if (!status) return;
         appendFeedbackLine(feedback, status.name);
-        appendFeedbackLine(feedback, `Temperature: ${formatFeedbackNumber(status.temperature)}°C`);
+        appendFeedbackLine(feedback, `Temperature: ${formatFeedbackNumber(status.temperature)}\u00b0C`);
         appendFeedbackLine(feedback, `Status: ${status.active ? 'Active' : 'Inactive'}`);
         appendFeedbackLine(feedback,
             `Illumination received: ${formatFeedbackNumber(getIlluminationAt(machine.x, machine.y))}%`);
         if (status.name === 'Lamp') {
-            appendFeedbackLine(feedback, `Light emission: ${status.active ? 'ON' : 'OFF'} · 360° · 25 cells`);
+            appendFeedbackLine(feedback, `Light emission: ${status.active ? 'ON' : 'OFF'} \u00b7 360\u00b0 \u00b7 25 cells`);
         }
         for (const port of status.ports) {
             const label = /^supply$/i.test(port.id) ? 'Battery supply input'
@@ -2349,8 +2338,8 @@ function updateFeedback() {
             world.generalWindX[cellIndex] + world.gustWindX[cellIndex];
         const windY = world.airflowY[cellIndex] + world.displayWindY[cellIndex] +
             world.generalWindY[cellIndex] + world.gustWindY[cellIndex];
-        appendFeedbackLine(feedback, `Air temperature: ${formatFeedbackNumber(world.temp[cellIndex])}°C`);
-        appendFeedbackLine(feedback, `Humidity: ${Math.round(world.humidity[cellIndex])}%`);
+        appendFeedbackLine(feedback, `Air temperature: ${formatFeedbackNumber(world.temp[cellIndex])}\u00b0C`);
+        appendFeedbackLine(feedback, `Humidity: ${Math.round(getHumidityAt(feedbackX, feedbackY))}%`);
         appendFeedbackLine(feedback, `Wind speed: ${formatFeedbackNumber(Math.hypot(windX, windY))}`);
         appendFeedbackLine(feedback,
             `Illumination: ${formatFeedbackNumber(getIlluminationAt(feedbackX, feedbackY))}%`);
@@ -2362,19 +2351,19 @@ function updateFeedback() {
         ? getPlantEnvironment(feedbackX, feedbackY) : null;
     appendFeedbackLine(feedback, def.name);
     appendFeedbackLine(feedback,
-        `Catalog: ${def.group}${def.catalogSubgroup ? ` / ${def.catalogSubgroup}` : ''} · ${def.category}`);
+        `Catalog: ${def.group}${def.catalogSubgroup ? ` / ${def.catalogSubgroup}` : ''} \u00b7 ${def.category}`);
     if (plantEnvironment) {
         appendFeedbackLine(feedback,
-            `Temperature: ${formatFeedbackNumber(plantEnvironment.temperature)}°C · ideal ${formatFeedbackNumber(plantEnvironment.idealTemperature)}°C (${formatFeedbackNumber(plantEnvironment.minTemperature)}–${formatFeedbackNumber(plantEnvironment.maxTemperature)}°C)`);
+            `Temperature: ${formatFeedbackNumber(plantEnvironment.temperature)}\u00b0C \u00b7 ideal ${formatFeedbackNumber(plantEnvironment.idealTemperature)}\u00b0C (${formatFeedbackNumber(plantEnvironment.minTemperature)}\u2013${formatFeedbackNumber(plantEnvironment.maxTemperature)}\u00b0C)`);
         appendFeedbackLine(feedback,
-            `Illumination: ${formatFeedbackNumber(plantEnvironment.illumination)}% · min ${formatFeedbackNumber(plantEnvironment.minIllumination)} / ideal ${formatFeedbackNumber(plantEnvironment.idealIllumination)}`);
+            `Illumination: ${formatFeedbackNumber(plantEnvironment.illumination)}% \u00b7 min ${formatFeedbackNumber(plantEnvironment.minIllumination)} / ideal ${formatFeedbackNumber(plantEnvironment.idealIllumination)}`);
         appendFeedbackLine(feedback,
-            `Humidity: ${formatFeedbackNumber(plantEnvironment.humidity)}% · ideal ${formatFeedbackNumber(plantEnvironment.idealHumidity)}% (${formatFeedbackNumber(plantEnvironment.minHumidity)}–${formatFeedbackNumber(plantEnvironment.maxHumidity)}%)`);
+            `Humidity: ${formatFeedbackNumber(plantEnvironment.humidity)}% \u00b7 ideal ${formatFeedbackNumber(plantEnvironment.idealHumidity)}% (${formatFeedbackNumber(plantEnvironment.minHumidity)}\u2013${formatFeedbackNumber(plantEnvironment.maxHumidity)}%)`);
     } else {
-        appendFeedbackLine(feedback, `Temperature: ${formatFeedbackNumber(world.temp[cellIndex])}°C`);
+        appendFeedbackLine(feedback, `Temperature: ${formatFeedbackNumber(world.temp[cellIndex])}\u00b0C`);
         appendFeedbackLine(feedback,
             `Illumination: ${formatFeedbackNumber(getIlluminationAt(feedbackX, feedbackY))}%`);
-        appendFeedbackLine(feedback, `Humidity: ${Math.round(world.humidity[cellIndex])}%`);
+        appendFeedbackLine(feedback, `Humidity: ${Math.round(getHumidityAt(feedbackX, feedbackY))}%`);
     }
     const transitions = transitionLines(def, defs);
     if (def.name !== 'Battery' || transitions.length) {
@@ -2394,7 +2383,7 @@ function updateFeedback() {
     const trend = getBatteryTrend(battery, performance.now());
     updateChargeIndicator(elements, { ...battery, ratio: trend.ratio });
     const load = `Circuit load: ${formatFeedbackNumber(battery.load)}/tick`;
-    const separator = trend.state ? ' |' : ' · ';
+    const separator = trend.state ? ' |' : ' \u00b7 ';
     appendFeedbackLine(feedback,
         `${load}${separator}${trend.label}`, trend.state, true);
 }
@@ -2409,7 +2398,8 @@ function machineFaceCoversCell(cellX, cellY, exceptMachineIndex = -1, alsoExcept
     const cellHeight = rect.height / world.rows;
     const clientX = rect.left + (cellX + 0.5) * cellWidth;
     const clientY = rect.top + (cellY + 0.5) * cellHeight;
-    for (const icon of machineArtworkIcons) {
+    const candidates = machineCandidatesAt(clientX, clientY);
+    for (const icon of candidates) {
         const machineX = Number(icon.getAttribute('data-machine-x'));
         const machineY = Number(icon.getAttribute('data-machine-y'));
         const machineIndex = index(machineX, machineY);
@@ -2481,6 +2471,7 @@ export function paintCell(centreX, centreY, dragX, dragY, rayDirection = null, p
             if (id === EMPTY) {
                 const previousType = world.type[i];
                 world.type[i] = EMPTY;
+                invalidateAmbientIlluminationForTypes(previousType, EMPTY, i);
                 world.machineSensorRule[i] = 0;
                 world.machineSensorThreshold[i] = 0;
                 world.life[i] = 0;
@@ -2632,6 +2623,7 @@ function paintSingleCell(x, y, id, fillLooseMaterial = false, rayDirection = nul
     if (id === EMPTY) {
         const previousType = world.type[i];
         world.type[i] = EMPTY;
+        invalidateAmbientIlluminationForTypes(previousType, EMPTY, i);
         world.machineSensorRule[i] = 0;
         world.machineSensorThreshold[i] = 0;
         world.life[i] = 0;
@@ -2719,6 +2711,7 @@ export function stampBlueprintAt(blueprint, startX, startY) {
                 // have no corresponding plane; restore its empty default.
                 world[field][destination] = blueprint.cells[field]?.[source] ?? 0;
             }
+            invalidateAmbientIlluminationForTypes(previousType, world.type[destination], destination);
             invalidateElectricalTopologyForTypes(previousType, world.type[destination]);
             syncElectricalPulseTrackingAt(destination);
             world.tempNext[destination] = world.temp[destination];
@@ -2854,6 +2847,7 @@ export function hasGrabbedPixels() {
 function clearGrabbedCell(world, i, y) {
     const previousType = world.type[i];
     world.type[i] = EMPTY;
+    invalidateAmbientIlluminationForTypes(previousType, EMPTY, i);
     invalidateElectricalTopologyForTypes(previousType, EMPTY);
     world.temp[i] = getAirTempAt(y);
     world.life[i] = 0;
@@ -2896,6 +2890,7 @@ function clearGrabbedCell(world, i, y) {
 function restoreGrabbedCell(world, i, cell) {
     const previousType = world.type[i];
     world.type[i] = cell.type;
+    invalidateAmbientIlluminationForTypes(previousType, cell.type, i);
     invalidateElectricalTopologyForTypes(previousType, cell.type);
     world.temp[i] = cell.temp;
     world.life[i] = cell.life;
@@ -2930,10 +2925,10 @@ function restoreGrabbedCell(world, i, cell) {
         world.mixerOutputMixed[i] = cell.mixerOutputMixed || 0;
     world.mixerOutputFlow[i] = cell.mixerOutputFlow || 0; world.mixerNextInput[i] = cell.mixerNextInput || 0;
     world.mixerOutputNext[i] = cell.mixerOutputNext || 0;
-    world.power[i] = cell.power;
-    world.powerDelay[i] = cell.powerDelay;
-    syncElectricalPulseTrackingAt(i);
+    world.power[i] = 0;
+    world.powerDelay[i] = 0;
     world.charge[i] = cell.charge;
+    syncElectricalPulseTrackingAt(i);
     world.wind[i] = cell.wind;
     world.moved[i] = 1;
 }

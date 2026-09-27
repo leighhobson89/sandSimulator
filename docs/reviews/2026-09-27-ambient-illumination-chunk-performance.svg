@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="250" viewBox="0 0 760 250" role="img" aria-labelledby="title desc">
+  <title id="title">Ambient visibility edit step timings before and after chunk sampling</title>
+  <desc id="desc">Median fell from 53.0 to 21.6 milliseconds and p95 fell from 453.8 to 71.9 milliseconds.</desc>
+  <style>
+    text { font-family: Arial, sans-serif; fill: #1f2937; }
+    .title { font-size: 17px; font-weight: 700; }
+    .label { font-size: 13px; }
+    .value { font-size: 12px; }
+    .axis { stroke: #9ca3af; stroke-width: 1; }
+    .grid { stroke: #e5e7eb; stroke-width: 1; }
+    .before { fill: #94a3b8; }
+    .after { fill: #15803d; }
+  </style>
+  <text x="20" y="26" class="title">Ambient visibility edit: simulation step time</text>
+  <rect x="480" y="12" width="12" height="12" class="before"/><text x="498" y="23" class="value">Previous</text>
+  <rect x="570" y="12" width="12" height="12" class="after"/><text x="588" y="23" class="value">30-cell chunks</text>
+  <line x1="185" y1="48" x2="735" y2="48" class="axis"/>
+  <line x1="185" y1="48" x2="185" y2="214" class="axis"/>
+  <line x1="295" y1="48" x2="295" y2="214" class="grid"/>
+  <line x1="405" y1="48" x2="405" y2="214" class="grid"/>
+  <line x1="515" y1="48" x2="515" y2="214" class="grid"/>
+  <line x1="625" y1="48" x2="625" y2="214" class="grid"/>
+  <line x1="735" y1="48" x2="735" y2="214" class="grid"/>
+  <text x="20" y="94" class="label">Median</text>
+  <rect x="185" y="67" width="58.3" height="14" rx="3" class="before"/>
+  <text x="250" y="78" class="value">53.0 ms</text>
+  <rect x="185" y="86" width="23.8" height="14" rx="3" class="after"/>
+  <text x="216" y="97" class="value">21.6 ms</text>
+  <text x="20" y="158" class="label">p95</text>
+  <rect x="185" y="131" width="499.2" height="14" rx="3" class="before"/>
+  <text x="690" y="142" class="value">453.8 ms</text>
+  <rect x="185" y="150" width="79.1" height="14" rx="3" class="after"/>
+  <text x="271" y="161" class="value">71.9 ms</text>
+  <text x="180" y="233" class="value">0</text>
+  <text x="284" y="233" class="value">100</text>
+  <text x="394" y="233" class="value">200</text>
+  <text x="504" y="233" class="value">300</text>
+  <text x="614" y="233" class="value">400</text>
+  <text x="720" y="233" class="value">500 ms</text>
+</svg>

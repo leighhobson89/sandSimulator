@@ -16,7 +16,7 @@ import {
     getAirTempAt,
     captureSimulationState, restoreSimulationState,
     applyWind, getWindTrails, decayWindTrails,
-    setAmbientWindOn, isBreezeBlowing, isPowered, getStoredCharge,
+    setAmbientWindOn, isBreezeBlowing, isLogicallyPowered, getStoredCharge,
     getConnectedBatteryCharge, getStorageInventory, getSprinklerInventory, getSprinklerReleaseRate,
     getSprinklerTubingRate,
     getTubingFlows, setSprinklerReleaseEnabled, setSprinklerReleaseRate, setRandomSeed,
@@ -367,7 +367,7 @@ function runStainlessSteelRegression() {
         stepSimulation();
         const fanIndex = index(5, 4);
         check('Battery-grid Stainless Steel powers a Fan two cells beyond its wire end',
-            getWorld().powerDelay[fanIndex] > 0 || getWorld().power[fanIndex] > 0,
+            physics.isMachinePoweredAt(5, 4),
             `wireReach=${stainless.wireReach}, power=${getWorld().power[fanIndex]}, delay=${getWorld().powerDelay[fanIndex]}`);
     }
 
@@ -927,7 +927,7 @@ function runFanWindScaleAlignmentRegression() {
         stepSimulation();
         return {
             admittedSpeed,
-            powered: isPowered(fanX, fanY),
+            powered: physics.isMachinePoweredAt(fanX, fanY),
             airflowX: Array.from(getWorld().airflowX),
             airflowY: Array.from(getWorld().airflowY)
         };
@@ -1795,6 +1795,89 @@ function runPlantIlluminationRegressions() {
         }));
     if (!hasLightApi || !hasPlantEnvironmentApi) return;
 
+    const chunkSize = physics.AMBIENT_ILLUMINATION_CHUNK_SIZE;
+    check('ambient chunk size is exposed as a positive integer constant',
+        Number.isInteger(chunkSize) && chunkSize > 0, String(chunkSize));
+    if (!Number.isInteger(chunkSize) || chunkSize < 3) return;
+    const chunkCenter = (start, extent) => start + Math.floor((extent - 1) / 2);
+    const chunkCols = chunkSize * 3 + 5;
+    const chunkRows = chunkSize * 2 + 1;
+    const firstChunkCenter = { x: chunkCenter(0, chunkSize), y: chunkCenter(0, chunkSize) };
+    const groundChunkCenter = { x: chunkCenter(chunkSize, chunkSize), y: firstChunkCenter.y };
+    const gasChunkCenter = { x: firstChunkCenter.x, y: chunkCenter(chunkSize, chunkSize) };
+    const fallbackChunkCenter = { x: chunkCenter(chunkSize * 2, chunkSize), y: gasChunkCenter.y };
+    const edgeChunkCenter = { x: chunkCenter(chunkSize * 3, 5), y: chunkCenter(chunkSize * 2, 1) };
+    createWorld(chunkCols, chunkRows);
+    let chunkWorld = getWorld();
+    chunkWorld.type.fill(ID.Wall);
+    defs[ID.Steam].moves = false;
+    const clearChunkRay = (x, firstY, lastY) => {
+        for (let y = firstY; y <= lastY; y++) chunkWorld.type[index(x, y)] = ID.Empty ?? 0;
+    };
+    clearChunkRay(firstChunkCenter.x, 0, gasChunkCenter.y);
+    const chunkGasY = chunkSize + Math.floor((gasChunkCenter.y - chunkSize) / 2);
+    chunkWorld.type[index(gasChunkCenter.x, chunkGasY)] = ID.Steam;
+    clearChunkRay(groundChunkCenter.x, firstChunkCenter.y, chunkRows - 1);
+    clearChunkRay(edgeChunkCenter.x, 0, edgeChunkCenter.y);
+    physics.setAmbientIlluminationTarget(80);
+    const chunkReadings = [
+        physics.getIlluminationAt(firstChunkCenter.x, firstChunkCenter.y),
+        physics.getIlluminationAt(groundChunkCenter.x, groundChunkCenter.y),
+        physics.getIlluminationAt(gasChunkCenter.x, gasChunkCenter.y),
+        physics.getIlluminationAt(fallbackChunkCenter.x, fallbackChunkCenter.y),
+        physics.getIlluminationAt(edgeChunkCenter.x, edgeChunkCenter.y)
+    ];
+    const chunkValues = [];
+    for (let y0 = 0; y0 < chunkWorld.rows; y0 += chunkSize) {
+        for (let x0 = 0; x0 < chunkWorld.cols; x0 += chunkSize) {
+            const width = Math.min(chunkSize, chunkWorld.cols - x0);
+            const height = Math.min(chunkSize, chunkWorld.rows - y0);
+            const value = chunkWorld.ambientIllumination[index(x0, y0)];
+            let uniform = true;
+            for (let y = y0; y < y0 + height; y++) {
+                for (let x = x0; x < x0 + width; x++) {
+                    if (chunkWorld.ambientIllumination[index(x, y)] !== value) uniform = false;
+                }
+            }
+            chunkValues.push({ x0, y0, width, height, value, uniform });
+        }
+    }
+    check('ambient chunks sample their center and fill partial edge tiles uniformly',
+        chunkReadings.join(',') === '80,40,60,10,80' && chunkValues.length === 12 &&
+        chunkValues.every(tile => tile.uniform) &&
+        chunkValues.find(tile => tile.x0 === chunkSize * 3 && tile.y0 === chunkSize * 2)?.width === 5 &&
+        chunkValues.find(tile => tile.x0 === chunkSize * 3 && tile.y0 === chunkSize * 2)?.height === 1,
+        JSON.stringify({ chunkReadings, chunkValues }));
+
+    // The sample at the in-bounds chunk center remains the ambient value for
+    // every cell in that chunk, even when local visibility differs.
+    createWorld(chunkSize, chunkSize);
+    const sampledWorld = getWorld();
+    const center = chunkCenter(0, chunkSize);
+    sampledWorld.type.fill(ID.Wall);
+    for (let y = 0; y <= center; y++) sampledWorld.type[index(center - 1, y)] = ID.Empty ?? 0;
+    for (let y = center; y < chunkSize; y++) sampledWorld.type[index(center + 1, y)] = ID.Empty ?? 0;
+    sampledWorld.type[index(center - 1, Math.floor(center / 2))] = ID.Steam;
+    sampledWorld.type[index(center + 1,
+        center + Math.floor((chunkSize - 1 - center) / 2))] = ID.Steam;
+    physics.setAmbientIlluminationTarget(80);
+    const centerValue = physics.getIlluminationAt(center, center);
+    let nonUniformCells = 0;
+    for (let y = 0; y < chunkSize; y++) {
+        for (let x = 0; x < chunkSize; x++) {
+            const actual = physics.getIlluminationAt(x, y);
+            if (actual !== centerValue) nonUniformCells++;
+        }
+    }
+    const leftSample = physics.getIlluminationAt(center - 1, center);
+    const rightSample = physics.getIlluminationAt(center + 1, center);
+    check('every cell in a mixed chunk uses the in-bounds center sample across the former wall split',
+        centerValue === 10 && leftSample === centerValue && rightSample === centerValue &&
+        nonUniformCells === 0,
+        JSON.stringify({ centerValue, leftSample, rightSample, nonUniformCells,
+            centerCell: { x: center, y: center },
+            divider: sampledWorld.type[index(center, center)] }));
+
     createWorld(12, 12);
     const initialLight = physics.getAmbientIlluminationTarget();
     physics.setAmbientIlluminationTarget(-1);
@@ -1806,22 +1889,29 @@ function runPlantIlluminationRegressions() {
     const sourceIndex = index(5, 5);
     const localEmission = getWorld().illumination[sourceIndex] || physics.getIlluminationAt(5, 5);
     const effectiveAtSource = physics.getIlluminationAt(5, 5);
-    physics.setAmbientIlluminationTarget(50);
-    const effectiveAmbient = physics.getIlluminationAt(9, 9);
     check('new worlds default to 50 ambient illumination', initialLight === 50, String(initialLight));
     check('ambient illumination clamps to 0 through 100', lowClamp === 0 && highClamp === 100,
         `${lowClamp}, ${highClamp}`);
-    check('effective light is the brighter of ambient and local emission',
-        localEmission > 0 && effectiveAtSource === localEmission && effectiveAmbient === 50,
-        JSON.stringify({ localEmission, effectiveAtSource, effectiveAmbient }));
+    check('local Fire illumination is returned at its source',
+        localEmission > 0 && effectiveAtSource === localEmission,
+        JSON.stringify({ localEmission, effectiveAtSource }));
+    // Reset the one-chunk fixture so Fire cannot attenuate the ambient sample ray.
+    createWorld(12, 12);
+    physics.setAmbientIlluminationTarget(50);
+    const effectiveAmbient = physics.getIlluminationAt(9, 9);
+    check('effective light is the brighter of ambient and local emission', effectiveAmbient === 50,
+        JSON.stringify({ effectiveAmbient, ambientTarget: physics.getAmbientIlluminationTarget() }));
 
-    createWorld(20, 20);
-    const sampleX = 10;
-    const sampleY = 10;
+    createWorld(chunkSize, chunkSize);
+    const sampleX = chunkCenter(0, chunkSize);
+    const sampleY = chunkCenter(0, chunkSize);
     const wallId = ID.Wall;
     const steamId = ID.Steam;
     const setLightRow = (y, materialId) => {
         for (let x = 0; x < getWorld().cols; x++) setCell(x, y, materialId);
+    };
+    const settleAmbientChunks = () => {
+        for (let tick = 0; tick < 120; tick++) stepSimulation();
     };
     physics.setAmbientIlluminationTarget(10);
     const lowOpenTop = physics.getIlluminationAt(3, 3);
@@ -1838,22 +1928,29 @@ function runPlantIlluminationRegressions() {
     physics.setAmbientIlluminationTarget(80);
     setLightRow(sampleY - 1, ID.Empty ?? 0);
     setLightRow(sampleY + 1, ID.Empty ?? 0);
+    settleAmbientChunks();
     const bothBoundariesVisible = physics.getIlluminationAt(sampleX, sampleY);
     setLightRow(sampleY - 1, wallId);
+    settleAmbientChunks();
     const bottomOnly = physics.getIlluminationAt(sampleX, sampleY);
     setLightRow(sampleY + 1, wallId);
+    settleAmbientChunks();
     const neitherBoundaryVisible = physics.getIlluminationAt(sampleX, sampleY);
-    const topOnly = physics.getIlluminationAt(sampleX, sampleY - 2);
+    setLightRow(sampleY - 1, ID.Empty ?? 0);
+    settleAmbientChunks();
+    const topOnly = physics.getIlluminationAt(sampleX, sampleY);
     check('high ambient prefers full top exposure, then half bottom exposure, then the 10 floor',
         bothBoundariesVisible === 80 && bottomOnly === 40 &&
         neitherBoundaryVisible === 10 && topOnly === 80,
         JSON.stringify({ bothBoundariesVisible, bottomOnly, neitherBoundaryVisible, topOnly }));
 
-    setLightRow(sampleY + 1, ID.Empty ?? 0);
     setLightRow(sampleY - 1, wallId);
+    setLightRow(sampleY + 1, ID.Empty ?? 0);
     setCell(sampleX - 1, sampleY - 1, ID.Empty ?? 0);
+    settleAmbientChunks();
     const diagonalTopWitness = physics.getIlluminationAt(sampleX, sampleY);
     setCell(sampleX - 1, sampleY - 1, wallId);
+    settleAmbientChunks();
     const diagonalTopBlocked = physics.getIlluminationAt(sampleX, sampleY);
     check('an open diagonal line to the top preserves full ambient visibility around a solid above',
         diagonalTopWitness === 80 && diagonalTopBlocked === 40,
@@ -1897,37 +1994,41 @@ function runPlantIlluminationRegressions() {
         for (const cell of gas) setCell(cell.x, cell.y, steamId);
     };
 
-    const slopeTarget = { x: 10, y: 10 };
-    const shallowSlope = lineCells(5, 0, slopeTarget.x, slopeTarget.y);
-    makeRayFixture(20, 20, slopeTarget, [{ x: 5 }]);
+    const rayCenter = chunkCenter(0, chunkSize);
+    const slopeSourceX = Math.floor(rayCenter / 2);
+    const slopeTarget = { x: rayCenter, y: rayCenter };
+    const shallowSlope = lineCells(slopeSourceX, 0, slopeTarget.x, slopeTarget.y);
+    makeRayFixture(chunkSize, chunkSize, slopeTarget, [{ x: slopeSourceX }]);
     const shallowSlopeOpen = physics.getIlluminationAt(slopeTarget.x, slopeTarget.y);
     const shallowSlopeGas = shallowSlope[Math.floor(shallowSlope.length / 2)];
     setCell(shallowSlopeGas.x, shallowSlopeGas.y, steamId);
+    settleAmbientChunks();
     const shallowSlopeThroughGas = physics.getIlluminationAt(slopeTarget.x, slopeTarget.y);
     check('a non-45-degree 1:2 top ray carries full ambient light and attenuates along its selected path',
         shallowSlopeOpen === 80 && shallowSlopeThroughGas === 60,
         JSON.stringify({ shallowSlopeOpen, shallowSlopeThroughGas, shallowSlopeGas }));
 
-    const rayTarget = { x: 11, y: 10 };
-    const leftRay = lineCells(1, 0, rayTarget.x, rayTarget.y);
-    const rightRay = lineCells(21, 0, rayTarget.x, rayTarget.y);
+    const rayTarget = { x: rayCenter, y: rayCenter };
+    const leftRay = lineCells(0, 0, rayTarget.x, rayTarget.y);
+    const rightSourceX = chunkSize - 1;
+    const rightRay = lineCells(rightSourceX, 0, rayTarget.x, rayTarget.y);
     const verticalRay = lineCells(rayTarget.x, 0, rayTarget.x, rayTarget.y);
     const leftGas = leftRay[Math.floor(leftRay.length / 2)];
     const rightGas = rightRay[Math.floor(rightRay.length / 2)];
-    makeRayFixture(22, 20, rayTarget,
-        [{ x: 1 }, { x: 21 }, { x: rayTarget.x }], [leftGas]);
+    makeRayFixture(chunkSize, chunkSize, rayTarget,
+        [{ x: 0 }, { x: rightSourceX }, { x: rayTarget.x }], [leftGas]);
     const verticalWinsOverGasDiagonal = physics.getIlluminationAt(rayTarget.x, rayTarget.y);
-    makeRayFixture(22, 20, rayTarget, [{ x: 1 }, { x: 21 }], [leftGas]);
+    makeRayFixture(chunkSize, chunkSize, rayTarget, [{ x: 0 }, { x: rightSourceX }], [leftGas]);
     const leftBoundaryWinsTie = physics.getIlluminationAt(rayTarget.x, rayTarget.y);
-    makeRayFixture(22, 20, rayTarget, [{ x: 1 }, { x: 21 }], [rightGas]);
+    makeRayFixture(chunkSize, chunkSize, rayTarget, [{ x: 0 }, { x: rightSourceX }], [rightGas]);
     const leftBoundaryWinsClearTie = physics.getIlluminationAt(rayTarget.x, rayTarget.y);
     check('ambient chooses the closest-to-vertical visible ray, then the smaller boundary x on a tie',
         verticalWinsOverGasDiagonal === 80 && leftBoundaryWinsTie === 60 &&
         leftBoundaryWinsClearTie === 80,
         JSON.stringify({ verticalWinsOverGasDiagonal, leftBoundaryWinsTie, leftBoundaryWinsClearTie,
-            leftBoundaryX: 1, rightBoundaryX: 21, verticalBoundaryX: rayTarget.x,
+            leftBoundaryX: 0, rightBoundaryX: rightSourceX, verticalBoundaryX: rayTarget.x,
             leftGas, rightGas, verticalRayLength: verticalRay.length }));
-    createWorld(20, 20);
+    createWorld(chunkSize, chunkSize);
     physics.setAmbientIlluminationTarget(80);
 
     setLightRow(sampleY - 1, ID.Empty ?? 0);
@@ -1937,6 +2038,7 @@ function runPlantIlluminationRegressions() {
     const twoGasCellsOnRay = physics.getIlluminationAt(sampleX, sampleY);
     const oneGasCellOnRay = (() => {
         setCell(sampleX, 2, ID.Empty ?? 0);
+        settleAmbientChunks();
         return physics.getIlluminationAt(sampleX, sampleY);
     })();
     check('a straight ambient ray loses 25% once when it crosses one or more gas cells',
@@ -1944,35 +2046,45 @@ function runPlantIlluminationRegressions() {
         JSON.stringify({ twoGasCellsOnRay, oneGasCellOnRay, steamCategory: defs[steamId]?.category }));
 
     setCell(sampleX, 5, ID.Empty ?? 0);
+    settleAmbientChunks();
     const cachedOpenLight = physics.getIlluminationAt(sampleX, sampleY);
     setLightRow(sampleY - 1, wallId);
+    settleAmbientChunks();
     const afterSolidEdit = physics.getIlluminationAt(sampleX, sampleY);
     setLightRow(sampleY - 1, ID.Empty ?? 0);
+    settleAmbientChunks();
     const afterOpeningSolid = physics.getIlluminationAt(sampleX, sampleY);
     setCell(sampleX, 5, steamId);
+    settleAmbientChunks();
     const afterGasEdit = physics.getIlluminationAt(sampleX, sampleY);
-    getWorld().type[index(sampleX, 5)] = ID.Empty ?? 0;
-    stepSimulation();
+    setCell(sampleX, 5, ID.Empty ?? 0);
+    settleAmbientChunks();
     const afterTick = physics.getIlluminationAt(sampleX, sampleY);
     check('ambient cache refreshes after slider, solid, gas, and simulation-tick changes',
         cachedOpenLight === 80 && afterSolidEdit === 40 && afterOpeningSolid === 80 &&
         afterGasEdit === 60 && afterTick === 80,
         JSON.stringify({ cachedOpenLight, afterSolidEdit, afterOpeningSolid, afterGasEdit, afterTick }));
     if (typeof physics.getIlluminationCacheStats === 'function') {
-        physics.getIlluminationAt(sampleX, sampleY);
-        const beforeRepeatedReads = physics.getIlluminationCacheStats();
-        physics.getIlluminationAt(sampleX, sampleY);
-        physics.getIlluminationAt(sampleX, sampleY);
-        physics.getIlluminationAt(sampleX, sampleY);
-        const afterRepeatedReads = physics.getIlluminationCacheStats();
-        stepSimulation();
-        physics.getIlluminationAt(sampleX, sampleY);
-        const afterNextTickRead = physics.getIlluminationCacheStats();
-        check('repeated illumination reads reuse one field build and one new tick needs one rebuild',
-            afterRepeatedReads.rebuilds === beforeRepeatedReads.rebuilds &&
-            afterRepeatedReads.lookups - beforeRepeatedReads.lookups === 3 &&
-            afterNextTickRead.rebuilds === afterRepeatedReads.rebuilds + 1,
-            JSON.stringify({ beforeRepeatedReads, afterRepeatedReads, afterNextTickRead }));
+        const localLightWasEnabled = physics.isDebugFeatureEnabled('localLight');
+        physics.setDebugFeatureEnabled('localLight', false);
+        try {
+            physics.getIlluminationAt(sampleX, sampleY);
+            const beforeRepeatedReads = physics.getIlluminationCacheStats();
+            physics.getIlluminationAt(sampleX, sampleY);
+            physics.getIlluminationAt(sampleX, sampleY);
+            physics.getIlluminationAt(sampleX, sampleY);
+            const afterRepeatedReads = physics.getIlluminationCacheStats();
+            stepSimulation();
+            physics.getIlluminationAt(sampleX, sampleY);
+            const afterNextTickRead = physics.getIlluminationCacheStats();
+            check('repeated illumination reads and stable simulation ticks reuse the built chunks',
+                afterRepeatedReads.rebuilds === beforeRepeatedReads.rebuilds &&
+                afterRepeatedReads.lookups - beforeRepeatedReads.lookups === 3 &&
+                afterNextTickRead.rebuilds === afterRepeatedReads.rebuilds,
+                JSON.stringify({ beforeRepeatedReads, afterRepeatedReads, afterNextTickRead }));
+        } finally {
+            physics.setDebugFeatureEnabled('localLight', localLightWasEnabled);
+        }
     } else {
         console.log('Illumination cache work counter unavailable; exact rebuild-count coverage needs ' +
             'physics.getIlluminationCacheStats() returning { lookups, rebuilds }.');
@@ -2066,7 +2178,9 @@ function runPlantIlluminationRegressions() {
         !growsAtMinimum && growsAtIdeal, `${growsAtMinimum}, ${growsAtIdeal}`);
 
     function bananaGerminatesAt(light) {
-        createWorld(16, 12);
+        const seedX = chunkCenter(0, chunkSize);
+        const seedY = chunkCenter(0, chunkSize);
+        createWorld(chunkSize, chunkSize);
         physics.setAmbientTarget(30);
         physics.setAmbientHumidityTarget(95);
         physics.setDewpointTarget(10);
@@ -2074,21 +2188,57 @@ function runPlantIlluminationRegressions() {
         const world = getWorld();
         world.temp.fill(30);
         world.humidity.fill(95);
-        for (let x = 0; x < world.cols; x++) setCell(x, world.rows - 1, ID.Wall);
-        setCell(8, 10, ID['Wet Mud']);
-        setCell(8, 9, ID['Banana Seeds']);
-        world.temp[index(8, 9)] = 30;
-        world.humidity[index(8, 9)] = 95;
+        for (const x of [seedX - 1, seedX + 1]) {
+            for (let y = seedY; y <= seedY + 2; y++) setCell(x, y, ID.Wall);
+        }
+        setCell(seedX, seedY + 2, ID.Wall);
+        setCell(seedX, seedY + 1, ID['Wet Mud']);
+        setCell(seedX, seedY, ID['Banana Seeds']);
+        world.temp[index(seedX, seedY)] = 30;
+        world.humidity[index(seedX, seedY)] = 95;
+        const before = {
+            seedCell: [seedX, seedY],
+            chunkCenter: [chunkCenter(0, chunkSize), chunkCenter(0, chunkSize)],
+            illumination: physics.getIlluminationAt(seedX, seedY),
+            target: physics.getAmbientIlluminationTarget(),
+            temperature: world.temp[index(seedX, seedY)],
+            humidity: world.humidity[index(seedX, seedY)],
+            environment: physics.getPlantEnvironment(seedX, seedY),
+        };
         setRandomSeed(7300 + light);
         physics.setRandomSource(() => 0);
         for (let frame = 0; frame < 60; frame++) stepSimulation();
-        return countOf(ID['Banana Plant']) > 0;
+        const finalWorld = getWorld();
+        const remainingSeeds = [];
+        for (let cell = 0; cell < finalWorld.type.length; cell++) {
+            if (finalWorld.type[cell] !== ID['Banana Seeds']) continue;
+            const x = cell % finalWorld.cols;
+            const y = Math.floor(cell / finalWorld.cols);
+            remainingSeeds.push({
+                x, y,
+                illumination: physics.getIlluminationAt(x, y),
+                temperature: finalWorld.temp[cell],
+                humidity: finalWorld.humidity[cell],
+                substrate: finalWorld.type[index(x, y + 1)],
+                environment: physics.getPlantEnvironment(x, y),
+            });
+        }
+        const after = {
+            illumination: physics.getIlluminationAt(seedX, seedY),
+            temperature: getWorld().temp[index(seedX, seedY)],
+            humidity: getWorld().humidity[index(seedX, seedY)],
+            environment: physics.getPlantEnvironment(seedX, seedY),
+            seedCellType: getWorld().type[index(seedX, seedY)],
+            remainingSeeds,
+            plants: countOf(ID['Banana Plant']),
+        };
+        return { germinated: after.plants > 0, before, after };
     }
-    const bananaGerminatesBelowMinimum = bananaGerminatesAt(29);
-    const bananaGerminatesAtMinimum = bananaGerminatesAt(30);
+    const bananaBelowMinimum = bananaGerminatesAt(29);
+    const bananaAtMinimum = bananaGerminatesAt(30);
     check('Banana Seeds germinate at their 30% light minimum but stay dormant below it',
-        !bananaGerminatesBelowMinimum && bananaGerminatesAtMinimum,
-        `below=${bananaGerminatesBelowMinimum}, atMinimum=${bananaGerminatesAtMinimum}`);
+        !bananaBelowMinimum.germinated && bananaAtMinimum.germinated,
+        JSON.stringify({ belowMinimum: bananaBelowMinimum, atMinimum: bananaAtMinimum }));
     physics.setAmbientIlluminationTarget(50);
     physics.resetRandomSource();
 }
@@ -3136,24 +3286,16 @@ runMetalMeltRegressions();
 
 // ---------------------------------------------------------------------------
 
-section('A Spark sends a temporary power pulse to both ends of a metal wire');
+section('A physical Spark does not create transient wire power');
 check('Spark does not produce smoke when it expires', defs[ID.Spark].smokeChance === 0);
 for (let x = 10; x <= 50; x++) setCell(x, 20, ID.Copper);
 setCell(30, 19, ID.Spark);
 stepSimulation();
 check('the Spark is absorbed when it touches the wire', typeAt(30, 19) === EMPTY);
-check('the contact point registers as powered', isPowered(30, 20));
-let reachedLeft = false;
-let reachedRight = false;
-for (let f = 0; f < 35; f++) {
-    stepSimulation();
-    reachedLeft ||= isPowered(10, 20);
-    reachedRight ||= isPowered(50, 20);
-}
-check('the pulse travelled away from the contact to both extremes', reachedLeft && reachedRight);
-check('the power disappears after the pulse reaches the ends',
-    !getWorld().power.some(value => value > 0) &&
-    !getWorld().powerDelay.some(value => value > 0));
+check('Battery-less Copper remains logically OFF after ordinary Spark contact',
+    !isLogicallyPowered(10, 20) && !isLogicallyPowered(30, 20) && !isLogicallyPowered(50, 20));
+check('ordinary Spark contact leaves no transient power or delay cells',
+    !getWorld().power.some(value => value > 0) && !getWorld().powerDelay.some(value => value > 0));
 
 // ---------------------------------------------------------------------------
 
@@ -3178,6 +3320,8 @@ check('a disconnected Battery entity has its own battery reservoir',
 check('each Spark adds a fixed total charge shared across connected Battery',
     Math.abs(storedCharge - expectedCharge) < 0.001,
     `${storedCharge.toFixed(2)} charge per cell`);
+check('ordinary Spark charging leaves the transient electrical planes empty',
+    !getWorld().power.some(value => value > 0) && !getWorld().powerDelay.some(value => value > 0));
 check('a larger Battery mass has proportionally more total capacity',
     defs[ID.Battery].chargeCapacity * 10 ===
         defs[ID.Battery].chargeCapacity * 2 * 5);
@@ -3207,10 +3351,10 @@ try {
     defs[ID.Battery].sparkEmitterChance = savedBatterySparkChance;
     if (savedBatterySparkSeed !== null) setRandomSeed(savedBatterySparkSeed);
 }
-check('a charged Battery emits a visual Spark when emission is eligible', emittedChargeSpark);
+check('a charged Battery never emits decorative Spark particles', !emittedChargeSpark);
 check('stored charge persists when no discharge metal is attached',
     Math.abs(getStoredCharge(10, 20) - defs[ID.Battery].chargeCapacity) < 0.001);
-check('visual charge Sparks do not create smoke', countOf(ID.Smoke) === 0);
+check('ordinary Spark charging creates no smoke', countOf(ID.Smoke) === 0);
 
 // ---------------------------------------------------------------------------
 
@@ -3234,7 +3378,7 @@ const batteryChargeBefore = Array.from({ length: 5 }, (_, n) =>
 let batteryPoweredFarEnd = false;
 for (let f = 0; f < 160; f++) {
     stepSimulation();
-    batteryPoweredFarEnd ||= isPowered(30, 20);
+    batteryPoweredFarEnd ||= isLogicallyPowered(30, 20);
 }
 const batteryChargeAfter = Array.from({ length: 5 }, (_, n) =>
     getStoredCharge(10 + n, 20)).reduce((sum, value) => sum + value, 0);
@@ -3243,8 +3387,8 @@ check('touching Copper slowly drains the Battery reservoir',
     `${batteryChargeBefore.toFixed(1)} -> ${batteryChargeAfter.toFixed(1)} total charge`);
 check('battery power repeatedly reaches the far end of attached metal', batteryPoweredFarEnd);
 run(50);
-check('the attached metal stops receiving power once Battery is empty',
-    !getWorld().power.some(value => value > 0) &&
+check('the attached metal is logically OFF with no transient fields once Battery is empty',
+    !isLogicallyPowered(30, 20) && !getWorld().power.some(value => value > 0) &&
     !getWorld().powerDelay.some(value => value > 0));
 
 for (const [wireId, wireName] of [[ID.Copper, 'Copper'], [ID.Iron, 'Iron']]) {
@@ -3255,8 +3399,8 @@ for (const [wireId, wireName] of [[ID.Copper, 'Copper'], [ID.Iron, 'Iron']]) {
     getWorld().charge[index(10, 20)] = defs[ID.Battery].chargeCapacity;
     stepSimulation();
     const machine = index(13, 20);
-    check(`${wireName} can power a machine two cells beyond its end`,
-        getWorld().powerDelay[machine] > 0 || getWorld().power[machine] > 0,
+    check(`${wireName} can power a machine two cells beyond its end with steady logical state`,
+        isLogicallyPowered(13, 20),
         `${wireName} wire reach is ${defs[wireId].wireReach}`);
 }
 
@@ -3343,7 +3487,7 @@ setCell(fanX - 1, fanY, ID.Battery);
 getWorld().charge[index(fanX - 1, fanY)] = defs[ID.Battery].chargeCapacity;
 stepSimulation();
 const fanWind = getWorld().wind;
-check('a charged Battery contact powers the Fan', isPowered(fanX, fanY));
+check('a charged Battery contact powers the Fan logically', physics.isMachinePoweredAt(fanX, fanY));
 check('an active Fan marks its forward cone',
     fanWind[index(fanX + 1, fanY)] > 0 && fanWind[index(fanX + 3, fanY)] > 0);
 check('the Fan cone widens away from the housing',
@@ -5111,7 +5255,12 @@ const fedFanX = 18;
 const fedFanY = 30;
 setCell(fedFanX, fedFanY, ID.Fan);
 getWorld().data[index(fedFanX, fedFanY)] = fedDirection;
-getWorld().power[index(fedFanX, fedFanY)] = 255;
+setCell(fedFanX - 3, fedFanY, ID.Battery);
+setCell(fedFanX - 2, fedFanY, ID.Elec);
+setCell(fedFanX - 1, fedFanY, ID.Elec);
+getWorld().charge[index(fedFanX - 3, fedFanY)] = defs[ID.Battery].chargeCapacity;
+stepSimulation();
+check('the Fan is logically powered by a Battery-backed route', isMachinePoweredAt(fedFanX, fedFanY));
 getWorld().machineSetting[index(fedFanX, fedFanY)] = 20;
 // These start outside the icon and its rear-edge barrier, on the Fan's exact
 // lower-left to upper-right centreline. This reproduces the diagonal failure

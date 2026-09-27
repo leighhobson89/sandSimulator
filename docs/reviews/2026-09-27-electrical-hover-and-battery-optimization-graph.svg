@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="790" viewBox="0 0 1080 790" role="img" aria-labelledby="title desc">
+  <title id="title">Performance timings by functional area</title>
+  <desc id="desc">Combined 260 by 150 fixture. The full simulation step has a median of 58.35 milliseconds and dominates. The ambient full build took 9564.4 milliseconds once during setup and is shown in a separate scale.</desc>
+  <style>
+    text { font-family: Inter, Segoe UI, Arial, sans-serif; fill: #e9eef5; }
+    .muted { fill: #a9b7c8; }
+    .axis { stroke: #506174; stroke-width: 1; }
+    .grid { stroke: #2a3948; stroke-width: 1; }
+    .bar { fill: #48a9e8; }
+    .bar-hot { fill: #ef9f43; }
+    .one-off { fill: #cf78df; }
+    .panel { fill: #17222e; stroke: #34485b; stroke-width: 1; }
+  </style>
+  <rect width="1080" height="790" rx="18" fill="#101820"/>
+  <text x="44" y="52" font-size="27" font-weight="700">Performance profile — combined electrical fixture</text>
+  <text x="44" y="80" class="muted" font-size="15">260×150 world · 60 measured ticks · median milliseconds per recorded call</text>
+
+  <rect x="35" y="104" width="1010" height="505" rx="12" class="panel"/>
+  <text x="58" y="138" font-size="18" font-weight="650">Recurring measured work</text>
+  <text x="58" y="160" class="muted" font-size="13">Bars show medians. Parent and child stages overlap; compare each cost, do not sum them.</text>
+
+  <!-- Plot area: x=300..920; 10 px per ms -->
+  <line x1="300" y1="186" x2="920" y2="186" class="axis"/>
+  <line x1="300" y1="186" x2="300" y2="557" class="grid"/>
+  <line x1="400" y1="186" x2="400" y2="557" class="grid"/>
+  <line x1="500" y1="186" x2="500" y2="557" class="grid"/>
+  <line x1="600" y1="186" x2="600" y2="557" class="grid"/>
+  <line x1="700" y1="186" x2="700" y2="557" class="grid"/>
+  <line x1="800" y1="186" x2="800" y2="557" class="grid"/>
+  <line x1="900" y1="186" x2="900" y2="557" class="grid"/>
+  <text x="300" y="179" text-anchor="middle" class="muted" font-size="12">0</text>
+  <text x="400" y="179" text-anchor="middle" class="muted" font-size="12">10</text>
+  <text x="500" y="179" text-anchor="middle" class="muted" font-size="12">20</text>
+  <text x="600" y="179" text-anchor="middle" class="muted" font-size="12">30</text>
+  <text x="700" y="179" text-anchor="middle" class="muted" font-size="12">40</text>
+  <text x="800" y="179" text-anchor="middle" class="muted" font-size="12">50</text>
+  <text x="900" y="179" text-anchor="middle" class="muted" font-size="12">60 ms</text>
+
+  <text x="58" y="214" font-size="14">Simulation step (60 calls)</text>
+  <rect x="300" y="196" width="583.5" height="23" rx="4" class="bar-hot"/>
+  <text x="894" y="213" font-size="13" font-weight="700">58.35</text>
+
+  <text x="58" y="251" font-size="14">World draw (120 calls)</text>
+  <rect x="300" y="233" width="18.5" height="23" rx="4" class="bar"/>
+  <text x="327" y="250" font-size="13">1.85</text>
+
+  <text x="58" y="288" font-size="14">Electrical topology (2 calls)</text>
+  <rect x="300" y="270" width="12" height="23" rx="4" class="bar"/>
+  <text x="320" y="287" font-size="13">1.20 · 30-tick cadence</text>
+
+  <text x="58" y="325" font-size="14">Logic gates (2 calls)</text>
+  <rect x="300" y="307" width="11.5" height="23" rx="4" class="bar"/>
+  <text x="320" y="324" font-size="13">1.15 · 30-tick cadence</text>
+
+  <text x="58" y="362" font-size="14">Illumination layer (120 calls)</text>
+  <rect x="300" y="344" width="6" height="23" rx="4" class="bar"/>
+  <text x="315" y="361" font-size="13">0.60</text>
+
+  <text x="58" y="399" font-size="14">Machine overlay reuse (120 calls)</text>
+  <rect x="300" y="381" width="3" height="23" rx="3" class="bar"/>
+  <text x="312" y="398" font-size="13">0.30</text>
+
+  <text x="58" y="436" font-size="14">Ambient incremental update (60 calls)</text>
+  <rect x="300" y="418" width="1" height="23" rx="2" class="bar"/>
+  <text x="312" y="435" font-size="13">0.10</text>
+
+  <text x="58" y="473" font-size="14">Feedback update (60 calls)</text>
+  <rect x="300" y="455" width="1" height="23" rx="2" class="bar"/>
+  <text x="312" y="472" font-size="13">0.10</text>
+
+  <text x="58" y="510" font-size="14">Spark / hover / electrical wrapper</text>
+  <rect x="300" y="492" width="1" height="23" rx="2" class="bar"/>
+  <text x="312" y="509" font-size="13">below timer resolution at median</text>
+
+  <text x="58" y="547" font-size="14">Battery load traversal</text>
+  <text x="300" y="547" class="muted" font-size="13">no calls during measured steady state</text>
+
+  <rect x="35" y="630" width="1010" height="125" rx="12" class="panel"/>
+  <text x="58" y="664" font-size="18" font-weight="650">One-time ambient initialization (separate scale)</text>
+  <text x="58" y="689" class="muted" font-size="13">Ambient-visibility-edit fixture · 1 setup sample · not a recurring frame cost</text>
+  <rect x="58" y="706" width="880" height="18" rx="4" fill="#283544"/>
+  <rect x="58" y="706" width="880" height="18" rx="4" class="one-off"/>
+  <text x="950" y="721" font-size="14" font-weight="700">9,564.40 ms</text>
+  <text x="58" y="744" class="muted" font-size="11">Recurring chart is normalized to 60 ms; this independent scale shows the measured full-build duration.</text>
+</svg>

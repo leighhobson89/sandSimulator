@@ -29,8 +29,7 @@ import { assertValidWorldDimensions } from './worldConfig.js';
 //           lower three bits for their projectile direction; hand-painted rays
 //           use cardinal values 0-3, while emitted machine rays may use all
 //           eight directions and additionally use bit 3 as a marker.
-//   power   frames of visible electrical power left in a conductive cell
-//   powerDelay  frames until an electrical pulse reaches a conductive cell
+//   power/powerDelay legacy planes retained at zero for save compatibility
 //   charge  persistent stored charge for materials that can retain it; this is
 //           floating point so a large connected mass can share one small input
 //   wind    how recently moving air passed through the cell, 0 to 255, fading a
@@ -40,12 +39,14 @@ import { assertValidWorldDimensions } from './worldConfig.js';
 // -----------------------------------------------------------------------------
 
 export const EMPTY = 0;
+// Single tuning point for the ambient-light approximation, measured in
+// simulation cells (independent of rendered pixel size and zoom).
+export const AMBIENT_ILLUMINATION_CHUNK_SIZE = 30;
 const OUT_OF_BOUNDS = -1;
 const STORAGE_VIRTUAL_WALL = -2;
 const NO_SURFACE = 32000;
 const MAX_WATER_INFILTRATION_DEPTH = 50;
 const CORROSION_POWDER_EXPOSURE_REQUIRED = 360;
-const POWER_GLOW_FRAMES = 7;
 const BATTERY_DISCHARGE_SCALE = 100;
 const DEFAULT_LAMP_LIGHT_RADIUS = 25;
 const DEFAULT_LAMP_LIGHT_INTENSITY = 100;
@@ -67,21 +68,32 @@ let lastElectricalRefreshFrame = -ELECTRICAL_REFRESH_INTERVAL;
 let electricalTopologyCache = null;
 let electricalLoadLogicSignature = null;
 let electricalVisitStamps = new Uint32Array(0);
-let electricalDistanceStamps = new Uint32Array(0);
-let electricalDistances = new Int32Array(0);
 let electricalQueueScratch = new Int32Array(0);
 let electricalVisitGeneration = 0;
-const electricalWeightedQueueScratch = [];
-const electricalTouchedScratch = [];
-const electricalStorageScratch = [];
-let activeElectricalPulseCells = [];
-let activeElectricalPulseMask = new Uint8Array(0);
 let illuminationDirty = true;
 let illuminationSourceSignature = null;
 let illuminationFieldFrame = -1;
 let ambientIlluminationDirty = true;
 let ambientIlluminationFieldFrame = -1;
 let ambientVisibilityScratch = null;
+let ambientFieldBuilt = false;
+let ambientFullRefreshQueued = false;
+let ambientFullRefreshCursor = 0;
+let ambientDirtyQueue = [];
+let ambientDirtyHead = 0;
+let ambientDirtyCount = 0;
+let ambientDirtyGeneration = 0;
+let ambientFirstDirtyFrame = -1;
+let ambientRowsUpdated = 0;
+let ambientColumnsUpdated = 0;
+let ambientFallbackCount = 0;
+let ambientQueuedTargets = 0;
+let ambientProcessedTargets = 0;
+let ambientRayTraces = 0;
+let ambientPendingOldType = new Uint8Array(0);
+let ambientPendingStamp = new Uint32Array(0);
+let ambientPendingIndices = [];
+let ambientPendingGeneration = 0;
 let illuminationLookupCount = 0;
 let illuminationRebuildCount = 0;
 let illuminationFlashes = [];
@@ -98,6 +110,13 @@ let AMBIENT = 8;
 let ambientTarget = 8;
 let ambientHumidityTarget = 50;
 let ambientIlluminationTarget = 50;
+const debugFeatureFlags = {
+    localLight: true,
+    worldIllumination: true,
+    humidity: true,
+    electricity: true,
+    electricalEffects: true
+};
 let dewpointTarget = 10;
 let frameCount = 0;
 let humidityCursor = 0;
@@ -124,11 +143,7 @@ function ensureElectricalScratch() {
     const cells = world?.type.length || 0;
     if (electricalVisitStamps.length === cells) return;
     electricalVisitStamps = new Uint32Array(cells);
-    electricalDistanceStamps = new Uint32Array(cells);
-    electricalDistances = new Int32Array(cells);
     electricalQueueScratch = new Int32Array(cells);
-    activeElectricalPulseMask = new Uint8Array(cells);
-    activeElectricalPulseCells = [];
     electricalVisitGeneration = 0;
     electricalTopologyCache = null;
     electricalLoadLogicSignature = null;
@@ -142,35 +157,9 @@ function nextElectricalVisitGeneration() {
     electricalVisitGeneration = (electricalVisitGeneration + 1) >>> 0;
     if (electricalVisitGeneration === 0) {
         electricalVisitStamps.fill(0);
-        electricalDistanceStamps.fill(0);
         electricalVisitGeneration = 1;
     }
     return electricalVisitGeneration;
-}
-
-function queueElectricalPulseCell(cell) {
-    if (!world || cell < 0 || cell >= world.type.length) return;
-    ensureElectricalScratch();
-    if (activeElectricalPulseMask[cell] ||
-        (world.power[cell] === 0 && world.powerDelay[cell] === 0)) return;
-    activeElectricalPulseMask[cell] = 1;
-    activeElectricalPulseCells.push(cell);
-}
-
-function rebuildActiveElectricalPulseCells() {
-    if (!world) {
-        activeElectricalPulseCells = [];
-        activeElectricalPulseMask = new Uint8Array(0);
-        return;
-    }
-    ensureElectricalScratch();
-    activeElectricalPulseCells = [];
-    activeElectricalPulseMask.fill(0);
-    for (let cell = 0; cell < world.type.length; cell++) {
-        if (world.power[cell] === 0 && world.powerDelay[cell] === 0) continue;
-        activeElectricalPulseMask[cell] = 1;
-        activeElectricalPulseCells.push(cell);
-    }
 }
 
 function hasElectricalPorts(def) {
@@ -184,6 +173,10 @@ function participatesInElectricalNetwork(def) {
 }
 
 function invalidateElectricalState({ topology = false, loads = false } = {}) {
+    if (!debugFeatureFlags.electricity) {
+        illuminationDirty = true;
+        return;
+    }
     electricalStateDirty = true;
     logicalCurrentDirty = true;
     if (topology) {
@@ -204,12 +197,8 @@ function resetElectricalStateCache() {
     electricalTopologyCache = null;
     electricalLoadLogicSignature = null;
     electricalVisitStamps = new Uint32Array(0);
-    electricalDistanceStamps = new Uint32Array(0);
-    electricalDistances = new Int32Array(0);
     electricalQueueScratch = new Int32Array(0);
     electricalVisitGeneration = 0;
-    activeElectricalPulseMask = new Uint8Array(0);
-    activeElectricalPulseCells = [];
 }
 
 export function setRandomSource(source) {
@@ -308,7 +297,6 @@ export function prepareDefinitions(json) {
         energizesConductors: false,
         chargeCapacity: 0,
         chargePerSpark: 0,
-        chargeSparkChance: 0,
         dischargeBattery: false,
         powerConsumption: 0,
         sparkEmitterChance: 0,
@@ -375,7 +363,7 @@ export function prepareDefinitions(json) {
             coolingVariance: p.coolingVariance === undefined ? 0 : p.coolingVariance,
             // Electrical conduction is separate from heat conduction. Every
             // ordinary material receives false/zero defaults; metals opt in
-            // and use the numeric value to set pulse speed.
+            // to the steady binary ON/OFF conductor graph.
             conductive: !!p.conductive,
             electricalConductivity: p.conductive
                 ? Math.max(0.01, p.electricalConductivity || 1)
@@ -408,7 +396,6 @@ export function prepareDefinitions(json) {
             energizesConductors: !!p.energizesConductors,
             chargeCapacity: p.chargeCapacity || 0,
             chargePerSpark: p.chargePerSpark || 0,
-            chargeSparkChance: p.chargeSparkChance || 0,
             dischargeBattery: !!p.dischargeBattery,
             // Power draw is summed across every conductive cell in a battery's
             // connected grid once per simulation tick. This leaves room for
@@ -752,6 +739,97 @@ function channelFromHue(hue) {
 export function getDefinitions() { return DEFS; }
 export function getAmbientTemp() { return AMBIENT; }
 
+export function getDebugFeatureFlags() {
+    return { ...debugFeatureFlags };
+}
+
+export function isDebugFeatureEnabled(name) {
+    return debugFeatureFlags[name] === true;
+}
+
+function clearDisabledElectricityState() {
+    if (world) {
+        world.power.fill(0);
+        world.powerDelay.fill(0);
+        world.logicalPower.fill(0);
+        world.gateOutputState.fill(0);
+        world.charge.fill(0);
+    }
+    electricalTopologyCache = null;
+    electricalLoadLogicSignature = null;
+    electricalTopologyDirty = false;
+    electricalLoadsDirty = false;
+    electricalStateDirty = false;
+    logicalCurrentDirty = false;
+    lastElectricalRefreshFrame = frameCount;
+}
+
+function setUniformHumidity() {
+    if (world?.humidity) world.humidity.fill(ambientHumidityTarget);
+    humidityCursor = 0;
+}
+
+function setUniformWorldIllumination() {
+    // Effective ambient queries use the slider directly while this feature is
+    // disabled, avoiding a full-grid rewrite whenever the slider moves.
+    ambientIlluminationDirty = false;
+    ambientIlluminationFieldFrame = frameCount;
+}
+
+function clearLocalIllumination() {
+    if (world) {
+        world.illumination.fill(0);
+        world.illuminationTint.fill(0);
+        world.illuminationTintStrength.fill(0);
+    }
+    illuminationFlashes.length = 0;
+    illuminationDirty = false;
+    illuminationSourceSignature = null;
+    illuminationFieldFrame = frameCount;
+}
+
+export function setDebugFeatureEnabled(name, enabled) {
+    if (!Object.hasOwn(debugFeatureFlags, name)) return false;
+    const next = !!enabled;
+    if (debugFeatureFlags[name] === next) return false;
+    debugFeatureFlags[name] = next;
+
+    if (name === 'localLight') {
+        if (next) {
+            illuminationDirty = true;
+            illuminationSourceSignature = null;
+            illuminationFieldFrame = -1;
+        } else {
+            clearLocalIllumination();
+        }
+    } else if (name === 'worldIllumination') {
+        if (next) {
+            if (!ambientFieldBuilt) ambientIlluminationDirty = true;
+            else queueFullAmbientRefresh();
+        } else {
+            setUniformWorldIllumination();
+        }
+    } else if (name === 'humidity') {
+        setUniformHumidity();
+    } else if (name === 'electricalEffects') {
+        // Presentation-only. Charge, power, and simulation caches are untouched.
+    } else if (name === 'electricity') {
+        if (next) {
+            resetElectricalStateCache();
+            ensureElectricalScratch();
+            electricalStateDirty = true;
+            logicalCurrentDirty = true;
+        } else {
+            clearDisabledElectricityState();
+        }
+        if (debugFeatureFlags.localLight) {
+            illuminationDirty = true;
+            illuminationSourceSignature = null;
+        }
+    }
+    return true;
+}
+
 // The air temperature the world is heading towards. Setting it does not snap
 // the world to that temperature: stepSimulation eases the actual ambient
 // towards it a little each frame, so turning the dial down feels like a cold
@@ -761,6 +839,7 @@ export function getAmbientTarget() { return ambientTarget; }
 export function setAmbientHumidityTarget(value) {
     if (!Number.isFinite(Number(value))) return;
     ambientHumidityTarget = Math.max(0, Math.min(100, Number(value)));
+    if (!debugFeatureFlags.humidity) setUniformHumidity();
 }
 export function getAmbientHumidityTarget() { return ambientHumidityTarget; }
 export function setAmbientIlluminationTarget(value) {
@@ -768,7 +847,30 @@ export function setAmbientIlluminationTarget(value) {
     const next = Math.max(0, Math.min(100, Number(value)));
     if (next === ambientIlluminationTarget) return;
     ambientIlluminationTarget = next;
-    ambientIlluminationDirty = true;
+    const recorder = activeP0PerformanceRecorder();
+    const startedAt = recorder ? performance.now() : 0;
+    let chunksRemapped = 0;
+    let cellsWritten = 0;
+    if (debugFeatureFlags.worldIllumination && world && ambientFieldBuilt) {
+        const scratch = ensureAmbientVisibilityScratch(world.type.length);
+        for (let chunk = 0; chunk < scratch.chunkCount; chunk++) {
+            cellsWritten += remapAmbientChunk(scratch, chunk);
+            chunksRemapped++;
+        }
+    } else if (!debugFeatureFlags.worldIllumination) {
+        ambientIlluminationDirty = false;
+        ambientIlluminationFieldFrame = frameCount;
+    } else if (world && next <= 10) {
+        world.ambientIllumination.fill(next);
+        cellsWritten = world.ambientIllumination.length;
+    }
+    if (recorder) {
+        recorder.record('ambientIlluminationSliderRemap', performance.now() - startedAt, {
+            chunksRemapped,
+            cellsWritten,
+            rayTraces: 0
+        });
+    }
 }
 export function getAmbientIlluminationTarget() { return ambientIlluminationTarget; }
 export function getHumidityAt(x, y) {
@@ -782,15 +884,29 @@ function isIlluminationOccluder(cellIndex) {
 }
 
 function ensureAmbientVisibilityScratch(cells) {
+    const chunkCols = Math.ceil(COLS / AMBIENT_ILLUMINATION_CHUNK_SIZE);
+    const chunkRows = Math.ceil(ROWS / AMBIENT_ILLUMINATION_CHUNK_SIZE);
+    const chunkCount = chunkCols * chunkRows;
     if (ambientVisibilityScratch?.cols === COLS &&
-        ambientVisibilityScratch?.cells === cells) return ambientVisibilityScratch;
+        ambientVisibilityScratch?.rows === ROWS &&
+        ambientVisibilityScratch?.cells === cells &&
+        ambientVisibilityScratch?.chunkCount === chunkCount) return ambientVisibilityScratch;
     ambientVisibilityScratch = {
         cols: COLS,
+        rows: ROWS,
         cells,
+        chunkCols,
+        chunkRows,
+        chunkCount,
         topVerticalClear: new Uint8Array(cells),
         topVerticalGas: new Uint8Array(cells),
         bottomVerticalClear: new Uint8Array(cells),
         bottomVerticalGas: new Uint8Array(cells),
+        visibilityClass: new Uint8Array(chunkCount),
+        selectedGas: new Uint8Array(chunkCount),
+        dirtyGeneration: new Uint32Array(chunkCount),
+        dirtyQueued: new Uint8Array(chunkCount),
+        dirtyQueue: [],
         skippedSources: new Int32Array(COLS),
         generation: 0,
         fullRows: new Uint8Array(ROWS),
@@ -805,6 +921,7 @@ function isAmbientGas(cellIndex) {
 }
 
 function traceAmbientRay(sourceX, sourceY, targetX, targetY) {
+    ambientRayTraces++;
     let x = sourceX;
     let y = sourceY;
     const targetIndex = index(targetX, targetY);
@@ -925,67 +1042,442 @@ function findAmbientWitness(x, y, fromTop, scratch) {
     return null;
 }
 
+function ambientChunkBounds(scratch, chunk) {
+    const chunkX = chunk % scratch.chunkCols;
+    const chunkY = Math.floor(chunk / scratch.chunkCols);
+    const x0 = chunkX * AMBIENT_ILLUMINATION_CHUNK_SIZE;
+    const y0 = chunkY * AMBIENT_ILLUMINATION_CHUNK_SIZE;
+    const x1 = Math.min(COLS, x0 + AMBIENT_ILLUMINATION_CHUNK_SIZE);
+    const y1 = Math.min(ROWS, y0 + AMBIENT_ILLUMINATION_CHUNK_SIZE);
+    return {
+        x0,
+        y0,
+        x1,
+        y1,
+        sampleX: x0 + Math.floor((x1 - x0 - 1) / 2),
+        sampleY: y0 + Math.floor((y1 - y0 - 1) / 2)
+    };
+}
+
+function writeAmbientChunk(scratch, chunk, value) {
+    const bounds = ambientChunkBounds(scratch, chunk);
+    let cellsWritten = 0;
+    for (let y = bounds.y0; y < bounds.y1; y++) {
+        const start = y * COLS + bounds.x0;
+        const end = y * COLS + bounds.x1;
+        world.ambientIllumination.fill(value, start, end);
+        cellsWritten += end - start;
+    }
+    return cellsWritten;
+}
+
+function remapAmbientChunk(scratch, chunk) {
+    return writeAmbientChunk(scratch, chunk, ambientValueForClass(
+        scratch.visibilityClass[chunk], scratch.selectedGas[chunk] !== 0));
+}
+
+function refreshAmbientChunk(scratch, chunk) {
+    const { sampleX, sampleY } = ambientChunkBounds(scratch, chunk);
+    const top = findAmbientWitness(sampleX, sampleY, true, scratch);
+    const witness = top || findAmbientWitness(sampleX, sampleY, false, scratch);
+    const visibilityClass = top ? 2 : witness ? 1 : 0;
+    const gas = witness?.gas ? 1 : 0;
+    scratch.visibilityClass[chunk] = visibilityClass;
+    scratch.selectedGas[chunk] = gas;
+    return writeAmbientChunk(scratch, chunk, ambientValueForClass(visibilityClass, gas !== 0));
+}
+
 function rebuildAmbientIlluminationField() {
     if (!world) return;
+    const recorder = activeP0PerformanceRecorder();
+    const startedAt = recorder ? performance.now() : 0;
+    if (!debugFeatureFlags.worldIllumination) {
+        setUniformWorldIllumination();
+        return;
+    }
     const cells = world.type.length;
+    const scratch = ensureAmbientVisibilityScratch(cells);
     if (!world.ambientIllumination || world.ambientIllumination.length !== cells) {
         world.ambientIllumination = new Float32Array(cells);
     }
-    const target = ambientIlluminationTarget;
-    if (target <= 10) {
-        world.ambientIllumination.fill(target);
-    } else {
-        const scratch = ensureAmbientVisibilityScratch(cells);
-        scratch.fullRowPrefix.fill(0);
-        scratch.fullRowSuffix.fill(0);
-        for (let y = 0; y < ROWS; y++) {
-            let fullyOpaque = true;
-            for (let x = 0; x < COLS; x++) {
-                if (!isIlluminationOccluder(index(x, y))) {
-                    fullyOpaque = false;
-                    break;
-                }
-            }
-            scratch.fullRows[y] = fullyOpaque ? 1 : 0;
-            scratch.fullRowPrefix[y + 1] = scratch.fullRowPrefix[y] + scratch.fullRows[y];
-        }
-        for (let y = ROWS - 1; y >= 0; y--) {
-            scratch.fullRowSuffix[y] = scratch.fullRowSuffix[y + 1] + scratch.fullRows[y];
-        }
-
+    const rayTracesBefore = ambientRayTraces;
+    scratch.fullRowPrefix.fill(0);
+    scratch.fullRowSuffix.fill(0);
+    for (let y = 0; y < ROWS; y++) {
+        let fullyOpaque = true;
         for (let x = 0; x < COLS; x++) {
-            let blocked = false;
-            let gasSeen = false;
-            for (let y = 0; y < ROWS; y++) {
-                const cellIndex = index(x, y);
-                scratch.topVerticalClear[cellIndex] = blocked ? 0 : 1;
-                scratch.topVerticalGas[cellIndex] = gasSeen || isAmbientGas(cellIndex) ? 1 : 0;
-                if (isIlluminationOccluder(cellIndex)) blocked = true;
-                if (isAmbientGas(cellIndex)) gasSeen = true;
-            }
-            blocked = false;
-            gasSeen = false;
-            for (let y = ROWS - 1; y >= 0; y--) {
-                const cellIndex = index(x, y);
-                scratch.bottomVerticalClear[cellIndex] = blocked ? 0 : 1;
-                scratch.bottomVerticalGas[cellIndex] = gasSeen || isAmbientGas(cellIndex) ? 1 : 0;
-                if (isIlluminationOccluder(cellIndex)) blocked = true;
-                if (isAmbientGas(cellIndex)) gasSeen = true;
+            if (!isIlluminationOccluder(index(x, y))) {
+                fullyOpaque = false;
+                break;
             }
         }
+        scratch.fullRows[y] = fullyOpaque ? 1 : 0;
+        scratch.fullRowPrefix[y + 1] = scratch.fullRowPrefix[y] + scratch.fullRows[y];
+    }
+    for (let y = ROWS - 1; y >= 0; y--) {
+        scratch.fullRowSuffix[y] = scratch.fullRowSuffix[y + 1] + scratch.fullRows[y];
+    }
 
+    for (let x = 0; x < COLS; x++) {
+        let blocked = false;
+        let gasSeen = false;
         for (let y = 0; y < ROWS; y++) {
-            for (let x = 0; x < COLS; x++) {
-                const i = index(x, y);
-                const top = findAmbientWitness(x, y, true, scratch);
-                const witness = top || findAmbientWitness(x, y, false, scratch);
-                const value = top ? target : witness ? target * 0.5 : 10;
-                world.ambientIllumination[i] = witness?.gas ? value * 0.75 : value;
-            }
+            const cellIndex = index(x, y);
+            scratch.topVerticalClear[cellIndex] = blocked ? 0 : 1;
+            scratch.topVerticalGas[cellIndex] = gasSeen || isAmbientGas(cellIndex) ? 1 : 0;
+            if (isIlluminationOccluder(cellIndex)) blocked = true;
+            if (isAmbientGas(cellIndex)) gasSeen = true;
         }
+        blocked = false;
+        gasSeen = false;
+        for (let y = ROWS - 1; y >= 0; y--) {
+            const cellIndex = index(x, y);
+            scratch.bottomVerticalClear[cellIndex] = blocked ? 0 : 1;
+            scratch.bottomVerticalGas[cellIndex] = gasSeen || isAmbientGas(cellIndex) ? 1 : 0;
+            if (isIlluminationOccluder(cellIndex)) blocked = true;
+            if (isAmbientGas(cellIndex)) gasSeen = true;
+        }
+    }
+    let cellsWritten = 0;
+    for (let chunk = 0; chunk < scratch.chunkCount; chunk++) {
+        cellsWritten += refreshAmbientChunk(scratch, chunk);
     }
     ambientIlluminationDirty = false;
     ambientIlluminationFieldFrame = frameCount;
+    ambientFieldBuilt = true;
+    ambientFullRefreshQueued = false;
+    ambientFullRefreshCursor = 0;
+    ambientDirtyQueue = scratch.dirtyQueue;
+    scratch.dirtyQueue.length = 0;
+    ambientDirtyHead = 0;
+    ambientDirtyCount = 0;
+    scratch.dirtyQueued.fill(0);
+    ambientPendingIndices.length = 0;
+    ambientPendingGeneration = 0;
+    if (ambientPendingStamp.length) ambientPendingStamp.fill(0);
+    if (recorder) recorder.record('ambientIlluminationFullBuild', performance.now() - startedAt, {
+        worldCells: cells,
+        visibilityCells: scratch.chunkCount,
+        chunksSampled: scratch.chunkCount,
+        cellsWritten,
+        pendingChunks: 0,
+        rayTraces: ambientRayTraces - rayTracesBefore
+    });
+}
+
+function ambientValueForClass(visibilityClass, hasGas) {
+    if (ambientIlluminationTarget <= 10 || visibilityClass === 3) return ambientIlluminationTarget;
+    const base = visibilityClass === 2 ? ambientIlluminationTarget
+        : visibilityClass === 1 ? ambientIlluminationTarget * 0.5 : 10;
+    return hasGas ? base * 0.75 : base;
+}
+
+function advanceAmbientDirtyGeneration(scratch) {
+    ambientDirtyGeneration = (ambientDirtyGeneration + 1) >>> 0;
+    if (ambientDirtyGeneration === 0) {
+        scratch.dirtyGeneration.fill(0);
+        ambientDirtyGeneration = 1;
+    }
+}
+
+function enqueueAmbientChunk(scratch, chunk) {
+    if (chunk < 0 || chunk >= scratch.chunkCount || scratch.dirtyQueued[chunk]) return false;
+    scratch.dirtyQueued[chunk] = 1;
+    scratch.dirtyGeneration[chunk] = ambientDirtyGeneration;
+    scratch.dirtyQueue.push(chunk);
+    ambientQueuedTargets++;
+    ambientDirtyCount++;
+    if (ambientFirstDirtyFrame < 0) ambientFirstDirtyFrame = frameCount;
+    return true;
+}
+
+function enqueueAmbientChunkSpan(scratch, y, minX, maxX) {
+    if (y < 0 || y >= ROWS || minX > maxX) return;
+    const chunkY = Math.floor(y / AMBIENT_ILLUMINATION_CHUNK_SIZE);
+    const firstChunkX = Math.max(0, Math.floor(minX / AMBIENT_ILLUMINATION_CHUNK_SIZE));
+    const lastChunkX = Math.min(scratch.chunkCols - 1,
+        Math.floor(maxX / AMBIENT_ILLUMINATION_CHUNK_SIZE));
+    for (let chunkX = firstChunkX; chunkX <= lastChunkX; chunkX++) {
+        enqueueAmbientChunk(scratch, chunkY * scratch.chunkCols + chunkX);
+    }
+}
+
+function enqueueAmbientChunkRow(scratch, y) {
+    enqueueAmbientChunkSpan(scratch, y, 0, COLS - 1);
+}
+
+// Project a changed cell's square to every row beyond it from the top and
+// bottom boundaries. The interval is conservative and padded for the grid's
+// discrete Bresenham choices; queued chunk centers are resampled afterward.
+function enqueueAmbientShadowWedge(scratch, blockX, blockY, fromTop) {
+    if (fromTop) {
+        // A complete opaque row below the edit already blocks every top ray
+        // for cells beyond it. Keep the row itself in the dirty interval (the
+        // changed blocker can still alter light on that row), then stop.
+        let lastAffectedRow = ROWS - 1;
+        for (let y = blockY + 1; y < ROWS; y++) {
+            if (scratch.fullRows[y]) {
+                lastAffectedRow = y;
+                break;
+            }
+        }
+        for (let y = blockY; y <= lastAffectedRow; y++) {
+            if (y === blockY || blockY <= 0) {
+                enqueueAmbientChunkRow(scratch, y);
+                continue;
+            }
+            const scale = (y - blockY + 1) / blockY;
+            const left = Math.floor((blockX - 1) + (blockX - COLS) * scale) - 2;
+            const right = Math.ceil((blockX + 1) + (blockX + 1) * scale) + 2;
+            const minX = Math.max(0, Math.min(left, right));
+            const maxX = Math.min(COLS - 1, Math.max(left, right));
+            enqueueAmbientChunkSpan(scratch, y, minX, maxX);
+        }
+    } else {
+        // Symmetric pruning for bottom visibility: an opaque row above the
+        // changed cell shields every cell farther toward the top edge.
+        let firstAffectedRow = 0;
+        for (let y = blockY - 1; y >= 0; y--) {
+            if (scratch.fullRows[y]) {
+                firstAffectedRow = y;
+                break;
+            }
+        }
+        const depth = ROWS - 1 - blockY;
+        for (let y = blockY; y >= firstAffectedRow; y--) {
+            if (y === blockY || depth <= 0) {
+                enqueueAmbientChunkRow(scratch, y);
+                continue;
+            }
+            const scale = (blockY - y + 1) / depth;
+            const left = Math.floor((blockX - 1) + (blockX - COLS) * scale) - 2;
+            const right = Math.ceil((blockX + 1) + (blockX + 1) * scale) + 2;
+            const minX = Math.max(0, Math.min(left, right));
+            const maxX = Math.min(COLS - 1, Math.max(left, right));
+            enqueueAmbientChunkSpan(scratch, y, minX, maxX);
+        }
+    }
+}
+
+function refreshAmbientColumn(scratch, x) {
+    let blocked = false;
+    let gasSeen = false;
+    for (let y = 0; y < ROWS; y++) {
+        const cell = y * COLS + x;
+        scratch.topVerticalClear[cell] = blocked ? 0 : 1;
+        scratch.topVerticalGas[cell] = gasSeen || isAmbientGas(cell) ? 1 : 0;
+        if (isIlluminationOccluder(cell)) blocked = true;
+        if (isAmbientGas(cell)) gasSeen = true;
+    }
+    blocked = false;
+    gasSeen = false;
+    for (let y = ROWS - 1; y >= 0; y--) {
+        const cell = y * COLS + x;
+        scratch.bottomVerticalClear[cell] = blocked ? 0 : 1;
+        scratch.bottomVerticalGas[cell] = gasSeen || isAmbientGas(cell) ? 1 : 0;
+        if (isIlluminationOccluder(cell)) blocked = true;
+        if (isAmbientGas(cell)) gasSeen = true;
+    }
+    ambientColumnsUpdated++;
+}
+
+function refreshAmbientRows(scratch, changedRows) {
+    for (const y of changedRows) {
+        let fullyOpaque = true;
+        for (let x = 0; x < COLS; x++) {
+            if (!isIlluminationOccluder(y * COLS + x)) {
+                fullyOpaque = false;
+                break;
+            }
+        }
+        scratch.fullRows[y] = fullyOpaque ? 1 : 0;
+    }
+    scratch.fullRowPrefix[0] = 0;
+    for (let y = 0; y < ROWS; y++) {
+        scratch.fullRowPrefix[y + 1] = scratch.fullRowPrefix[y] + scratch.fullRows[y];
+    }
+    scratch.fullRowSuffix[ROWS] = 0;
+    for (let y = ROWS - 1; y >= 0; y--) {
+        scratch.fullRowSuffix[y] = scratch.fullRowSuffix[y + 1] + scratch.fullRows[y];
+    }
+    ambientRowsUpdated += ROWS;
+}
+
+function queueAmbientCellChange(cell, previousType, nextType) {
+    if (!world || !debugFeatureFlags.worldIllumination ||
+        cell < 0 || cell >= world.type.length) return;
+    const previous = DEFS[previousType];
+    const next = DEFS[nextType];
+    const changedVisibility = isIlluminationOccluderByDef(previous) !== isIlluminationOccluderByDef(next) ||
+        isAmbientGasByDef(previous) !== isAmbientGasByDef(next);
+    if (!changedVisibility) return;
+    if (!ambientFieldBuilt) {
+        ambientIlluminationDirty = true;
+        return;
+    }
+    if (ambientPendingStamp.length !== world.type.length) {
+        ambientPendingOldType = new Uint8Array(world.type.length);
+        ambientPendingStamp = new Uint32Array(world.type.length);
+        ambientPendingIndices = [];
+        ambientPendingGeneration = 0;
+    }
+    if (ambientPendingGeneration === 0) {
+        ambientPendingGeneration = 1;
+        ambientPendingStamp.fill(0);
+    }
+    if (ambientPendingStamp[cell] !== ambientPendingGeneration) {
+        ambientPendingStamp[cell] = ambientPendingGeneration;
+        ambientPendingOldType[cell] = previousType;
+        ambientPendingIndices.push(cell);
+    }
+}
+
+function isIlluminationOccluderByDef(def) {
+    return !!def && (def.group === 'Solids' || def.category === 'powder' || def.isPlant || !!def.machine);
+}
+
+function isAmbientGasByDef(def) { return def?.category === 'gas'; }
+
+function flushAmbientPendingChanges() {
+    if (!world || ambientPendingIndices.length === 0) return;
+    const pending = ambientPendingIndices;
+    ambientPendingIndices = [];
+    ambientPendingGeneration = 0;
+    const scratch = ensureAmbientVisibilityScratch(world.type.length);
+    const columns = new Set();
+    const rows = new Set();
+    const changedCells = [];
+    for (const cell of pending) {
+        const previous = DEFS[ambientPendingOldType[cell]];
+        const next = DEFS[world.type[cell]];
+        ambientPendingStamp[cell] = 0;
+        if (isIlluminationOccluderByDef(previous) === isIlluminationOccluderByDef(next) &&
+            isAmbientGasByDef(previous) === isAmbientGasByDef(next)) continue;
+        changedCells.push(cell);
+        columns.add(cell % COLS);
+        rows.add(Math.floor(cell / COLS));
+    }
+    if (!changedCells.length) return;
+    if (!ambientFieldBuilt) {
+        ambientIlluminationDirty = true;
+        return;
+    }
+    advanceAmbientDirtyGeneration(scratch);
+    for (const x of columns) refreshAmbientColumn(scratch, x);
+    refreshAmbientRows(scratch, rows);
+    for (const cell of changedCells) {
+        const x = cell % COLS;
+        const y = Math.floor(cell / COLS);
+        enqueueAmbientShadowWedge(scratch, x, y, true);
+        enqueueAmbientShadowWedge(scratch, x, y, false);
+    }
+    const queued = scratch.dirtyQueue.length - ambientDirtyHead;
+    if (queued > scratch.chunkCount * 0.4) {
+        scratch.dirtyQueue.length = 0;
+        ambientDirtyHead = 0;
+        ambientDirtyCount = 0;
+        scratch.dirtyQueued.fill(0);
+        ambientFullRefreshQueued = true;
+        ambientFullRefreshCursor = 0;
+        ambientFallbackCount++;
+    }
+}
+
+export function invalidateAmbientIlluminationForTypes(previousType, nextType, cell) {
+    if (previousType === nextType) return;
+    queueAmbientCellChange(cell, previousType, nextType);
+}
+
+function processAmbientIlluminationWork() {
+    if (!world || !debugFeatureFlags.worldIllumination || !ambientFieldBuilt) return;
+    const scratch = ensureAmbientVisibilityScratch(world.type.length);
+    const queue = scratch.dirtyQueue;
+    const recorder = activeP0PerformanceRecorder();
+    const startedAt = recorder ? performance.now() : 0;
+    const rayTracesBefore = ambientRayTraces;
+    const sampledChunkIds = recorder ? [] : null;
+    let chunksSampled = 0;
+    let cellsWritten = 0;
+    const pendingBefore = ambientFullRefreshQueued
+        ? scratch.chunkCount - ambientFullRefreshCursor : queue.length - ambientDirtyHead;
+    const age = ambientFirstDirtyFrame < 0 ? 0 : frameCount - ambientFirstDirtyFrame;
+    const budget = age > 90 ? 7 : age > 45 ? 5 : 3;
+    if (ambientFullRefreshQueued) {
+        const end = Math.min(scratch.chunkCount, ambientFullRefreshCursor + budget);
+        for (; ambientFullRefreshCursor < end; ambientFullRefreshCursor++) {
+            const chunk = ambientFullRefreshCursor;
+            cellsWritten += refreshAmbientChunk(scratch, chunk);
+            chunksSampled++;
+            if (sampledChunkIds) sampledChunkIds.push(chunk);
+        }
+        if (ambientFullRefreshCursor >= scratch.chunkCount) {
+            ambientFullRefreshQueued = false;
+            ambientFullRefreshCursor = 0;
+            ambientFirstDirtyFrame = -1;
+        }
+    } else {
+        while (ambientDirtyHead < queue.length && chunksSampled < budget) {
+            const chunk = queue[ambientDirtyHead++];
+            scratch.dirtyQueued[chunk] = 0;
+            ambientDirtyCount--;
+            cellsWritten += refreshAmbientChunk(scratch, chunk);
+            chunksSampled++;
+            if (sampledChunkIds) sampledChunkIds.push(chunk);
+        }
+        if (ambientDirtyHead >= queue.length) {
+            queue.length = 0;
+            ambientDirtyHead = 0;
+            ambientDirtyCount = 0;
+            ambientFirstDirtyFrame = -1;
+            advanceAmbientDirtyGeneration(scratch);
+        }
+    }
+    if (chunksSampled > 0) {
+        if (recorder) {
+            const pendingChunks = ambientFullRefreshQueued
+                ? scratch.chunkCount - ambientFullRefreshCursor : queue.length - ambientDirtyHead;
+            let pendingCells = 0;
+            if (ambientFullRefreshQueued || pendingChunks > 0) {
+                const start = ambientFullRefreshQueued ? ambientFullRefreshCursor : ambientDirtyHead;
+                const end = ambientFullRefreshQueued ? scratch.chunkCount : queue.length;
+                if (ambientFullRefreshQueued) {
+                    for (let chunk = start; chunk < end; chunk++) {
+                        const bounds = ambientChunkBounds(scratch, chunk);
+                        pendingCells += (bounds.x1 - bounds.x0) * (bounds.y1 - bounds.y0);
+                    }
+                } else {
+                    for (let queuedIndex = start; queuedIndex < end; queuedIndex++) {
+                        const bounds = ambientChunkBounds(scratch, queue[queuedIndex]);
+                        pendingCells += (bounds.x1 - bounds.x0) * (bounds.y1 - bounds.y0);
+                    }
+                }
+            }
+            recorder.record('ambientIlluminationIncrementalUpdate',
+                performance.now() - startedAt, {
+                worldCells: world.type.length,
+                queuedTargets: ambientQueuedTargets,
+                processedTargets: chunksSampled,
+                affectedCells: cellsWritten,
+                dirtyTargets: ambientDirtyCount,
+                pendingCells,
+                chunksSampled,
+                cellsWritten,
+                pendingChunks,
+                rayTraces: ambientRayTraces - rayTracesBefore,
+                oldestDirtyTargetAgeTicks: age,
+                columnsUpdated: ambientColumnsUpdated,
+                rowsUpdated: ambientRowsUpdated,
+                fallbackCount: ambientFallbackCount,
+                durationMs: performance.now() - startedAt,
+                ...(sampledChunkIds ? { sampledChunkIds } : {})
+                });
+        }
+        ambientProcessedTargets += chunksSampled;
+        ambientQueuedTargets = 0;
+        ambientColumnsUpdated = 0;
+        ambientRowsUpdated = 0;
+    }
+    if (pendingBefore === 0) ambientFirstDirtyFrame = -1;
 }
 
 function illuminationPathBlocked(sourceX, sourceY, targetX, targetY) {
@@ -1016,7 +1508,11 @@ function illuminationPathBlocked(sourceX, sourceY, targetX, targetY) {
 
 function rebuildIlluminationField() {
     if (!world) return;
-    ensureLogicalCurrent();
+    if (!debugFeatureFlags.localLight) {
+        clearLocalIllumination();
+        return;
+    }
+    if (debugFeatureFlags.electricity) ensureLogicalCurrent();
     const cells = world.type.length;
     if (world.illumination.length !== cells) world.illumination = new Float32Array(cells);
     else world.illumination.fill(0);
@@ -1060,9 +1556,11 @@ function rebuildIlluminationField() {
         if (def.lightRadius > 0 && def.lightIntensity > 0) {
             if (def.machine === 'lamp') {
                 if ((Math.round(world.machineSetting[source] || 0) & 1) === 0) continue;
-                const input = machinePortDescriptors(source).find(port =>
-                    port.family === 'electrical' && port.role === 'input');
-                if (!portHasLogicalSignal(input)) continue;
+                if (debugFeatureFlags.electricity) {
+                    const input = machinePortDescriptors(source).find(port =>
+                        port.family === 'electrical' && port.role === 'input');
+                    if (!portHasLogicalSignal(input)) continue;
+                }
             }
             addEmitter(sourceX, sourceY, def.lightRadius, def.lightIntensity, 1,
                 def.lightFalloffDenominator, def.lightTint);
@@ -1079,8 +1577,8 @@ function rebuildIlluminationField() {
 }
 
 export function ensureLocalIlluminationCurrent() {
-    if (!world) return false;
-    ensureLogicalCurrent();
+    if (!world || !debugFeatureFlags.localLight) return false;
+    if (debugFeatureFlags.electricity) ensureLogicalCurrent();
     let rebuilt = false;
     if (illuminationDirty || illuminationFieldFrame !== frameCount) {
         rebuildIlluminationField();
@@ -1092,14 +1590,17 @@ export function ensureLocalIlluminationCurrent() {
 export function getIlluminationAt(x, y) {
     if (!world || !inBounds(x, y)) return 0;
     illuminationLookupCount++;
-    let rebuilt = ensureLocalIlluminationCurrent();
-    if (ambientIlluminationDirty || ambientIlluminationFieldFrame !== frameCount) {
+    let rebuilt = debugFeatureFlags.localLight ? ensureLocalIlluminationCurrent() : false;
+    if (debugFeatureFlags.worldIllumination && !ambientFieldBuilt) {
         rebuildAmbientIlluminationField();
         rebuilt = true;
     }
     if (rebuilt) illuminationRebuildCount++;
     const i = index(x, y);
-    return Math.max(world.ambientIllumination[i] || 0, world.illumination[i] || 0);
+    const ambient = debugFeatureFlags.worldIllumination
+        ? world.ambientIllumination[i] || 0 : ambientIlluminationTarget;
+    const local = debugFeatureFlags.localLight ? world.illumination[i] || 0 : 0;
+    return Math.max(ambient, local);
 }
 export function getIlluminationCacheStats() {
     return { lookups: illuminationLookupCount, rebuilds: illuminationRebuildCount };
@@ -1324,6 +1825,7 @@ function hasCardinalWaterNeighbour(x, y) {
 const HUMIDITY_NEIGHBOURS = [[0, -1], [1, 0], [0, 1], [-1, 0]];
 
 function humidityNearCell(x, y) {
+    if (!debugFeatureFlags.humidity) return ambientHumidityTarget;
     const i = index(x, y);
     if (AIR_SPACE_BY_TYPE[world.type[i]]) return world.humidity[i];
     let total = 0;
@@ -1490,6 +1992,11 @@ export function restoreSimulationState(state) {
         world[field].set(source);
     }
 
+    // Older saves may contain timed travelling-pulse values. Preserve the
+    // compatibility fields in the save shape, but normalize them to zero.
+    world.power.fill(0);
+    world.powerDelay.fill(0);
+
     // Version 1 used bit 1 for Sprinkler mode. Version 2 uses the same bit for
     // Drain Mode, so only legacy, explicitly stored settings need inversion.
     // When old saves omit the setting array, createWorld's current defaults
@@ -1535,6 +2042,7 @@ export function restoreSimulationState(state) {
     dewpointTarget = Number.isFinite(state.dewpointTarget)
         ? Math.max(0, Math.min(100, state.dewpointTarget)) : 10;
     if (!state.arrays.humidity) world.humidity.fill(ambientHumidityTarget);
+    if (!debugFeatureFlags.humidity) setUniformHumidity();
     // Legacy layer settings are intentionally ignored. Outside air now always
     // follows the natural height profile, including saves that disabled it.
     frameCount = Number.isSafeInteger(state.frameCount) ? state.frameCount : 0;
@@ -1563,16 +2071,20 @@ export function restoreSimulationState(state) {
     // Restored cells and Battery-backed routes are authoritative. Rebuild all
     // derived signal and light planes from the restored world before reads.
     logicalCurrentDirty = true;
-    illuminationDirty = true;
+    illuminationDirty = debugFeatureFlags.localLight;
     illuminationSourceSignature = null;
-    illuminationFieldFrame = -1;
-    ambientIlluminationDirty = true;
-    ambientIlluminationFieldFrame = -1;
+    illuminationFieldFrame = debugFeatureFlags.localLight ? -1 : frameCount;
+    ambientIlluminationDirty = debugFeatureFlags.worldIllumination;
+    ambientIlluminationFieldFrame = debugFeatureFlags.worldIllumination ? -1 : frameCount;
     illuminationFlashes = [];
     machineCollisionMaskDirty = true;
     resetElectricalStateCache();
     ensureElectricalScratch();
-    rebuildActiveElectricalPulseCells();
+    world.power.fill(0);
+    world.powerDelay.fill(0);
+    if (!debugFeatureFlags.localLight) clearLocalIllumination();
+    if (!debugFeatureFlags.worldIllumination) setUniformWorldIllumination();
+    if (!debugFeatureFlags.electricity) clearDisabledElectricityState();
 }
 
 // --------------------------------------------------------------------- world
@@ -1586,6 +2098,22 @@ export function createWorld(cols, rows) {
     ambientIlluminationDirty = true;
     ambientIlluminationFieldFrame = -1;
     ambientVisibilityScratch = null;
+    ambientFieldBuilt = false;
+    ambientFullRefreshQueued = false;
+    ambientFullRefreshCursor = 0;
+    ambientDirtyQueue = [];
+    ambientDirtyHead = 0;
+    ambientDirtyCount = 0;
+    ambientFirstDirtyFrame = -1;
+    ambientPendingOldType = new Uint8Array(0);
+    ambientPendingStamp = new Uint32Array(0);
+    ambientPendingIndices = [];
+    ambientPendingGeneration = 0;
+    ambientQueuedTargets = 0;
+    ambientProcessedTargets = 0;
+    ambientRowsUpdated = 0;
+    ambientColumnsUpdated = 0;
+    ambientFallbackCount = 0;
     illuminationDirty = true;
     illuminationSourceSignature = null;
     illuminationFieldFrame = -1;
@@ -1680,6 +2208,7 @@ export function createWorld(cols, rows) {
     tempNextFloodQueue = new Int32Array(world.tempNext.buffer);
     world.temp.fill(AMBIENT);
     world.humidity.fill(ambientHumidityTarget);
+    if (!debugFeatureFlags.worldIllumination) setUniformWorldIllumination();
     for (let i = 0; i < n; i++) world.shade[i] = random() * 255;
     storageFunnelMachines = [];
     storageBarrierMask = null;
@@ -1714,15 +2243,17 @@ export function invalidateLogicalCurrent() {
     // inherently change the conductor graph or machine-load attribution.
     // recomputeLogicalCurrent will dirty loads only if gate supply/output state
     // actually changes.
-    electricalStateDirty = true;
-    logicalCurrentDirty = true;
+    if (debugFeatureFlags.electricity) {
+        electricalStateDirty = true;
+        logicalCurrentDirty = true;
+    }
     illuminationDirty = true;
 }
 
 // The renderer calls this before sampling cached logicalPower so edits remain
 // visible immediately even while simulation stepping is paused.
 export function ensureElectricalStateCurrent() {
-    if (!world) return;
+    if (!world || !debugFeatureFlags.electricity) return;
     if (electricalStateDirty || electricalTopologyDirty || electricalLoadsDirty || logicalCurrentDirty) {
         refreshElectricalState({ force: true });
     }
@@ -1733,29 +2264,56 @@ export function ensureElectricalStateCurrent() {
 // invalidation selective, just like setCell(), without exposing the internal
 // cache implementation to the renderer.
 export function invalidateElectricalTopologyForTypes(previousType, nextType) {
+    if (!debugFeatureFlags.electricity) return;
     if (participatesInElectricalNetwork(DEFS[previousType]) ||
         participatesInElectricalNetwork(DEFS[nextType])) {
         invalidateElectricalState({ topology: true });
     }
 }
 
-// Direct patch/blueprint edits restore the pulse planes as well as the type
-// plane. Keep the sparse aging list synchronized without adding duplicate
-// entries when a cell already has an active pulse slot.
+// Compatibility hook for patch editors. The pulse planes are legacy fields
+// and are always kept at zero.
 export function syncElectricalPulseTrackingAt(cell) {
     if (!world || !Number.isInteger(cell) || cell < 0 || cell >= world.type.length) return;
-    if (world.power[cell] === 0 && world.powerDelay[cell] === 0) {
-        return;
-    }
-    queueElectricalPulseCell(cell);
+    world.power[cell] = 0;
+    world.powerDelay[cell] = 0;
 }
 
-function invalidateAmbientIllumination() {
-    ambientIlluminationDirty = true;
+function queueFullAmbientRefresh() {
+    if (!world || !debugFeatureFlags.worldIllumination) return;
+    if (!ambientFieldBuilt) {
+        ambientIlluminationDirty = true;
+        return;
+    }
+    const scratch = ensureAmbientVisibilityScratch(world.type.length);
+    ambientPendingIndices.length = 0;
+    ambientPendingGeneration = 0;
+    if (ambientPendingStamp.length) ambientPendingStamp.fill(0);
+    for (let x = 0; x < COLS; x++) refreshAmbientColumn(scratch, x);
+    const rows = [];
+    for (let y = 0; y < ROWS; y++) rows.push(y);
+    refreshAmbientRows(scratch, rows);
+    scratch.dirtyQueue.length = 0;
+    scratch.dirtyQueued.fill(0);
+    ambientDirtyHead = 0;
+    ambientDirtyCount = 0;
+    ambientFullRefreshQueued = true;
+    ambientFullRefreshCursor = 0;
+    ambientFallbackCount++;
+    if (ambientFirstDirtyFrame < 0) ambientFirstDirtyFrame = frameCount;
+}
+
+function invalidateAmbientIllumination(cell = -1, previousType = EMPTY, nextType = EMPTY) {
+    if (!debugFeatureFlags.worldIllumination) return;
+    if (cell >= 0) {
+        queueAmbientCellChange(cell, previousType, nextType);
+        return;
+    }
+    queueFullAmbientRefresh();
 }
 
 function ensureLogicalCurrent() {
-    if (logicalCurrentDirty && world) recomputeLogicalCurrent();
+    if (debugFeatureFlags.electricity && logicalCurrentDirty && world) recomputeLogicalCurrent();
 }
 
 function defaultMachineSetting(def) {
@@ -2495,7 +3053,7 @@ export function getMachineSignalStates(x, y) {
             direction: machinePortDirectionLabel(port),
             directionX: port.directionX,
             directionY: port.directionY,
-            active: port.family === 'copper'
+            active: !debugFeatureFlags.electricity ? false : port.family === 'copper'
                 ? isMachinePoweredAt(x, y) : portHasLogicalSignal(port),
             connectionCell: port.connectionCell
         }));
@@ -2516,7 +3074,7 @@ export function getMachineLiveStatus(x, y) {
     const active = isLogicGate(def) ? world.gateOutputState[i] > 0
         : sensor ? sensor.passing
             : def.machine === 'simpleSwitch' || def.machine === 'lamp'
-                ? enabled && inputActive
+                ? enabled && (def.machine === 'lamp' && !debugFeatureFlags.electricity || inputActive)
                 : isMachinePoweredAt(x, y);
     return {
         name: def.name,
@@ -2886,7 +3444,7 @@ export function getMachineSensorReading(x, y) {
         if (sampled.has(cell) || machineCollisionIsWall(px, py) ||
             !AIR_SPACE_BY_TYPE[world.type[cell]]) continue;
         sampled.add(cell);
-        total += humiditySwitch ? world.humidity[cell] : world.temp[cell];
+        total += humiditySwitch ? humidityNearCell(px, py) : world.temp[cell];
         count++;
     }
     return count ? total / count : null;
@@ -2948,19 +3506,19 @@ export function getMachineSensorStatus(x, y) {
 
 // Public electrical state for later devices as well as the current renderer.
 export function isPowered(x, y) {
-    return inBounds(x, y) && world.power[index(x, y)] > 0;
+    return isLogicallyPowered(x, y);
 }
 
-// DC logic is derived from charged Battery routes and enabled machine relays.
-// isPowered remains the visual travelling-pulse query for Spark effects.
+// Logical current is the sole electrical ON/OFF state. The save-compatible
+// power and powerDelay arrays remain zero and are not consulted here.
 export function isLogicallyPowered(x, y) {
-    if (!world || !inBounds(x, y)) return false;
+    if (!debugFeatureFlags.electricity || !world || !inBounds(x, y)) return false;
     ensureLogicalCurrent();
     return world.logicalPower[index(x, y)] > 0;
 }
 
 export function getStoredCharge(x, y) {
-    return inBounds(x, y) ? world.charge[index(x, y)] : 0;
+    return debugFeatureFlags.electricity && inBounds(x, y) ? world.charge[index(x, y)] : 0;
 }
 
 function connectedBatteryComponent(start) {
@@ -3014,7 +3572,7 @@ function connectedBatteryComponent(start) {
 // cursor. Batteries that touch are one reservoir; they never bridge separate
 // batteries elsewhere on the conductor grid.
 export function getConnectedBatteryCharge(x, y) {
-    if (!world || !inBounds(x, y)) return null;
+    if (!debugFeatureFlags.electricity || !world || !inBounds(x, y)) return null;
     return connectedBatteryComponent(index(x, y));
 }
 
@@ -3024,20 +3582,43 @@ export function getConnectedBatteryCharge(x, y) {
 // are charged for each physical conductive cell. The UI samples stored charge
 // over a longer hover window so brief Spark bursts do not swing its ETA.
 export function getBatteryCircuitMetrics(x, y) {
-    const charge = getConnectedBatteryCharge(x, y);
-    if (!charge) return null;
-    ensureLogicalCurrent();
+    if (!debugFeatureFlags.electricity) return null;
+    if (!world || !inBounds(x, y)) return null;
+    ensureElectricalStateCurrent();
     if (!electricalTopologyCache || electricalTopologyDirty) rebuildElectricalTopologyCache();
     if (electricalLoadsDirty || !electricalTopologyCache.loadsByWire) rebuildElectricalLoadCache();
-    const group = electricalTopologyCache.groups.find(candidate => candidate.cells[0] === charge.key);
-    const load = group?.consumption || 0;
-    return { ...charge, load };
+    const groupIndex = electricalTopologyCache.batteryGroupByCell[index(x, y)];
+    if (groupIndex < 0) return null;
+    const group = electricalTopologyCache.groups[groupIndex];
+    return {
+        key: group.cells[0],
+        cells: group.cells,
+        charge: group.charge,
+        capacity: group.capacity,
+        ratio: group.ratio,
+        load: group.consumption || 0
+    };
+}
+
+export function getElectricalBatteryGroupCharge(group) {
+    if (!world || !group || !electricalTopologyCache?.groups.includes(group)) return 0;
+    return group.charge;
+}
+
+// Cached Battery entities used by the renderer. The UI samples each group
+// total without walking its individual Battery cells.
+export function getElectricalBatteryGroups() {
+    if (!world || !debugFeatureFlags.electricity) return [];
+    ensureElectricalStateCurrent();
+    if (!electricalTopologyCache || electricalTopologyDirty) rebuildElectricalTopologyCache();
+    if (electricalLoadsDirty || !electricalTopologyCache.loadsByWire) rebuildElectricalLoadCache();
+    return electricalTopologyCache.groups;
 }
 
 export function clearWorld() {
     world.type.fill(EMPTY);
     world.ambientIllumination.fill(0);
-    invalidateAmbientIllumination();
+    queueFullAmbientRefresh();
     world.life.fill(0);
     world.lifeMax.fill(0);
     world.residue.fill(0);
@@ -3102,9 +3683,12 @@ export function clearWorld() {
     if (machineCollisionMask) machineCollisionMask.fill(0);
     machineCollisionMaskDirty = false;
     logicalCurrentDirty = false;
-    illuminationDirty = false;
-    illuminationSourceSignature = '';
-    illuminationFieldFrame = frameCount;
+    // A subsequent placement can add a source or blocker without advancing
+    // the simulation frame, so the cleared local-light plane must be rebuilt
+    // before the next read.
+    illuminationDirty = debugFeatureFlags.localLight;
+    illuminationSourceSignature = null;
+    illuminationFieldFrame = debugFeatureFlags.localLight ? -1 : frameCount;
     tubingFlows = [];
     hasMixerMachine = false;
     windTrailsAlive = 0;
@@ -3185,11 +3769,17 @@ export function setCell(x, y, id, keepTemp) {
         machineCollisionMaskDirty = true;
     }
     const wasSameRay = previousType === id && def?.forceRate > 0;
-    if (previousType !== id) invalidateAmbientIllumination();
+    if (previousType !== id && debugFeatureFlags.localLight &&
+        (previousDef?.lightRadius > 0 || def?.lightRadius > 0 ||
+            previousDef?.lightFlashRadius > 0 || def?.lightFlashRadius > 0 ||
+            isIlluminationOccluderByDef(previousDef) || isIlluminationOccluderByDef(def))) {
+        illuminationDirty = true;
+    }
     if (participatesInElectricalNetwork(previousDef) || participatesInElectricalNetwork(def)) {
         invalidateElectricalState({ topology: true });
     }
     world.type[i] = id;
+    if (previousType !== id) invalidateAmbientIllumination(i, previousType, id);
     if (def?.machine === 'mixer') hasMixerMachine = true;
     world.residue[i] = EMPTY;
     const lifetime = def.life > 0
@@ -3236,7 +3826,7 @@ export function setCell(x, y, id, keepTemp) {
 function transform(i, id, life, residue) {
     const def = DEFS[id];
     const previousDef = DEFS[world.type[i]];
-    if (world.type[i] !== id) invalidateAmbientIllumination();
+    const previousType = world.type[i];
     if (participatesInElectricalNetwork(previousDef) || participatesInElectricalNetwork(def)) {
         invalidateElectricalState({ topology: true });
     }
@@ -3245,6 +3835,7 @@ function transform(i, id, life, residue) {
         machineCollisionMaskDirty = true;
     }
     world.type[i] = id;
+    if (previousType !== id) invalidateAmbientIllumination(i, previousType, id);
     const lifetime = life !== undefined ? life
         : (def.life > 0 ? def.life + Math.floor((random() - 0.5) * def.lifeVariance) : 0);
     world.life[i] = lifetime;
@@ -3284,11 +3875,12 @@ function defaultBulkInsulation(category) {
 
 function removeParticle(i) {
     const previousDef = DEFS[world.type[i]];
-    if (world.type[i] !== EMPTY) invalidateAmbientIllumination();
+    const previousType = world.type[i];
     if (participatesInElectricalNetwork(previousDef)) invalidateElectricalState({ topology: true });
     if (isCollectorMachine(DEFS[world.type[i]])) collectorMasksDirty = true;
     if (DEFS[world.type[i]]?.machineCollisionWidth) machineCollisionMaskDirty = true;
     world.type[i] = EMPTY;
+    if (previousType !== EMPTY) invalidateAmbientIllumination(i, previousType, EMPTY);
     world.life[i] = 0;
     world.lifeMax[i] = 0;
     world.residue[i] = EMPTY;
@@ -3322,7 +3914,8 @@ function swapCells(i1, i2) {
     if (participatesInElectricalNetwork(previousA) || participatesInElectricalNetwork(previousB)) {
         invalidateElectricalState({ topology: true });
     }
-    if (world.type[i1] !== world.type[i2]) invalidateAmbientIllumination();
+    const previousTypeA = world.type[i1];
+    const previousTypeB = world.type[i2];
     if (isCollectorMachine(DEFS[world.type[i1]]) || isCollectorMachine(DEFS[world.type[i2]])) {
         collectorMasksDirty = true;
     }
@@ -3330,6 +3923,10 @@ function swapCells(i1, i2) {
         machineCollisionMaskDirty = true;
     }
     let t = world.type[i1]; world.type[i1] = world.type[i2]; world.type[i2] = t;
+    if (previousTypeA !== previousTypeB) {
+        invalidateAmbientIllumination(i1, previousTypeA, previousTypeB);
+        invalidateAmbientIllumination(i2, previousTypeB, previousTypeA);
+    }
     let h = world.temp[i1]; world.temp[i1] = world.temp[i2]; world.temp[i2] = h;
     let l = world.life[i1]; world.life[i1] = world.life[i2]; world.life[i2] = l;
     let lm = world.lifeMax[i1]; world.lifeMax[i1] = world.lifeMax[i2]; world.lifeMax[i2] = lm;
@@ -3376,104 +3973,73 @@ function swapCells(i1, i2) {
     world.moved[i2] = 1;
 }
 
-// A Spark schedules a travelling wave over the whole connected conductor. The
-// delay is the weighted distance from the contact point, so the visible yellow
-// front moves away in both directions and reaches every branch and endpoint.
-// Each cell is only visibly powered while the front passes over it.
+// Ordinary Sparks can charge Battery storage reached through conductors. This
+// graph walk does not create current: charged storage and the logical solver
+// are the only sources of a steady ON state.
 function energizeConnectedMetal(seeds, chargeStorage = true, profileOrdinarySpark = false) {
-    if (seeds.length === 0) return;
-
+    if (!chargeStorage || seeds.length === 0 || !world) return;
     const recorder = profileOrdinarySpark ? activeP0PerformanceRecorder() : null;
     const startedAt = recorder ? performance.now() : 0;
-    let connectionVisits = 0;
-
-    ensureElectricalScratch();
-    const distance = electricalDistances;
-    const distanceGeneration = nextElectricalVisitGeneration();
-    const queue = electricalWeightedQueueScratch;
-    const touched = electricalTouchedScratch;
-    const storageCells = electricalStorageScratch;
-    queue.length = 0;
-    touched.length = 0;
-    storageCells.length = 0;
-
-    for (const seed of seeds) {
-        if (electricalDistanceStamps[seed] === distanceGeneration) continue;
-        electricalDistanceStamps[seed] = distanceGeneration;
-        distance[seed] = 0;
-        queue.push(seed);
-        touched.push(seed);
+    if (!electricalTopologyCache || electricalTopologyDirty) rebuildElectricalTopologyCache();
+    const cache = electricalTopologyCache;
+    const stamps = cache.sparkGroupStamps;
+    cache.sparkGroupGeneration = (cache.sparkGroupGeneration + 1) >>> 0;
+    if (cache.sparkGroupGeneration === 0) {
+        stamps.fill(0);
+        cache.sparkGroupGeneration = 1;
     }
-
-    for (let head = 0; head < queue.length; head++) {
-        const i = queue[head];
-        forEachConductiveConnection(i, ni => {
-            if (recorder) connectionVisits++;
-            const nextDef = DEFS[world.type[ni]];
-            if (!chargeStorage && nextDef.chargeCapacity > 0) return;
-
-            const travelFrames = Math.max(1,
-                Math.ceil(1 / Math.max(0.01, nextDef.electricalConductivity)));
-            const nextDistance = distance[i] + travelFrames;
-            const wasVisited = electricalDistanceStamps[ni] === distanceGeneration;
-            if (wasVisited && distance[ni] <= nextDistance) return;
-            if (!wasVisited) {
-                touched.push(ni);
-                electricalDistanceStamps[ni] = distanceGeneration;
-            }
-            distance[ni] = nextDistance;
-            queue.push(ni);
-        });
+    const generation = cache.sparkGroupGeneration;
+    const touchedGroups = cache.sparkTouchedGroupIndices;
+    touchedGroups.length = 0;
+    for (const seed of seeds) {
+        const componentIndex = cache.conductiveComponentByCell[seed];
+        if (componentIndex < 0) continue;
+        for (const groupIndex of cache.conductiveComponents[componentIndex].batteryGroupIndices) {
+            if (stamps[groupIndex] === generation) continue;
+            stamps[groupIndex] = generation;
+            touchedGroups.push(groupIndex);
+        }
     }
 
     let stored = 0;
     let storageCapacity = 0;
     let chargePerSpark = 0;
-
-    for (const i of touched) {
-        const delay = Math.min(65535, distance[i]);
-        if (delay === 0) {
-            world.power[i] = POWER_GLOW_FRAMES;
-        } else if (world.powerDelay[i] === 0 || delay < world.powerDelay[i]) {
-            world.powerDelay[i] = delay;
-        }
-        queueElectricalPulseCell(i);
-
-        const def = DEFS[world.type[i]];
-        if (def.chargeCapacity > 0 && def.chargePerSpark > 0) {
-            storageCells.push(i);
-            stored += world.charge[i];
-            storageCapacity += def.chargeCapacity;
-            chargePerSpark = Math.max(chargePerSpark, def.chargePerSpark);
+    let batteryCellsTouched = 0;
+    for (const groupIndex of touchedGroups) {
+        const group = cache.groups[groupIndex];
+        for (const cell of group.cells) {
+            stored += world.charge[cell];
+            storageCapacity += DEFS[world.type[cell]]?.chargeCapacity || 0;
+            chargePerSpark = Math.max(chargePerSpark,
+                DEFS[world.type[cell]]?.chargePerSpark || 0);
+            batteryCellsTouched++;
         }
     }
-
-    // A Spark carries a fixed amount of energy. Sharing it across every
-    // storage cell means a larger Battery mass has proportionally more total
-    // capacity, but needs proportionally more Sparks (or a Spark brush held on
-    // it for longer) to reach the same yellow charge level.
-    if (chargeStorage && storageCells.length > 0 && storageCapacity > 0) {
+    if (touchedGroups.length && storageCapacity > 0) {
         const sourceBecameAvailable = stored <= 0 && stored + chargePerSpark > 0;
         const fullness = Math.min(1, (stored + chargePerSpark) / storageCapacity);
-        for (const i of storageCells) {
-            world.charge[i] = DEFS[world.type[i]].chargeCapacity * fullness;
+        for (const groupIndex of touchedGroups) {
+            const group = cache.groups[groupIndex];
+            let groupCharge = 0;
+            for (const cell of group.cells) {
+                world.charge[cell] = (DEFS[world.type[cell]]?.chargeCapacity || 0) * fullness;
+                groupCharge += world.charge[cell];
+            }
+            group.charge = groupCharge;
+            group.ratio = group.capacity > 0 ? Math.max(0, Math.min(1, groupCharge / group.capacity)) : 0;
         }
         if (sourceBecameAvailable) invalidateLogicalCurrent();
     }
-
-    if (recorder) {
-        recorder.record('ordinarySparkPropagation', performance.now() - startedAt, {
-            touchedCells: touched.length,
-            connectionVisits,
-            // World-sized distance, queue, and touched scratch is retained and
-            // reused; this per-Spark traversal creates no cell-slot arrays.
-            allocatedCells: 0,
-            scratchCells: queue.length + touched.length
-        });
-    }
-    queue.length = 0;
-    touched.length = 0;
-    storageCells.length = 0;
+    if (recorder) recorder.record('ordinarySparkPropagation', performance.now() - startedAt, {
+        touchedCells: seeds.length,
+        connectionVisits: 0,
+        chargingTraversalCells: batteryCellsTouched,
+        chargingConnectionVisits: 0,
+        componentLookups: seeds.length,
+        batteryGroupsTouched: touchedGroups.length,
+        allocatedCells: 0
+    });
+    touchedGroups.length = 0;
 }
 
 function conductiveNeighbours(x, y) {
@@ -3704,6 +4270,8 @@ function rebuildElectricalTopologyCache(profileCounters = null) {
     ensureElectricalScratch();
     const generation = nextElectricalVisitGeneration();
     const groups = [];
+    const batteryGroupByCell = new Int32Array(world.type.length);
+    batteryGroupByCell.fill(-1);
     let batteryCells = 0;
     for (let start = 0; start < world.type.length; start++) {
         const startDef = DEFS[world.type[start]];
@@ -3717,10 +4285,26 @@ function rebuildElectricalTopologyCache(profileCounters = null) {
         const cells = [];
         const contacts = new Set();
         let capacity = 0;
+        let storedCharge = 0;
+        let sumX = 0;
+        let sumY = 0;
+        let minX = COLS;
+        let maxX = -1;
+        let minY = world.rows;
+        let maxY = -1;
         while (head < tail) {
             const battery = queue[head++];
             cells.push(battery);
             capacity += DEFS[world.type[battery]].chargeCapacity;
+            storedCharge += world.charge[battery];
+            const batteryX = battery % COLS;
+            const batteryY = Math.floor(battery / COLS);
+            sumX += batteryX;
+            sumY += batteryY;
+            minX = Math.min(minX, batteryX);
+            maxX = Math.max(maxX, batteryX);
+            minY = Math.min(minY, batteryY);
+            maxY = Math.max(maxY, batteryY);
             const x = battery % COLS;
             const y = Math.floor(battery / COLS);
             for (const [dx, dy] of ELECTRICAL_NEIGHBOURS) {
@@ -3743,13 +4327,88 @@ function rebuildElectricalTopologyCache(profileCounters = null) {
         const batteryCellsForGroup = Int32Array.from(cells);
         const contactCells = Int32Array.from(contacts);
         batteryCells += batteryCellsForGroup.length;
-        groups.push({ cells: batteryCellsForGroup, contacts: contactCells, capacity, consumption: 0 });
+        const centerX = sumX / batteryCellsForGroup.length;
+        const centerY = sumY / batteryCellsForGroup.length;
+        let anchorCell = batteryCellsForGroup[0];
+        let nearestCenterDistance = Infinity;
+        for (const cell of batteryCellsForGroup) {
+            const dx = cell % COLS - centerX;
+            const dy = Math.floor(cell / COLS) - centerY;
+            const distance = dx * dx + dy * dy;
+            if (distance < nearestCenterDistance) {
+                nearestCenterDistance = distance;
+                anchorCell = cell;
+            }
+        }
+        const groupIndex = groups.length;
+        groups.push({
+            cells: batteryCellsForGroup,
+            contacts: contactCells,
+            capacity,
+            charge: storedCharge,
+            ratio: capacity > 0 ? Math.max(0, Math.min(1, storedCharge / capacity)) : 0,
+            anchorCell,
+            bounds: { minX, maxX, minY, maxY },
+            consumption: 0
+        });
+        for (const cell of batteryCellsForGroup) batteryGroupByCell[cell] = groupIndex;
     }
+    const conductiveComponentByCell = new Int32Array(world.type.length);
+    conductiveComponentByCell.fill(-1);
+    const conductiveComponents = [];
+    const conductorGeneration = nextElectricalVisitGeneration();
+    const componentQueue = electricalQueueScratch;
+    for (let start = 0; start < world.type.length; start++) {
+        if (!DEFS[world.type[start]]?.conductive ||
+            electricalVisitStamps[start] === conductorGeneration) continue;
+        let head = 0;
+        let tail = 1;
+        componentQueue[0] = start;
+        electricalVisitStamps[start] = conductorGeneration;
+        const batteryGroupsInComponent = new Set();
+        const componentIndex = conductiveComponents.length;
+        while (head < tail) {
+            const cell = componentQueue[head++];
+            conductiveComponentByCell[cell] = componentIndex;
+            const ownBatteryGroup = batteryGroupByCell[cell];
+            if (ownBatteryGroup >= 0) batteryGroupsInComponent.add(ownBatteryGroup);
+            const x = cell % COLS;
+            const y = Math.floor(cell / COLS);
+            for (const [dx, dy] of ELECTRICAL_NEIGHBOURS) {
+                const nx = x + dx;
+                const ny = y + dy;
+                if (!inBounds(nx, ny)) continue;
+                const neighbor = index(nx, ny);
+                const batteryGroup = batteryGroupByCell[neighbor];
+                if (batteryGroup >= 0) batteryGroupsInComponent.add(batteryGroup);
+            }
+            forEachConductiveConnection(cell, next => {
+                if (electricalVisitStamps[next] === conductorGeneration) return;
+                electricalVisitStamps[next] = conductorGeneration;
+                componentQueue[tail++] = next;
+            });
+        }
+        conductiveComponents.push({
+            batteryGroupIndices: Int32Array.from(batteryGroupsInComponent)
+        });
+    }
+
     let conductiveCells = 0;
     for (let cell = 0; cell < world.type.length; cell++) {
         if (DEFS[world.type[cell]]?.conductive) conductiveCells++;
     }
-    electricalTopologyCache = { groups, loadsByWire: null, conductiveCells, batteryCells };
+    electricalTopologyCache = {
+        groups,
+        batteryGroupByCell,
+        conductiveComponentByCell,
+        conductiveComponents,
+        sparkGroupStamps: new Uint32Array(groups.length),
+        sparkGroupGeneration: 0,
+        sparkTouchedGroupIndices: [],
+        loadsByWire: null,
+        conductiveCells,
+        batteryCells
+    };
     electricalTopologyDirty = false;
     electricalLoadsDirty = true;
     if (profileCounters) {
@@ -3824,7 +4483,7 @@ function countCachedElectricalLoadMachines() {
 }
 
 function refreshElectricalState({ scheduled = false, force = false } = {}) {
-    if (!world) return false;
+    if (!debugFeatureFlags.electricity || !world) return false;
     const topologyRebuilt = electricalTopologyDirty || !electricalTopologyCache;
     const needsRefresh = force || scheduled || electricalStateDirty || topologyRebuilt || logicalCurrentDirty;
     if (!needsRefresh) return false;
@@ -3854,17 +4513,19 @@ function refreshElectricalState({ scheduled = false, force = false } = {}) {
 }
 
 function machineHasLogicalInput(machine) {
+    if (!debugFeatureFlags.electricity) return false;
     return machinePortDescriptors(machine).some(port =>
         port.family === 'electrical' && port.role === 'input' &&
         electricalPortWireCells(port).some(wire => world.logicalPower[wire] > 0));
 }
 
 function portHasLogicalSignal(port) {
+    if (!debugFeatureFlags.electricity) return false;
     return !!port && electricalPortWireCells(port).some(wire => world.logicalPower[wire] > 0);
 }
 
 function portHasBatterySupply(port) {
-    if (!port) return false;
+    if (!debugFeatureFlags.electricity || !port) return false;
     const cells = electricalNetworkCells(electricalPortWireCells(port));
     for (const cell of cells) {
         const x = cell % COLS;
@@ -3953,7 +4614,9 @@ function energizeEnabledRelayOutputs() {
 }
 
 function recomputeLogicalCurrent() {
-    if (!world) return;
+    if (!debugFeatureFlags.electricity || !world) return;
+    const recorder = activeP0PerformanceRecorder();
+    const startedAt = recorder ? performance.now() : 0;
     const gateMachines = [];
     for (let machine = 0; machine < world.type.length; machine++) {
         const def = DEFS[world.type[machine]];
@@ -3978,8 +4641,10 @@ function recomputeLogicalCurrent() {
     let seenStates = new Map();
     const signature = state => Array.from(state).join('');
     const iterationLimit = Math.max(8, gateMachines.length + 2);
+    let solverIterations = 0;
 
     for (let iteration = 0; iteration < iterationLimit; iteration++) {
+        solverIterations++;
         const currentSignature = signature(gateOutputState);
         if (!seenStates.has(currentSignature)) {
             seenStates.set(currentSignature, history.length);
@@ -4069,6 +4734,12 @@ function recomputeLogicalCurrent() {
         illuminationSourceSignature = nextIlluminationSignature;
         illuminationDirty = true;
     }
+    if (recorder) recorder.record('logicalGateSolve', performance.now() - startedAt, {
+        gateCount: gateMachines.length,
+        iterations: solverIterations,
+        iterationLimit,
+        forcedOffCount: forcedOff.reduce((total, value) => total + value, 0)
+    });
 }
 
 // Directly touching storage metals behave as one reservoir. This conserves
@@ -4097,43 +4768,16 @@ function balanceStoredCharge() {
             const capacity = DEFS[world.type[cell]]?.chargeCapacity || 0;
             world.charge[cell] = capacity * fullness;
         }
+        group.charge = totalCharge;
+        group.ratio = totalCapacity > 0 ? Math.max(0, Math.min(1, totalCharge / totalCapacity)) : 0;
     }
     return supplyAvailabilityChanged;
 }
 
-function ageElectricalPulses() {
-    let write = 0;
-    for (let read = 0; read < activeElectricalPulseCells.length; read++) {
-        const cell = activeElectricalPulseCells[read];
-        if (!activeElectricalPulseMask[cell]) continue;
-        const def = DEFS[world.type[cell]];
-        // Cleared/replaced cells retain one sparse-list slot until this pass;
-        // if energized again before now, that slot ages the replacement pulse
-        // once instead of creating a duplicate entry.
-        if (!def?.conductive) {
-            world.power[cell] = 0;
-            world.powerDelay[cell] = 0;
-            activeElectricalPulseMask[cell] = 0;
-            continue;
-        }
-        if (world.power[cell] > 0) world.power[cell]--;
-        if (world.powerDelay[cell] > 0) {
-            world.powerDelay[cell]--;
-            if (world.powerDelay[cell] === 0) world.power[cell] = POWER_GLOW_FRAMES;
-        }
-        if (world.power[cell] > 0 || world.powerDelay[cell] > 0) {
-            activeElectricalPulseCells[write++] = cell;
-        } else {
-            activeElectricalPulseMask[cell] = 0;
-        }
-    }
-    activeElectricalPulseCells.length = write;
-}
-
 function updateElectricalPower() {
+    if (!debugFeatureFlags.electricity) return;
     const recorder = activeP0PerformanceRecorder();
     const startedAt = recorder ? performance.now() : 0;
-    ageElectricalPulses();
     const scheduled = frameCount - lastElectricalRefreshFrame >= ELECTRICAL_REFRESH_INTERVAL;
     refreshElectricalState({ scheduled });
     const supplyAvailabilityChanged = balanceStoredCharge();
@@ -4146,28 +4790,6 @@ function updateElectricalPower() {
             worldCells: world.type.length,
             conductiveCells: electricalTopologyCache?.conductiveCells || 0
         });
-    }
-}
-
-function relayElectricalSwitches() {
-    for (let machine = 0; machine < world.type.length; machine++) {
-        if (DEFS[world.type[machine]]?.machine !== 'simpleSwitch' ||
-            (Math.round(world.machineSetting[machine]) & 1) === 0) continue;
-        const ports = machinePortDescriptors(machine);
-        const output = ports.find(port => port.family === 'electrical' && port.role === 'output');
-        if (!machineHasLogicalInput(machine)) continue;
-        const outputWires = electricalPortWireCells(output);
-        if (outputWires.length) energizeConnectedMetal(outputWires, false);
-    }
-    for (let machine = 0; machine < world.type.length; machine++) {
-        const def = DEFS[world.type[machine]];
-        if (!isMachineSensor(def)) continue;
-        const status = getMachineSensorStatus(machine % COLS, Math.floor(machine / COLS));
-        if (!status?.passing) continue;
-        const output = machinePortDescriptors(machine).find(port =>
-            port.family === 'electrical' && port.role === 'output');
-        const outputWires = electricalPortWireCells(output);
-        if (outputWires.length) energizeConnectedMetal(outputWires, false);
     }
 }
 
@@ -4289,6 +4911,7 @@ function markOpenAirCells() {
 // while every cell still gets fresh diffusion and source/sink input every four
 // ticks. The existing open-air flood mask distinguishes outside air from rooms.
 function updateHumidityField() {
+    if (!debugFeatureFlags.humidity) return;
     const count = world.type.length;
     const phase = humidityCursor & 3;
     humidityCursor = (humidityCursor + 1) & 3;
@@ -4364,8 +4987,7 @@ export function stepSimulation() {
     const recorder = activeP0PerformanceRecorder();
     const startedAt = recorder ? performance.now() : 0;
     frameCount++;
-    invalidateAmbientIllumination();
-    if (illuminationFlashes.length) {
+    if (debugFeatureFlags.localLight && illuminationFlashes.length) {
         illuminationFlashes = illuminationFlashes.filter(flash =>
             flash.expiresAtFrame > frameCount);
         illuminationDirty = true;
@@ -4380,13 +5002,13 @@ export function stepSimulation() {
         if (Math.abs(ambientTarget - AMBIENT) < 0.05) AMBIENT = ambientTarget;
     }
     markOpenAirCells();
-    updateHumidityField();
+    if (debugFeatureFlags.humidity) updateHumidityField();
     diffuseHeat();
     radiateHeat();
     computeLiquidSurfaces();
     world.moved.fill(0);
     refreshStorageFunnelMachines();
-    updateElectricalPower();
+    if (debugFeatureFlags.electricity) updateElectricalPower();
     decayAndAdvectFanAir();
     updateActiveMachines();
     applyFanAirflowToParticles();
@@ -4449,6 +5071,8 @@ export function stepSimulation() {
             else if (def.category === 'gas' && !sluggish) moveGas(x, y, i, def);
         }
     }
+    flushAmbientPendingChanges();
+    processAmbientIlluminationWork();
     if (recorder) {
         recorder.record('stepSimulation', performance.now() - startedAt, {
             worldCells: world.type.length
@@ -4820,7 +5444,7 @@ function applyStateChange(x, y, i, def) {
     let over = 0;
 
     if (def.evaporatesAbove !== undefined && t > def.evaporatesAbove) {
-        if (def.evaporationHumidity > 0) {
+        if (debugFeatureFlags.humidity && def.evaporationHumidity > 0) {
             world.humidity[i] = Math.min(100, world.humidity[i] + def.evaporationHumidity);
         }
         removeParticle(i);
@@ -4987,7 +5611,9 @@ function applyReactions(x, y, i, def) {
             if (precipitation !== EMPTY) {
                 transform(i, precipitation);
                 world.temp[i] = precipitationTemp <= 0 ? Math.min(world.temp[i], precipitationTemp) : precipitationTemp;
-                world.humidity[i] = Math.max(0, world.humidity[i] - 18);
+                if (debugFeatureFlags.humidity) {
+                    world.humidity[i] = Math.max(0, world.humidity[i] - 18);
+                }
                 return true;
             }
         }
@@ -5047,10 +5673,10 @@ function applyReactions(x, y, i, def) {
         }
     }
 
-    // An ordinary Spark touching any conductor becomes a travelling power
-    // pulse. Sparks emitted by stored charge carry data=1 and are visual only,
-    // which prevents charged Battery from feeding itself forever.
-    if (def.energizesConductors && world.data[i] === 0) {
+    // An ordinary Spark touching a conductor can charge reachable Batteries.
+    // Electrical wires only carry steady logical state from charged storage
+    // or active gates; the Spark itself never powers a Battery-less wire.
+    if (debugFeatureFlags.electricity && def.energizesConductors && world.data[i] === 0) {
         const conductors = conductiveNeighbours(x, y);
         if (conductors.length > 0) {
             energizeConnectedMetal(conductors, true, true);
@@ -5059,26 +5685,10 @@ function applyReactions(x, y, i, def) {
         }
     }
 
-    // Battery keeps the charge added by each pulse. At higher charge it gives
-    // off occasional decorative sparks without spending or reapplying charge;
-    // a future device can read the stored value and discharge it deliberately.
-    if (def.chargeCapacity > 0 && world.charge[i] > 0 && def.chargeSparkChance > 0) {
-        const fullness = world.charge[i] / def.chargeCapacity;
-        if (random() < def.chargeSparkChance * fullness) {
-            const spot = findEmptyNeighbour(x, y);
-            if (spot >= 0) {
-                const spark = idOf('Spark');
-                transform(spot, spark);
-                world.data[spot] = 1;
-                world.temp[spot] = Math.max(world.temp[spot], DEFS[spark].defaultTemp);
-            }
-        }
-    }
-
     // Spark sources spend their own lifetime producing ordinary Sparks around
     // themselves. Any touching liquid suppresses the source until it clears.
-    // The Sparks are real particles, so they can charge Battery and conduct
-    // its pulse normally before the source pixel eventually wears out.
+    // The Sparks are real particles, so they can charge a Battery before the
+    // source pixel eventually wears out.
     if (def.sparkEmitterChance > 0 && !hasLiquidNeighbour(x, y) &&
         random() < def.sparkEmitterChance) {
         const spot = findEmptySparkSpace(x, y);
@@ -5803,7 +6413,7 @@ function explode(x, y, def) {
     // place the loop below finds it, treats it as more gunpowder to light, and
     // it re-lights itself over and over.
     const source = y * COLS + x;
-    if (def.lightFlashRadius > 0 && def.lightFlashIntensity > 0) {
+    if (debugFeatureFlags.localLight && def.lightFlashRadius > 0 && def.lightFlashIntensity > 0) {
         // Capture a transient flash before clearing the gunpowder cell. Absolute
         // frame expiry keeps its four-tick fade deterministic while particles
         // move, and flash events are deliberately not part of saved state.
@@ -5844,7 +6454,7 @@ function explode(x, y, def) {
                 invalidateElectricalState({ topology: true });
             }
             world.type[ni] = EMPTY;
-            invalidateAmbientIllumination();
+            invalidateAmbientIllumination(ni, id, EMPTY);
             world.life[ni] = 0;
             world.lifeMax[ni] = 0;
             world.residue[ni] = EMPTY;
@@ -6691,6 +7301,11 @@ function moveProjectile(x, y, i, def) {
 }
 
 function machineIsPowered(x, y, i) {
+    const def = DEFS[world.type[i]];
+    if (!debugFeatureFlags.electricity) {
+        return !!def?.machine && !isLogicGate(def) && def.machine !== 'simpleSwitch' &&
+            !isMachineSensor(def) && (def.powerConsumption || 0) > 0;
+    }
     ensureLogicalCurrent();
     if (world.logicalPower[i] > 0) return true;
 

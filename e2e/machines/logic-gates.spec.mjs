@@ -297,7 +297,7 @@ test('AND supply and independent signal Batteries drive a separate output wire t
     expect(depletedSupply.supplyLoad).toBeLessThan(bothSignals.supplyLoad);
 });
 
-test('cutting supply, input A, or input B turns AND and its Lamp off despite visual wire pulses', async ({ page }) => {
+test('cutting supply, input A, or input B turns AND and its Lamp off without transient wire fields', async ({ page }) => {
     const game = new GamePage(page);
     await game.openMenu();
     await game.newGame();
@@ -315,20 +315,20 @@ test('cutting supply, input A, or input B turns AND and its Lamp off despite vis
         await game.step(0);
         await expect(lampGlow, `${scenario.label} baseline Lamp is lit`).toHaveAttribute('data-lit', 'true');
         expect(powered.outputActive, `${scenario.label} baseline AND output is live`).toBe(true);
+        const baselineTransientFields = await page.evaluate(async () => {
+            const physics = await import('/physics.js');
+            const world = physics.getWorld();
+            return world.power.some(value => value > 0) || world.powerDelay.some(value => value > 0);
+        });
+        expect(baselineTransientFields, `${scenario.label} baseline uses only logical ON/OFF state`).toBe(false);
         const activeSupplyColor = await supplyMarker.evaluate(node => getComputedStyle(node).fill);
         expect(isActiveSupplyCyan(activeSupplyColor), 'active supply marker is cyan/light blue').toBe(true);
 
         const interrupted = await page.evaluate(async ({ battery, scenario }) => {
             const physics = await import('/physics.js');
-            const definitions = physics.getDefinitions();
             const world = physics.getWorld();
             const batteryIndex = physics.index(battery.x, battery.y);
             world.charge[batteryIndex] = 0;
-            // Preserve visible pulse paths on conductors after the Battery route
-            // is cut; logical DC state must come only from the live circuit.
-            for (let cell = 0; cell < world.type.length; cell++) {
-                if (definitions[world.type[cell]]?.conductive) world.power[cell] = 8;
-            }
             physics.invalidateLogicalCurrent();
             const gatePorts = physics.getMachinePorts(90, 45);
             const output = gatePorts.find(port => port.role === 'output');
@@ -339,18 +339,18 @@ test('cutting supply, input A, or input B turns AND and its Lamp off despite vis
                 outputLogical: world.logicalPower[physics.index(output.connectionCell.x, output.connectionCell.y)] > 0,
                 lampActive: liveLamp.active,
                 supplyActive: liveGate.ports.find(port => port.id === 'supply')?.active,
-                visualPulseCells: world.power.reduce((count, value, i) =>
-                    count + (value > 0 && definitions[world.type[i]]?.conductive ? 1 : 0), 0)
+                transientPowerCells: world.power.reduce((count, value) => count + (value > 0 ? 1 : 0), 0),
+                transientDelayCells: world.powerDelay.reduce((count, value) => count + (value > 0 ? 1 : 0), 0)
             };
         }, { battery: powered[scenario.batteryKey], scenario });
         await game.step(0);
         await expect(lampGlow, `${scenario.label} Battery loss extinguishes the Lamp`).toHaveAttribute('data-lit', 'false');
         expect(interrupted.outputLogical, `${scenario.label} cut clears logical gate output`).toBe(false);
         expect(interrupted.lampActive, `${scenario.label} cut disables the Lamp`).toBe(false);
-        expect(interrupted.visualPulseCells, `${scenario.label} leaves decorative conductor pulses behind`)
-            .toBeGreaterThan(0);
+        expect(interrupted.transientPowerCells, `${scenario.label} cut leaves no transient power field`).toBe(0);
+        expect(interrupted.transientDelayCells, `${scenario.label} cut leaves no transient delay field`).toBe(0);
         expect(await page.locator('#machineOverlay .electrical-signal-spark').count(),
-            `${scenario.label} cut can still show residual pulse artwork`).toBeGreaterThan(0);
+            `${scenario.label} cut has no moving transient wire artwork`).toBe(0);
 
         const supplyColorAfterCut = await supplyMarker.evaluate(node => getComputedStyle(node).fill);
         if (scenario.supplyShouldRemainActive) {

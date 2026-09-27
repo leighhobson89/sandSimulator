@@ -27,10 +27,11 @@ import {
     setShapePreview, clearShapePreview, paintShape,
     getMachinePortAtClientPoint, paintMachinePortConnector, setMachinePortConnectorPreview,
     getMachineArtworkAtClientPoint, preloadMachineArtworkAlpha,
-    captureBlueprint, stampBlueprint, stampBlueprintAt, BLUEPRINT_SLOT_COUNT
+    captureBlueprint, stampBlueprint, stampBlueprintAt, BLUEPRINT_SLOT_COUNT, renderWorld
 } from './game.js';
 import {
     getDefinitions, setAmbientTarget, getAmbientTarget,
+    getDebugFeatureFlags, setDebugFeatureEnabled,
     setAmbientIlluminationTarget, getAmbientIlluminationTarget,
     setAmbientHumidityTarget, getAmbientHumidityTarget, setDewpointTarget, getDewpointTarget,
     setAmbientWindOn, getAmbientWindOn,
@@ -93,6 +94,7 @@ let visualizationsDialogInvoker = null;
 let edgePanPointer = null;
 let edgePanFrame = null;
 let edgePanLastTime = 0;
+let debugMenuReturnFocus = null;
 const EDGE_PAN_MAX_SPEED = 180;
 const CANVAS_SCROLL_STEP = 80;
 
@@ -118,16 +120,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     elements.newGameMenuButton.addEventListener('click', () => { void startNewGame(); });
     elements.autosaveToggle.checked = isAutosaveEnabled();
     elements.autosaveToggle.addEventListener('change', handleAutosaveToggle);
-    const noWireSparksPreference = 'sandSimulator.noWireSparks';
-    if (elements.noWireSparksToggle) {
-        try {
-            elements.noWireSparksToggle.checked = localStorage.getItem(noWireSparksPreference) === 'true';
-        } catch { elements.noWireSparksToggle.checked = false; }
-        elements.noWireSparksToggle.addEventListener('change', () => {
-            try { localStorage.setItem(noWireSparksPreference, String(elements.noWireSparksToggle.checked)); }
-            catch { /* The display preference remains usable without storage. */ }
-        });
-    }
+    setUpDebugMenu(elements);
     elements.worldSizeStart.addEventListener('click', () => settleWorldSizeChoice(
         elements.worldSizeDialog.querySelector('input[name="worldSize"]:checked')?.value || null
     ));
@@ -1376,7 +1369,6 @@ function formatMaterialTooltip(def) {
     if (def.wireReach > 0) properties.push(`wire reach ${formatNumber(def.wireReach)} cells`);
     if (def.chargeCapacity > 0) properties.push(`stores ${formatNumber(def.chargeCapacity)} charge`);
     if (def.chargePerSpark > 0) properties.push(`adds ${formatNumber(def.chargePerSpark)} charge per Spark`);
-    if (def.chargeSparkChance > 0) properties.push(`full-charge spark chance ${formatPercent(def.chargeSparkChance)}`);
     if (def.powerConsumption > 0) properties.push(`draws ${formatNumber(def.powerConsumption)} power/tick`);
     if (def.machine) properties.push(`machine: ${titleCase(def.machine)}`);
     if (def.storageCategory) properties.push(`stores one ${def.storageCategory} type, up to ${formatNumber(def.storageCapacity)} particles`);
@@ -2828,8 +2820,65 @@ function stopPaintTimer() {
     paintTimer = null;
 }
 
+function setUpDebugMenu(elements) {
+    const flags = getDebugFeatureFlags() || {};
+    for (const toggle of elements.debugFeatureToggles || []) {
+        const feature = toggle.dataset.debugFeature;
+        if (!feature) continue;
+        toggle.checked = flags[feature] !== false;
+        toggle.addEventListener('change', () => {
+            setDebugFeatureEnabled(feature, toggle.checked);
+            if (getWorld()) renderWorld();
+        });
+    }
+    elements.closeDebugMenuButton?.addEventListener('click', () => {
+        setDebugMenuOpen(elements, false);
+    });
+}
+
+function setDebugMenuOpen(elements, open) {
+    const menu = elements.debugMenu;
+    if (!menu) return;
+    if (open) {
+        debugMenuReturnFocus = document.activeElement;
+        menu.hidden = false;
+        elements.closeDebugMenuButton?.focus({ preventScroll: true });
+        return;
+    }
+
+    menu.hidden = true;
+    const returnFocus = debugMenuReturnFocus;
+    debugMenuReturnFocus = null;
+    if (returnFocus instanceof HTMLElement && returnFocus !== document.body &&
+        returnFocus.isConnected && !menu.contains(returnFocus)) {
+        returnFocus.focus({ preventScroll: true });
+    } else {
+        elements.canvasArea?.focus({ preventScroll: true });
+    }
+}
+
+function isTextEntryTarget(target) {
+    if (!(target instanceof Element)) return false;
+    if (target.isContentEditable || target.closest('[contenteditable]:not([contenteditable="false"])')) return true;
+    const input = target.closest('input');
+    if (!input) return !!target.closest('textarea');
+    const type = (input.type || 'text').toLowerCase();
+    return !['checkbox', 'radio', 'button', 'submit', 'reset', 'file', 'color', 'range', 'image'].includes(type);
+}
+
 function setUpKeyboardShortcuts() {
+    const elements = getElements();
     document.addEventListener('keydown', event => {
+        if (event.code === 'NumpadSubtract' && !event.repeat && !isTextEntryTarget(event.target)) {
+            event.preventDefault();
+            setDebugMenuOpen(elements, elements.debugMenu?.hidden !== false);
+            return;
+        }
+        if (event.key === 'Escape' && elements.debugMenu && !elements.debugMenu.hidden) {
+            event.preventDefault();
+            setDebugMenuOpen(elements, false);
+            return;
+        }
         if (event.key === 'Escape' && machinePlacement) {
             event.preventDefault();
             cancelPainting();

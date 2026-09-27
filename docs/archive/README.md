@@ -19,6 +19,21 @@ in [`../README.md`](../README.md); active findings remain in
 
 ## Executed Plans
 
+- [`plans/2026-09-27-ambient-illumination-adaptive-refinement-rollback.md`](plans/2026-09-27-ambient-illumination-adaptive-refinement-rollback.md)
+  - rollback to uniform center-sampled ambient chunks, focused verification, and before/after benchmark comparison; see the [results report](../reviews/2026-09-27-ambient-illumination-chunk-performance-results.md).
+
+- [`plans/2026-09-27-ambient-illumination-chunk-approximation.md`](plans/2026-09-27-ambient-illumination-chunk-approximation.md)
+  — tuneable center-sampled ambient-light chunks, incremental invalidation,
+  focused verification, and benchmark results; see the
+  [performance report](../reviews/2026-09-27-ambient-illumination-chunk-performance-results.md).
+- [`plans/2026-09-27-electrical-hover-and-battery-optimization.md`](plans/2026-09-27-electrical-hover-and-battery-optimization.md)
+  — binary electrical state, Battery entity trend rendering, hover caching,
+  opt-in instrumentation, and incremental ambient-light profiling; see the
+  [benchmark results and graph](../reviews/2026-09-27-electrical-hover-and-battery-optimization-results.md).
+- [`plans/2026-09-27-debug-performance-menu.md`](plans/2026-09-27-debug-performance-menu.md)
+  — runtime-only debug overrides for local and ambient illumination, humidity,
+  and electricity; records implementation scope and syntax/whitespace-only
+  checks, with automated test suites not added or run.
 - [`plans/2026-09-26-plant-illumination-and-world-light.md`](plans/2026-09-26-plant-illumination-and-world-light.md)
   — ambient world illumination, species-specific plant light responses,
   feedback, focused regressions, and the opt-in P0 performance benchmark.

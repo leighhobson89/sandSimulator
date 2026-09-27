@@ -33,6 +33,66 @@ test('Save and Load round-trip restores world and tool settings', async ({ page 
     await expect(page.locator('#brushSize')).toHaveValue('9');
 });
 
+test('legacy saves discard transient wire pulses and rebuild steady Battery current', async ({ page }) => {
+    const game = new GamePage(page); await game.openMenu(); await game.newGame();
+    const fixture = await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        const saves = await import('/saveLoadGame.js');
+        const codec = await import('/lzString.js');
+        const definitions = physics.getDefinitions();
+        const id = name => definitions.findIndex(definition => definition?.name === name);
+        const world = physics.getWorld();
+        physics.clearWorld();
+        physics.setCell(20, 35, id('Battery'));
+        physics.setCell(21, 35, id('Elec'));
+        physics.setCell(23, 35, id('Fan'));
+        world.charge[physics.index(20, 35)] = definitions[id('Battery')].chargeCapacity;
+        const wireIndex = physics.index(21, 35);
+        world.power[wireIndex] = 9;
+        world.powerDelay[wireIndex] = 12;
+        const payload = saves.parseSaveString(saves.createSaveString());
+        const savedLegacyPulse = {
+            power: world.power[wireIndex],
+            powerDelay: world.powerDelay[wireIndex],
+            includesLegacyFields: Boolean(payload.simulation.arrays.power && payload.simulation.arrays.powerDelay)
+        };
+        // Version 1 saves may contain the old visual pulse planes but no derived logicalPower plane.
+        payload.version = 1;
+        payload.simulation.version = 1;
+        return {
+            savedLegacyPulse,
+            encoded: codec.compressToEncodedURIComponent(JSON.stringify(payload))
+        };
+    });
+    expect(fixture.savedLegacyPulse).toEqual({ power: 9, powerDelay: 12, includesLegacyFields: true });
+
+    const restored = await page.evaluate(async encoded => {
+        const physics = await import('/physics.js');
+        (await import('/saveLoadGame.js')).loadSaveString(encoded);
+        const world = physics.getWorld();
+        const wireIndex = physics.index(21, 35);
+        const immediatelyRestored = {
+            power: world.power[wireIndex],
+            powerDelay: world.powerDelay[wireIndex]
+        };
+        physics.stepSimulation();
+        return {
+            immediatelyRestored,
+            logicalWireOn: physics.isLogicallyPowered(21, 35),
+            fanOn: physics.isMachinePoweredAt(23, 35),
+            anyPower: world.power.some(value => value > 0),
+            anyPowerDelay: world.powerDelay.some(value => value > 0),
+            batteryCharge: physics.getStoredCharge(20, 35)
+        };
+    }, fixture.encoded);
+    expect(restored.immediatelyRestored).toEqual({ power: 0, powerDelay: 0 });
+    expect(restored.logicalWireOn).toBe(true);
+    expect(restored.fanOn).toBe(true);
+    expect(restored.anyPower).toBe(false);
+    expect(restored.anyPowerDelay).toBe(false);
+    expect(restored.batteryCharge).toBeGreaterThan(0);
+});
+
 test('wind strengths round-trip and legacy saves migrate to an ordered calibrated pair', async ({ page }) => {
     const game = new GamePage(page); await game.openMenu(); await game.newGame();
     await page.locator('#windStrength').evaluate(input => { input.value = '37'; input.dispatchEvent(new Event('input', { bubbles: true })); });

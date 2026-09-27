@@ -48,10 +48,6 @@
                         <input id="edgePanToggle" type="checkbox">
                         <span>Edge pan</span>
                     </label>
-                    <label class="toggle no-wire-sparks-toggle tooltip-control" data-tooltip="Keep powered wires bright; hide moving electrical bolts">
-                        <input id="noWireSparksToggle" type="checkbox" aria-label="No wire spark animation">
-                        <span>No wire sparks</span>
-                    </label>
                     <label class="toggle autosave-toggle tooltip-control" data-tooltip="Save progress to this device every five minutes. Turn off to stop future updates while keeping the current resume save.">
                         <input id="autosaveToggle" type="checkbox" aria-label="Autosave">
                         <span>Autosave</span>
@@ -357,6 +353,41 @@
 
     <div id="toolTooltip" class="tool-tooltip" role="tooltip" hidden></div>
     <div id="overlay" class="d-none overlay"></div>
+
+    <section id="debugMenu" class="debug-menu" hidden role="dialog"
+             aria-labelledby="debugMenuTitle" aria-describedby="debugMenuHint">
+        <div class="debug-menu-heading">
+            <div>
+                <span class="tools-kicker">Runtime controls</span>
+                <h2 id="debugMenuTitle">Debug features</h2>
+            </div>
+            <button id="closeDebugMenu" class="btn btn-ghost debug-menu-close" type="button"
+                    aria-label="Close debug features">Close</button>
+        </div>
+        <p id="debugMenuHint" class="debug-menu-hint">Press Numpad − to open or close this menu. These switches reset when the page reloads.</p>
+        <div class="debug-feature-list">
+            <label class="debug-feature-option">
+                <input type="checkbox" data-debug-feature="localLight" checked>
+                <span><strong>Source light</strong><small>Off: lamps, fire, lava, and flashes add no local light. Ambient world illumination remains.</small></span>
+            </label>
+            <label class="debug-feature-option">
+                <input type="checkbox" data-debug-feature="worldIllumination" checked>
+                <span><strong>World illumination</strong><small>Off: ambient illumination uses the slider value uniformly; local source light remains.</small></span>
+            </label>
+            <label class="debug-feature-option">
+                <input type="checkbox" data-debug-feature="humidity" checked>
+                <span><strong>Humidity</strong><small>Off: humidity uses the base humidity setting everywhere; local humidity sources and diffusion are ignored.</small></span>
+            </label>
+            <label class="debug-feature-option">
+                <input type="checkbox" data-debug-feature="electricity" checked>
+                <span><strong>Electricity</strong><small>Off: batteries and wires carry no current; powered actuators use their always-on fallback, while logic signals stay inactive.</small></span>
+            </label>
+            <label class="debug-feature-option">
+                <input type="checkbox" data-debug-feature="electricalEffects" checked>
+                <span><strong>Electrical effects</strong><small>Off: hide Battery charge direction markers. Battery charge and circuit state keep updating.</small></span>
+            </label>
+        </div>
+    </section>
 
     <div id="autosaveStatus" class="autosave-status" hidden role="status" aria-live="polite">
         <svg class="autosave-spinner" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle></svg>

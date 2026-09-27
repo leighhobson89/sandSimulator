@@ -147,7 +147,7 @@ test('empty-air feedback reports local temperature, humidity, and wind speed', a
         return {
             cell,
             temperature: Math.round(world.temp[i] * 10) / 10,
-            humidity: Math.round(world.humidity[i]),
+            humidity: Math.round(physics.getHumidityAt(cell.x, cell.y)),
             windSpeed: 5
         };
     }, { x: 40, y: 30 });
@@ -179,7 +179,7 @@ test('particle feedback reports its catalog section, temperature, humidity, and 
             cell,
             section: water.group,
             temperature: Math.round(world.temp[i]),
-            humidity: Math.round(world.humidity[i]),
+            humidity: Math.round(physics.getHumidityAt(cell.x, cell.y)),
             threshold: water.boilPoint,
             target: definitions[water.boilsInto].name
         };
@@ -298,7 +298,11 @@ test('plant feedback shows current and preferred temperature, humidity, and ligh
     expect(rowHasCurrentAndIdeal(/illumination|light/i, readings.illumination, readings.idealIllumination),
         'light feedback pairs the effective and preferred values').toBe(true);
 
-    await page.evaluate(async () => (await import('/physics.js')).setAmbientIlluminationTarget(80));
+    await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        physics.setAmbientIlluminationTarget(80);
+        for (let tick = 0; tick < 120; tick++) physics.stepSimulation();
+    });
     await game.step(0);
     await hoverCell(page, plant);
     const brighterEnvironment = await page.evaluate(async plant =>
@@ -416,6 +420,83 @@ test('Battery hover moves the charge icon into feedback and shows circuit load, 
     const charging = page.getByText(/charging/i).last();
     const chargingColour = await charging.evaluate(element => getComputedStyle(element).color);
     expect(isGreen(chargingColour)).toBe(true);
+});
+
+test('stationary machine hover reuses one exact SVG hit test and machine edits invalidate it', async ({ page }) => {
+    const game = new GamePage(page);
+    await game.openMenu();
+    await game.newGame();
+
+    const machine = { x: 40, y: 30 };
+    const alternate = { x: 60, y: 30 };
+    await page.evaluate(async ({ machine, alternate }) => {
+        const physics = await import('/physics.js');
+        const game = await import('/game.js');
+        const definitions = physics.getDefinitions();
+        physics.clearWorld();
+        physics.setCell(machine.x, machine.y,
+            definitions.find(definition => definition?.name === 'Simple Switch').id);
+        physics.setCell(alternate.x, alternate.y,
+            definitions.find(definition => definition?.name === 'Sand').id);
+        game.renderWorld();
+        window.__P0_PERF__ = {
+            enabled: true,
+            events: [],
+            record(name, durationMs, counters = {}) {
+                if (this.enabled) this.events.push({ name, durationMs, counters });
+            },
+            reset() { this.events.length = 0; }
+        };
+    }, { machine, alternate });
+
+    await page.mouse.move(5, 5);
+    await page.evaluate(() => window.__P0_PERF__.reset());
+    await hoverCell(page, machine);
+    const feedback = page.locator('#hoverFeedback');
+    await expect(feedback).toContainText('Simple Switch');
+    const afterInitialHover = await page.evaluate(() => {
+        const events = window.__P0_PERF__.events.filter(event => event.name === 'hoverHitTest');
+        return {
+            exactSvgTests: events.reduce((sum, event) => sum + (event.counters.exactSvgTests || 0), 0),
+            cacheHits: events.reduce((sum, event) => sum + (event.counters.cacheHits || 0), 0)
+        };
+    });
+
+    await page.evaluate(async () => {
+        const game = await import('/game.js');
+        for (let frame = 0; frame < 6; frame++) game.gameLoop(performance.now() + frame + 1);
+    });
+    const afterStationaryFrames = await page.evaluate(() => {
+        const events = window.__P0_PERF__.events.filter(event => event.name === 'hoverHitTest');
+        return {
+            exactSvgTests: events.reduce((sum, event) => sum + (event.counters.exactSvgTests || 0), 0),
+            cacheHits: events.reduce((sum, event) => sum + (event.counters.cacheHits || 0), 0)
+        };
+    });
+    expect(afterInitialHover.exactSvgTests).toBeGreaterThan(0);
+    expect(afterStationaryFrames.exactSvgTests - afterInitialHover.exactSvgTests)
+        .toBeLessThanOrEqual(1);
+    expect(afterStationaryFrames.cacheHits - afterInitialHover.cacheHits).toBeGreaterThanOrEqual(5);
+
+    await hoverCell(page, alternate);
+    await expect(feedback).toContainText('Sand');
+    const afterMovement = await page.evaluate(() => window.__P0_PERF__.events
+        .filter(event => event.name === 'hoverHitTest')
+        .reduce((sum, event) => sum + (event.counters.exactSvgTests || 0), 0));
+    expect(afterMovement).toBeGreaterThan(afterStationaryFrames.exactSvgTests);
+
+    await hoverCell(page, machine);
+    await expect(feedback).toContainText('Simple Switch');
+    await page.evaluate(async machine => {
+        const physics = await import('/physics.js');
+        const game = await import('/game.js');
+        physics.setCell(machine.x, machine.y,
+            physics.getDefinitions().find(definition => definition?.name === 'Sand').id);
+        game.renderWorld();
+        game.gameLoop(performance.now());
+    }, machine);
+    await expect(feedback).toContainText('Sand');
+    await expect(feedback).not.toContainText('Simple Switch');
 });
 
 function isRed(colour) {
