@@ -128,6 +128,8 @@ const debugFeatureFlags = {
 let dewpointTarget = 10;
 let frameCount = 0;
 let materialTransitionListener = () => {};
+let plantGrowthCompletionListener = () => {};
+let pendingPlantGrowthCompletions = [];
 let humidityCursor = 0;
 let cloudCursor = 0;
 const PREVAILING_WIND_CYCLE_TICKS = 108_000;
@@ -2141,6 +2143,7 @@ export function restoreSimulationState(state) {
 
 export function createWorld(cols, rows) {
     assertValidWorldDimensions(cols, rows);
+    pendingPlantGrowthCompletions = [];
     COLS = cols;
     ROWS = rows;
     ambientIlluminationTarget = 50;
@@ -3756,6 +3759,7 @@ export function getElectricalBatteryGroups() {
 }
 
 export function clearWorld() {
+    pendingPlantGrowthCompletions = [];
     world.type.fill(EMPTY);
     openAirClassificationDirty = true;
     world.ambientIllumination.fill(0);
@@ -4003,13 +4007,28 @@ function transform(i, id, life, residue) {
     world.shade[i] = random() * 255;
     world.moved[i] = 1;
     if (previousType !== id) {
-        try { materialTransitionListener(previousType, id); }
+        const plantGrowthPending = previousDef?.isSeed && def?.isPlant && def.growHeight > 0;
+        try {
+            materialTransitionListener(previousType, id, plantGrowthPending ? { plantGrowthPending: true } : undefined);
+        }
         catch (error) { console.error('Campaign material transition handler failed:', error); }
+        if (plantGrowthPending) {
+            pendingPlantGrowthCompletions.push({
+                root: i,
+                seedType: previousType,
+                plantType: id,
+                species: def.plantSpecies
+            });
+        }
     }
 }
 
 export function setMaterialTransitionListener(listener) {
     materialTransitionListener = typeof listener === 'function' ? listener : () => {};
+}
+
+export function setPlantGrowthCompletionListener(listener) {
+    plantGrowthCompletionListener = typeof listener === 'function' ? listener : () => {};
 }
 
 function defaultBulkInsulation(category) {
@@ -5222,6 +5241,54 @@ function nearbyClouds(x, y, radius) {
     return false;
 }
 
+function processMaturePlantGrowthCandidates() {
+    for (let candidateIndex = pendingPlantGrowthCompletions.length - 1; candidateIndex >= 0; candidateIndex--) {
+        const candidate = pendingPlantGrowthCompletions[candidateIndex];
+        const rootDef = DEFS[world.type[candidate.root]];
+        if (!rootDef?.isPlant || rootDef.plantSpecies !== candidate.species) {
+            pendingPlantGrowthCompletions.splice(candidateIndex, 1);
+            continue;
+        }
+
+        const queue = [candidate.root];
+        const visited = new Set(queue);
+        let hasGrowthRemaining = false;
+        for (let cursor = 0; cursor < queue.length && !hasGrowthRemaining; cursor++) {
+            const index = queue[cursor];
+            const definition = DEFS[world.type[index]];
+            if (definition.growHeight > 0 && world.data[index] > 1) {
+                hasGrowthRemaining = true;
+                break;
+            }
+
+            const x = index % COLS;
+            const y = Math.floor(index / COLS);
+            for (let dy = -1; dy <= 1; dy++) {
+                for (let dx = -1; dx <= 1; dx++) {
+                    if (dx === 0 && dy === 0) continue;
+                    const nx = x + dx;
+                    const ny = y + dy;
+                    if (nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS) continue;
+                    const neighbour = ny * COLS + nx;
+                    if (visited.has(neighbour)) continue;
+                    const neighbourDef = DEFS[world.type[neighbour]];
+                    if (!neighbourDef?.isPlant || neighbourDef.plantSpecies !== candidate.species) continue;
+                    visited.add(neighbour);
+                    queue.push(neighbour);
+                }
+            }
+        }
+
+        if (hasGrowthRemaining) continue;
+        try {
+            plantGrowthCompletionListener(candidate.seedType, candidate.plantType);
+        } catch (error) {
+            console.error('Campaign plant-growth completion handler failed:', error);
+        }
+        pendingPlantGrowthCompletions.splice(candidateIndex, 1);
+    }
+}
+
 export function stepSimulation() {
     const recorder = activeP0PerformanceRecorder();
     const startedAt = recorder ? performance.now() : 0;
@@ -5319,6 +5386,7 @@ export function stepSimulation() {
     }
     flushAmbientPendingChanges();
     processAmbientIlluminationWork();
+    processMaturePlantGrowthCandidates();
     if (recorder) {
         recorder.record('stepSimulation', performance.now() - startedAt, {
             worldCells: world.type.length

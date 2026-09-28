@@ -1,6 +1,6 @@
 // Campaign rules are data driven so later story missions can be added without
 // changing the simulation loop or the sandbox's material catalogue.
-import { getDefinitions, setMaterialTransitionListener } from './physics.js';
+import { getDefinitions, setMaterialTransitionListener, setPlantGrowthCompletionListener } from './physics.js';
 
 // BEGIN GENERATED MISSION DATA
 const MISSION_DEFINITIONS = Object.freeze([
@@ -225,16 +225,36 @@ export function consumeCampaignMachine(name) {
     return true;
 }
 
-export function recordMaterialTransition(fromId, toId) {
+export function recordMaterialTransition(fromId, toId, context = {}) {
     if (!campaignState) return null;
     const definitions = getDefinitions();
     const from = definitions[fromId]?.name;
     const to = definitions[toId]?.name;
     if (!from || !to) return campaignState;
+    const seedDefinition = definitions[fromId];
+    const plantDefinition = definitions[toId];
 
     const mission = getCurrentMission();
     for (const objective of mission.objectives) {
         if (objective.type !== 'transformation' || objective.from !== from || objective.to !== to) continue;
+        if (context.plantGrowthPending && seedDefinition?.isSeed &&
+            plantDefinition?.isPlant && plantDefinition.growHeight > 0) continue;
+        incrementObjective(objective);
+    }
+    updateMissionCompletion();
+    return campaignState;
+}
+
+export function recordPlantGrowthCompletion(seedId, plantId) {
+    if (!campaignState) return null;
+    const definitions = getDefinitions();
+    const seed = definitions[seedId];
+    const plant = definitions[plantId];
+    if (!seed?.isSeed || !plant?.isPlant || plant.growHeight <= 0) return campaignState;
+
+    const mission = getCurrentMission();
+    for (const objective of mission.objectives) {
+        if (objective.type !== 'transformation' || objective.from !== seed.name || objective.to !== plant.name) continue;
         incrementObjective(objective);
     }
     updateMissionCompletion();
@@ -343,3 +363,4 @@ function announceObjectiveComplete(objective) {
 // separate from setCell so player placement and world seeding do not count as
 // story progress.
 setMaterialTransitionListener(recordMaterialTransition);
+setPlantGrowthCompletionListener(recordPlantGrowthCompletion);

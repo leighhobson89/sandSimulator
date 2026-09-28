@@ -38,13 +38,14 @@ Mission starting-layout cells and particles created by simulation reactions
 do not use player supplies. Sandbox bypasses all campaign limits.
 
 Mission objectives count actual simulation transitions. **Grow one Daffodil
-from seed** counts one `Daffodil Seeds → Daffodil` germination transition.
-Painting or stamping a Daffodil does not count. Progress accumulates from the
-transition and the configured completion event fires once; objective counters
-and fired event IDs remain in the active session only. The mission briefing
-displays the mission number, title, briefing, objective, and available supplies
-before play. During play, the mission HUD shows objective progress, each
-supply's used and total counts, and event notices.
+from seed** counts one `Daffodil Seeds → Daffodil` germination only after the
+connected plant cells exhaust their growth budgets, so the plant can no longer
+grow taller. Painting or stamping a Daffodil does not count. The configured
+completion event fires once; objective counters and fired event IDs remain in
+the active session only. The mission briefing displays the mission number,
+title, briefing, objective, and available supplies before play. During play,
+the mission HUD shows objective progress, each supply's used and total counts,
+and event notices.
 
 **Mission 2: The Icebound Grove** uses a 260×150 world with a full-width
 five-row Ice floor. The opening climate is −10 °C, 35% humidity, and 10%
@@ -60,8 +61,9 @@ temperature/humidity ideals from the authored 85% illumination target.
 
 The four guided Mission 2 objectives each have target one: count an actual
 Ice-to-Water transition, reach all three authored climate targets at once,
-count a Dry Mud-to-Wet Mud transition, then count an actual Banana Seeds-to-
-Banana Plant germination. Painting or blueprint stamping the resulting
+count a Dry Mud-to-Wet Mud transition, then count a Banana Seeds-to-Banana Plant
+germination after all connected plant cells exhaust their growth budgets, so it
+can no longer grow taller. Painting or blueprint stamping the resulting
 materials does not satisfy transition objectives. Each objective event fires
 once per run; progress, used supplies, and fired event IDs are session state and
 are not saved. The temperature,
