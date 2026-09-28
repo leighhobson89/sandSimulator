@@ -10,7 +10,7 @@ export class GamePage {
     }
 
     async newGame({ worldSize = '260 × 150' } = {}) {
-        await this.page.getByRole('button', { name: 'New Game' }).click();
+        await this.page.getByRole('button', { name: 'Sandbox', exact: true }).click();
         const sizeDialog = this.page.locator('#worldSizeDialog');
         if (await sizeDialog.isVisible()) {
             if (worldSize.includes('520')) {

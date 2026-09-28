@@ -11,6 +11,134 @@ Use [`E2E_TEST_PLAN.md`](E2E_TEST_PLAN.md) for test ownership and browser-test
 commands; active follow-ups and proposed changes remain in [`ISSUES.md`](ISSUES.md)
 and [`FUTURE_IDEAS.md`](FUTURE_IDEAS.md).
 
+## Game modes, missions, and local saves
+
+The main menu starts either a **Sandbox** or a **New Campaign**. Sandbox keeps
+the freeform world-size chooser and normal unlimited painting and machine
+placement. Campaign starts a story mission with an authored world, finite
+player-placement resources, machine limits, cumulative objectives, and event
+notices. The menu stacks New Campaign above Sandbox, followed by Resume Game
+when a resume record exists and Load Game; its theme panel sits below the
+actions. Theme-specific presentation keeps the menu centered in Terminal.
+
+The current first mission is **Mission 1: The First Daffodil**. It uses a
+260×150 world with a five-row Sand floor spanning the full width. The floor is
+the only material in the starting scene; Dry Mud and Daffodil Seeds are player
+supplies. The player can place 100 Dry Mud, 1,000 Water, and one Daffodil Seed,
+with no machine allowance. Mission data also fixes the ideal growing climate:
+14 °C temperature, 68% humidity, 65% illumination, 10 °C dewpoint, and no wind.
+Climate controls are locked during play, while Normal, Heat, Humidity, and Wind
+visualizations remain available.
+
+Campaign budgets apply to player-created placements. Attempts rejected by
+world occupancy or an exhausted quota do not spend resources. Palette controls
+reflect exhausted supplies. Blueprint stamps charge their newly placed
+contents once; undo/redo restores the recorded stamp without charging again.
+Mission starting-layout cells and particles created by simulation reactions
+do not use player supplies. Sandbox bypasses all campaign limits.
+
+Mission objectives count actual simulation transitions. **Grow one Daffodil
+from seed** counts one `Daffodil Seeds → Daffodil` germination transition.
+Painting or stamping a Daffodil does not count. Progress accumulates from the
+transition and the configured completion event fires once; objective counters
+and fired event IDs remain in the active session only. The mission briefing
+displays the mission number, title, briefing, objective, and available supplies
+before play. During play, the mission HUD shows objective progress, each
+supply's used and total counts, and event notices.
+
+**Mission 2: The Icebound Grove** uses a 260×150 world with a full-width
+five-row Ice floor. The opening climate is −10 °C, 35% humidity, and 10%
+illumination, with a −15 °C dewpoint and calm wind. Player supplies are 500 Dry
+Mud and one Banana Seed; the Ice floor is part of the authored world, and
+melting it creates Water through simulation. The authored climate objective is
+30 °C, 95% humidity, and 85% illumination. Banana Plant's material definition
+sets ideal temperature to 30 °C and ideal humidity to 95%; it has no
+material-level ideal illumination, so 85% is a Mission 2 target only.
+The briefing directs the player to the Temperature and Humidity sliders in
+World Parameters and the Ambient Light slider. It distinguishes Banana's
+temperature/humidity ideals from the authored 85% illumination target.
+
+The four guided Mission 2 objectives each have target one: count an actual
+Ice-to-Water transition, reach all three authored climate targets at once,
+count a Dry Mud-to-Wet Mud transition, then count an actual Banana Seeds-to-
+Banana Plant germination. Painting or blueprint stamping the resulting
+materials does not satisfy transition objectives. Each objective event fires
+once per run; progress, used supplies, and fired event IDs are session state and
+are not saved. The temperature,
+humidity, and illumination controls stay available so the climate target can be
+reached; dewpoint and wind are locked for this mission.
+
+Campaign catalogs hide unavailable materials, machines, and tools. Categories
+with available entries automatically expand in Campaign; empty categories are
+collapsed and locked. Their visible headings remain keyboard focusable and
+explain that no items are available. Other unavailable controls use disabled
+semantics, reduced opacity, and a focusable tooltip with a bold red **DISABLED**
+status and reason. Pause and Load remain usable during a mission. Campaign Save,
+Save to Library, export, and Autosave are disabled; Sandbox keeps the full
+catalog and its normal controls.
+
+Completing all mission objectives pauses the simulation and automatically
+opens a recap dialog with objective results and used, total, and remaining
+counts for each finite player supply. Clicking **OK** closes the recap and
+leaves the objective-passed bar in the HUD. Its **ADVANCE** action opens the
+next mission briefing; confirming that briefing initializes its authored world
+and fresh resource budgets. A Campaign checkpoint is written only when
+**ADVANCE** selects an installed successor. It stores the next mission number;
+Mission start, objective completion, recap dismissal, Restart, and a final
+mission with no successor do not write a checkpoint. Restart asks for
+confirmation, then rebuilds the authored scenario without changing the saved
+mission number. Resume resolves the checkpoint's number and reconstructs a
+pristine world, environment, full budgets, and zeroed objectives/events. The
+completion recap and current run progress do not persist. When no later mission
+is installed, the bar reports **CAMPAIGN COMPLETE** and cannot advance.
+
+Portable LZString save payloads are version 3. Sandbox saves contain the full
+world and tool state. A Campaign checkpoint contains the standard format,
+version, timestamp, `mode: "campaign"`, and only the campaign-specific
+`missionNumber`; it has no simulation, tool, blueprint, objective, event, or
+resource-use state. Versions 1 and 2 remain loadable as Sandbox. Older version-3
+full-state Campaign records normalize to a mission-number checkpoint and resume
+from that mission's pristine authored start. Invalid checkpoint metadata is
+rejected before the live world is restored.
+
+Named local saves are stored as individual compressed records in the local save
+library. Each record has an ID, name, automatically assigned Sandbox or
+Campaign type, `saveString`, and update time. A separate active-save ID selects
+the record restored by Resume Game. Five-minute Autosave updates the active
+Sandbox record only. Starting a Campaign creates no record; its first Campaign
+checkpoint is written only when **ADVANCE** selects a successor after mission
+completion. Later advances update that Campaign record with only the next
+`missionNumber`. A new Campaign creates its own checkpoint at its first
+ADVANCE, preserving existing Campaign records. Starting a new autosaved Sandbox
+creates a fresh uniquely named Sandbox record so it preserves Campaign records.
+Players can name or update Sandbox records through **Save to Library** in the
+Load/Save dialog. Campaign Save, Save to Library, export, and timed Autosave
+are unavailable during play. The dialog lists local records and offers a Load
+action for each, while portable string copy/paste remains available for
+Sandbox. Existing version-1 single-slot autosaves are migrated into the library
+as a named record and become the active resume game. When migration succeeds,
+the legacy slot is removed; the library record remains authoritative for
+active-session autosave and resume.
+
+The yellow **Campaign Editor** action in the main menu opens a docked side panel
+beside the live canvas. It starts an unrestricted Sandbox authoring session,
+with ordinary material, tool, environment, and visualization controls. Loading
+a draft with a captured `startingSave` resizes and clears the canvas to the
+saved dimensions before restoring that simulation; drafts that use a
+declarative layout build that layout instead. Capturing the live scene stores a
+compressed Sandbox save as the mission starting state. Drawing, clearing, or
+resuming simulation marks a captured snapshot stale; recapture it before review
+and installation. Editor drafts autosave in localStorage under
+`elemental-foundry.campaign-editor.drafts.v1`, separate from game saves.
+
+While the editor is open, periodic autosave writes are suspended and the save,
+import, and export controls are disabled. The active resume save remains
+untouched. Closing the editor restores the previous autosave timer without an
+immediate write; re-enabling Autosave after return releases the suspended-write
+guard. Installing mission data requires review and approval, then a file picker
+for `campaign.js`; the editor preserves source outside the generated mission-
+data markers and stores a recoverable source backup in localStorage.
+
 ## 1. Material catalogue and glossary maintenance
 
 The material picker is also the simulator's glossary. Its category headings
@@ -314,8 +442,9 @@ Stainless Steel, and Elec, and reject Tubing. Focused port coverage is
 documented in the machine E2E README.
 
 Clicking a placed machine opens its settings or inventory dialog. Machine state
-persists in local Resume Game saves and portable LZString saves. Portable save
-format version `2` is written and versions `1` and `2` are accepted on load.
+persists in the active local save-library record and portable LZString saves.
+Portable save format version `3` is written and versions `1`, `2`, and `3` are
+accepted on load.
 Version-1 Sprinkler mode is migrated to the current Drain Mode semantics.
 Current snapshots and blueprints record `sprinklerModeVersion: 2` and
 `machinePortLayoutVersion: 2`; missing legacy port-layout markers trigger a

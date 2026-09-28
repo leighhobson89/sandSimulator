@@ -11,12 +11,12 @@ test('menu and workspace controls expose names, states, and keyboard activation'
     await game.openMenu();
 
     await expect(page.getByRole('heading', { name: 'Elemental Foundry' })).toHaveCount(1);
-    for (const name of ['New Game', 'Load Game']) {
+    for (const name of ['New Campaign', 'Sandbox', 'Load Game']) {
         const button = page.getByRole('button', { name });
         await expect(button).toBeVisible();
         await expect(button).toBeEnabled();
     }
-    await page.getByRole('button', { name: 'New Game' }).focus();
+    await page.getByRole('button', { name: 'Sandbox', exact: true }).focus();
     await page.keyboard.press('Enter');
     const worldSizeDialog = page.locator('#worldSizeDialog');
     await expect(worldSizeDialog).toBeVisible();

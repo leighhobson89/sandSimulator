@@ -33,7 +33,7 @@ test('New Game autosave choices support Cancel and No without losing the existin
     await page.evaluate(value => localStorage.setItem('elemental-foundry.autosave.v1', value), save);
     await page.reload();
 
-    await page.getByRole('button', { name: 'New Game' }).click();
+    await page.getByRole('button', { name: 'Sandbox', exact: true }).click();
     await chooseStandardWorld(page);
     const choice = page.locator('#autosaveChoiceDialog');
     await expect(choice).toBeVisible();
@@ -41,7 +41,7 @@ test('New Game autosave choices support Cancel and No without losing the existin
     await expect(choice).toBeHidden();
     await expect(page.getByRole('button', { name: 'Resume Game' })).toBeVisible();
 
-    await page.getByRole('button', { name: 'New Game' }).click();
+    await page.getByRole('button', { name: 'Sandbox', exact: true }).click();
     await chooseStandardWorld(page);
     await expect(choice).toBeVisible();
     await page.getByRole('button', { name: 'No, play without autosave', exact: true }).click();

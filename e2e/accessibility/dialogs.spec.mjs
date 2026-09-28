@@ -42,7 +42,7 @@ test('save and clear dialogs expose labelled modal state and keyboard-focusable 
 test('autosave choice is a labelled modal and supports keyboard cancellation', async ({ page }) => {
     const game = new GamePage(page); await game.openMenu(); await game.newGame();
     await page.reload();
-    await page.getByRole('button', { name: 'New Game' }).click();
+    await page.getByRole('button', { name: 'Sandbox', exact: true }).click();
     const sizeDialog = page.locator('#worldSizeDialog');
     await expect(sizeDialog).toBeVisible();
     await sizeDialog.getByRole('radio', { name: '260 × 150', exact: true }).check();

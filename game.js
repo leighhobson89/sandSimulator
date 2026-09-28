@@ -37,6 +37,10 @@ import {
     invalidateElectricalTopologyForTypes, ensureElectricalStateCurrent,
     syncElectricalPulseTrackingAt, invalidateAmbientIlluminationForTypes
 } from './physics.js';
+import {
+    canUseMaterial, consumeCampaignMaterial, canPlaceMissionMachine, getCampaignState,
+    consumeCampaignMachine, isCampaignActive
+} from './campaign.js';
 
 let context = null;
 let imageData = null;
@@ -2519,6 +2523,7 @@ function machineFaceBlocksPaint(cellX, cellY) {
 // machine-emitted ray markers are never created by this brush path.
 export function paintCell(centreX, centreY, dragX, dragY, rayDirection = null, portSnap = null) {
     const id = getEraserOn() ? EMPTY : getParticleTypeIdSelected();
+    if (id !== EMPTY && isCampaignActive() && !canPaintMissionMaterial(id)) return;
 
     // A CSS-space port snap is resolved by the UI and handed through this
     // explicit override. Simulation topology never infers a route from nearby
@@ -2528,7 +2533,11 @@ export function paintCell(centreX, centreY, dragX, dragY, rayDirection = null, p
         const cell = portSnap.connectionCell;
         if (!machineFaceCoversCell(cell.x, cell.y, index(portSnap.machineX, portSnap.machineY)) &&
             (getWorld().type[index(cell.x, cell.y)] === EMPTY || getWorld().type[index(cell.x, cell.y)] === id)) {
-            if (getWorld().type[index(cell.x, cell.y)] === EMPTY) setCell(cell.x, cell.y, id);
+            if (getWorld().type[index(cell.x, cell.y)] === EMPTY &&
+                canPaintMissionMaterial(id) && canUseMaterial(getDefinitions()[id]?.name)) {
+                setCell(cell.x, cell.y, id);
+                consumeCampaignMaterial(getDefinitions()[id]?.name);
+            }
         }
         return;
     }
@@ -2588,9 +2597,11 @@ export function paintCell(centreX, centreY, dragX, dragY, rayDirection = null, p
             // and stops the brush dumping a solid block of sand.
             const def = getDefinitions()[id];
             const loose = def.category === 'powder' || def.category === 'gas';
+            if (isCampaignActive() && (!canPaintMissionMaterial(id) || !canUseMaterial(def.name))) continue;
             if (loose && size > 1 && Math.random() < 0.45) continue;
 
             setCell(x, y, id);
+            consumeCampaignMaterial(def.name);
             setPaintedRayDirection(i, id, rayDirection);
         }
     }
@@ -2615,7 +2626,8 @@ function normaliseMachineDirection(direction) {
 
 export function canPlaceMachine(x, y, machine) {
     const id = machineId(machine);
-    return id > 0 && inBounds(x, y) && getWorld().type[index(x, y)] === EMPTY;
+    return id > 0 && canPlaceMissionMachine(machine) &&
+        inBounds(x, y) && getWorld().type[index(x, y)] === EMPTY;
 }
 
 // Machines are placed as one cell, independently of brush size. Their
@@ -2623,10 +2635,11 @@ export function canPlaceMachine(x, y, machine) {
 // when the grabber moves it and survives normal world-state operations.
 export function placeMachine(x, y, machine, direction = machine === 'collector' ? 3 : 0) {
     const id = machineId(machine);
-    if (id <= 0 || !inBounds(x, y)) return false;
+    if (id <= 0 || !canPlaceMissionMachine(machine) || !inBounds(x, y)) return false;
     const i = index(x, y);
     if (getWorld().type[i] !== EMPTY) return false;
     setCell(x, y, id);
+    if (!consumeCampaignMachine(machine)) return false;
     getWorld().data[i] = normaliseMachineDirection(direction);
     return true;
 }
@@ -2677,6 +2690,7 @@ export function paintShape(shape, x0, y0, x1, y1, rayDirection = null) {
     if (shape !== 'rectangle' && shape !== 'ellipse') return;
 
     const id = getEraserOn() ? EMPTY : getParticleTypeIdSelected();
+    if (id !== EMPTY && isCampaignActive() && !canPaintMissionMaterial(id)) return;
     const left = Math.min(x0, x1);
     const right = Math.max(x0, x1);
     const top = Math.min(y0, y1);
@@ -2738,10 +2752,22 @@ function paintSingleCell(x, y, id, fillLooseMaterial = false, rayDirection = nul
     if (world.type[i] !== EMPTY) return;
 
     const def = getDefinitions()[id];
+    if (isCampaignActive() && (!canPaintMissionMaterial(id) || !canUseMaterial(def.name))) return;
     const loose = def.category === 'powder' || def.category === 'gas';
     if (!fillLooseMaterial && loose && getBrushSize() > 1 && Math.random() < 0.45) return;
     setCell(x, y, id);
+    consumeCampaignMaterial(def.name);
     setPaintedRayDirection(i, id, rayDirection);
+}
+
+function canPaintMissionMaterial(id) {
+    if (!isCampaignActive()) return true;
+    const definition = getDefinitions()[id];
+    return !!definition && !definition.machine && !definition.tool;
+}
+
+function campaignResourceRemaining(category, name) {
+    return getCampaignState()?.resources?.[category]?.[name]?.remaining || 0;
 }
 
 // --------------------------------------------------------------- blueprints
@@ -2780,15 +2806,36 @@ export function stampBlueprint(blueprint, centreX, centreY) {
     if (!blueprint?.cells || !Number.isInteger(blueprint.width) || !Number.isInteger(blueprint.height)) return 0;
     const startX = Math.round(centreX - (blueprint.width - 1) / 2);
     const startY = Math.round(centreY - (blueprint.height - 1) / 2);
-    return stampBlueprintAt(blueprint, startX, startY);
+    return stampBlueprintAt(blueprint, startX, startY, true);
 }
 
 // This top-left variant is used by the session-only stamp history. It restores
 // an exact captured patch rather than centring it again, which is especially
 // important for stamps that were clipped at a world edge.
-export function stampBlueprintAt(blueprint, startX, startY) {
+export function stampBlueprintAt(blueprint, startX, startY, chargeMissionResources = false) {
     if (!blueprint?.cells || !Number.isInteger(blueprint.width) || !Number.isInteger(blueprint.height)) return 0;
     const world = getWorld();
+    const costs = { materials: {}, machines: {} };
+    if (chargeMissionResources && isCampaignActive()) {
+        const definitions = getDefinitions();
+        for (let sy = 0; sy < blueprint.height; sy++) {
+            const y = startY + sy;
+            if (y < 0 || y >= world.rows) continue;
+            for (let sx = 0; sx < blueprint.width; sx++) {
+                const x = startX + sx;
+                if (x < 0 || x >= world.cols) continue;
+                const id = blueprint.cells.type?.[sy * blueprint.width + sx] ?? EMPTY;
+                if (!id) continue;
+                const definition = definitions[id];
+                if (!definition || definition.tool) return 0;
+                if (definition.machine) costs.machines[definition.machine] = (costs.machines[definition.machine] || 0) + 1;
+                else costs.materials[definition.name] = (costs.materials[definition.name] || 0) + 1;
+            }
+        }
+        if (Object.entries(costs.materials).some(([name, count]) => !canUseMaterial(name, count)) ||
+            Object.entries(costs.machines).some(([name, count]) => !canPlaceMissionMachine(name) ||
+                count > (campaignResourceRemaining('machines', name)))) return 0;
+    }
     let stamped = 0;
     for (let sy = 0; sy < blueprint.height; sy++) {
         const y = startY + sy;
@@ -2815,6 +2862,12 @@ export function stampBlueprintAt(blueprint, startX, startY) {
     }
     if (stamped > 0) {
         invalidateMachineCollisionMask();
+        if (chargeMissionResources) {
+            for (const [name, count] of Object.entries(costs.materials)) consumeCampaignMaterial(name, count);
+            for (const [name, count] of Object.entries(costs.machines)) {
+                for (let placed = 0; placed < count; placed++) consumeCampaignMachine(name);
+            }
+        }
     }
     return stamped;
 }

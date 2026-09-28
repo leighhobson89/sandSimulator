@@ -1,5 +1,5 @@
-// Portable saves and the single local resume slot. Typed arrays are base64
-// encoded inside JSON, then compressed with LZString's URI-safe codec.
+// Portable snapshots and the browser-local save library. Typed arrays are
+// base64 encoded inside JSON, then compressed with LZString's URI-safe codec.
 import {
     getParticleTypeIdSelected, setParticleTypeIdSelected, getBrushSize, setBrushSize,
     getDrawMode, setDrawMode, getGrabberSize, setGrabberSize,
@@ -18,9 +18,14 @@ import {
 } from './physics.js';
 import { BLUEPRINT_FIELDS, BLUEPRINT_SLOT_COUNT } from './game.js';
 import { compressToEncodedURIComponent, decompressFromEncodedURIComponent } from './lzString.js';
+import {
+    getCampaignState, restoreCampaignState, clearCampaign, validateCampaignState, getMissionDefinitions
+} from './campaign.js';
 
 export const AUTOSAVE_STORAGE_KEY = 'elemental-foundry.autosave.v1';
-const SAVE_VERSION = 2;
+export const SAVE_LIBRARY_STORAGE_KEY = 'elemental-foundry.saves.v1';
+export const ACTIVE_SAVE_STORAGE_KEY = 'elemental-foundry.active-save.v1';
+const SAVE_VERSION = 3;
 const AUTOSAVE_INTERVAL_MS = 5 * 60_000;
 const MAX_WORLD_CELLS = 2_000_000;
 const ARRAY_TYPES = { Uint8Array, Uint16Array, Uint32Array, Int16Array, Float32Array, Float64Array };
@@ -54,6 +59,7 @@ let autosaveTimer = null;
 let autosaveEnabled = false;
 let autosaveWriting = false;
 let autosaveGeneration = 0;
+let autosaveWritesSuspended = false;
 let savingListener = () => {};
 let autosaveErrorListener = () => {};
 let blueprintStateProvider = () => null;
@@ -73,6 +79,10 @@ export function setBlueprintSaveHandlers({ capture, restore } = {}) {
 }
 
 export function hasAutosave() {
+    const { records } = readSaveLibrary(false);
+    let activeId = null;
+    try { activeId = localStorage.getItem(ACTIVE_SAVE_STORAGE_KEY); } catch { /* checked below */ }
+    if (activeId && records.some(record => record.id === activeId)) return true;
     try { return !!localStorage.getItem(AUTOSAVE_STORAGE_KEY); } catch { return false; }
 }
 
@@ -80,6 +90,8 @@ export function createSaveString() {
     const blueprints = encodeBlueprintState(blueprintStateProvider());
     const payload = {
         format: 'elemental-foundry', version: SAVE_VERSION, savedAt: new Date().toISOString(),
+        mode: getCampaignState() ? 'campaign' : 'sandbox',
+        campaign: getCampaignState() ? structuredClone(getCampaignState()) : null,
         simulation: encodeSimulation(captureSimulationState()),
         tools: {
             particleId: getParticleTypeIdSelected(), brushSize: getBrushSize(), drawMode: getDrawMode(),
@@ -106,22 +118,65 @@ export function parseSaveString(compressed) {
         payload = JSON.parse(json);
     } catch { throw new Error('That is not a valid Elemental Foundry save string.'); }
     if (payload?.format !== 'elemental-foundry' ||
-        ![1, SAVE_VERSION].includes(payload.version)) {
+        ![1, 2, SAVE_VERSION].includes(payload.version)) {
         throw new Error('This save was made by an unsupported version of Elemental Foundry.');
     }
+    if (payload.version >= 3 &&
+        (!['sandbox', 'campaign'].includes(payload.mode) ||
+            (payload.mode === 'campaign' && payload.missionNumber !== undefined && !isCampaignMissionNumber(payload.missionNumber)) ||
+            (payload.mode === 'campaign' && payload.missionNumber === undefined && !validateCampaignState(payload.campaign)) ||
+            (payload.mode === 'sandbox' && (payload.campaign || payload.missionNumber !== undefined)))) {
+        throw new Error('This save has invalid campaign data.');
+    }
     // Validate the simulation now, while no live state has been changed.
-    decodeSimulation(payload.simulation);
-    decodeBlueprintState(payload.blueprints, payload.version);
+    if (!(payload.mode === 'campaign' && Number.isInteger(payload.missionNumber))) {
+        decodeSimulation(payload.simulation);
+        decodeBlueprintState(payload.blueprints, payload.version);
+    }
     return payload;
 }
 
 export function restoreSavePayload(payload) {
+    const checkpoint = campaignCheckpointPayload(payload);
+    if (checkpoint) {
+        stopAutosave();
+        clearCampaign();
+        return checkpoint;
+    }
     const simulation = decodeSimulation(payload.simulation);
     if (payload.version === 1) simulation.sprinklerModeVersion = 1;
     restoreSimulationState(simulation);
     restoreTools(payload.tools);
     blueprintStateRestorer(decodeBlueprintState(payload.blueprints, payload.version));
+    if (payload.version >= 3 && payload.mode === 'campaign' && payload.campaign) {
+        restoreCampaignState(payload.campaign);
+    } else {
+        clearCampaign();
+    }
     return payload;
+}
+
+function isCampaignMissionNumber(number) {
+    return Number.isInteger(number) && getMissionDefinitions().some(mission => mission.number === number);
+}
+
+function getCampaignMissionNumber(payload) {
+    if (isCampaignMissionNumber(payload?.missionNumber)) return payload.missionNumber;
+    const state = payload?.campaign;
+    const missionId = state?.pendingMissionId || state?.missionId;
+    const mission = getMissionDefinitions().find(item => item.id === missionId);
+    if (mission) return mission.number;
+    return missionId === 'first-thaw' ? 1 : null;
+}
+
+function campaignCheckpointPayload(payload) {
+    if (payload?.mode !== 'campaign') return null;
+    const missionNumber = getCampaignMissionNumber(payload);
+    if (!isCampaignMissionNumber(missionNumber)) throw new Error('This save has invalid campaign data.');
+    return {
+        format: 'elemental-foundry', version: SAVE_VERSION,
+        savedAt: payload.savedAt || new Date().toISOString(), mode: 'campaign', missionNumber
+    };
 }
 
 export function loadSaveString(compressed) {
@@ -129,18 +184,136 @@ export function loadSaveString(compressed) {
 }
 
 export async function restoreAutosave() {
+    let record;
     let compressed;
-    try { compressed = localStorage.getItem(AUTOSAVE_STORAGE_KEY); }
-    catch { throw new Error('Local storage is not available in this browser.'); }
+    try {
+        initializeSaveLibrary();
+        const activeId = getActiveSaveId();
+        record = listSavedGames().find(item => item.id === activeId);
+        compressed = record?.saveString || localStorage.getItem(AUTOSAVE_STORAGE_KEY);
+    } catch { throw new Error('Local storage is not available in this browser.'); }
     if (!compressed) throw new Error('There is no resume game saved on this device.');
     const payload = loadSaveString(compressed);
-    startAutosave();
+    if (record) setActiveSaveId(record.id);
+    if (payload.mode === 'campaign') stopAutosave();
+    else startAutosave();
     return payload;
+}
+
+export function listSavedGames() {
+    const { records } = readSaveLibrary(false);
+    return records.map(record => ({ ...record }));
+}
+
+export function initializeSaveLibrary() {
+    readSaveLibrary(true);
+}
+
+export function getActiveSaveId() {
+    readSaveLibrary(false);
+    try { return localStorage.getItem(ACTIVE_SAVE_STORAGE_KEY); } catch { return null; }
+}
+
+export function syncActiveSaveToLegacySlot() {
+    const id = getActiveSaveId();
+    if (!id) return false;
+    const { records } = readSaveLibrary(false);
+    const active = records.find(record => record.id === id);
+    if (!active) return false;
+    try {
+        localStorage.setItem(AUTOSAVE_STORAGE_KEY, active.saveString);
+        return true;
+    } catch { return false; }
+}
+
+export function saveGameToLibrary(name) {
+    if (getCampaignState()) throw new Error('Campaign progress is saved when you advance to the next mission.');
+    const cleanName = String(name || '').trim();
+    if (!cleanName) throw new Error('Enter a name for this save.');
+    const saveString = createSaveString();
+    const payload = parseSaveString(saveString);
+    const type = payload.mode === 'campaign' ? 'campaign' : 'sandbox';
+    const { records } = readSaveLibrary(false);
+    const existing = records.find(record => record.name === cleanName && record.type === type);
+    const record = {
+        id: existing?.id || createSaveId(),
+        name: cleanName,
+        type,
+        saveString,
+        updatedAt: new Date().toISOString()
+    };
+    const next = existing ? records.map(item => item.id === record.id ? record : item) : [...records, record];
+    writeSaveLibrary(next);
+    setActiveSaveId(record.id);
+    try { localStorage.setItem(AUTOSAVE_STORAGE_KEY, saveString); } catch { /* library copy remains durable */ }
+    return { ...record };
+}
+
+// Story progress is intentionally a compact checkpoint. The authored mission
+// definition supplies a clean world and fresh objectives whenever it resumes.
+export function writeCampaignCheckpoint(missionNumber, requestedName = '', reuseRecordId = null) {
+    if (!isCampaignMissionNumber(missionNumber)) throw new Error('That campaign mission is not available.');
+    const saveString = createCampaignCheckpointString(missionNumber);
+    const { records } = readSaveLibrary(false);
+    const active = records.find(record => record.id === reuseRecordId && record.type === 'campaign');
+    let name = active?.name || String(requestedName || `Campaign - Mission ${missionNumber}`).trim();
+    if (!active) {
+        const names = new Set(records.map(record => record.name));
+        const base = name;
+        let suffix = 2;
+        while (names.has(name)) name = `${base} (${suffix++})`;
+    }
+    const record = {
+        id: active?.id || createSaveId(), name, type: 'campaign', saveString,
+        updatedAt: new Date().toISOString()
+    };
+    const next = active
+        ? records.map(item => item.id === active.id ? record : item)
+        : [...records, record];
+    writeSaveLibrary(next);
+    setActiveSaveId(record.id);
+    try { localStorage.setItem(AUTOSAVE_STORAGE_KEY, saveString); } catch { /* library copy remains authoritative */ }
+    stopAutosave();
+    return { ...record };
+}
+
+export function createCampaignCheckpointString(missionNumber) {
+    if (!isCampaignMissionNumber(missionNumber)) throw new Error('That campaign mission is not available.');
+    return compressToEncodedURIComponent(JSON.stringify({
+        format: 'elemental-foundry', version: SAVE_VERSION,
+        savedAt: new Date().toISOString(), mode: 'campaign', missionNumber
+    }));
+}
+
+export function loadSavedGame(id) {
+    const record = listSavedGames().find(item => item.id === id);
+    if (!record) throw new Error('That saved game is no longer available.');
+    const payload = parseSaveString(record.saveString);
+    const restored = restoreSavePayload(payload);
+    const checkpointFields = new Set(['format', 'version', 'savedAt', 'mode', 'missionNumber']);
+    const alreadyMinimal = payload.mode === 'campaign' && payload.version === SAVE_VERSION &&
+        isCampaignMissionNumber(payload.missionNumber) &&
+        Object.keys(payload).every(key => checkpointFields.has(key));
+    if (restored.mode === 'campaign' && !alreadyMinimal) {
+        const { records } = readSaveLibrary(false);
+        const normalized = { ...record, saveString: createCampaignCheckpointString(restored.missionNumber) };
+        writeSaveLibrary(records.map(item => item.id === record.id ? normalized : item));
+        record.saveString = normalized.saveString;
+    }
+    setActiveSaveId(record.id);
+    try { localStorage.setItem(AUTOSAVE_STORAGE_KEY, record.saveString); } catch { /* registry remains authoritative */ }
+    if (restored.mode === 'campaign') stopAutosave();
+    else startAutosave({ saveNow: false });
+    return restored;
 }
 
 // The regular autosave always runs every five minutes. saveNow is only used when
 // a player explicitly chooses a new resume target, so that choice is durable.
 export function startAutosave({ saveNow = false, checkStorage = true } = {}) {
+    if (getCampaignState()) {
+        stopAutosave();
+        return false;
+    }
     if (checkStorage && !storageWorks()) {
         stopAutosave();
         return false;
@@ -165,13 +338,20 @@ export function clearAutosave() {
 }
 
 export function isAutosaveEnabled() { return autosaveEnabled; }
+export function suspendAutosaveWrites() {
+    autosaveWritesSuspended = true;
+    autosaveGeneration++;
+}
+export function resumeAutosaveWrites() { autosaveWritesSuspended = false; }
 
 export async function replaceAutosaveWithCurrentGame() {
+    if (getCampaignState()) return false;
     // Serialize before touching the resume slot. localStorage.setItem is atomic:
     // a quota failure leaves the previous string in place.
     try {
         const replacement = createSaveString();
         localStorage.setItem(AUTOSAVE_STORAGE_KEY, replacement);
+        storeSnapshotInActiveRecord(replacement);
     } catch (error) {
         stopAutosave();
         throw new Error(`The resume game could not be saved (${error?.message || 'local storage rejected the save'}).`);
@@ -180,7 +360,7 @@ export async function replaceAutosaveWithCurrentGame() {
 }
 
 export async function writeAutosave() {
-    if (!autosaveEnabled || autosaveWriting) return false;
+    if (getCampaignState() || !autosaveEnabled || autosaveWriting || autosaveWritesSuspended) return false;
     if (!storageWorks()) {
         const error = new Error('Local storage is not available in this browser.');
         stopAutosave();
@@ -193,7 +373,9 @@ export async function writeAutosave() {
     try {
         await nextPaint();
         if (!autosaveEnabled || generation !== autosaveGeneration) return false;
-        localStorage.setItem(AUTOSAVE_STORAGE_KEY, createSaveString());
+        const replacement = createSaveString();
+        localStorage.setItem(AUTOSAVE_STORAGE_KEY, replacement);
+        storeSnapshotInActiveRecord(replacement);
         return true;
     } catch (error) {
         console.warn('Could not autosave Elemental Foundry game:', error);
@@ -219,6 +401,124 @@ function nextPaint() {
         if (typeof requestAnimationFrame === 'function') requestAnimationFrame(resolve);
         else setTimeout(resolve, 0);
     });
+}
+
+function readSaveLibrary(migrateLegacy = false) {
+    let records = [];
+    try {
+        const parsed = JSON.parse(localStorage.getItem(SAVE_LIBRARY_STORAGE_KEY) || '[]');
+        if (Array.isArray(parsed)) records = parsed.filter(record =>
+            record && typeof record.id === 'string' && typeof record.name === 'string' &&
+            (record.type === 'sandbox' || record.type === 'campaign') &&
+            typeof record.saveString === 'string' && typeof record.updatedAt === 'string');
+        if (migrateLegacy) {
+            const legacy = localStorage.getItem(AUTOSAVE_STORAGE_KEY);
+            if (legacy && records.length === 0) {
+                let type = 'sandbox';
+                let saveString = legacy;
+                try {
+                    const parsed = parseSaveString(legacy);
+                    type = parsed.mode === 'campaign' ? 'campaign' : 'sandbox';
+                    if (type === 'campaign') saveString = createCampaignCheckpointString(getCampaignMissionNumber(parsed));
+                }
+                catch { /* Keep legacy records available for the existing error flow. */ }
+                const record = {
+                    id: createSaveId(), name: type === 'campaign' ? 'Migrated Campaign' : 'Migrated Sandbox',
+                    type, saveString, updatedAt: new Date().toISOString()
+                };
+                records.push(record);
+                localStorage.setItem(SAVE_LIBRARY_STORAGE_KEY, JSON.stringify(records));
+                localStorage.setItem(ACTIVE_SAVE_STORAGE_KEY, record.id);
+                if (type === 'campaign') localStorage.setItem(AUTOSAVE_STORAGE_KEY, saveString);
+                else localStorage.removeItem(AUTOSAVE_STORAGE_KEY);
+            } else if (records.length) {
+                let activeId = localStorage.getItem(ACTIVE_SAVE_STORAGE_KEY);
+                let activeRecord = records.find(record => record.id === activeId);
+                if (!activeRecord) {
+                    activeRecord = records[records.length - 1];
+                    activeId = activeRecord.id;
+                }
+                // Older app versions wrote the active snapshot directly to the
+                // autosave key. If that key has since changed, import it into
+                // the active library record before syncing the registry back.
+                if (legacy && legacy !== activeRecord.saveString) {
+                    try {
+                        const payload = parseSaveString(legacy);
+                        if (payload.mode === 'campaign') {
+                            activeRecord = { ...activeRecord, type: 'campaign',
+                                saveString: createCampaignCheckpointString(getCampaignMissionNumber(payload)),
+                                updatedAt: payload.savedAt || new Date().toISOString() };
+                        } else {
+                            activeRecord = { ...activeRecord, type: 'sandbox', saveString: legacy,
+                                updatedAt: payload.savedAt || new Date().toISOString() };
+                        }
+                        records = records.map(record => record.id === activeRecord.id ? activeRecord : record);
+                        localStorage.setItem(SAVE_LIBRARY_STORAGE_KEY, JSON.stringify(records));
+                    } catch { /* Preserve the active library record if the mirror is malformed. */ }
+                }
+                if (activeRecord.type === 'campaign') {
+                    try {
+                        const payload = parseSaveString(activeRecord.saveString);
+                        const checkpoint = campaignCheckpointPayload(payload);
+                        if (checkpoint && JSON.stringify(payload) !== JSON.stringify(checkpoint)) {
+                            activeRecord = { ...activeRecord, saveString: createCampaignCheckpointString(checkpoint.missionNumber) };
+                            records = records.map(record => record.id === activeRecord.id ? activeRecord : record);
+                            localStorage.setItem(SAVE_LIBRARY_STORAGE_KEY, JSON.stringify(records));
+                        }
+                    } catch { /* Keep an unreadable record available for the normal load error flow. */ }
+                }
+                localStorage.setItem(ACTIVE_SAVE_STORAGE_KEY, activeId);
+                localStorage.setItem(AUTOSAVE_STORAGE_KEY, activeRecord.saveString);
+            }
+        }
+    } catch { /* Local storage can be unavailable or contain an older payload. */ }
+    return { records };
+}
+
+function writeSaveLibrary(records) {
+    localStorage.setItem(SAVE_LIBRARY_STORAGE_KEY, JSON.stringify(records));
+}
+
+function setActiveSaveId(id) {
+    localStorage.setItem(ACTIVE_SAVE_STORAGE_KEY, id);
+}
+
+function createSaveId() {
+    return globalThis.crypto?.randomUUID?.() ||
+        `save-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function storeSnapshotInActiveRecord(saveString) {
+    const payload = parseSaveString(saveString);
+    if (payload.mode === 'campaign') return;
+    const type = payload.mode === 'campaign' ? 'campaign' : 'sandbox';
+    const { records } = readSaveLibrary(false);
+    let activeId = null;
+    try { activeId = localStorage.getItem(ACTIVE_SAVE_STORAGE_KEY); } catch { return; }
+    const current = records.find(record => record.id === activeId);
+    if (!current) {
+        const baseName = type === 'campaign' ? 'Campaign' : 'Sandbox';
+        const names = new Set(records.map(record => record.name));
+        let name = baseName;
+        let suffix = 2;
+        while (names.has(name)) name = `${baseName} ${suffix++}`;
+        const created = {
+            id: createSaveId(), name, type, saveString,
+            updatedAt: new Date().toISOString()
+        };
+        writeSaveLibrary([...records, created]);
+        setActiveSaveId(created.id);
+        return;
+    }
+    const record = {
+        ...current,
+        type,
+        saveString,
+        updatedAt: new Date().toISOString()
+    };
+    const next = records.map(item => item.id === current.id ? record : item);
+    writeSaveLibrary(next);
+    setActiveSaveId(record.id);
 }
 
 function encodeSimulation(simulation) {

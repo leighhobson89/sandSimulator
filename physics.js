@@ -127,6 +127,7 @@ const debugFeatureFlags = {
 };
 let dewpointTarget = 10;
 let frameCount = 0;
+let materialTransitionListener = () => {};
 let humidityCursor = 0;
 let cloudCursor = 0;
 const PREVAILING_WIND_CYCLE_TICKS = 108_000;
@@ -1656,7 +1657,7 @@ export function getIlluminationCacheStats() {
 }
 export function setDewpointTarget(value) {
     if (!Number.isFinite(Number(value))) return;
-    dewpointTarget = Math.max(0, Math.min(100, Number(value)));
+    dewpointTarget = Math.max(-60, Math.min(100, Number(value)));
 }
 export function getDewpointTarget() { return dewpointTarget; }
 
@@ -2089,7 +2090,7 @@ export function restoreSimulationState(state) {
     ambientIlluminationTarget = Number.isFinite(state.ambientIllumination)
         ? Math.max(0, Math.min(100, state.ambientIllumination)) : 50;
     dewpointTarget = Number.isFinite(state.dewpointTarget)
-        ? Math.max(0, Math.min(100, state.dewpointTarget)) : 10;
+        ? Math.max(-60, Math.min(100, state.dewpointTarget)) : 10;
     if (!state.arrays.humidity) world.humidity.fill(ambientHumidityTarget);
     if (!debugFeatureFlags.humidity) setUniformHumidity();
     // Legacy layer settings are intentionally ignored. Outside air now always
@@ -4001,6 +4002,14 @@ function transform(i, id, life, residue) {
     world.charge[i] = 0;
     world.shade[i] = random() * 255;
     world.moved[i] = 1;
+    if (previousType !== id) {
+        try { materialTransitionListener(previousType, id); }
+        catch (error) { console.error('Campaign material transition handler failed:', error); }
+    }
+}
+
+export function setMaterialTransitionListener(listener) {
+    materialTransitionListener = typeof listener === 'function' ? listener : () => {};
 }
 
 function defaultBulkInsulation(category) {

@@ -110,14 +110,14 @@ test('New Game replacement choices preserve, discard, or replace the saved resum
     await page.locator('#closeSaveDialog').click();
     await page.reload();
 
-    await page.getByRole('button', { name: 'New Game' }).click();
+    await page.getByRole('button', { name: 'Sandbox', exact: true }).click();
     await chooseStandardWorld(page);
     await expect(page.locator('#autosaveChoiceDialog')).toBeVisible();
     await page.getByRole('button', { name: 'Cancel' }).click();
     await expect(page.locator('#menu')).toBeVisible();
     await expect(page.evaluate(() => localStorage.getItem('elemental-foundry.autosave.v1'))).resolves.toBe(originalResume);
 
-    await page.getByRole('button', { name: 'New Game' }).click();
+    await page.getByRole('button', { name: 'Sandbox', exact: true }).click();
     await chooseStandardWorld(page);
     await page.getByRole('button', { name: 'No, play without autosave' }).click();
     await expect(page.locator('#canvasContainer')).toBeVisible();
@@ -125,7 +125,7 @@ test('New Game replacement choices preserve, discard, or replace the saved resum
     await expect(page.evaluate(() => localStorage.getItem('elemental-foundry.autosave.v1'))).resolves.toBe(originalResume);
     await page.reload();
 
-    await page.getByRole('button', { name: 'New Game' }).click();
+    await page.getByRole('button', { name: 'Sandbox', exact: true }).click();
     await chooseStandardWorld(page);
     await page.getByRole('button', { name: 'Yes, replace it' }).click();
     await expect(page.locator('#canvasContainer')).toBeVisible();

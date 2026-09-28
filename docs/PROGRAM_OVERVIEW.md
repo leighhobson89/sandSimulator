@@ -1,13 +1,13 @@
 # Elemental Foundry: program overview
 
-Reviewed: 24 September 2026
+Reviewed: 28 September 2026
 
-Elemental Foundry is a browser-based **falling-sand / cellular-automata
-sandbox**. The player paints materials into a pixel grid, then watches simple
-local rules produce larger-scale behaviour: sand piles, water levels, steam
-rises, heat moves, fuel burns, plants grow, and powered machines move air.
-It is a creative simulation, not an engineering-grade fluid, electrical, or
-thermodynamics solver.
+Elemental Foundry is a browser-based **falling-sand / cellular-automata game**
+with a freeform sandbox and a story-campaign mode. The player paints materials
+into a pixel grid, then watches simple local rules produce larger-scale
+behaviour: sand piles, water levels, steam rises, heat moves, fuel burns, plants
+grow, and powered machines move air. It is a creative simulation, not an
+engineering-grade fluid, electrical, or thermodynamics solver.
 
 ## What runs where
 
@@ -15,8 +15,12 @@ thermodynamics solver.
 `physics.js` turns those definitions into a headless simulation. `game.js`
 renders that state to a single pixelated canvas and drives the animation loop.
 `ui.js` connects controls and pointer input; `themes.js` owns presentation
-themes; `saveLoadGame.js` owns portable saves and the local resume slot. The
-260×150 and 520×300 worlds are stored as flat typed arrays for material,
+themes; `campaign.js` owns mission definitions and campaign progress;
+`campaignEditor.js` owns local authoring drafts, validation, review, and guarded
+mission-data installation;
+`saveLoadGame.js` owns portable saves, the named local save library, and its
+active resume record. The 260×150 and 520×300 worlds are stored as flat typed
+arrays for material,
 temperature, lifetime, state-change progress, movement, visual shade, liquid
 surface, charge, power and wind/airflow state.
 
@@ -32,16 +36,26 @@ ambient temperature eases toward its setting
   -> canvas draws the resulting world
 ```
 
+The main menu presents **New Campaign** above **Sandbox**, then the yellow
+**Campaign Editor** action, Resume Game when an active record exists, and Load
+Game. The Sandbox button names the freeform mode it starts. The theme picker
+sits beneath the vertical action stack; Terminal keeps the menu centered.
+Sandbox retains its existing startup and world-size chooser. Campaign opens a
+mission briefing first, then enters the mission workspace with objective and
+resource status visible. Campaign Editor docks an authoring panel beside a live
+canvas.
+
 ## View and input ownership
 
-The New Game chooser offers exactly two fixed world sizes: **260×150** and
+The Sandbox chooser offers exactly two fixed world sizes: **260×150** and
 **520×300**. The larger choice carries a warning that it is performance-heavy
 and autosaving will freeze the game. It stays hidden until the usable
 `#canvasArea` content box is at least 260×150 CSS pixels. Both worlds start at a
 fitted view with every edge visible and no scrolling. New worlds begin centered
 horizontally; the stage is aligned to the bottom. When zoomed, scrolling is
 clamped to the world's left, right, and bottom boundaries. World size is part of
-the v1 save data, so Resume and the Load action restore the selected dimensions.
+the save data, so Resume and Load restore the selected dimensions. Campaign
+missions use their authored dimensions and do not open the Sandbox size chooser.
 
 The canvas viewport is a view layer around the simulation canvas. Zoom and
 scroll offsets are transient and are not serialized:
@@ -163,10 +177,68 @@ rule based on the surface of connected liquid, not a Navier–Stokes solution.
   active tools untouched, and never pans or triggers browser autoscroll. The
   material picker doubles as a glossary: every entry has a keyboard-accessible
   tooltip built from its live properties and reactions.
-- The **Save** action stores full worlds as LZString strings; use **Load** to
-  restore one by pasting its save string.
-  When Autosave is enabled, the game updates its local resume save every five
-  minutes and can be resumed from the menu.
+- The **Save** dialog supports named local saves and portable LZString strings.
+  Local records are tagged Sandbox or Campaign from their save metadata, and
+  **Load** lists the saved records as well as accepting a pasted portable save.
+  Sandbox records keep full snapshots; Sandbox Autosave updates the active
+  record every five minutes. Starting a new autosaved Sandbox creates a fresh
+  uniquely named record. A new Campaign creates no save record and stops
+  Autosave. Its first Campaign checkpoint is written only when **ADVANCE** is
+  clicked after Mission 1's recap and a next mission is available. Later
+  advances update the mission-number checkpoint. Campaign Save, Save to Library,
+  export, and timed Autosave are unavailable during play; Load remains usable.
+  Version-3 Campaign checkpoints store only `mode: "campaign"` and
+  `missionNumber`, without a world or progress state. Legacy full-state version-3
+  Campaign saves normalize to this checkpoint; version-1 and version-2 saves
+  load as Sandbox.
+
+- Campaign definitions live in `campaign.js`. Mission 1, **The First Daffodil**,
+  starts with a full-width Sand floor and player supplies of 100 Dry Mud,
+  1,000 Water, and one Daffodil Seed. It fixes the growing climate at 14 °C,
+  68% humidity, 65% illumination, 10 °C dewpoint, and calm wind, with those
+  player controls locked. Its objective counts one actual Daffodil Seeds-to-
+  Daffodil germination transition. Progress and its completion event are
+  cumulative and idempotent within a run; objective progress, used resources,
+  and fired event IDs are session state, not persisted. User blueprint stamps consume matching
+  placement budgets once; undo/redo restores the stamp without a second charge.
+  Campaign HUD and briefing presentation are owned by `ui.js` and the
+  menu/workspace markup.
+- Mission 2, **The Icebound Grove**, starts with a full-width five-row Ice
+  floor in a 260×150 world. Its start climate is −10 °C, 35% humidity, and 10%
+  illumination, with a −15 °C dewpoint and calm wind. The player receives 500
+  Dry Mud and one Banana Seed. Four cumulative, one-time objectives track
+  Ice-to-Water, the authored climate target (30 °C / 95% humidity / 85%
+  illumination), Dry Mud-to-Wet Mud, and Banana seed germination. Banana Plant
+  defines temperature and humidity ideals but no ideal illumination; 85% is
+  authored mission data. Briefing guidance names the Temperature, Humidity, and
+  Ambient Light sliders and distinguishes the Banana ideals from that light
+  target. The editor validates and saves `environmentTargets` with
+  environment-target objectives.
+- `campaign.js` owns active-run objective and event state. On completion,
+  `ui.js` pauses play and opens a recap with resource-use counts. **OK** dismisses
+  the recap; **ADVANCE** to an installed successor writes a checkpoint with
+  only that next mission's number. Resume rebuilds the authored scenario with
+  full budgets and zeroed objectives/events. Restart confirms through
+  `#missionRestartDialog` then rebuilds the current mission without changing the
+  checkpoint. In-progress Campaign state is never saved.
+- During Campaign, the material catalog hides unavailable entries. Categories
+  with available entries auto-expand; empty categories collapse and lock with a
+  focusable reason tooltip. Exiting Campaign restores the Sandbox category
+  expansion state. Campaign Save/export and Autosave remain disabled, while
+  usable system actions remain available. Sandbox retains its full catalog,
+  saves, and normal category controls.
+- Campaign Editor starts an unrestricted Sandbox authoring session and keeps
+  the canvas live beside its docked side panel. Drafts and compressed captured
+  Sandbox starting saves persist under
+  `elemental-foundry.campaign-editor.drafts.v1`. Loading a captured draft
+  resizes and clears the canvas to the saved dimensions before restoring its
+  world. Drawing, clearing, or resuming simulation marks that capture stale
+  until it is recaptured. Editor sessions suspend periodic autosave writes so
+  they cannot replace the active resume save. Re-enabling autosave after return
+  releases the write guard; closing an editor session does not immediately
+  write an autosave.
+  Mission installation requires validation and review, uses a picker for
+  `campaign.js`, and keeps a recoverable localStorage source backup.
 
 ## What it intentionally does less well
 
@@ -209,3 +281,9 @@ QMODE palette catalog regression passed 8/8.
 Use the npm harness commands in [`E2E_TEST_PLAN.md`](E2E_TEST_PLAN.md). Focused
 browser coverage is run by functional area or spec through
 `npm run test:browser -- <area-or-spec> --workers=1 --trace=off`.
+The Campaign checkpoint and catalog regressions passed **15/15** in 1.4 minutes
+on 28 September 2026. The focused Sandbox clear/Resume and Save/Load regressions
+each passed **1/1**. The initial broader Campaign-plus-persistence run was
+exploratory and exposed stale expectations; those assertions were corrected
+before the focused final runs. The deterministic `npm test` harness was not run.
+Exact commands and scope are in [`E2E_TEST_PLAN.md`](E2E_TEST_PLAN.md).

@@ -129,6 +129,57 @@ own workflow captures them. See the [Playwright HTML reporter guide](https://pla
   coverage checks its six-option grid, modal semantics, narrow viewport bounds,
   safe placeholders, Escape and Close behavior, and focus restoration. The Ember
   tooltip background is opaque.
+- `e2e/navigation/menu.spec.mjs` verifies the refreshed menu and preserves the
+  Sandbox startup flow. Its first two actions are vertically stacked as New
+  Campaign followed by Sandbox; the theme panel sits beneath them, and Terminal
+  retains centered alignment. Campaign entry presents the mission briefing
+  before the workspace opens. The navigation area also retains Load, Resume,
+  theme, pause, and workspace-tab coverage.
+- `e2e/campaign/mission.spec.mjs` covers Mission 1, **The First Daffodil**:
+  the Sand-only starting habitat, 100 Dry Mud / 1,000 Water / one Daffodil Seed
+  player budgets, ideal fixed climate and locks, supply placement, and the
+  actual seed-germination objective/event firing once. Exhausted budgeted
+  supplies disappear from the material catalog rather than remaining as
+  disabled buttons.
+- `e2e/campaign/mission-progression.spec.mjs` covers Mission 1 recap resource
+  statistics, **OK** dismissal, the persistent objective-passed bar, and
+  **ADVANCE** into Mission 2's briefing and Ice scenario. It also checks the
+  Mission 2 climate target, initial climate, floor and budgets; hidden Water;
+  disabled markers, opacity, and red `DISABLED` tooltips for unavailable
+  controls; usable system-action exceptions; Sandbox isolation; named climate
+  slider guidance; and pristine Mission 2 climate, world, budgets, and
+  objectives after checkpoint Resume.
+- `e2e/campaign/checkpoint-controls.spec.mjs` covers Restart confirmation and
+  cancellation, resetting the authored mission without changing the checkpoint,
+  hidden unbudgeted material entries, category auto-expansion and empty-category
+  locking/tooltips, and Sandbox catalog and Save-to-Library behavior.
+- `e2e/campaign/editor.spec.mjs` covers the main-menu editor entry and docked
+  unrestricted canvas workspace, blank/edit/load flows, local draft and
+  captured-save round trips, validation and mandatory review, autosave
+  suspension with the resume save preserved, marker-bounded file installation,
+  replacement cancel/confirm, and source-backup metadata. It also verifies that
+  Mission 2's three `environmentTargets` fields and typed environment objective
+  persist in an editor draft.
+- Campaign editor drafts use localStorage key
+  `elemental-foundry.campaign-editor.drafts.v1`. Loading a draft with a captured
+  `startingSave` resizes and clears the canvas to the saved dimensions before
+  restoring the simulation. Drawing, clearing, or resuming simulation makes a
+  capture stale until the developer captures the scene again. Autosave writes
+  are suspended while the editor is open; explicitly re-enabling Autosave after
+  return releases the write guard.
+- Campaign blueprint placement charges the mission budget at the user stamp
+  operation. Undo/redo only restores the saved stamp state and does not charge
+  those resources again.
+- The campaign browser contracts are exposed by `campaign.js`:
+  `getMissionDefinitions()`, `getCurrentMission()`, `getCampaignState()`,
+  `recordMaterialTransition(fromId, toId)`, `canUseMaterial(name)`, and
+  `canPlaceMissionMachine(name)`. The briefing/HUD selectors include
+  `#missionIntroDialog`, `#missionIntroOk`, `#missionHud`,
+  `#missionResourceList`, `#missionObjectiveProgress`, and
+  `#missionEventNotice`. Completion uses `#missionCompleteDialog`,
+  `#missionCompleteStats`, and `#missionCompleteOk`; after dismissal the HUD
+  bar exposes `#missionAdvance`. The next briefing guidance is
+  `#missionIntroGuidance`.
 - `e2e/tools/` covers painting, shapes, Grabber, and environment controls. The
   environment specs check the Visualizations section and Environment order,
   equal-width rows, narrow sidebar fit, existing control behavior, Heat
@@ -234,7 +285,21 @@ own workflow captures them. See the [Playwright HTML reporter guide](https://pla
   includes the selected world size in save, resume, and load flows. The
   profiler's 1040×600 dimension remains synthetic and is not a UI option.
 - `e2e/persistence/` covers Save/Load, resume choices, validation, clear
-  behavior, and the live Autosave checkbox. It also verifies modern
+  behavior, and the live Autosave checkbox. `multi-save-registry.spec.mjs`
+  checks separate named Sandbox and Campaign snapshots, active-record switching,
+  that fresh Sandbox and Campaign starts preserve existing records, and that the
+  first Campaign record is created only on ADVANCE. `campaign-checkpoints.spec.mjs`
+  checks the mission-number-only v3 payload, no checkpoint before ADVANCE,
+  blocked in-mission Save/export and timed autosave, pristine Resume, and
+  migration of legacy full-state v3 Campaign autosaves. Resume must leave the
+  checkpoint `saveString` and `updatedAt` unchanged. Portable v1 and v2 saves
+  remain readable as Sandbox; v3 Campaign checkpoints store only the mission
+  number. Registry assertions use `saveGameToLibrary(name)`,
+  `listSavedGames()`, `getActiveSaveId()`, and `loadSavedGame(id)` from
+  `saveLoadGame.js`; each listed record exposes its own `id`, `name`, `type`,
+  and compressed `saveString`. The Save dialog lists local records and offers a
+  Load action for each alongside the existing portable import/export actions.
+  The area also verifies modern
   visualization-mode save/load and restores Heat from a legacy payload with
   `tools.heatViewOn` but no `tools.visualizationMode`. Its cases verify state
   across New Game, Resume, Load, and write failure. In
@@ -266,11 +331,12 @@ Wind overhaul verification attempt:
 - The focused npm browser run could not launch tests in this environment, so
   the slider and save/load browser assertions remain unverified here.
 
-Each test uses a fresh browser context, opens a New Game, pauses before
-deterministic setup, and seeds randomness when the scenario needs it. The
-`?e2e` adapter exposes copied state inspection, exact stepping, seeded random
-control, rendered canvas mapping, and snapshot restore without replacing user
-actions. Production behavior remains animation-frame driven.
+Each test uses a fresh browser context. Sandbox scenarios open a New Game;
+campaign scenarios enter through the campaign briefing. Deterministic scenarios
+pause before setup and seed randomness when needed. The `?e2e` adapter exposes
+copied state inspection, exact stepping, seeded random control, rendered canvas
+mapping, and snapshot restore without replacing user actions. Production
+behavior remains animation-frame driven.
 
 Use Playwright controls, keyboard input, pointer gestures, dialogs, and mapped
 canvas coordinates for user workflows. Use the physics boundary only to create
@@ -379,12 +445,71 @@ The deterministic section passed **7/7**. The focused browser selection passed
 **4/4** across `e2e/feedback/illumination.spec.mjs` and
 `e2e/machines/electrical.spec.mjs`.
 
+## Campaign menu and save-library verification (28 September 2026)
+
+The refreshed menu and mode entry points passed **7/7** navigation tests,
+including a rerun after fresh-Sandbox saves were isolated into their own record.
+Before the First Daffodil/editor follow-up, the initial campaign mission and
+resource suite passed **2/2**, including a rerun after the blueprint undo/redo
+accounting review. Their focused commands were:
+
+```text
+npm.cmd run test:browser -- e2e/navigation --workers=1 --trace=off
+npm.cmd run test:browser -- e2e/campaign/mission.spec.mjs --workers=1 --trace=off
+```
+
+The selected persistence regression set passed **5/5**. A later focused run of
+the complete multi-save registry spec passed **3/3**, including the additional
+fresh-Sandbox isolation case:
+
+```text
+npm.cmd run test:browser -- e2e/persistence --grep "resume slot is offered|clear cancel and confirm|New Game autosave choices|Load Cancel leaves|legacy single-slot" --workers=1 --trace=off
+npm.cmd run test:browser -- e2e/persistence/multi-save-registry.spec.mjs --workers=1 --trace=off
+```
+
+An earlier broader persistence attempt exposed save-migration failures. These
+were fixed before the focused runs above. The entire persistence area was not
+rerun after those fixes, so these focused results do not establish a clean
+full-area or full-browser-suite result. The browser performance suite and full
+project suite were not run for this handoff.
+
 The related machine-port selection passed **2/2**, covering compatible direct
 Elec contact at its declared port and the 15 CSS px protrusion:
 
 ```text
 npm.cmd run test:browser -- e2e/machines/ports.spec.mjs --grep "direct contact at compatible Elec|every machine port has a visible 15 CSS px protrusion" --workers=1 --trace=off
 ```
+
+## Campaign checkpoint, restart, and catalog verification (28 September 2026)
+
+The final targeted combined selection passed **15 tests in 1.4 minutes** across
+Campaign mission, progression, restart/catalog, checkpoint, and save-registry
+coverage. It verifies that no Campaign record exists before Mission 1 ADVANCE;
+ADVANCE writes only the next `missionNumber`; completion and recap dismissal do
+not write; Save/export and timed Autosave are blocked during Campaign; Resume
+rebuilds a pristine mission without changing the checkpoint `saveString` or
+`updatedAt`; legacy full-state v3 Campaign data normalizes to a checkpoint;
+Restart resets the authored world but leaves the checkpoint unchanged; empty
+catalog categories lock and explain their state; and Sandbox records/catalog
+remain isolated. The exact wrapper invocation was:
+
+```text
+npm.cmd run test:browser -- e2e/campaign/checkpoint-controls.spec.mjs e2e/campaign/mission-progression.spec.mjs e2e/campaign/mission.spec.mjs e2e/persistence/campaign-checkpoints.spec.mjs e2e/persistence/multi-save-registry.spec.mjs --workers=1 --trace=off
+```
+
+Two additional focused Sandbox persistence regressions passed **1/1** each:
+
+```text
+npm.cmd run test:browser -- e2e/persistence/autosave-resume.spec.mjs --grep "clear cancel and confirm" --workers=1 --trace=off
+npm.cmd run test:browser -- e2e/persistence/export-import.spec.mjs --grep "Save and Load round-trip" --workers=1 --trace=off
+```
+
+The earlier broad Campaign-plus-persistence run was exploratory and exposed
+stale expectations. Those assertions were corrected before the targeted final
+runs; the exploratory run is not reported as a passing suite. The final
+results cover only the listed focused selections, not the complete Campaign or
+persistence areas or the full browser suite. No full deterministic test run was
+performed for this handoff.
 
 The scale profile's allocation and pure math/CLI checks are headless Node tests
 and can be run independently from Playwright. `npm run profile:scale` reports

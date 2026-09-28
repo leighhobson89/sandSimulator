@@ -10,14 +10,18 @@
     <script>window.__E2E_MODE__ = new URLSearchParams(location.search).has('e2e');</script>
     <!-- Menu -->
     <div id="menu" class="d-none">
+        <div class="menu-atmosphere" aria-hidden="true"><span></span><span></span><span></span></div>
         <div class="menu-card">
+            <span class="menu-kicker">A living world awaits</span>
             <div class="menu-head">
                 <span class="brand-dot brand-dot-lg"></span>
                 <h1 id="menuTitle" class="menu-title">Elemental Foundry</h1>
             </div>
-            <p class="menu-subtitle">A living elemental sandbox of heat, weather, fire, water and electricity.</p>
+            <p class="menu-subtitle">Shape a world of heat, weather, fire, water and electricity.</p>
             <div class="menu-actions">
-                <button id="newGame" class="btn btn-primary btn-lead">New Game</button>
+                <button id="startCampaign" class="btn btn-campaign btn-lead" type="button">New Campaign</button>
+                <button id="newGame" class="btn btn-primary btn-lead">Sandbox</button>
+                <button id="openCampaignEditor" class="btn btn-debug btn-lead" type="button">Campaign Editor <span>DEBUG</span></button>
                 <button id="resumeGame" class="btn btn-lead d-none">Resume Game</button>
                 <button id="importGameMenu" class="btn btn-ghost">Load Game</button>
             </div>
@@ -28,6 +32,49 @@
             </div>
         </div>
     </div>
+
+    <section id="missionIntroDialog" class="save-dialog mission-intro-dialog" hidden role="dialog"
+             aria-modal="true" aria-labelledby="missionIntroTitle" aria-describedby="missionIntroBriefing">
+        <div class="save-dialog-card mission-intro-card">
+            <span class="tools-kicker">Campaign briefing · Mission <span id="missionIntroNumber">1</span></span>
+            <h2 id="missionIntroTitle">The First Daffodil</h2>
+            <p id="missionIntroBriefing" class="save-dialog-description"></p>
+            <p id="missionIntroGuidance" class="mission-intro-guidance"></p>
+            <div id="missionIntroResources" class="mission-intro-resources" aria-label="Available resources"></div>
+            <div class="mission-briefing-objectives">
+                <h3>Objectives</h3>
+                <ul id="missionIntroObjectives"></ul>
+            </div>
+            <div class="save-dialog-actions">
+                <button id="missionIntroOk" class="btn btn-primary" type="button">OK</button>
+            </div>
+        </div>
+    </section>
+
+    <section id="missionCompleteDialog" class="save-dialog mission-complete-dialog" hidden role="dialog"
+             aria-modal="true" aria-labelledby="missionCompleteTitle" aria-describedby="missionCompleteStats">
+        <div class="save-dialog-card mission-complete-card">
+            <span class="tools-kicker">Mission results</span>
+            <h2 id="missionCompleteTitle">Objectives passed</h2>
+            <div id="missionCompleteStats" class="mission-complete-stats"></div>
+            <div class="save-dialog-actions">
+                <button id="missionCompleteOk" class="btn btn-primary" type="button">OK</button>
+            </div>
+        </div>
+    </section>
+
+    <section id="missionRestartDialog" class="save-dialog mission-restart-dialog" hidden role="dialog"
+             aria-modal="true" aria-labelledby="missionRestartTitle" aria-describedby="missionRestartDescription">
+        <div class="save-dialog-card save-dialog-card-small">
+            <span class="tools-kicker">Mission controls</span>
+            <h2 id="missionRestartTitle">Restart this mission?</h2>
+            <p id="missionRestartDescription" class="save-dialog-description">This restores the authored starting world and resets mission progress. Your saved campaign checkpoint will stay unchanged.</p>
+            <div class="save-dialog-actions">
+                <button id="confirmRestartMission" class="btn btn-primary" type="button">Restart Mission</button>
+                <button id="cancelRestartMission" class="btn btn-ghost" type="button">Cancel</button>
+            </div>
+        </div>
+    </section>
 
     <!-- Simulator -->
     <div id="canvasContainer" class="d-none">
@@ -195,6 +242,7 @@
 
                 <section id="environmentSection" class="tool-section">
                     <h3>Environment</h3>
+                    <p id="missionClimateLock" class="mission-climate-lock" hidden role="status">🔒 Mission climate is fixed for this level.</p>
                     <div class="tool-icon-grid environment-toggle-row">
                         <label class="tool-icon-toggle tooltip-control"
                                data-tooltip="Let natural gusts cross the world">
@@ -347,9 +395,153 @@
                     </section>
                 </div>
             </aside>
+        <aside id="campaignEditorWorkspace" class="campaign-editor-workspace" hidden aria-label="Campaign editor">
+            <header class="campaign-editor-heading">
+                <div><span class="tools-kicker">Debug authoring</span><h2>Campaign Editor</h2></div>
+                <button id="campaignEditorClose" class="btn btn-ghost" type="button" aria-label="Return to menu">×</button>
+            </header>
+            <p class="campaign-editor-intro">Build the scenario on the live canvas, then capture and review its mission data.</p>
+            <div class="campaign-editor-list-row">
+                <label for="campaignMissionList">Installed missions and drafts</label>
+                <select id="campaignMissionList" class="select-input"></select>
+            </div>
+            <div class="campaign-editor-actions">
+                <button id="campaignEditorNewBlank" class="btn btn-ghost" type="button">New blank</button>
+                <button id="campaignEditorLoadMission" class="btn btn-ghost" type="button">Load selected</button>
+                <button id="campaignEditorSaveDraft" class="btn btn-primary" type="button">Save draft</button>
+            </div>
+            <p id="campaignEditorStatus" class="campaign-editor-status" role="status" aria-live="polite">Ready to author a mission.</p>
+            <div class="campaign-editor-form">
+                <label>Mission ID<input data-mission-field="id" type="text" autocomplete="off"></label>
+                <div class="campaign-editor-grid-two">
+                    <label for="campaignEditorNumber">Mission number<input id="campaignEditorNumber" data-mission-field="number" type="number" min="1" step="1"></label>
+                    <label for="campaignEditorTitle">Title<input id="campaignEditorTitle" data-mission-field="title" type="text"></label>
+                </div>
+                <label for="campaignEditorBriefing">Briefing<textarea id="campaignEditorBriefing" data-mission-field="briefing" rows="3"></textarea></label>
+                <div class="campaign-editor-grid-two">
+                    <label>World columns<input data-mission-field="cols" type="number" min="200" step="1"></label>
+                    <label>World rows<input data-mission-field="rows" type="number" min="1" step="1"></label>
+                </div>
+                <button id="campaignEditorApplyDimensions" class="btn btn-ghost campaign-editor-add" type="button">Resize and clear canvas</button>
+                <fieldset><legend>Material budgets</legend>
+                    <div id="campaignEditorMaterialBudgets" class="campaign-editor-budget-rows"></div>
+                    <button id="campaignEditorAddMaterialBudget" class="btn btn-ghost campaign-editor-add" type="button">Add material budget</button>
+                    <div id="campaignEditorMachineBudgets" class="campaign-editor-budget-rows"></div>
+                    <button id="campaignEditorAddMachineBudget" class="btn btn-ghost campaign-editor-add" type="button">Add machine budget</button>
+                </fieldset>
+                <fieldset><legend>Fixed environment profile</legend>
+                    <div class="campaign-editor-grid-two">
+                        <label>Temperature °C<input data-environment="temperature" type="number" min="-60" max="4000" step="1"></label>
+                        <label>Humidity %<input data-environment="humidity" type="number" min="0" max="100" step="1"></label>
+                        <label>Illumination %<input data-environment="illumination" type="number" min="0" max="100" step="1"></label>
+                        <label>Dewpoint °C<input data-environment="dewpoint" type="number" min="-60" max="100" step="1"></label>
+                        <label>General wind<input data-environment="windStrength" type="number" min="0" max="50" step="1"></label>
+                        <label>Gust strength<input data-environment="gustWindStrength" type="number" min="0" max="50" step="1"></label>
+                    </div>
+                    <label class="campaign-editor-check"><input data-environment="ambientWindOn" type="checkbox"> Ambient wind enabled</label>
+                    <fieldset class="campaign-editor-targets"><legend>Player environment targets</legend>
+                        <div class="campaign-editor-grid-three">
+                            <label>Temperature °C<input data-environment-target="temperature" type="number" min="-60" max="4000" step="1"></label>
+                            <label>Humidity %<input data-environment-target="humidity" type="number" min="0" max="100" step="1"></label>
+                            <label>Illumination %<input data-environment-target="illumination" type="number" min="0" max="100" step="1"></label>
+                        </div>
+                    </fieldset>
+                    <div class="campaign-editor-locks" aria-label="Player climate controls locked">
+                        <strong>Lock climate controls during the mission</strong>
+                        <label><input data-lock="temperature" type="checkbox"> Temperature</label>
+                        <label><input data-lock="humidity" type="checkbox"> Humidity</label>
+                        <label><input data-lock="illumination" type="checkbox"> Illumination</label>
+                        <label><input data-lock="dewpoint" type="checkbox"> Dewpoint</label>
+                        <label><input data-lock="wind" type="checkbox"> Wind</label>
+                    </div>
+                </fieldset>
+                <div class="campaign-editor-grid-two">
+                    <label>Start material<select data-mission-field="startMaterial" class="select-input"></select></label>
+                    <label>Drawing mode<select data-mission-field="drawMode" class="select-input"><option value="brush">Brush</option><option value="line">Line</option><option value="rectangle">Rectangle</option><option value="ellipse">Ellipse</option></select></label>
+                </div>
+                <label>Available visualizations<select data-mission-field="visualizations" class="select-input" multiple size="4"><option value="normal">Normal</option><option value="heat">Heat</option><option value="humidity">Humidity</option><option value="wind">Wind</option></select></label>
+                <label>Unlocked player tools<select data-mission-field="tools" class="select-input" multiple size="5"><option value="brush">Brush</option><option value="line">Line</option><option value="rectangle">Rectangle</option><option value="ellipse">Ellipse</option><option value="grabber">Grabber</option><option value="eraser">Eraser</option></select></label>
+                <fieldset><legend>Objective and completion event</legend>
+                    <div id="campaignEditorObjectives" class="campaign-editor-objective-rows">
+                        <div class="campaign-objective-row" data-objective-row>
+                            <label>Objective label<input id="campaignObjectiveLabel" data-objective-label type="text"></label>
+                            <label>Objective condition<select data-objective-type class="select-input"><option value="transformation">Material transition</option><option value="environment-target">Environment targets reached</option></select></label>
+                            <div class="campaign-editor-grid-three">
+                                <label>From<select id="campaignObjectiveFrom" data-objective-from class="select-input"></select></label>
+                                <label>To<select id="campaignObjectiveTo" data-objective-to class="select-input"></select></label>
+                                <label>Target<input id="campaignObjectiveTarget" data-objective-target type="number" min="1" step="1"></label>
+                            </div>
+                            <button class="btn btn-ghost campaign-editor-remove" data-remove-objective type="button" hidden>Remove objective</button>
+                        </div>
+                    </div>
+                    <button id="campaignEditorAddObjective" class="btn btn-ghost campaign-editor-add" type="button">Add objective</button>
+                    <div id="campaignEditorEvents" class="campaign-editor-event-rows">
+                        <div class="campaign-event-row" data-event-row>
+                            <label>Trigger condition<select data-trigger-condition class="select-input"><option value="objective-complete">Objective complete</option></select></label>
+                            <label>Objective<select data-trigger-objective class="select-input"></select></label>
+                            <label>Event message<input id="campaignEventMessage" data-event-message type="text"></label>
+                            <button class="btn btn-ghost campaign-editor-remove" data-remove-event type="button" hidden>Remove trigger</button>
+                        </div>
+                    </div>
+                    <button id="campaignEditorAddEvent" class="btn btn-ghost campaign-editor-add" type="button">Add completion trigger</button>
+                </fieldset>
+                <div class="campaign-editor-capture">
+                    <button id="campaignEditorCaptureScenario" class="btn btn-ghost" type="button">Capture live scenario</button>
+                    <span id="campaignEditorSnapshotStatus">No scenario captured.</span>
+                </div>
+                <div id="campaignEditorValidation" class="campaign-editor-validation" role="status" aria-live="polite"></div>
+                <div class="campaign-editor-actions campaign-editor-install-actions">
+                    <button id="campaignEditorValidate" class="btn btn-primary" type="button">Validate and review</button>
+                    <button id="campaignEditorInstall" class="btn btn-debug" type="button" disabled>Install to campaign.js</button>
+                </div>
+                <div id="campaignEditorConfirmReplaceWrap" class="campaign-editor-confirm" hidden>
+                    <p id="campaignEditorReplaceMessage"></p>
+                    <button id="campaignEditorConfirmReplace" class="btn btn-danger" type="button">Confirm replacement</button>
+                    <button id="campaignEditorCancelReplace" class="btn btn-ghost" type="button">Cancel replacement</button>
+                </div>
+                <section class="campaign-editor-backup" aria-label="Installed source backup">
+                    <strong id="campaignEditorBackupStatus">No source backup stored.</strong>
+                    <button id="campaignEditorDownloadBackup" class="btn btn-ghost" type="button">Download backup</button>
+                    <button id="campaignEditorRestoreBackup" class="btn btn-ghost" type="button">Restore backup…</button>
+                </section>
+            </div>
+        </aside>
         </div>
 
+        <aside id="missionHud" class="mission-hud" hidden role="region" aria-label="Mission status">
+            <div class="mission-hud-heading"><span class="mission-pulse" aria-hidden="true"></span><strong id="missionHudTitle">Mission</strong><button id="restartMissionButton" class="btn btn-ghost mission-restart-button" type="button" hidden>Restart Mission</button></div>
+            <div id="missionResourceList" class="mission-resource-list"></div>
+            <div id="missionObjectiveProgress" class="mission-objective-progress"></div>
+            <p id="missionEventNotice" class="mission-event-notice" role="status" aria-live="polite" hidden></p>
+            <div id="missionPassedBar" class="mission-passed-bar" hidden role="status" aria-live="polite">
+                <span id="missionPassedMessage">Objectives passed</span>
+                <button id="missionAdvance" class="btn btn-primary" type="button" disabled>ADVANCE</button>
+            </div>
+        </aside>
+
     </div>
+
+
+
+    <section id="campaignEditorReviewDialog" class="save-dialog campaign-review-dialog" hidden role="dialog" aria-modal="true" aria-labelledby="campaignEditorReviewTitle">
+        <div class="save-dialog-card">
+            <h2 id="campaignEditorReviewTitle">Mission review</h2>
+            <div id="campaignEditorReviewSummary"></div>
+            <pre id="campaignEditorReviewData" class="campaign-review-data"></pre>
+            <div class="save-dialog-actions">
+                <button id="campaignEditorCancelReview" class="btn btn-ghost" type="button">Cancel review</button>
+                <button id="campaignEditorApproveReview" class="btn btn-primary" type="button">Approve this review</button>
+            </div>
+        </div>
+    </section>
+
+    <section id="campaignEditorConfirmRestore" class="save-dialog" hidden role="dialog" aria-modal="true" aria-labelledby="campaignEditorRestoreTitle">
+        <div class="save-dialog-card">
+            <h2 id="campaignEditorRestoreTitle">Restore campaign.js backup?</h2>
+            <p>This replaces the selected campaign.js source with the saved original.</p>
+            <div class="save-dialog-actions"><button id="campaignEditorConfirmRestoreButton" class="btn btn-danger" type="button">Restore saved source</button><button id="campaignEditorCancelRestore" class="btn btn-ghost" type="button">Cancel</button></div>
+        </div>
+    </section>
 
     <div id="toolTooltip" class="tool-tooltip" role="tooltip" hidden></div>
     <div id="overlay" class="d-none overlay"></div>
@@ -433,6 +625,15 @@
                 <button id="closeSaveDialog" class="btn btn-ghost save-dialog-close" type="button" aria-label="Close">Close</button>
             </div>
             <p id="saveDialogDescription" class="save-dialog-description">Copy this string to keep a portable snapshot of this world.</p>
+            <section class="saved-games-panel" aria-label="Saved games on this device">
+                <div class="saved-games-heading"><h3>Saved Games</h3><span>On this device</span></div>
+                <div id="savedGamesList" class="saved-games-list" aria-live="polite"></div>
+                <div id="librarySaveControls" class="library-save-row" hidden>
+                    <label for="librarySaveName">Save name</label>
+                    <input id="librarySaveName" class="number-input" type="text" maxlength="48" placeholder="Name this world">
+                    <button id="saveToLibrary" class="btn btn-primary" type="button">Save to Library</button>
+                </div>
+            </section>
             <textarea id="saveString" class="save-string" spellcheck="false" aria-label="Save string"></textarea>
             <p id="saveDialogError" class="save-dialog-error" role="alert" hidden></p>
             <div class="save-dialog-actions">

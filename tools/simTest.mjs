@@ -24,6 +24,7 @@ import {
     getRandomSeed, EMPTY
 } from '../physics.js';
 import * as physics from '../physics.js';
+import * as campaign from '../campaign.js';
 
 const json = JSON.parse(readFileSync(new URL('../particles.json', import.meta.url), 'utf8'));
 const defs = prepareDefinitions(json);
@@ -6171,6 +6172,168 @@ if (hasHumidityApi && seedNames.every(name => ID[name] > 0) && plantNames.every(
             speciesAppeared,
             `${speciesAppeared ? 'appeared during fixture' : 'not observed'}; final ${countOf(ID[fixture.plant])} ${fixture.plant} cells`);
         setRandomSeed(TEST_SEED);
+    }
+
+    section('Mission 1 counts Daffodil germination once under its locked climate');
+    const missionOne = campaign.getMissionDefinitions()[0];
+    const daffodilObjective = missionOne?.objectives?.find(objective =>
+        objective.from === 'Daffodil Seeds' && objective.to === 'Daffodil');
+    check('Mission 1 objective is one Daffodil seed-to-plant transition',
+        missionOne?.number === 1 && daffodilObjective?.target === 1,
+        `${missionOne?.title ?? 'missing mission'}: ${daffodilObjective?.from ?? 'no seed'} -> ${daffodilObjective?.to ?? 'no plant'}, target ${daffodilObjective?.target ?? 'missing'}`);
+    const missionEvent = missionOne?.events?.find(event =>
+        event.when?.type === 'objective-complete' && event.when.objectiveId === daffodilObjective?.id);
+    check('Mission 1 has a configured completion event for the Daffodil objective', !!missionEvent,
+        missionEvent?.id || 'missing objective-complete event');
+    try {
+        campaign.startCampaign(missionOne.id);
+        createWorld(16, 12);
+        setExactAirConditions(14);
+        physics.setAmbientTarget(14);
+        physics.setAmbientHumidityTarget(68);
+        physics.setAmbientIlluminationTarget(65);
+        physics.setDewpointTarget(10);
+        physics.setAmbientWindOn(false);
+        physics.setGeneralWindStrength(0);
+        physics.setGustWindStrength(0);
+        getWorld().temp.fill(14);
+        getWorld().humidity.fill(68);
+        for (let x = 0; x < 16; x++) setCell(x, 11, ID.Wall);
+        setCell(8, 10, ID['Wet Mud']);
+        setCell(8, 9, ID['Daffodil Seeds']);
+        getWorld().temp[index(8, 9)] = 14;
+        getWorld().humidity[index(8, 9)] = 68;
+        setRandomSeed(7141);
+        physics.setRandomSource(() => 0);
+        for (let frame = 0; frame < 40; frame++) {
+            stepSimulation();
+            if (countOf(ID.Daffodil) > 0) break;
+        }
+        const missionState = campaign.getCampaignState();
+        const progress = daffodilObjective ? missionState.objectiveProgress[daffodilObjective.id] : 0;
+        const firedBeforeRepeat = [...missionState.firedEventIds];
+        check('a Daffodil seed germinates into the objective plant at Mission 1 climate',
+            countOf(ID.Daffodil) > 0 && countOf(ID['Daffodil Seeds']) === 0,
+            `${countOf(ID.Daffodil)} Daffodil cells, ${countOf(ID['Daffodil Seeds'])} seeds`);
+        check('the committed germination advances the campaign objective to its target',
+            !!daffodilObjective && progress === daffodilObjective.target,
+            `${progress} / ${daffodilObjective?.target ?? 'missing target'}`);
+        check('the configured objective event fires once on germination',
+            !!missionEvent && firedBeforeRepeat.filter(id => id === missionEvent.id).length === 1,
+            `${missionEvent?.id ?? 'missing event'} fired ${firedBeforeRepeat.filter(id => id === missionEvent?.id).length} times`);
+        if (daffodilObjective && ID['Daffodil Seeds'] > 0 && ID.Daffodil > 0) {
+            campaign.recordMaterialTransition(ID['Daffodil Seeds'], ID.Daffodil);
+            const firedAfterRepeat = campaign.getCampaignState().firedEventIds;
+            check('repeating the completed transition does not refire the objective event',
+                !!missionEvent && firedAfterRepeat.filter(id => id === missionEvent.id).length === 1 &&
+                campaign.getCampaignState().objectiveProgress[daffodilObjective.id] === daffodilObjective.target,
+                `${missionEvent?.id ?? 'missing event'} fired ${firedAfterRepeat.filter(id => id === missionEvent?.id).length} times`);
+        }
+    } finally {
+        campaign.clearCampaign();
+        physics.resetRandomSource();
+        setRandomSeed(TEST_SEED);
+    }
+
+    section('Mission 2 tracks the ice-to-banana progression and its climate target');
+    const missionTwo = campaign.getMissionDefinitions().find(mission => mission.number === 2);
+    check('Mission 2 is the authored Ice and Banana scenario',
+        missionTwo?.number === 2 && missionTwo.world?.cols === 260 && missionTwo.world?.rows === 150 &&
+        missionTwo.startingLayout?.material === 'Ice' && missionTwo.startingLayout?.rows === 5,
+        missionTwo ? JSON.stringify({ number: missionTwo.number, world: missionTwo.world,
+            layout: missionTwo.startingLayout }) : 'Mission 2 is missing');
+    check('Mission 2 keeps its frozen start distinct from the Banana climate targets',
+        missionTwo?.environment?.temperature === -10 && missionTwo.environment?.humidity === 35 &&
+        missionTwo.environment?.illumination === 10 && missionTwo.environment?.dewpoint === -15 &&
+        missionTwo.environmentTargets?.temperature === 30 && missionTwo.environmentTargets?.humidity === 95 &&
+        missionTwo.environmentTargets?.illumination === 85,
+        missionTwo ? JSON.stringify({ environment: missionTwo.environment,
+            targets: missionTwo.environmentTargets }) : 'Mission 2 is missing');
+    check('Mission 2 supplies 500 Dry Mud and one Banana seed',
+        missionTwo?.resourceBudgets?.materials?.['Dry Mud'] === 500 &&
+        missionTwo.resourceBudgets.materials['Banana Seeds'] === 1,
+        missionTwo ? JSON.stringify(missionTwo.resourceBudgets?.materials) : 'Mission 2 is missing');
+    if (missionTwo) {
+        const transitionSteps = [
+            ['Ice', 'Water'], ['Dry Mud', 'Wet Mud'], ['Banana Seeds', 'Banana Plant']
+        ];
+        const transitionObjectives = transitionSteps.map(([from, to]) => missionTwo.objectives.find(objective =>
+            objective.type === 'transformation' && objective.from === from && objective.to === to));
+        const climateObjective = missionTwo.objectives.find(objective => objective.type === 'environment-target');
+        check('Mission 2 includes all three material steps and a climate target step',
+            transitionObjectives.every(Boolean) && !!climateObjective &&
+            transitionObjectives.every(objective => objective.target === 1) && climateObjective.target === 1,
+            JSON.stringify({ transitionObjectives, climateObjective }));
+        const objectiveEvents = missionTwo.objectives.map(objective => missionTwo.events?.find(event =>
+            event.when?.type === 'objective-complete' && event.when.objectiveId === objective.id));
+        check('Mission 2 configures a completion event for every progression step',
+            objectiveEvents.length === missionTwo.objectives.length && objectiveEvents.every(Boolean),
+            objectiveEvents.map(event => event?.id || 'missing event').join(', '));
+
+        try {
+            campaign.startCampaign(missionTwo.id);
+            const canRecordEnvironment = typeof campaign.recordEnvironmentChange === 'function';
+            check('campaign runtime exports environment-target objective tracking', canRecordEnvironment);
+            if (canRecordEnvironment) {
+                campaign.recordEnvironmentChange({ temperature: 30, humidity: 95, illumination: 85 });
+            }
+            const definitions = physics.getDefinitions();
+            for (const [from, to] of transitionSteps.slice(0, 2)) {
+                const fromId = definitions.findIndex(definition => definition?.name === from);
+                const toId = definitions.findIndex(definition => definition?.name === to);
+                if (fromId > 0 && toId > 0) campaign.recordMaterialTransition(fromId, toId);
+            }
+
+            // Exercise the real ecology hook for the final story step rather
+            // than treating a painted Banana Plant as seed germination.
+            createWorld(16, 12);
+            setExactAirConditions(30);
+            physics.setAmbientTarget(30);
+            physics.setAmbientHumidityTarget(95);
+            physics.setAmbientIlluminationTarget(85);
+            physics.setDewpointTarget(-15);
+            physics.setAmbientWindOn(false);
+            physics.setGeneralWindStrength(0);
+            physics.setGustWindStrength(0);
+            getWorld().temp.fill(30);
+            getWorld().humidity.fill(95);
+            for (let x = 0; x < 16; x++) setCell(x, 11, ID.Wall);
+            setCell(8, 10, ID['Wet Mud']);
+            setCell(8, 9, ID['Banana Seeds']);
+            getWorld().temp[index(8, 9)] = 30;
+            getWorld().humidity[index(8, 9)] = 95;
+            setRandomSeed(8142);
+            physics.setRandomSource(() => 0);
+            for (let frame = 0; frame < 60 && countOf(ID['Banana Plant']) === 0; frame++) stepSimulation();
+
+            const completedState = campaign.getCampaignState();
+            const allObjectivesComplete = missionTwo.objectives.every(objective =>
+                completedState.objectiveProgress[objective.id] === objective.target);
+            const firedBeforeRepeat = [...completedState.firedEventIds];
+            check('a Banana seed germinates into a Banana Plant in the authored target climate',
+                countOf(ID['Banana Plant']) > 0 && countOf(ID['Banana Seeds']) === 0,
+                `${countOf(ID['Banana Plant'])} Banana Plant cells, ${countOf(ID['Banana Seeds'])} seeds`);
+            check('Mission 2 passes Ice, target climate, Wet Mud, and Banana progression', allObjectivesComplete,
+                JSON.stringify(completedState.objectiveProgress));
+            check('Mission 2 fires every configured step event once',
+                objectiveEvents.filter(Boolean).every(event => firedBeforeRepeat.filter(id => id === event.id).length === 1),
+                objectiveEvents.filter(Boolean).map(event => `${event.id}:${firedBeforeRepeat.filter(id => id === event.id).length}`).join(', '));
+
+            if (canRecordEnvironment) campaign.recordEnvironmentChange({ temperature: 30, humidity: 95, illumination: 85 });
+            for (const [from, to] of transitionSteps) {
+                const fromId = definitions.findIndex(definition => definition?.name === from);
+                const toId = definitions.findIndex(definition => definition?.name === to);
+                if (fromId > 0 && toId > 0) campaign.recordMaterialTransition(fromId, toId);
+            }
+            const firedAfterRepeat = campaign.getCampaignState().firedEventIds;
+            check('repeating Mission 2 steps does not refire events or exceed progress targets',
+                JSON.stringify(firedAfterRepeat) === JSON.stringify(firedBeforeRepeat) &&
+                missionTwo.objectives.every(objective =>
+                    campaign.getCampaignState().objectiveProgress[objective.id] === objective.target),
+                JSON.stringify(firedAfterRepeat));
+        } finally {
+            campaign.clearCampaign();
+        }
     }
 
     createWorld(12, 10);

@@ -15,7 +15,7 @@ test.afterEach(async ({ page }, testInfo) => {
 
 async function openSizeChooser(page) {
     await page.goto('/?e2e');
-    await page.getByRole('button', { name: 'New Game', exact: true }).click();
+    await page.getByRole('button', { name: 'Sandbox', exact: true }).click();
     const dialog = page.locator('#worldSizeDialog');
     await expect(dialog).toBeVisible();
     await expect(dialog).toHaveRole('dialog');
@@ -96,7 +96,7 @@ test('chooser and replacement cancellation preserve the saved game until a new s
     const storageKey = 'elemental-foundry.autosave.v1';
     await expect(page.evaluate(key => localStorage.getItem(key), storageKey)).resolves.toBeNull();
 
-    await page.getByRole('button', { name: 'New Game', exact: true }).click();
+    await page.getByRole('button', { name: 'Sandbox', exact: true }).click();
     await expect(page.locator('#worldSizeDialog')).toBeVisible();
     await startChosenWorld(page, '520 × 300');
     await expect(page.locator('#canvas')).toBeVisible();
@@ -105,13 +105,13 @@ test('chooser and replacement cancellation preserve the saved game until a new s
     const previousResume = await page.evaluate(key => localStorage.getItem(key), storageKey);
 
     await page.reload();
-    await page.getByRole('button', { name: 'New Game', exact: true }).click();
+    await page.getByRole('button', { name: 'Sandbox', exact: true }).click();
     await expect(page.locator('#worldSizeDialog')).toBeVisible();
     await page.getByRole('button', { name: 'Cancel', exact: true }).click();
     await expect(page.locator('#menu')).toBeVisible();
     await expect(page.evaluate(key => localStorage.getItem(key), storageKey)).resolves.toBe(previousResume);
 
-    await page.getByRole('button', { name: 'New Game', exact: true }).click();
+    await page.getByRole('button', { name: 'Sandbox', exact: true }).click();
     await startChosenWorld(page, '260 × 150');
     const replacement = page.locator('#autosaveChoiceDialog');
     await expect(replacement).toBeVisible();
@@ -119,7 +119,7 @@ test('chooser and replacement cancellation preserve the saved game until a new s
     await expect(page.locator('#menu')).toBeVisible();
     await expect(page.evaluate(key => localStorage.getItem(key), storageKey)).resolves.toBe(previousResume);
 
-    await page.getByRole('button', { name: 'New Game', exact: true }).click();
+    await page.getByRole('button', { name: 'Sandbox', exact: true }).click();
     await startChosenWorld(page, '260 × 150');
     await expect(replacement).toBeVisible();
     await page.getByRole('button', { name: 'Yes, replace it', exact: true }).click();

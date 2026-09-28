@@ -10,7 +10,7 @@ import {
     setParticleTypeIdSelected, getParticleTypeIdSelected, getGameVisibleActive,
     getGridCols, setGridCols, getGridRows, setGridRows, setElements, getElements,
     setBeginGameStatus, getGameInProgress, setGameInProgress, getMenuState,
-    getBrushSize, setBrushSize, getDrawMode, setDrawMode, getEraserOn, setEraserOn,
+    getBrushSize, setBrushSize, getDrawMode, setDrawMode, getEraserOn, setEraserOn as setEraserState,
     getVisualizationMode, setVisualizationMode, getHeatViewOn, setHeatViewOn,
     getSimulationPaused, setSimulationPaused,
     getWindStrength, setWindStrength, getGeneralWindStrength, setGeneralWindStrength,
@@ -34,7 +34,7 @@ import {
     getDebugFeatureFlags, setDebugFeatureEnabled,
     setAmbientIlluminationTarget, getAmbientIlluminationTarget,
     setAmbientHumidityTarget, getAmbientHumidityTarget, setDewpointTarget, getDewpointTarget,
-    setAmbientWindOn, getAmbientWindOn,
+    setAmbientWindOn, getAmbientWindOn, restoreSimulationState,
     setGeneralWindStrength as setPhysicsGeneralWindStrength,
     setGustWindStrength as setPhysicsGustWindStrength,
     getWorld, index, getMachineSetting, setMachineSetting,
@@ -45,7 +45,7 @@ import {
     getMachineSensorRule, setMachineSensorRule, getMachineSensorThreshold,
     setMachineSensorThreshold, getMachineSensorStatus, getIlluminationAt,
     getMachineAirMixRange, getMaxMachineAirMixRange, setMachineAirMixRange,
-    getTubingFlows, getSprinklerTubingRate, getMixerInventory, purgeMixerBin,
+    getTubingFlows, getSprinklerTubingRate, getMixerInventory, purgeMixerBin, setCell,
     isMixerReleaseEnabled, setMixerReleaseEnabled, isMachinePoweredAt,
     migrateLegacyMachinePortEndpointRemap
 } from './physics.js';
@@ -53,8 +53,17 @@ import { loadSavedTheme, buildThemeSwatches, buildThemeSelect } from './themes.j
 import {
     hasAutosave, createSaveString, parseSaveString, restoreSavePayload, restoreAutosave,
     stopAutosave, replaceAutosaveWithCurrentGame, setSavingListener, setBlueprintSaveHandlers,
-    setAutosaveErrorListener, writeAutosave, isAutosaveEnabled, startAutosave
+    setAutosaveErrorListener, writeAutosave, isAutosaveEnabled, startAutosave,
+    suspendAutosaveWrites, resumeAutosaveWrites,
+    listSavedGames, saveGameToLibrary, loadSavedGame, initializeSaveLibrary, getActiveSaveId,
+    writeCampaignCheckpoint
 } from './saveLoadGame.js';
+import {
+    startCampaign, getCampaignState, getCurrentMission, getNextMission, getPendingMission,
+    queueNextMission, beginPendingMission, dismissMissionRecap, recordEnvironmentChange,
+    canUseMaterial, canPlaceMissionMachine, clearCampaign, getMissionDefinitions
+} from './campaign.js';
+import { initCampaignEditor } from './campaignEditor.js';
 
 let isPainting = false;
 let isGrabbing = false;
@@ -93,6 +102,12 @@ let machineDialogTimer = null;
 let mixerPurgeSlot = null;
 let visualizationsDialogInvoker = null;
 let edgePanPointer = null;
+let campaignEditorSessionActive = false;
+let campaignEditorAutosaveWasEnabled = false;
+let campaignEditorSaveControlsState = null;
+let sandboxEnvironmentBeforeCampaign = null;
+let campaignCheckpointRecordId = null;
+let campaignCatalogSandboxExpansion = null;
 let edgePanFrame = null;
 let edgePanLastTime = 0;
 let debugMenuReturnFocus = null;
@@ -102,9 +117,11 @@ const CANVAS_SCROLL_STEP = 80;
 document.addEventListener('DOMContentLoaded', async () => {
     await Promise.all([loadParticleDefinitions(), preloadMachineArtworkAlpha()]);
     initializeWorld();
+    initializeSaveLibrary();
     setElements();
     if (window.__E2E_MODE__) await import('./e2eHooks.js');
     buildParticleButtons();
+    initCampaignEditor({ startSession: startCampaignEditorSession, closeSession: closeCampaignEditorSession });
 
     const elements = getElements();
     setBlueprintSaveHandlers({
@@ -119,6 +136,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     buildThemeSelect(elements.themeSelect);
 
     elements.newGameMenuButton.addEventListener('click', () => { void startNewGame(); });
+    elements.startCampaignButton.addEventListener('click', startNewCampaign);
     elements.autosaveToggle.checked = isAutosaveEnabled();
     elements.autosaveToggle.addEventListener('change', handleAutosaveToggle);
     setUpDebugMenu(elements);
@@ -136,6 +154,42 @@ document.addEventListener('DOMContentLoaded', async () => {
     elements.importGameMenuButton.addEventListener('click', openImportDialog);
     elements.exportGameButton.addEventListener('click', openExportDialog);
     elements.importGameButton.addEventListener('click', openImportDialog);
+    elements.missionIntroOk.addEventListener('click', beginCampaignWorkspace);
+    elements.missionCompleteOk.addEventListener('click', dismissMissionCompletion);
+    elements.missionAdvance.addEventListener('click', advanceCampaignFromHud);
+    elements.restartMissionButton.addEventListener('click', openMissionRestartDialog);
+    elements.cancelRestartMission.addEventListener('click', closeMissionRestartDialog);
+    elements.confirmRestartMission.addEventListener('click', restartCurrentMission);
+    elements.missionRestartDialog.addEventListener('keydown', event => {
+        if (event.key === 'Escape') { event.preventDefault(); closeMissionRestartDialog(); }
+    });
+    elements.saveToLibraryButton.addEventListener('click', saveCurrentGameToLibrary);
+    elements.savedGamesList.addEventListener('click', event => {
+        const button = event.target.closest('[data-load-save-id]');
+        if (button) void loadLibraryGame(button.dataset.loadSaveId);
+    });
+    window.addEventListener('campaign-state-change', updateCampaignUi);
+    window.addEventListener('campaign-mission-complete', () => {
+        setSimulationPaused(true);
+        updateCampaignUi();
+    });
+    window.addEventListener('campaign-editor-selection-restored', () => {
+        selectDrawingMode(getDrawMode());
+        highlightSelectedParticle();
+    });
+    window.addEventListener('campaign-objective-complete', event => {
+        const notice = elements.missionEventNotice;
+        notice.textContent = `Objective complete — ${event.detail?.label || 'Mission objective completed.'}`;
+        notice.hidden = false;
+        updateCampaignUi();
+    });
+    window.addEventListener('campaign-event', event => {
+        const notice = elements.missionEventNotice;
+        const message = event.detail?.message || 'Mission event triggered.';
+        notice.textContent = event.detail?.type === 'objective-complete'
+            ? `Objective complete — ${message}` : message;
+        notice.hidden = false;
+    });
     setUpSaveDialogs();
     setUpVisualizationsDialog();
     window.addEventListener('resize', refreshWorldSizeChoices);
@@ -178,6 +232,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     updateResumeButton();
 
     elements.pauseButton.addEventListener('click', () => {
+        if (campaignEditorSessionActive && getSimulationPaused()) {
+            window.dispatchEvent(new Event('campaign-editor-world-edited'));
+        }
         setSimulationPaused(!getSimulationPaused());
         elements.pauseButton.textContent = getSimulationPaused() ? 'Play' : 'Pause';
     });
@@ -196,10 +253,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     elements.redoBlueprintButton.addEventListener('click', redoBlueprintStamp);
 
     elements.clearButton.addEventListener('click', () => {
+        if (getCampaignState()) return;
         openClearDialog();
     });
 
     elements.eraserButton.addEventListener('click', () => {
+        if (!campaignToolAllowed('eraser')) return;
         cancelBlueprintModes();
         if (!getEraserOn()) setGrabberMode(false);
         setEraserOn(!getEraserOn());
@@ -218,11 +277,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     selectDrawingMode(getDrawMode());
 
     elements.grabberButton.addEventListener('click', () => {
+        if (!campaignToolAllowed('grabber')) return;
         cancelBlueprintModes();
         setGrabberMode(!getGrabberOn());
     });
 
     elements.grabberSizeInput.addEventListener('input', event => {
+        if (!campaignToolAllowed('grabber')) return;
         const size = Math.max(1, Math.min(60, parseInt(event.target.value)));
         setGrabberSize(size);
         elements.grabberSizeValue.textContent = String(size);
@@ -239,6 +300,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     setUpCanvasInput();
     setUpCanvasViewportInput();
     setUpKeyboardShortcuts();
+    updateCampaignUi();
 });
 
 // ---------------------------------------------------------------- save/load
@@ -249,13 +311,20 @@ async function startNewGame() {
 
     const replacingExisting = hasAutosave();
     const useAsResumeGame = replacingExisting
-        ? await askToReplaceResume('Starting a new game will replace the saved resume game on this device.')
+        ? await askToReplaceResume('Starting a new sandbox will replace the active resume game on this device.')
         : true;
 
     if (useAsResumeGame === null) return;
     if (!useAsResumeGame) {
         stopAutosave();
         syncAutosaveToggle();
+    } else {
+        resumeAutosaveWrites();
+    }
+    clearCampaign();
+    if (sandboxEnvironmentBeforeCampaign) {
+        applyMissionEnvironment({ environment: sandboxEnvironmentBeforeCampaign });
+        sandboxEnvironmentBeforeCampaign = null;
     }
     resetBlueprintLibrary();
     setBeginGameStatus(true);
@@ -274,6 +343,11 @@ async function startNewGame() {
 
     if (useAsResumeGame) {
         try {
+            const names = new Set(listSavedGames().map(record => record.name));
+            let name = 'Sandbox';
+            let suffix = 2;
+            while (names.has(name)) name = `Sandbox ${suffix++}`;
+            saveGameToLibrary(name);
             await replaceAutosaveWithCurrentGame();
             updateResumeButton();
             clearAutosaveFailure();
@@ -283,8 +357,610 @@ async function startNewGame() {
     }
 }
 
+function campaignToolAllowed(tool) {
+    const campaign = getCampaignState();
+    if (!campaign) return true;
+    const unlocked = getCurrentMission()?.unlockedTools || ['brush'];
+    return unlocked.includes(tool);
+}
+
+function captureEnvironmentProfile() {
+    return {
+        temperature: getAmbientTarget(), humidity: getAmbientHumidityTarget(),
+        illumination: getAmbientIlluminationTarget(), dewpoint: getDewpointTarget(),
+        ambientWindOn: getAmbientWindOn(), windStrength: getGeneralWindStrength(),
+        gustWindStrength: getWindStrength()
+    };
+}
+
+function recordCurrentMissionEnvironment() {
+    recordEnvironmentChange({
+        temperature: getAmbientTarget(), humidity: getAmbientHumidityTarget(),
+        illumination: getAmbientIlluminationTarget()
+    });
+}
+
+function setEraserOn(on) {
+    if (on && !campaignToolAllowed('eraser')) return;
+    setEraserState(on);
+}
+
+function campaignClimateControlAllowed(control) {
+    const mission = getCurrentMission();
+    return !getCampaignState() || !mission?.lockedControls?.includes(control);
+}
+
+function campaignVisualizationAllowed(mode) {
+    const campaign = getCampaignState();
+    if (!campaign) return true;
+    return (getCurrentMission()?.visualizationModes || ['normal']).includes(mode);
+}
+
+function applyMissionEnvironment(mission) {
+    if (!mission?.environment) return;
+    const environment = mission.environment;
+    setAmbientTarget(environment.temperature);
+    setAmbientHumidityTarget(environment.humidity);
+    setAmbientIlluminationTarget(environment.illumination);
+    setDewpointTarget(environment.dewpoint);
+    setAmbientWindOn(environment.ambientWindOn);
+    setGeneralWindStrength(environment.windStrength);
+    setWindStrength(environment.gustWindStrength);
+    setPhysicsGeneralWindStrength(environment.windStrength);
+    setPhysicsGustWindStrength(environment.gustWindStrength);
+}
+
+function applyLockedMissionEnvironment(mission) {
+    if (!mission?.environment) return;
+    const environment = mission.environment;
+    const locked = new Set(mission.lockedControls || []);
+    if (locked.has('temperature')) setAmbientTarget(environment.temperature);
+    if (locked.has('humidity')) setAmbientHumidityTarget(environment.humidity);
+    if (locked.has('illumination')) setAmbientIlluminationTarget(environment.illumination);
+    if (locked.has('dewpoint')) setDewpointTarget(environment.dewpoint);
+    if (locked.has('wind')) {
+        setAmbientWindOn(environment.ambientWindOn);
+        setGeneralWindStrength(environment.windStrength);
+        setWindStrength(environment.gustWindStrength);
+        setPhysicsGeneralWindStrength(environment.windStrength);
+        setPhysicsGustWindStrength(environment.gustWindStrength);
+    }
+}
+
+function setCampaignLocked(element, locked, reason = 'Not available in this mission.') {
+    if (!element) return;
+    if (locked) {
+        if (!Object.hasOwn(element.dataset, 'campaignPreviousDisabled')) {
+            element.dataset.campaignPreviousDisabled = String(!!element.disabled);
+        }
+        element.disabled = true;
+        element.classList.add('campaign-locked-control');
+        element.dataset.campaignDisabled = 'true';
+        element.dataset.campaignDisabledReason = reason;
+        element.setAttribute('aria-disabled', 'true');
+        element.setAttribute('aria-description', reason);
+        if (element.tagName === 'LABEL') {
+            if (!Object.hasOwn(element.dataset, 'campaignPreviousTabIndex')) {
+                element.dataset.campaignPreviousTabIndex = element.hasAttribute('tabindex') ? element.getAttribute('tabindex') : '';
+            }
+            element.tabIndex = 0;
+        }
+    } else if (Object.hasOwn(element.dataset, 'campaignPreviousDisabled')) {
+        element.disabled = element.dataset.campaignPreviousDisabled === 'true';
+        delete element.dataset.campaignPreviousDisabled;
+        delete element.dataset.campaignDisabled;
+        delete element.dataset.campaignDisabledReason;
+        element.classList.remove('campaign-locked-control');
+        element.setAttribute('aria-disabled', String(!!element.disabled));
+        element.removeAttribute('aria-description');
+        if (Object.hasOwn(element.dataset, 'campaignPreviousTabIndex')) {
+            const previousTabIndex = element.dataset.campaignPreviousTabIndex;
+            if (previousTabIndex === '') element.removeAttribute('tabindex');
+            else element.setAttribute('tabindex', previousTabIndex);
+            delete element.dataset.campaignPreviousTabIndex;
+        }
+    }
+}
+
+function syncCampaignControls(campaign, mission) {
+    const locked = !!campaign && !!mission;
+    const saveRestricted = locked || campaignEditorSessionActive;
+    const allowed = tool => !locked || (mission.unlockedTools || ['brush']).includes(tool);
+    const elements = getElements();
+    for (const control of [elements.exportGameButton, elements.saveToLibraryButton, elements.autosaveToggle]) {
+        if (control) control.disabled = saveRestricted;
+    }
+    if (locked) {
+        stopAutosave();
+        if (elements.autosaveToggle) elements.autosaveToggle.checked = false;
+    }
+    elements.restartMissionButton.hidden = !locked;
+    const toolButtons = [
+        [elements.brushModeButton, 'brush'], [elements.lineModeButton, 'line'],
+        [elements.rectangleModeButton, 'rectangle'], [elements.ellipseModeButton, 'ellipse'],
+        [elements.grabberButton, 'grabber'], [elements.eraserButton, 'eraser']
+    ];
+    for (const [button, tool] of toolButtons) setCampaignLocked(button, locked && !allowed(tool), 'Not available in this mission.');
+    for (const button of elements.visualizationModeButtons || []) {
+        setCampaignLocked(button, locked && !campaignVisualizationAllowed(button.dataset.visualizationMode), 'Not available in this mission.');
+    }
+    for (const button of [elements.blueprintsTabButton, elements.marqueeButton, elements.copyBlueprintButton,
+        elements.undoBlueprintButton, elements.redoBlueprintButton, ...elements.blueprintSlots.querySelectorAll('.blueprint-slot')]) {
+        setCampaignLocked(button, locked);
+    }
+    setCampaignLocked(elements.clearButton, locked, 'Not available in this mission.');
+    setCampaignLocked(elements.grabberSizeInput, locked && !allowed('grabber'), 'Not available in this mission.');
+    const climateControls = [
+        ['temperature', elements.airTempInput, elements.airTempValue],
+        ['humidity', elements.baseHumidityInput], ['illumination', elements.ambientIlluminationInput],
+        ['dewpoint', elements.dewpointInput], ['wind', elements.ambientWindCheckbox,
+            elements.generalWindStrengthInput, elements.windStrengthInput]
+    ];
+    let climateLocked = false;
+    for (const [control, ...inputs] of climateControls) {
+        const shouldLock = locked && (mission.lockedControls || []).includes(control);
+        climateLocked ||= shouldLock;
+        const reason = 'Locked by the current mission.';
+        for (const input of inputs) setCampaignLocked(input, shouldLock, reason);
+        const labelByControl = {
+            temperature: [elements.airTempLabel], humidity: [document.getElementById('baseHumidityLabel')],
+            illumination: [document.getElementById('ambientIlluminationLabel')], dewpoint: [document.getElementById('dewpointLabel')],
+            wind: [elements.windStrengthLabel, elements.ambientWindCheckbox?.closest('label'), elements.generalWindStrengthLabel]
+        };
+        for (const label of labelByControl[control] || []) setCampaignLocked(label, shouldLock, reason);
+    }
+    const lockNotice = document.getElementById('missionClimateLock');
+    if (lockNotice) lockNotice.hidden = !climateLocked;
+    for (const input of elements.debugFeatureToggles || []) setCampaignLocked(input, locked, 'Not available in this mission.');
+    setCampaignLocked(elements.machineAirMixRangeInput, locked, 'Not available in this mission.');
+    setCampaignLocked(document.getElementById('setMachineAirMixRange'), locked, 'Not available in this mission.');
+    const mode = getDrawMode();
+    elements.brushSizeInput.disabled = (mode !== 'brush' && mode !== 'line') || (locked && !allowed(mode));
+}
+
+function startCampaignEditorSession({ clear = true, cols = 260, rows = 150 } = {}) {
+    const elements = getElements();
+    if (!campaignEditorSessionActive) {
+        campaignEditorSessionActive = true;
+        campaignEditorAutosaveWasEnabled = isAutosaveEnabled();
+        if (campaignEditorAutosaveWasEnabled) stopAutosave();
+        suspendAutosaveWrites();
+        const saveControls = [elements.exportGameButton, elements.importGameButton, elements.autosaveToggle,
+            elements.saveToLibraryButton];
+        campaignEditorSaveControlsState = saveControls.map(control => ({ control, disabled: !!control?.disabled }));
+        saveControls.forEach(control => { if (control) control.disabled = true; });
+        if (elements.autosaveToggle) elements.autosaveToggle.checked = campaignEditorAutosaveWasEnabled;
+    }
+    if (!sandboxEnvironmentBeforeCampaign && !getCampaignState()) sandboxEnvironmentBeforeCampaign = captureEnvironmentProfile();
+    clearCampaign();
+    if (sandboxEnvironmentBeforeCampaign) applyMissionEnvironment({ environment: sandboxEnvironmentBeforeCampaign });
+    elements.missionIntroDialog.hidden = true;
+    elements.campaignEditorWorkspace.hidden = false;
+    setBeginGameStatus(true);
+    setGameInProgress(true);
+    setGridCols(200);
+    setGridRows(150);
+    setGridCols(cols);
+    setGridRows(rows);
+    if (clear || !getGameInProgress()) startGame({ newWorld: true, alignAtGround: false });
+    else startGame();
+    setSimulationPaused(true);
+    elements.pauseButton.textContent = 'Play';
+    elements.missionHud.hidden = true;
+    synchroniseRestoredControls();
+    collapseVegetationCatalogGroup();
+    updateCampaignUi();
+}
+
+function closeCampaignEditorSession() {
+    sandboxEnvironmentBeforeCampaign = captureEnvironmentProfile();
+    if (campaignEditorSessionActive) {
+        campaignEditorSessionActive = false;
+        campaignEditorSaveControlsState?.forEach(({ control, disabled }) => { if (control) control.disabled = disabled; });
+        campaignEditorSaveControlsState = null;
+        if (campaignEditorAutosaveWasEnabled) startAutosave({ saveNow: false, checkStorage: false });
+        campaignEditorAutosaveWasEnabled = false;
+        syncAutosaveToggle();
+    }
+    setSimulationPaused(true);
+    setGameState(getMenuState());
+    updateCampaignUi();
+}
+
+function startNewCampaign() {
+    if (!getCampaignState()) sandboxEnvironmentBeforeCampaign = captureEnvironmentProfile();
+    campaignCheckpointRecordId = null;
+    stopAutosave();
+    startCampaign();
+    const mission = getCurrentMission();
+    prepareCampaignMissionWorld(mission);
+    showMissionBriefing(mission);
+    updateCampaignUi();
+}
+
+function prepareCampaignMissionWorld(mission) {
+    const elements = getElements();
+    resetBlueprintLibrary();
+    setBeginGameStatus(true);
+    setGameInProgress(true);
+    setGridCols(200);
+    setGridRows(150);
+    setGridCols(mission.world.cols);
+    setGridRows(mission.world.rows);
+    initializeWorld();
+    if (mission.startingSave) {
+        const payload = parseSaveString(mission.startingSave);
+        if (payload.mode !== 'sandbox' || payload.campaign) throw new Error('Mission scenario must be an unrestricted Sandbox save.');
+        restoreSimulationState(payload.simulation);
+    } else if (mission.startingLayout?.type === 'floor') {
+        const id = getDefinitions().findIndex(definition => definition?.name === mission.startingLayout.material);
+        const rows = Math.max(1, Math.min(mission.world.rows, Math.floor(mission.startingLayout.rows || 1)));
+        if (id > 0) {
+            for (let y = mission.world.rows - rows; y < mission.world.rows; y++) {
+                for (let x = 0; x < mission.world.cols; x++) setCell(x, y, id);
+            }
+        }
+    }
+
+    applyMissionEnvironment(mission);
+    const selectedMaterialId = getDefinitions().findIndex(definition => definition?.name === mission.startSelection?.material);
+    if (selectedMaterialId > 0) setParticleTypeIdSelected(selectedMaterialId);
+    setDrawMode(mission.startSelection?.drawMode || 'brush');
+    setVisualizationMode(mission.visualizationModes?.[0] || 'normal');
+    setSimulationPaused(false);
+    synchroniseRestoredControls();
+
+    const definitions = getDefinitions();
+    for (const starting of mission.startingMaterials || []) {
+        const id = definitions.findIndex(definition => definition?.name === starting.name);
+        if (id <= 0) continue;
+        let placed = 0;
+        for (let offset = 0; placed < starting.count; offset++) {
+            const x = starting.x + (offset % 20);
+            const y = starting.y + Math.floor(offset / 20);
+            if (x >= mission.world.cols || y >= mission.world.rows) break;
+            setCell(x, y, id);
+            placed++;
+        }
+    }
+
+    setGameState(getMenuState());
+}
+
+function showMissionBriefing(mission) {
+    const elements = getElements();
+    elements.missionIntroNumber.textContent = String(mission.number);
+    elements.missionIntroTitle.textContent = mission.title;
+    elements.missionIntroBriefing.textContent = mission.briefing;
+    elements.missionIntroGuidance.textContent = mission.guidance || '';
+    elements.missionIntroGuidance.hidden = !mission.guidance;
+    const availableMaterials = Object.entries(mission.resourceBudgets.materials || {})
+        .map(([name, count]) => `${count} ${name}`);
+    const availableMachines = Object.entries(mission.resourceBudgets.machines || {})
+        .map(([name, count]) => `${count} ${titleCase(name)}`);
+    elements.missionIntroResources.textContent = `Available: ${[...availableMaterials, ...availableMachines].join(' · ')}`;
+    elements.missionIntroObjectives.replaceChildren(...mission.objectives.map(objective => {
+        const item = document.createElement('li');
+        item.textContent = objective.label;
+        return item;
+    }));
+    elements.missionEventNotice.hidden = true;
+    elements.missionEventNotice.textContent = '';
+    elements.missionIntroDialog.hidden = false;
+    elements.missionIntroOk.focus();
+}
+
+function saveCampaignCheckpoint(mission) {
+    const campaign = getCampaignState();
+    if (!campaign || !mission) return;
+    try {
+        const record = writeCampaignCheckpoint(mission.number,
+            `Campaign - Mission ${mission.number}: ${mission.title}`, campaignCheckpointRecordId);
+        campaignCheckpointRecordId = record.id;
+        updateResumeButton();
+    } catch (error) { showAutosaveFailure(error); }
+}
+
+function dismissMissionCompletion() {
+    dismissMissionRecap();
+}
+
+function advanceCampaignFromHud() {
+    const mission = queueNextMission();
+    if (!mission) return;
+    saveCampaignCheckpoint(mission);
+    showMissionBriefing(mission);
+}
+
+function openMissionRestartDialog() {
+    if (!getCampaignState()) return;
+    const dialog = getElements().missionRestartDialog;
+    dialog.hidden = false;
+    getElements().confirmRestartMission.focus();
+}
+
+function closeMissionRestartDialog() {
+    const elements = getElements();
+    if (!elements.missionRestartDialog || elements.missionRestartDialog.hidden) return;
+    elements.missionRestartDialog.hidden = true;
+    elements.restartMissionButton.focus();
+}
+
+function restartCurrentMission() {
+    const mission = getCurrentMission();
+    if (!mission || !getCampaignState()) return closeMissionRestartDialog();
+    const elements = getElements();
+    elements.missionRestartDialog.hidden = true;
+    elements.missionIntroDialog.hidden = true;
+    elements.missionCompleteDialog.hidden = true;
+    startCampaign(mission.id);
+    prepareCampaignMissionWorld(mission);
+    setSimulationPaused(false);
+    setGameState(getGameVisibleActive());
+    elements.pauseButton.textContent = 'Pause';
+    startGame();
+    updateCampaignUi();
+    elements.canvasArea?.focus({ preventScroll: true });
+}
+
+function beginCampaignWorkspace() {
+    const elements = getElements();
+    if (!getCampaignState()) return;
+    elements.missionIntroDialog.hidden = true;
+    if (getPendingMission()) {
+        beginPendingMission();
+        const mission = getCurrentMission();
+        prepareCampaignMissionWorld(mission);
+        setSimulationPaused(false);
+        setGameState(getGameVisibleActive());
+        synchroniseAmbientIlluminationControl();
+        collapseVegetationCatalogGroup();
+        elements.pauseButton.textContent = 'Pause';
+        startGame();
+        updateCampaignUi();
+        return;
+    }
+    applyMissionEnvironment(getCurrentMission());
+    synchroniseRestoredControls();
+    setSimulationPaused(false);
+    setGameState(getGameVisibleActive());
+    synchroniseAmbientIlluminationControl();
+    collapseVegetationCatalogGroup();
+    elements.pauseButton.textContent = 'Pause';
+    startGame();
+    updateCampaignUi();
+}
+
+function updateCampaignUi() {
+    const elements = getElements();
+    if (!elements?.missionHud) return;
+    const campaign = getCampaignState();
+    const mission = getCurrentMission();
+    syncCampaignControls(campaign, mission);
+    elements.missionHud.hidden = !campaign || !elements.canvasContainer?.classList.contains('d-flex');
+    if (campaign && mission) {
+        elements.missionHudTitle.textContent = `Mission ${mission.number} · ${mission.title}`;
+        const materialRows = Object.entries(campaign.resources.materials).map(([name, resource]) => {
+            const row = document.createElement('div');
+            row.className = 'mission-resource-row';
+            const label = document.createElement('span'); label.textContent = name;
+            const count = document.createElement('span'); count.textContent = `${resource.used} / ${resource.limit}`;
+            row.append(label, count); return row;
+        });
+        const machineRows = Object.entries(campaign.resources.machines).map(([name, resource]) => {
+            const row = document.createElement('div');
+            row.className = 'mission-resource-row';
+            const machineName = getDefinitions().find(definition => definition?.machine === name)?.name || titleCase(name);
+            const label = document.createElement('span'); label.textContent = machineName;
+            const count = document.createElement('span'); count.textContent = `${resource.used} / ${resource.limit}`;
+            row.append(label, count); return row;
+        });
+        elements.missionResourceList.replaceChildren(...materialRows, ...machineRows);
+        elements.missionObjectiveProgress.replaceChildren(...mission.objectives.map(objective => {
+            const line = document.createElement('p');
+            const progress = campaign.objectiveProgress[objective.id] || 0;
+            line.textContent = `${objective.label} ${progress} / ${objective.target}`;
+            return line;
+        }));
+    }
+    const missionComplete = !!campaign?.missionCompleted;
+    elements.missionPassedBar.hidden = !missionComplete;
+    elements.missionPassedMessage.textContent = campaign?.campaignComplete
+        ? 'Campaign complete. Every available mission has been passed.'
+        : 'Objectives passed. Your next mission briefing is ready.';
+    elements.missionAdvance.textContent = campaign?.campaignComplete ? 'CAMPAIGN COMPLETE' : 'ADVANCE';
+    elements.missionAdvance.disabled = !missionComplete || !campaign?.recapDismissed || !!campaign?.campaignComplete;
+    const showRecap = missionComplete && !campaign.recapDismissed;
+    const wasHidden = elements.missionCompleteDialog.hidden;
+    elements.missionCompleteDialog.hidden = !showRecap;
+    if (showRecap && wasHidden) elements.missionCompleteOk.focus();
+    if (missionComplete && mission) {
+        elements.missionCompleteTitle.textContent = campaign.campaignComplete ? 'Campaign complete' : 'Objectives passed';
+        renderMissionCompletionStats(elements.missionCompleteStats, campaign, mission);
+    }
+    syncCampaignCatalog(campaign);
+}
+
+function syncCampaignCatalog(campaign) {
+    const container = getElements().particleButtons;
+    if (!container) return;
+    const toggles = Array.from(container.querySelectorAll('.panel-heading-toggle'));
+    if (campaign && !campaignCatalogSandboxExpansion) {
+        campaignCatalogSandboxExpansion = new Map(toggles.map(toggle =>
+            [toggle.getAttribute('aria-controls'), toggle.getAttribute('aria-expanded') === 'true']));
+    }
+    const definitions = getDefinitions();
+    container.querySelectorAll('.particle-button').forEach(button => {
+        const definition = definitions[Number(button.dataset.particleId)];
+        const wrapper = button.parentElement?.classList.contains('particle-button-tooltip-wrapper')
+            ? button.parentElement : button;
+        if (!definition) return;
+        let available = true;
+        if (campaign) {
+            const resource = definition.machine
+                ? campaign.resources.machines[definition.machine]
+                : campaign.resources.materials[definition.name];
+            available = !!resource && resource.remaining > 0 && !definition.tool;
+        }
+        wrapper.hidden = !!campaign && !available;
+        button.disabled = false;
+        button.removeAttribute('aria-disabled');
+        if (campaign && available) {
+            const resource = definition.machine
+                ? campaign.resources.machines[definition.machine]
+                : campaign.resources.materials[definition.name];
+            button.dataset.tooltip = `${definition.name}: ${resource.remaining} of ${resource.limit} remaining`;
+        } else button.dataset.tooltip = formatMaterialTooltip(definition);
+    });
+
+    toggles.forEach(toggle => {
+        const grid = document.getElementById(toggle.getAttribute('aria-controls'));
+        const heading = toggle.closest('.panel-heading');
+        if (!grid || !heading) return;
+        const arrow = toggle.querySelector('.panel-heading-arrow');
+        const hasAvailableItems = Array.from(grid.children).some(item => !item.hidden);
+        if (campaign && !hasAvailableItems) {
+            heading.dataset.campaignCategoryLocked = 'true';
+            toggle.classList.add('campaign-locked-control');
+            toggle.dataset.campaignDisabled = 'true';
+            toggle.dataset.campaignDisabledReason = 'No items available in this mission.';
+            toggle.setAttribute('aria-disabled', 'true');
+            toggle.setAttribute('aria-expanded', 'false');
+            toggle.tabIndex = 0;
+            grid.hidden = true;
+            if (arrow) arrow.dataset.campaignCategoryArrow = '';
+            return;
+        }
+        delete heading.dataset.campaignCategoryLocked;
+        toggle.classList.remove('campaign-locked-control');
+        delete toggle.dataset.campaignDisabled;
+        delete toggle.dataset.campaignDisabledReason;
+        toggle.removeAttribute('aria-disabled');
+        if (arrow) delete arrow.dataset.campaignCategoryArrow;
+        const expanded = campaign ? true
+            : (campaignCatalogSandboxExpansion?.get(grid.id) ?? (grid.dataset.defaultExpanded === 'true'));
+        toggle.setAttribute('aria-expanded', String(expanded));
+        grid.hidden = !expanded;
+    });
+    if (!campaign) campaignCatalogSandboxExpansion = null;
+}
+
+function setParticleMissionAvailability(element, unavailable) {
+    if (!element) return;
+    const tooltipWrapper = element.classList.contains('particle-button-tooltip-wrapper');
+    if (tooltipWrapper) element.tabIndex = unavailable ? 0 : -1;
+    if (unavailable) {
+        element.dataset.campaignDisabled = 'true';
+        element.dataset.campaignDisabledReason = 'Not available in this mission.';
+        if (!element.classList.contains('particle-button-tooltip-wrapper')) element.classList.add('campaign-locked-control');
+        element.setAttribute('aria-disabled', 'true');
+        element.setAttribute('aria-description', 'Not available in this mission.');
+    } else {
+        delete element.dataset.campaignDisabled;
+        delete element.dataset.campaignDisabledReason;
+        if (!element.classList.contains('particle-button-tooltip-wrapper')) element.classList.remove('campaign-locked-control');
+        element.removeAttribute('aria-disabled');
+        element.removeAttribute('aria-description');
+    }
+}
+
+function renderMissionCompletionStats(container, campaign, mission) {
+    const objectiveHeading = document.createElement('h3');
+    objectiveHeading.textContent = 'Mission result';
+    const objectives = document.createElement('ul');
+    for (const objective of mission.objectives) {
+        const row = document.createElement('li');
+        const progress = campaign.objectiveProgress[objective.id] || 0;
+        row.textContent = `${objective.label} — ${progress} / ${objective.target} passed`;
+        objectives.appendChild(row);
+    }
+    const budgetHeading = document.createElement('h3');
+    budgetHeading.textContent = 'Supplies used / total / remaining';
+    const budgets = document.createElement('ul');
+    for (const category of ['materials', 'machines']) {
+        for (const [name, resource] of Object.entries(campaign.resources[category] || {})) {
+            const row = document.createElement('li');
+            const label = category === 'machines'
+                ? getDefinitions().find(definition => definition?.machine === name)?.name || titleCase(name)
+                : name;
+            row.textContent = `${label}: ${resource.used} / ${resource.limit} used / total, ${resource.remaining} remaining`;
+            budgets.appendChild(row);
+        }
+    }
+    if (!budgets.children.length) {
+        const row = document.createElement('li');
+        row.textContent = 'No limited supplies.';
+        budgets.appendChild(row);
+    }
+    container.replaceChildren(objectiveHeading, objectives, budgetHeading, budgets);
+}
+
+function saveCurrentGameToLibrary() {
+    if (campaignEditorSessionActive || getCampaignState()) return;
+    const elements = getElements();
+    try {
+        const record = saveGameToLibrary(elements.librarySaveName.value);
+        elements.librarySaveName.value = record.name;
+        elements.saveDialogDescription.textContent = `Saved “${record.name}” as a ${record.type} game on this device.`;
+        clearSaveError();
+        renderSavedGames();
+        updateResumeButton();
+    } catch (error) {
+        showSaveError(error.message || 'Unable to save this game to the library.');
+    }
+}
+
+function renderSavedGames() {
+    const container = getElements()?.savedGamesList;
+    if (!container) return;
+    container.replaceChildren();
+    const records = listSavedGames().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    if (!records.length) {
+        const empty = document.createElement('p');
+        empty.className = 'saved-games-empty';
+        empty.textContent = 'No saved games yet.';
+        container.appendChild(empty);
+        return;
+    }
+    for (const record of records) {
+        const row = document.createElement('div');
+        row.className = 'saved-game-row';
+        const name = document.createElement('strong');
+        name.textContent = record.name;
+        const type = document.createElement('span');
+        type.className = `saved-game-type saved-game-type-${record.type}`;
+        type.textContent = record.type === 'campaign' ? 'Campaign' : 'Sandbox';
+        const load = document.createElement('button');
+        load.type = 'button';
+        load.className = 'btn btn-ghost';
+        load.textContent = 'Load';
+        load.setAttribute('aria-label', `Load ${record.name}`);
+        load.dataset.loadSaveId = record.id;
+        row.append(name, type, load);
+        container.appendChild(row);
+    }
+}
+
+async function loadLibraryGame(id) {
+    try {
+        resumeAutosaveWrites();
+        const payload = loadSavedGame(id);
+        beginLoadedGame(payload);
+        closeSaveDialog();
+        updateResumeButton();
+        syncAutosaveToggle();
+        updateCampaignUi();
+    } catch (error) {
+        showSaveError(error.message || 'The saved game could not be loaded.');
+    }
+}
+
 function handleAutosaveToggle() {
     const toggle = getElements().autosaveToggle;
+    if (campaignEditorSessionActive || getCampaignState()) {
+        toggle.checked = campaignEditorAutosaveWasEnabled;
+        return;
+    }
     if (!toggle.checked) {
         stopAutosave();
         syncAutosaveToggle();
@@ -296,6 +972,7 @@ function handleAutosaveToggle() {
         showAutosaveFailure(new Error('Local storage is not available in this browser.'));
         return;
     }
+    resumeAutosaveWrites();
     clearAutosaveFailure();
     syncAutosaveToggle();
 }
@@ -352,9 +1029,10 @@ function clearAutosaveFailure() {
 
 async function resumeGame() {
     try {
+        resumeAutosaveWrites();
         const payload = await restoreAutosave();
         beginLoadedGame(payload);
-        if (isAutosaveEnabled()) clearAutosaveFailure();
+        if (payload.mode === 'campaign' || isAutosaveEnabled()) clearAutosaveFailure();
         else showAutosaveFailure(new Error('Local storage is not available in this browser.'));
         syncAutosaveToggle();
     } catch (error) {
@@ -366,13 +1044,41 @@ async function resumeGame() {
 }
 
 function beginLoadedGame(payload) {
+    if (payload?.mode === 'campaign' && Number.isInteger(payload.missionNumber)) {
+        const mission = getMissionDefinitions().find(item => item.number === payload.missionNumber);
+        if (!mission) throw new Error('This campaign checkpoint refers to an unavailable mission.');
+        const activeRecord = listSavedGames().find(record => record.id === getActiveSaveId() && record.type === 'campaign');
+        campaignCheckpointRecordId = activeRecord?.id || null;
+        startCampaign(mission.id);
+        prepareCampaignMissionWorld(mission);
+        getElements().missionIntroDialog.hidden = true;
+        setSimulationPaused(false);
+        setGameState(getGameVisibleActive());
+        getElements().pauseButton.textContent = 'Pause';
+        startGame();
+        updateCampaignUi();
+        return;
+    }
     setGridCols(payload.simulation.cols);
     setGridRows(payload.simulation.rows);
     setBeginGameStatus(false);
     setGameInProgress(true);
+    if (getCampaignState()) {
+        const mission = getCurrentMission();
+        applyLockedMissionEnvironment(mission);
+        const materialId = getDefinitions().findIndex(definition => definition?.name === mission?.startSelection?.material);
+        if (materialId > 0) setParticleTypeIdSelected(materialId);
+        setDrawMode(campaignToolAllowed(mission?.startSelection?.drawMode || 'brush')
+            ? mission.startSelection?.drawMode || 'brush' : 'brush');
+        setEraserOn(false);
+        setGrabberOn(false);
+    } else sandboxEnvironmentBeforeCampaign = null;
     synchroniseRestoredControls();
     setGameState(getGameVisibleActive());
     startGame();
+    updateCampaignUi();
+    const pendingMission = getPendingMission();
+    if (pendingMission) showMissionBriefing(pendingMission);
 }
 
 function synchroniseRestoredControls() {
@@ -478,6 +1184,7 @@ function closeVisualizationsDialog() {
 }
 
 function setVisualizationModeAndSync(mode) {
+    if (!campaignVisualizationAllowed(mode)) return;
     setVisualizationMode(mode);
     synchroniseVisualizationButtons();
 }
@@ -495,11 +1202,17 @@ function synchroniseVisualizationButtons() {
 }
 
 function openExportDialog() {
+    if (campaignEditorSessionActive || getCampaignState()) return;
     const elements = getElements();
     try {
         elements.saveDialogTitle.textContent = 'Save Game';
         elements.saveDialogDescription.textContent = 'Copy this LZString save to keep or share a portable snapshot of this world.';
         elements.saveString.value = createSaveString();
+        elements.librarySaveControls.hidden = false;
+        elements.librarySaveName.value = getCampaignState()
+            ? `Campaign ${getCurrentMission()?.number || ''} - ${getCurrentMission()?.title || 'Mission'}`
+            : 'Sandbox save';
+        renderSavedGames();
         elements.saveString.readOnly = true;
         elements.copySaveString.classList.remove('d-none');
         elements.loadSaveString.classList.add('d-none');
@@ -511,10 +1224,13 @@ function openExportDialog() {
 }
 
 function openImportDialog() {
+    if (campaignEditorSessionActive) return;
     const elements = getElements();
     elements.saveDialogTitle.textContent = 'Load Game';
     elements.saveDialogDescription.textContent = 'Paste an Elemental Foundry LZString save here to load it.';
     elements.saveString.value = '';
+    elements.librarySaveControls.hidden = !getElements().canvasContainer.classList.contains('d-flex');
+    renderSavedGames();
     elements.saveString.readOnly = false;
     elements.copySaveString.classList.add('d-none');
     elements.loadSaveString.classList.remove('d-none');
@@ -552,8 +1268,10 @@ async function importFromDialog() {
     // The import dialog remains open so the pasted save can be reconsidered.
     if (useAsResumeGame === null) return;
 
-    restoreSavePayload(payload);
+    resumeAutosaveWrites();
+    payload = restoreSavePayload(payload);
     beginLoadedGame(payload);
+    updateCampaignUi();
     closeSaveDialog();
     if (useAsResumeGame) {
         try {
@@ -594,12 +1312,17 @@ function closeClearDialog() {
 }
 
 function confirmClearWorld() {
+    if (getCampaignState()) {
+        closeClearDialog();
+        return;
+    }
     // Stop any deferred stroke or Grabber operation before clearing the arrays,
     // so no input state can write material back into the freshly empty world.
     cancelPainting();
     cancelBlueprintModes();
     setGrabberMode(false);
     clearCanvasWorld();
+    if (campaignEditorSessionActive) window.dispatchEvent(new Event('campaign-editor-world-edited'));
     closeClearDialog();
 }
 
@@ -1261,7 +1984,8 @@ function buildParticleButtons() {
         const gridId = `particleGroup-${heading.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
         const toggle = document.createElement('button');
         toggle.type = 'button';
-        toggle.className = 'panel-heading-toggle';
+        toggle.className = 'panel-heading-toggle tooltip-control';
+        toggle.dataset.tooltip = `Show ${heading.toLowerCase()} materials`;
         const label = document.createElement('span');
         label.textContent = heading;
         const arrow = document.createElement('span');
@@ -1279,17 +2003,19 @@ function buildParticleButtons() {
         grid.className = 'particle-grid';
         grid.id = gridId;
         grid.hidden = !initiallyExpanded;
+        grid.dataset.defaultExpanded = String(initiallyExpanded);
         if (heading === 'LOGIC') {
-            logicIds.forEach(id => grid.appendChild(makeParticleButton(defs[id], id)));
+            logicIds.forEach(id => appendParticleButton(grid, defs[id], id));
         } else if (heading === 'Electricals') {
             groups[heading].filter(id => !defs[id].catalogSubgroup)
-                .forEach(id => grid.appendChild(makeParticleButton(defs[id], id)));
+                .forEach(id => appendParticleButton(grid, defs[id], id));
         } else {
-            groups[heading].forEach(id => grid.appendChild(makeParticleButton(defs[id], id)));
+            groups[heading].forEach(id => appendParticleButton(grid, defs[id], id));
         }
         container.appendChild(grid);
 
         toggle.addEventListener('click', () => {
+            if (title.dataset.campaignCategoryLocked === 'true' || toggle.dataset.campaignDisabled === 'true') return;
             const expanded = toggle.getAttribute('aria-expanded') === 'true';
             toggle.setAttribute('aria-expanded', String(!expanded));
             grid.hidden = expanded;
@@ -1297,6 +2023,17 @@ function buildParticleButtons() {
     }
 
     highlightSelectedParticle();
+}
+
+function appendParticleButton(grid, def, id) {
+    const button = makeParticleButton(def, id);
+    const wrapper = document.createElement('span');
+    wrapper.className = 'particle-button-tooltip-wrapper tooltip-control';
+    wrapper.tabIndex = -1;
+    wrapper.setAttribute('aria-label', `${def.name} material option`);
+    wrapper.dataset.tooltip = button.dataset.tooltip;
+    wrapper.appendChild(button);
+    grid.appendChild(wrapper);
 }
 
 function collapseVegetationCatalogGroup() {
@@ -1553,10 +2290,17 @@ function setUpAirTemperature() {
     const box = getElements().airTempValue;
 
     const apply = value => {
+        if (!campaignClimateControlAllowed('temperature')) {
+            applyMissionEnvironment(getCurrentMission());
+            slider.value = String(Math.round(getAmbientTarget()));
+            box.value = String(Math.round(getAmbientTarget()));
+            return;
+        }
         const clamped = Math.max(MIN_AIR_TEMP, Math.min(MAX_AIR_TEMP, Math.round(value)));
         setAmbientTarget(clamped);
         slider.value = String(clamped);
         box.value = String(clamped);
+        recordCurrentMissionEnvironment();
     };
 
     apply(getAmbientTarget());
@@ -1601,12 +2345,18 @@ function setUpAmbientIllumination() {
     const output = elements.ambientIlluminationValue;
     if (!slider || !output) return;
     const apply = next => {
+        if (!campaignClimateControlAllowed('illumination')) {
+            applyMissionEnvironment(getCurrentMission());
+            synchroniseRestoredControls();
+            return;
+        }
         const numeric = Number(next);
         if (!Number.isFinite(numeric)) return;
         const value = Math.max(0, Math.min(100, Math.round(numeric)));
         setAmbientIlluminationTarget(value);
         slider.value = String(value);
         output.textContent = `${value}%`;
+        recordCurrentMissionEnvironment();
     };
     apply(getAmbientIlluminationTarget());
     slider.addEventListener('input', event => apply(event.target.value));
@@ -1616,10 +2366,16 @@ function setUpBaseHumidity() {
     const slider = getElements().baseHumidityInput;
     const output = getElements().baseHumidityValue;
     const apply = next => {
+        if (!campaignClimateControlAllowed('humidity')) {
+            applyMissionEnvironment(getCurrentMission());
+            synchroniseRestoredControls();
+            return;
+        }
         const value = Math.max(0, Math.min(100, Math.round(Number(next))));
         setAmbientHumidityTarget(value);
         slider.value = String(value);
         output.textContent = `${value}%`;
+        recordCurrentMissionEnvironment();
     };
     apply(getAmbientHumidityTarget());
     slider.addEventListener('input', event => apply(event.target.value));
@@ -1629,6 +2385,11 @@ function setUpDewpoint() {
     const slider = getElements().dewpointInput;
     const output = getElements().dewpointValue;
     const apply = next => {
+        if (!campaignClimateControlAllowed('dewpoint')) {
+            applyMissionEnvironment(getCurrentMission());
+            synchroniseRestoredControls();
+            return;
+        }
         const value = Math.max(0, Math.min(100, Math.round(Number(next))));
         setDewpointTarget(value);
         slider.value = String(value);
@@ -1648,6 +2409,11 @@ function setUpWindStrength() {
     const controls = elements.windStrengthControls;
 
     const apply = source => {
+        if (!campaignClimateControlAllowed('wind')) {
+            applyMissionEnvironment(getCurrentMission());
+            synchroniseRestoredControls();
+            return;
+        }
         let generalValue = Math.max(0, Math.min(50, Math.round(Number(general.value))));
         let gustValue = Math.max(0, Math.min(50, Math.round(Number(gust.value))));
         if (source === 'general' && generalValue > gustValue) gustValue = generalValue;
@@ -1712,7 +2478,14 @@ function setUpWindStrength() {
 function setUpAmbientWind() {
     const box = getElements().ambientWindCheckbox;
     box.checked = getAmbientWindOn();
-    box.addEventListener('change', () => setAmbientWindOn(box.checked));
+    box.addEventListener('change', () => {
+        if (!campaignClimateControlAllowed('wind')) {
+            applyMissionEnvironment(getCurrentMission());
+            synchroniseRestoredControls();
+            return;
+        }
+        setAmbientWindOn(box.checked);
+    });
 }
 
 // Tooltips live at document level instead of inside the scrolling tools panel.
@@ -1725,7 +2498,19 @@ function setUpTooltips() {
 
     const hide = () => { tooltip.hidden = true; };
     const show = control => {
-        tooltip.textContent = control.dataset.tooltip || control.title || '';
+        const disabledReason = control.dataset.campaignDisabled === 'true'
+            ? control.dataset.campaignDisabledReason || 'Not available in this mission.' : '';
+        if (disabledReason) {
+            const marker = document.createElement('strong');
+            marker.className = 'tool-tooltip-disabled';
+            marker.textContent = 'DISABLED';
+            const reason = document.createElement('span');
+            reason.className = 'tool-tooltip-reason';
+            reason.textContent = disabledReason;
+            tooltip.replaceChildren(marker, reason);
+        } else {
+            tooltip.textContent = control.dataset.tooltip || control.title || '';
+        }
         tooltip.hidden = false;
 
         const controlRect = control.getBoundingClientRect();
@@ -1866,6 +2651,7 @@ function hideMachineTooltip() {
 
 function selectDrawingMode(mode) {
     const next = ['line', 'rectangle', 'ellipse'].includes(mode) ? mode : 'brush';
+    if (!campaignToolAllowed(next)) return;
     cancelBlueprintModes();
     setDrawMode(next);
     setGrabberMode(false);
@@ -1899,6 +2685,7 @@ function syncDrawingModeButtons(mode) {
 function setWorkspace(workspace) {
     const elements = getElements();
     const showingBlueprints = workspace === 'blueprints';
+    if (showingBlueprints && getCampaignState()) return;
     elements.toolsWorkspace.hidden = showingBlueprints;
     elements.blueprintsWorkspace.hidden = !showingBlueprints;
     elements.toolsTabButton.classList.toggle('active-toggle', !showingBlueprints);
@@ -1908,6 +2695,7 @@ function setWorkspace(workspace) {
 }
 
 function beginMarqueeMode() {
+    if (getCampaignState()) return;
     // Clicking the active Marquee control is a cancellation just like using a
     // different tool, so it also resumes the world.
     if (marqueeMode) {
@@ -2005,6 +2793,7 @@ function updateMarqueeOverlay() {
 }
 
 function copyMarqueeSelection() {
+    if (getCampaignState()) return;
     if (!marqueeSelection) return;
     const { left, right, top, bottom } = marqueeSelection;
     const blueprint = captureBlueprint(left, top, right, bottom);
@@ -2076,6 +2865,7 @@ function renderBlueprintLibrary() {
 }
 
 function stampActiveBlueprint() {
+    if (getCampaignState()) return;
     const blueprint = blueprints[activeBlueprintSlot];
     if (!blueprint) return;
     const startX = Math.round(currentCell.x - (blueprint.width - 1) / 2);
@@ -2083,7 +2873,13 @@ function stampActiveBlueprint() {
     const before = captureBlueprint(startX, startY,
         startX + blueprint.width - 1, startY + blueprint.height - 1);
     if (!before) return;
-    stampBlueprint(blueprint, currentCell.x, currentCell.y);
+    const stamped = stampBlueprint(blueprint, currentCell.x, currentCell.y);
+    if (stamped === 0 && getCampaignState()) {
+        const notice = getElements().missionEventNotice;
+        notice.textContent = 'Mission resource limits prevent this blueprint stamp.';
+        notice.hidden = false;
+        return;
+    }
     const after = captureBlueprint(before.left, before.top,
         before.left + before.width - 1, before.top + before.height - 1);
     if (!after) return;
@@ -2095,6 +2891,7 @@ function stampActiveBlueprint() {
 }
 
 function undoBlueprintStamp() {
+    if (getCampaignState()) return;
     const entry = stampUndoHistory.pop();
     if (!entry) return;
     stampBlueprintAt(entry.before, entry.left, entry.top);
@@ -2103,6 +2900,7 @@ function undoBlueprintStamp() {
 }
 
 function redoBlueprintStamp() {
+    if (getCampaignState()) return;
     const entry = stampRedoHistory.pop();
     if (!entry) return;
     stampBlueprintAt(entry.after, entry.left, entry.top);
@@ -2118,8 +2916,8 @@ function clearStampHistory() {
 
 function updateStampHistoryControls() {
     const elements = getElements();
-    elements.undoBlueprintButton.disabled = stampUndoHistory.length === 0;
-    elements.redoBlueprintButton.disabled = stampRedoHistory.length === 0;
+    elements.undoBlueprintButton.disabled = !!getCampaignState() || stampUndoHistory.length === 0;
+    elements.redoBlueprintButton.disabled = !!getCampaignState() || stampRedoHistory.length === 0;
 }
 
 function drawBlueprintPreview(button, blueprint) {
@@ -2150,6 +2948,7 @@ function drawBlueprintPreview(button, blueprint) {
 }
 
 function selectBlueprintForStamp(slot) {
+    if (getCampaignState()) return;
     if (!blueprints[slot]) return;
     marqueeMode = false;
     isMarqueeDrawing = false;
@@ -2804,6 +3603,7 @@ function rayDirection(dx, dy) {
 }
 
 function setGrabberMode(on) {
+    if (on && !campaignToolAllowed('grabber')) return;
     if (!on) {
         cancelGrab();
         isGrabbing = false;
@@ -2873,6 +3673,10 @@ function setUpDebugMenu(elements) {
         if (!feature) continue;
         toggle.checked = flags[feature] !== false;
         toggle.addEventListener('change', () => {
+            if (getCampaignState()) {
+                toggle.checked = (getDebugFeatureFlags() || {})[feature] !== false;
+                return;
+            }
             setDebugFeatureEnabled(feature, toggle.checked);
             if (getWorld()) renderWorld();
         });
@@ -2884,6 +3688,7 @@ function setUpDebugMenu(elements) {
         rangeInput.value = String(getMachineAirMixRange());
         rangeInput.max = String(getMaxMachineAirMixRange());
         const applyRange = () => {
+            if (getCampaignState()) return;
             const requested = Number(rangeInput.value);
             if (!Number.isInteger(requested) || requested < 28) {
                 rangeStatus.textContent = 'Enter a whole number of at least 28 cells.';
@@ -2901,6 +3706,7 @@ function setUpDebugMenu(elements) {
         rangeInput.addEventListener('keydown', event => {
             if (event.key === 'Enter') {
                 event.preventDefault();
+                if (getCampaignState()) return;
                 applyRange();
             }
         });
@@ -2992,6 +3798,7 @@ function setUpKeyboardShortcuts() {
 
         if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') {
             event.preventDefault();
+            if (getCampaignState()) return;
             if (event.shiftKey) redoBlueprintStamp();
             else undoBlueprintStamp();
         } else if (event.key === ' ') {
