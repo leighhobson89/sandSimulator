@@ -1,6 +1,6 @@
 # Campaign Mission Outline
 
-This is a 23-mission story outline built from the existing catalogue and the first two campaign missions. Each Equipment list is the complete lesson kit: materials, tools, and machines omitted from that mission are unavailable there. New catalogue families enter in stages, from a small planting kit through material science and Tubing to machines, powered equipment, and logic. Missions can lock materials and climate sliders, then unlock them as objectives are completed. Slider limits can also change between stages.
+The campaign target is 25 missions. Missions 1–4 are established; the old Missions 5–23 entries are legacy drafts, not guidance or checklists. Design Missions 5–25 from scratch based on implemented systems and the mission-designer instructions in `.kilo/agents/mission-designer.md`. Each Equipment list is the complete lesson kit: materials, tools, and machines omitted from that mission are unavailable there. Missions can lock materials and climate sliders, then unlock them as objectives are completed. Slider limits can also change between stages.
 
 ## 1. The First Daffodil
 
@@ -43,252 +43,20 @@ Begin with a blank basin, build three dry material piles, make rain with Steam a
 
 **Equipment:** Sand (5,000), Dry Mud (5,000), Ash (5,000), Steam (8,000), Brush.  
 **Controls:** Temperature (maximum 150 °C, then 350 °C, then 2,000 °C), Humidity and Dewpoint (unlocked after Steam); Ambient Light and Wind remain locked.
-## 4. The Snowmelt Run
+## 4. The Meltwater Garden
 
-Guide Snow through its change into Water and use the melt to wet nearby ground.
-
-**Objectives**
-
-- Melt Snow into Water.
-- Let the Water spread across Sand and leave Wet Sand behind.
-
-**Equipment:** Snow, Sand, Brush.  
-**Controls:** Temperature, Humidity, Ambient Light.
-
-## 5. A Cloud Comes Home
-
-Boil Water into rising Steam, then explore how Dewpoint controls condensation.
+A dry Sand basin has no Water supply, but a reserve of Snow and one Red Tulip Seed; recover the garden by turning the Snow into usable soil moisture.
 
 **Objectives**
 
-- Heat Water until Steam rises from it.
-- Adjust Dewpoint and observe Steam condense into Water or Snow.
+- Melt 100 Snow cells into Water.
+- Let the thaw wet 100 Sand cells into Wet Sand.
+- Grow one Red Tulip from the supplied seed.
 
-**Equipment:** Water, Brush, Heat Ray.  
-**Controls:** Temperature, Humidity, Ambient Light, Dewpoint.
+**Starting Scenario:** A 260×150 world with a full-width, five-row Sand floor authored into the scenario. Start at −10 °C with 72% Humidity, 70% Ambient Light, a 10 °C Dewpoint, and no Wind. Temperature control is unlocked and capped at 8 °C; all other climate controls are locked. The world and loadout contain no Water, Steam, Cloud, or Wet Sand. Supply 500 Snow for the player to place and one Red Tulip Seed.
 
-## 6. Glass on the Shore
+**Equipment:** Sand (starting floor), Snow (500), Red Tulip Seeds (1), Brush. No Water.
 
-Use the meeting of Sand and Lava to make Glass, then follow Glass back into molten material.
+**Controls:** Temperature (starts at −10 °C; maximum 8 °C), Humidity (fixed at 72%), Ambient Light (fixed at 70%), Dewpoint (fixed at 10 °C), Wind (off).
 
-**Objectives**
-
-- Let Lava transform nearby Sand into Glass.
-- Heat Glass until it melts into Lava.
-
-**Equipment:** Sand, Lava, Brush, Heat Ray.  
-**Controls:** Temperature, Humidity, Ambient Light, Dewpoint.
-
-## 7. The Three Faces of Lava
-
-Quench and cool Lava to reveal the steps from molten rock to a stable Stone bed.
-
-**Objectives**
-
-- Quench Lava with Water and observe Scoria form.
-- Cool Scoria until it becomes Stone.
-- Heat Stone until it changes back into Scoria.
-
-**Equipment:** Lava, Water, Brush, Heat Ray.  
-**Controls:** Temperature, Humidity, Ambient Light, Dewpoint.
-
-## 8. Smoke Settles
-
-Trace the visible remains of burning Wood from Fire and Smoke to a bed of Ash.
-
-**Objectives**
-
-- Heat Wood until it ignites and produces Fire and Smoke.
-- Let the Smoke settle into Ash.
-- Use Water to put out any remaining Fire.
-
-**Equipment:** Wood, Water, Brush, Heat Ray.  
-**Controls:** Temperature, Humidity, Ambient Light, Dewpoint.
-
-## 9. The Fume and the Acid
-
-Follow Toxic Gas as it decays into Acid, then turn the Acid into Smoke with heat.
-
-**Objectives**
-
-- Observe Toxic Gas decay into Acid.
-- Heat Acid until Smoke appears.
-
-**Equipment:** Toxic Gas, Brush, Heat Ray.  
-**Controls:** Temperature, Humidity, Ambient Light, Dewpoint.
-
-## 10. The Soil Press
-
-Build a deep bed of Wet Mud and discover that supported wet soil can compact into Clay.
-
-**Objectives**
-
-- Make Wet Mud from Dry Mud and Water.
-- Compact supported Wet Mud into Clay.
-
-**Equipment:** Dry Mud, Water, Brush.  
-**Controls:** Temperature, Humidity, Ambient Light, Dewpoint.
-
-## 11. A Kiln for Clay
-
-Heat Clay into Ceramic and keep the finished material below the point where it melts away.
-
-**Objectives**
-
-- Heat Clay until it becomes Ceramic.
-- Keep a finished Ceramic piece intact while another piece is heated until it melts into Lava.
-
-**Equipment:** Clay, Brush, Heat Ray.  
-**Controls:** Temperature, Humidity, Ambient Light, Dewpoint.
-
-## 12. The Seeds of Many Habitats
-
-Use the climate controls to germinate several seed types and compare the habitats they prefer.
-
-**Objectives**
-
-- Grow Grass from Grass Seeds in damp soil.
-- Grow Moss from Moss Spores on a suitable damp surface.
-- Grow one flowering plant from Red Tulip Seeds or Blue Flower Seeds.
-
-**Equipment:** Grass Seeds, Moss Spores, Red Tulip Seeds, Blue Flower Seeds, Dry Mud, Water, Brush.  
-**Controls:** Temperature, Humidity, Ambient Light, Dewpoint.
-
-## 13. Wind at Work
-
-Unlock Wind and watch air movement carry light materials and spread a drifting plume.
-
-**Objectives**
-
-- Use Wind to move Seeds across the basin.
-- Carry Smoke or Cloud around a solid barrier with changing airflow.
-
-**Equipment:** Grass Seeds, Smoke, Cloud, Brush, Wind.  
-**Controls:** Temperature, Humidity, Ambient Light, Dewpoint, General Wind, Gust Strength.
-
-## 14. The First Delivery
-
-Meet Tubing and the Collector by carrying loose Sand into a Powder Storage Bin.
-
-**Objectives**
-
-- Watch loose Sand enter the Collector's buffer.
-- See Sand appear inside the Powder Storage Bin after it enters the Collector.
-
-**Equipment:** Sand, Collector, Powder Storage Bin, Tubing, Brush.  
-**Controls:** Temperature, Humidity, Ambient Light, Dewpoint, General Wind, Gust Strength.
-
-## 15. A Liquid in Reserve
-
-Collect Water, hold it in liquid storage, and release it through a second Tubing run.
-
-**Objectives**
-
-- See Water appear inside the Liquid Storage Bin after it enters the Collector.
-- Release stored Water and watch it return to the world.
-
-**Equipment:** Water, Collector, Liquid Storage Bin, Tubing, Brush.  
-**Controls:** Temperature, Humidity, Ambient Light, Dewpoint, General Wind, Gust Strength.
-
-## 16. The Garden Sprinkler
-
-Feed Water through Tubing and let a Sprinkler spread it back over dry ground.
-
-**Objectives**
-
-- See Water arrive at the Sprinkler through Tubing.
-- Observe the Sprinkler release Water onto Sand and create Wet Sand.
-- Switch between the Sprinkler's downward drain and its multi-direction spray.
-
-**Equipment:** Sand, Water, Collector, Sprinkler, Tubing, Brush.  
-**Controls:** Temperature, Humidity, Ambient Light, Dewpoint, General Wind, Gust Strength.
-
-## 17. Split the Stream
-
-Use a Splitter to divide a single Sand supply between two receiving Powder Storage Bins.
-
-**Objectives**
-
-- See Sand appear inside both Powder Storage Bins while the Splitter is operating.
-- Observe the two inventories fill from the shared supply.
-
-**Equipment:** Sand, Collector, Splitter, Powder Storage Bin, Tubing, Brush.  
-**Controls:** Temperature, Humidity, Ambient Light, Dewpoint, General Wind, Gust Strength.
-
-## 18. The Mixer Makes Wet Sand
-
-Bring Sand and Water to a Mixer and watch its recipe make Wet Sand.
-
-**Objectives**
-
-- Observe the Mixer turn Sand and Water into Wet Sand.
-- See Wet Sand emerge below the Mixer as it processes the recipe.
-- Let the Wet Sand output form a stable pile below the Mixer.
-
-**Equipment:** Sand, Water, Collector, Mixer, Tubing, Brush.  
-**Controls:** Temperature, Humidity, Ambient Light, Dewpoint, General Wind, Gust Strength.
-
-## 19. A Safe Gas Store
-
-Buffer a non-flaming gas in storage and release it through Tubing without losing its identity.
-
-**Objectives**
-
-- See Cloud enter the Gas Storage Bin through Tubing.
-- Release Cloud from storage and observe it rise into the open air.
-
-**Equipment:** Cloud, Collector, Gas Storage Bin, Tubing, Brush.  
-**Controls:** Temperature, Humidity, Ambient Light, Dewpoint, General Wind, Gust Strength.
-
-## 20. Keep the Air Moving
-
-Charge a Battery and power a Fan to move a plume along its directional airflow.
-
-**Objectives**
-
-- Charge a Battery with Spark.
-- See the powered Fan carry Smoke or Steam away from its outlet.
-- Change the Fan's facing and observe the plume travel in the new direction.
-
-**Equipment:** Battery, Spark, Copper, Elec, Fan, Smoke, Steam, Brush.  
-**Controls:** Temperature, Humidity, Ambient Light, Dewpoint, General Wind, Gust Strength.
-
-## 21. The Hot and Cold Bench
-
-Power a Heater and Cooler, then observe how their directional effects change nearby material.
-
-**Objectives**
-
-- See the powered Heater melt Ice into Water.
-- See the powered Cooler freeze Water into Ice.
-- Observe that each machine affects the space in front of its outlet.
-
-**Equipment:** Battery, Spark, Copper, Elec, Heater, Cooler, Ice, Water, Brush.  
-**Controls:** Temperature, Humidity, Ambient Light, Dewpoint, General Wind, Gust Strength.
-
-## 22. Light at the Switch
-
-Use a charged Battery, conductive wire, and switches to control visible Lamps.
-
-**Objectives**
-
-- See a connected Lamp light while its input receives current from the Battery.
-- Use a Simple Switch to turn the Lamp on and off.
-- Observe a Spotlamp's focused beam turn on and off with its input.
-- Make a Lamp respond to changing conditions through a Temperature, Humidity, or Light Switch.
-
-**Equipment:** Battery, Spark, Copper, Elec, Simple Switch, Lamp, Spotlamp, Temperature Switch, Humidity Switch, Light Switch, Brush.  
-**Controls:** Temperature, Humidity, Ambient Light, Dewpoint, General Wind, Gust Strength.
-
-## 23. The Logic Workshop
-
-Power logic gates from a separate Battery supply and use their outputs to change visible Lamps.
-
-**Objectives**
-
-- Make a Lamp change visibly while a NOT gate controls its electrical input.
-- Observe a Lamp change as an AND or OR gate receives different signal conditions.
-- Compare the visible output effects of NAND and XOR gates.
-
-**Equipment:** Battery, Spark, Copper, Elec, Simple Switch, Lamp, NOT, AND, OR, NAND, XOR, Brush.  
-**Controls:** Temperature, Humidity, Ambient Light, Dewpoint, General Wind, Gust Strength.
+**Design Notes:** Combines temperature and thaw from Mission 2, Sand wetting from Mission 3, and flowering-plant growth introduced in Mission 1. Snow is the only water source; the fixed humidity and light support the Red Tulip while the player solves thaw and moisture. Red Tulip seeds require at least 4 °C, 38% humidity, and 20% light; mature plants thrive from 4–28 °C, with ideal conditions at 15 °C, 72% humidity, and 70% light. The temperature cap yields at most 15.5 °C at the documented ground-level profile, meeting the temperature ideal. This prepares Mission 5's water-cycle work without introducing Steam or Dewpoint as new focus.
