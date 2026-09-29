@@ -106,6 +106,7 @@ test('Mission 1 recap reports objective and supplies; ADVANCE opens Mission 2 wi
     expect(missionDefinition.number).toBe(2);
     expect(missionDefinition.id).toBe('ice-banana');
     expect(missionDefinition.environmentTargets).toEqual({ temperature: 30, humidity: 95, illumination: 85 });
+    expect(missionDefinition.controlLimits).toMatchObject({ temperature: { max: 30 } });
     await page.locator('#missionIntroOk').click();
 
     const scenario = await page.evaluate(async () => {
@@ -137,6 +138,7 @@ test('Mission 1 recap reports objective and supplies; ADVANCE opens Mission 2 wi
         ambientWindOn: false, windStrength: 0, gustWindStrength: 0
     });
     expect(scenario.mission.environmentTargets).toEqual({ temperature: 30, humidity: 95, illumination: 85 });
+    expect(scenario.mission.controlLimits).toMatchObject({ temperature: { max: 30 } });
     expect(scenario.mission.objectives).toContainEqual(expect.objectContaining({
         type: 'transformation', from: 'Ice', to: 'Water', target: 1
     }));
@@ -171,6 +173,23 @@ test('Mission 2 keeps required climate controls available and explains disabled 
         await expect(page.locator(selector), `${selector} remains available to reach the Banana targets`).toBeEnabled();
         await expect(page.locator(selector)).not.toHaveAttribute('data-campaign-disabled', 'true');
     }
+    await expect(page.locator('#airTemp')).toHaveAttribute('max', '30');
+    await expect(page.locator('#airTempValue')).toHaveAttribute('max', '30');
+    await page.locator('#airTemp').evaluate(input => {
+        input.value = '4000';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await expect(page.locator('#airTemp')).toHaveValue('30');
+    await expect(page.locator('#airTempValue')).toHaveValue('30');
+    await page.locator('#airTempValue').fill('45');
+    await page.locator('#airTempValue').press('Enter');
+    const cappedTemperature = await page.evaluate(async () => ({
+        target: (await import('/physics.js')).getAmbientTarget(),
+        slider: document.querySelector('#airTemp').value,
+        number: document.querySelector('#airTempValue').value
+    }));
+    expect(cappedTemperature).toEqual({ target: 30, slider: '30', number: '30' });
+
     for (const name of ['Dry Mud', 'Banana Seeds']) {
         const material = page.getByRole('button', { name, exact: true });
         await expect(material).toBeEnabled();
@@ -265,6 +284,21 @@ test('Sandbox keeps its freeform materials and climate controls free of campaign
         await expect(page.locator(selector), `${selector} remains adjustable in Sandbox`).toBeEnabled();
         await expect(page.locator(selector)).not.toHaveClass(/campaign-locked-control/);
     }
+    await expect(page.locator('#airTemp')).toHaveAttribute('max', '4000');
+    await expect(page.locator('#airTempValue')).toHaveAttribute('max', '4000');
+    await page.locator('#airTemp').evaluate(input => {
+        input.value = '4000';
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await page.locator('#airTempValue').fill('4500');
+    await page.locator('#airTempValue').press('Enter');
+    const sandboxTemperature = await page.evaluate(async () => ({
+        target: (await import('/physics.js')).getAmbientTarget(),
+        slider: document.querySelector('#airTemp').value,
+        number: document.querySelector('#airTempValue').value
+    }));
+    expect(sandboxTemperature).toEqual({ target: 4000, slider: '4000', number: '4000' });
+
     for (const name of ['Water', 'Sand', 'Dry Mud', 'Banana Seeds']) {
         const material = page.getByRole('button', { name, exact: true });
         await expect(material).toBeEnabled();
@@ -277,4 +311,18 @@ test('Sandbox keeps its freeform materials and climate controls free of campaign
     await expect(page.locator('#toolTooltip .tool-tooltip-disabled')).toHaveCount(0);
     expect(await page.locator('.campaign-locked-control').count()).toBe(0);
     expect(await page.locator('[data-campaign-disabled="true"]').count()).toBe(0);
+});
+
+test('Mission 2 temperature range falls back to the Sandbox 4,000C limit after campaign clears', async ({ page }) => {
+    await openMissionTwoBriefing(page);
+    await page.locator('#missionIntroOk').click();
+    await expect(page.locator('#airTemp')).toHaveAttribute('max', '30');
+    await expect(page.locator('#airTempValue')).toHaveAttribute('max', '30');
+
+    await page.evaluate(async () => (await import('/campaign.js')).clearCampaign());
+    await expect(page.locator('#missionHud')).toBeHidden();
+    await expect(page.locator('#airTemp')).toHaveAttribute('max', '4000');
+    await expect(page.locator('#airTempValue')).toHaveAttribute('max', '4000');
+    await expect(page.locator('#airTemp')).toBeEnabled();
+    await expect(page.locator('#airTempValue')).toBeEnabled();
 });

@@ -42,9 +42,9 @@ async function paintSandFloor(page) {
 
 async function populateDraft(page) {
     await page.locator('#campaignEditorNewBlank').click();
-    await expect(page.locator('#campaignEditorNumber')).toHaveValue('3');
+    await expect(page.locator('#campaignEditorNumber')).toHaveValue('4');
     await page.locator('[data-mission-field="id"]').fill('editor-flower-test');
-    await page.locator('#campaignEditorNumber').fill('3');
+    await page.locator('#campaignEditorNumber').fill('4');
     await page.locator('#campaignEditorTitle').fill('Editor Flower Test');
     await page.locator('#campaignEditorBriefing').fill('A captured sand bed for a draft persistence check.');
     await page.locator('#campaignObjectiveFrom').selectOption({ label: 'Daffodil Seeds' });
@@ -105,7 +105,7 @@ test('Campaign Editor starts an unrestricted authoring Sandbox and persists blan
     expect(draftValue).toBeTruthy();
     await page.locator('#campaignMissionList').selectOption(draftValue);
     await page.locator('#campaignEditorLoadMission').click();
-    await expect(page.locator('#campaignEditorNumber')).toHaveValue('3');
+    await expect(page.locator('#campaignEditorNumber')).toHaveValue('4');
     await expect(page.locator('#campaignEditorTitle')).toHaveValue('Editor Flower Test');
     await expect(page.locator('#campaignEditorBriefing')).toHaveValue(
         'A captured sand bed for a draft persistence check.'
@@ -126,7 +126,7 @@ test('Campaign Editor starts an unrestricted authoring Sandbox and persists blan
 test('Campaign Editor validation blocks incomplete drafts and review approval gates installation', async ({ page }) => {
     await openEditor(page);
     await page.locator('#campaignEditorNewBlank').click();
-    await expect(page.locator('#campaignEditorNumber')).toHaveValue('3');
+    await expect(page.locator('#campaignEditorNumber')).toHaveValue('4');
     await expect(page.locator('#campaignEditorInstall')).toBeDisabled();
 
     await page.locator('#campaignEditorValidate').click();
@@ -162,6 +162,97 @@ test('Campaign Editor saves Mission 2 climate targets and typed environment obje
     }, DRAFTS_KEY);
     expect(savedMission.environmentTargets).toEqual({ temperature: 30, humidity: 95, illumination: 85 });
     expect(savedMission.objectives).toContainEqual(expect.objectContaining({ type: 'environment-target' }));
+});
+
+test('Campaign Editor validates and round-trips staged objective metadata and a blank layout', async ({ page }) => {
+    const stagedMission = {
+        id: 'staged-metadata-roundtrip',
+        number: 88,
+        title: 'Staged Metadata Round Trip',
+        briefing: 'Place material piles, make rain, dry them, then raise the heat.',
+        world: { cols: 260, rows: 150 },
+        startingLayout: { type: 'blank' },
+        resourceBudgets: { materials: { Sand: 5000, 'Dry Mud': 5000, Ash: 5000, Steam: 8000 }, machines: {} },
+        environment: {
+            temperature: 20, humidity: 50, illumination: 50, dewpoint: 10,
+            ambientWindOn: false, windStrength: 0, gustWindStrength: 0
+        },
+        lockedControls: ['humidity', 'dewpoint'],
+        startSelection: { material: 'Sand', drawMode: 'brush' },
+        visualizationModes: ['normal'],
+        unlockedTools: ['brush', 'line', 'rectangle'],
+        objectives: [
+            { id: 'place-sand', type: 'material-placement', material: 'Sand', target: 500, label: 'Place the Sand pile.' },
+            {
+                id: 'place-steam', type: 'material-placement', material: 'Steam', target: 500,
+                requires: ['place-sand'], unlocks: { controls: ['humidity', 'dewpoint'] },
+                label: 'Place Steam to begin making rain.'
+            },
+            {
+                id: 'make-rain', type: 'environment-target', target: 1,
+                targetValues: { humidity: 100, dewpoint: 100 }, requires: ['place-steam'],
+                label: 'Set humidity and dewpoint to make rain.'
+            },
+            {
+                id: 'dry-sand', type: 'transformation', from: 'Wet Sand', to: 'Sand', target: 500,
+                requires: ['make-rain'],
+                unlocks: { controls: ['temperature'], controlLimits: { temperature: { min: -60, max: 2000 } } },
+                label: 'Dry the Sand pile, then unlock higher heat.'
+            },
+            {
+                id: 'high-heat', type: 'environment-target', target: 1,
+                targetValues: { temperature: 2000 }, requires: ['dry-sand'],
+                label: 'Raise the temperature to 2,000°C.'
+            }
+        ],
+        events: [{
+            id: 'rain-started', when: { type: 'objective-complete', objectiveId: 'make-rain' },
+            message: 'The changed dewpoint brings rain.'
+        }]
+    };
+
+    await page.goto('/?e2e');
+    await page.evaluate(({ key, mission }) => {
+        localStorage.clear();
+        localStorage.setItem(key, JSON.stringify({ version: 1, drafts: [mission] }));
+    }, { key: DRAFTS_KEY, mission: stagedMission });
+    await page.reload();
+    await page.locator('#openCampaignEditor').click();
+    await expect(page.locator('#campaignEditorWorkspace')).toBeVisible();
+    await selectMission(page, stagedMission.title);
+    await expect(page.locator('#campaignEditorSnapshotStatus')).toContainText(/declarative starting layout/i);
+
+    const controlLimitsEditor = page.locator('#campaignEditorControlLimits');
+    await controlLimitsEditor.fill(JSON.stringify({ temperature: { max: 30 } }));
+
+    const blankWorld = await page.evaluate(async () => {
+        const world = (await import('/physics.js')).getWorld();
+        return world.type.every(type => type === 0);
+    });
+    expect(blankWorld).toBe(true);
+
+    await page.locator('#campaignEditorSaveDraft').click();
+    await expect(page.locator('#campaignEditorStatus')).toContainText(/saved/i);
+    await page.reload();
+    await page.locator('#openCampaignEditor').click();
+    await selectMission(page, stagedMission.title);
+    const reloadedControlLimits = JSON.parse(await page.locator('#campaignEditorControlLimits').inputValue());
+    expect(reloadedControlLimits).toEqual({ temperature: { max: 30 } });
+    await page.locator('#campaignEditorSaveDraft').click();
+
+    const savedMission = await page.evaluate(key => {
+        const store = JSON.parse(localStorage.getItem(key));
+        return store.drafts.find(item => item.id === 'staged-metadata-roundtrip');
+    }, DRAFTS_KEY);
+    expect(savedMission.startingLayout).toEqual({ type: 'blank' });
+    expect(savedMission.resourceBudgets).toEqual(stagedMission.resourceBudgets);
+    expect(savedMission.controlLimits).toEqual({ temperature: { max: 30 } });
+    expect(savedMission.objectives).toEqual(stagedMission.objectives);
+    expect(savedMission.events).toEqual(stagedMission.events);
+
+    await page.locator('#campaignEditorValidate').click();
+    await expect(page.locator('#campaignEditorStatus')).toContainText(/^Mission valid\./i);
+    await expect(page.locator('#campaignEditorReviewDialog')).toBeVisible();
 });
 
 test('Campaign Editor suspends autosave without changing the Sandbox resume save', async ({ page }) => {

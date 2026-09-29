@@ -121,6 +121,7 @@
                 <div id="canvasStage">
                     <canvas id="canvas"></canvas>
                     <canvas id="illuminationOverlay" aria-hidden="true"></canvas>
+                    <canvas id="placementPreviewOverlay" aria-hidden="true"></canvas>
                     <div id="machineOverlay" aria-hidden="true"></div>
                     <div id="marqueeOverlay" aria-hidden="true" hidden></div>
                     <div id="blueprintStampPreview" aria-hidden="true" hidden><canvas></canvas></div>
@@ -454,6 +455,7 @@
                         <label><input data-lock="dewpoint" type="checkbox"> Dewpoint</label>
                         <label><input data-lock="wind" type="checkbox"> Wind</label>
                     </div>
+                    <label for="campaignEditorControlLimits">Mission-specific slider limits (JSON)<textarea id="campaignEditorControlLimits" data-control-limits rows="2" spellcheck="false" placeholder='{"temperature":{"max":30}}'></textarea></label>
                 </fieldset>
                 <div class="campaign-editor-grid-two">
                     <label>Start material<select data-mission-field="startMaterial" class="select-input"></select></label>
@@ -465,12 +467,13 @@
                     <div id="campaignEditorObjectives" class="campaign-editor-objective-rows">
                         <div class="campaign-objective-row" data-objective-row>
                             <label>Objective label<input id="campaignObjectiveLabel" data-objective-label type="text"></label>
-                            <label>Objective condition<select data-objective-type class="select-input"><option value="transformation">Material transition</option><option value="environment-target">Environment targets reached</option></select></label>
+                            <label>Objective condition<select data-objective-type class="select-input"><option value="transformation">Material transition</option><option value="environment-target">Environment targets reached</option><option value="material-placement">Material placement</option></select></label>
                             <div class="campaign-editor-grid-three">
                                 <label>From<select id="campaignObjectiveFrom" data-objective-from class="select-input"></select></label>
                                 <label>To<select id="campaignObjectiveTo" data-objective-to class="select-input"></select></label>
                                 <label>Target<input id="campaignObjectiveTarget" data-objective-target type="number" min="1" step="1"></label>
                             </div>
+                            <label>Additional objective data (JSON)<textarea data-objective-settings rows="2" spellcheck="false" placeholder='{"material":"Sand","requires":["place-piles"],"targetValues":{"temperature":150},"unlocks":{"controls":["dewpoint"]}}'></textarea></label>
                             <button class="btn btn-ghost campaign-editor-remove" data-remove-objective type="button" hidden>Remove objective</button>
                         </div>
                     </div>
@@ -511,7 +514,20 @@
         <aside id="missionHud" class="mission-hud" hidden role="region" aria-label="Mission status">
             <div class="mission-hud-heading"><span class="mission-pulse" aria-hidden="true"></span><strong id="missionHudTitle">Mission</strong><button id="restartMissionButton" class="btn btn-ghost mission-restart-button" type="button" hidden>Restart Mission</button></div>
             <div id="missionResourceList" class="mission-resource-list"></div>
-            <div id="missionObjectiveProgress" class="mission-objective-progress"></div>
+            <div id="missionObjectiveCarousel" class="mission-objective-carousel" role="group" aria-label="Mission objectives">
+                <button id="missionObjectivePrevious" class="mission-objective-arrow" type="button" aria-label="Previous objective" title="Previous objective" disabled>‹</button>
+                <div id="missionObjectiveCurrent" class="mission-objective-current" data-objective-id="" data-objective-complete="false" data-objective-locked="false" aria-live="polite" aria-atomic="true">
+                    <span id="missionObjectivePosition" class="mission-objective-position">0 / 0</span>
+                    <span class="mission-objective-copy">
+                        <span id="missionObjectiveLabel" class="mission-objective-label"></span>
+                        <span id="missionObjectiveProgressText" class="mission-objective-progress-text"></span>
+                        <span id="missionObjectiveLockText" class="mission-objective-lock-text" hidden></span>
+                    </span>
+                    <span id="missionObjectiveCheck" class="mission-objective-check" data-objective-check aria-hidden="true" hidden>✓</span>
+                    <span id="missionObjectiveStatus" class="sr-only">Incomplete</span>
+                </div>
+                <button id="missionObjectiveNext" class="mission-objective-arrow" type="button" aria-label="Next objective" title="Next objective" disabled>›</button>
+            </div>
             <p id="missionEventNotice" class="mission-event-notice" role="status" aria-live="polite" hidden></p>
             <div id="missionPassedBar" class="mission-passed-bar" hidden role="status" aria-live="polite">
                 <span id="missionPassedMessage">Objectives passed</span>

@@ -112,13 +112,18 @@ export function validateCampaignMission(mission, { missions = getMissionDefiniti
         if (!Number.isInteger(value) || value < 0) errors.push(`${label} budget must be a non-negative whole number.`);
         if (!knownMaterials.has(label)) errors.push(`${label} is not a known material.`);
     }
+    if (mission?.initiallyAvailableMaterials !== undefined && (!Array.isArray(mission.initiallyAvailableMaterials) ||
+        mission.initiallyAvailableMaterials.some(name => !knownMaterials.has(name) || !Object.hasOwn(budgets || {}, name)))) {
+        errors.push('Initially available materials must be included in the mission budget.');
+    }
     for (const [label, value] of Object.entries(machines || {})) {
         if (!knownMachines.has(label)) errors.push(`${label} is not a known machine type.`);
         if (!Number.isInteger(value) || value < 0) errors.push(`${label} machine budget must be a non-negative whole number.`);
     }
     if (!Array.isArray(mission?.objectives) || mission.objectives.length === 0) errors.push('At least one objective is required.');
-    const hasEnvironmentObjective = (mission?.objectives || []).some(item => item.type === 'environment-target');
-    if (hasEnvironmentObjective) {
+    const environmentObjectives = (mission?.objectives || []).filter(item => item.type === 'environment-target');
+    const needsLegacyEnvironmentTargets = environmentObjectives.some(item => !item.targetValues);
+    if (needsLegacyEnvironmentTargets) {
         const targets = mission?.environmentTargets;
         const targetBounds = { temperature: [-60, 4000], humidity: [0, 100], illumination: [0, 100] };
         for (const [key, [min, max]] of Object.entries(targetBounds)) {
@@ -127,19 +132,94 @@ export function validateCampaignMission(mission, { missions = getMissionDefiniti
             }
         }
     }
-    const objectiveIds = new Set();
+    const objectiveIds = new Set((mission?.objectives || []).map(objective => objective.id).filter(Boolean));
+    const environmentBounds = { temperature: [-60, 4000], humidity: [0, 100], illumination: [0, 100], dewpoint: [-60, 100], windStrength: [0, 50], gustWindStrength: [0, 50] };
+    const campaignControls = new Set(['temperature', 'humidity', 'illumination', 'dewpoint', 'wind']);
+    const validateControlLimits = (limits, label) => {
+        if (limits === undefined) return;
+        if (!limits || typeof limits !== 'object' || Array.isArray(limits)) {
+            errors.push(`${label} must be a JSON object.`);
+            return;
+        }
+        for (const [control, bounds] of Object.entries(limits)) {
+            const [minimum, maximum] = environmentBounds[control] || [];
+            if (!Object.hasOwn(environmentBounds, control) || !bounds || typeof bounds !== 'object' || Array.isArray(bounds) ||
+                (!Number.isFinite(bounds.min) && !Number.isFinite(bounds.max))) {
+                errors.push(`${label} has an unsupported control or invalid bounds for ${control}.`);
+                continue;
+            }
+            if ((bounds.min !== undefined && (!Number.isFinite(bounds.min) || bounds.min < minimum || bounds.min > maximum)) ||
+                (bounds.max !== undefined && (!Number.isFinite(bounds.max) || bounds.max < minimum || bounds.max > maximum)) ||
+                (Number.isFinite(bounds.min) && Number.isFinite(bounds.max) && bounds.min > bounds.max)) {
+                errors.push(`${label} bounds for ${control} are outside its supported range.`);
+            }
+        }
+    };
+    if (mission?._editorControlLimitsError) errors.push(`Mission control limits contain invalid JSON: ${mission._editorControlLimitsError}`);
+    validateControlLimits(mission?.controlLimits, 'Starting control limits');
     for (const objective of mission?.objectives || []) {
-        if (!objective.id || objectiveIds.has(objective.id)) errors.push('Objective IDs must be present and unique.');
-        objectiveIds.add(objective.id);
+        if (!objective.id || (mission.objectives.filter(item => item.id === objective.id).length > 1)) errors.push('Objective IDs must be present and unique.');
+        if (objective._editorSettingsError) errors.push(`Objective “${objective.label || objective.id}” has invalid additional JSON: ${objective._editorSettingsError}`);
         if (objective.type === 'transformation' && (!knownMaterials.has(objective.from) || !knownMaterials.has(objective.to) || objective.from === objective.to)) {
             errors.push(`Objective “${objective.label || objective.id}” must use a supported material transition.`);
-        } else if (objective.type !== 'transformation' && objective.type !== 'environment-target') {
+        } else if (objective.type === 'material-placement' && !knownMaterials.has(objective.material)) {
+            errors.push(`Objective “${objective.label || objective.id}” must name a supported placement material.`);
+        } else if (objective.type !== 'transformation' && objective.type !== 'environment-target' && objective.type !== 'material-placement') {
             errors.push(`Objective “${objective.label || objective.id}” has an unsupported condition.`);
-        } else if (objective.type === 'environment-target' && !hasEnvironmentObjective) {
+        } else if (objective.type === 'environment-target' && !objective.targetValues && !mission.environmentTargets) {
             errors.push(`Objective “${objective.label || objective.id}” needs environment target values.`);
         }
         if (!Number.isInteger(objective.target) || objective.target < 1) errors.push(`Objective “${objective.label || objective.id}” needs a positive whole-number target.`);
         if (!objective.label?.trim()) errors.push(`Objective “${objective.id}” needs a player-facing label.`);
+        if (objective.requires !== undefined && (!Array.isArray(objective.requires) || objective.requires.some(id =>
+            typeof id !== 'string' || !objectiveIds.has(id) || id === objective.id))) {
+            errors.push(`Objective “${objective.label || objective.id}” has invalid prerequisite IDs.`);
+        }
+        if (objective.targetValues !== undefined) {
+            if (!objective.targetValues || typeof objective.targetValues !== 'object' || Array.isArray(objective.targetValues) ||
+                Object.keys(objective.targetValues).length === 0) {
+                errors.push(`Objective “${objective.label || objective.id}” needs one or more environment target values.`);
+            } else {
+                for (const [key, value] of Object.entries(objective.targetValues)) {
+                    const bounds = environmentBounds[key];
+                    if (!bounds || !Number.isFinite(value) || value < bounds[0] || value > bounds[1]) {
+                        errors.push(`Objective “${objective.label || objective.id}” has an invalid environment target for ${key}.`);
+                    }
+                }
+            }
+        }
+        if (objective.unlocks !== undefined) {
+            if (!objective.unlocks || typeof objective.unlocks !== 'object' || Array.isArray(objective.unlocks)) {
+                errors.push(`Objective “${objective.label || objective.id}” unlocks must be a JSON object.`);
+            } else {
+                if (objective.unlocks.controls !== undefined && (!Array.isArray(objective.unlocks.controls) ||
+                    objective.unlocks.controls.some(control => !campaignControls.has(control)))) {
+                    errors.push(`Objective “${objective.label || objective.id}” has an unsupported control unlock.`);
+                }
+                if (objective.unlocks.materials !== undefined && (!Array.isArray(objective.unlocks.materials) ||
+                    objective.unlocks.materials.some(name => !knownMaterials.has(name)))) {
+                    errors.push(`Objective “${objective.label || objective.id}” has an unsupported material unlock.`);
+                }
+                validateControlLimits(objective.unlocks.controlLimits, `Objective “${objective.label || objective.id}” control limits`);
+            }
+        }
+    }
+    const requirementGraph = new Map((mission?.objectives || []).map(objective => [objective.id,
+        Array.isArray(objective.requires) ? objective.requires : []]));
+    const checking = new Set();
+    const checked = new Set();
+    const hasCycle = id => {
+        if (checking.has(id)) return true;
+        if (checked.has(id)) return false;
+        checking.add(id);
+        const cycle = (requirementGraph.get(id) || []).some(next => objectiveIds.has(next) && hasCycle(next));
+        checking.delete(id);
+        checked.add(id);
+        return cycle;
+    };
+    for (const id of objectiveIds) if (hasCycle(id)) {
+        errors.push('Objective prerequisites must not form a cycle.');
+        break;
     }
     const eventIds = new Set();
     for (const event of mission?.events || []) {
@@ -150,7 +230,6 @@ export function validateCampaignMission(mission, { missions = getMissionDefiniti
         }
         if (!event.message?.trim()) errors.push(`Event “${event.id}” needs a message.`);
     }
-    const environmentBounds = { temperature: [-60, 4000], humidity: [0, 100], illumination: [0, 100], dewpoint: [-60, 100], windStrength: [0, 50], gustWindStrength: [0, 50] };
     for (const [key, [min, max]] of Object.entries(environmentBounds)) {
         const value = mission?.environment?.[key];
         if (!Number.isFinite(value) || value < min || value > max) errors.push(`Environment value ${key} must be between ${min} and ${max}.`);
@@ -278,7 +357,7 @@ function createBlankDraft(resetWorld) {
         unlockedTools: ['brush', 'line', 'rectangle', 'ellipse', 'grabber', 'eraser'],
         objectives: [{ id: 'objective-1', type: 'transformation', from: 'Daffodil Seeds', to: 'Daffodil', target: 1, label: '' }],
         events: [{ id: 'event-1', when: { type: 'objective-complete', objectiveId: 'objective-1' }, message: '' }],
-        startingLayout: null, startingSave: null
+        startingLayout: { type: 'blank' }, startingSave: null
     };
     draftId = `draft:${draft.id}`;
     revision++;
@@ -349,6 +428,10 @@ function fillObjectiveRows(objectives) {
         row.querySelector('[data-objective-from]').value = objective.from || 'Daffodil Seeds';
         row.querySelector('[data-objective-to]').value = objective.to || 'Daffodil';
         row.querySelector('[data-objective-target]').value = String(objective.target ?? 1);
+        const settings = Object.fromEntries(Object.entries(objective).filter(([key]) =>
+            !['id', 'type', 'from', 'to', 'target', 'label'].includes(key)));
+        row.querySelector('[data-objective-settings]').value = Object.keys(settings).length
+            ? JSON.stringify(settings, null, 2) : '';
     });
     renumberRows('objective');
     syncEventObjectiveChoices();
@@ -368,6 +451,7 @@ function addObjectiveRow() {
     row.dataset.objectiveId = `objective-${document.querySelectorAll('#campaignEditorObjectives [data-objective-row]').length + 1}`;
     row.querySelector('[data-objective-label]').value = '';
     row.querySelector('[data-objective-target]').value = '1';
+    row.querySelector('[data-objective-settings]').value = '';
     document.getElementById('campaignEditorObjectives').appendChild(row);
     renumberRows('objective');
     syncEventObjectiveChoices();
@@ -448,7 +532,7 @@ function applyEditorDimensions() {
         ...candidate,
         world: { cols, rows },
         startingSave: null,
-        startingLayout: null,
+        startingLayout: candidate.startingLayout?.type === 'blank' ? { type: 'blank' } : null,
         snapshotCapturedAt: null,
         snapshotStale: false
     };
@@ -517,6 +601,8 @@ function fillForm(mission) {
     for (const input of root.querySelectorAll('[data-environment-target]')) {
         input.value = String(mission.environmentTargets?.[input.dataset.environmentTarget] ?? 0);
     }
+    root.querySelector('[data-control-limits]').value = mission.controlLimits
+        ? JSON.stringify(mission.controlLimits, null, 2) : '';
     for (const input of root.querySelectorAll('[data-lock]')) input.checked = (mission.lockedControls || []).includes(input.dataset.lock);
     field('startMaterial').value = mission.startSelection?.material || 'Water';
     field('drawMode').value = mission.startSelection?.drawMode || 'brush';
@@ -554,18 +640,57 @@ function collectForm() {
     for (const input of root.querySelectorAll('[data-environment-target]')) {
         environmentTargets[input.dataset.environmentTarget] = Number(input.value);
     }
+    const controlLimitsText = root.querySelector('[data-control-limits]').value.trim();
+    let controlLimits = null;
+    let controlLimitsError;
+    if (controlLimitsText) {
+        try {
+            controlLimits = JSON.parse(controlLimitsText);
+            if (!controlLimits || typeof controlLimits !== 'object' || Array.isArray(controlLimits)) {
+                throw new Error('Mission control limits must be a JSON object.');
+            }
+        } catch (error) {
+            controlLimits = null;
+            controlLimitsError = error.message || 'Mission control limits contain invalid JSON.';
+        }
+    }
     const objectives = [...root.querySelectorAll('[data-objective-row]')].map((row, index) => {
         const previousObjective = previous.objectives?.find(item => item.id === row.dataset.objectiveId) || {};
-        return {
+        const rawSettings = row.querySelector('[data-objective-settings]').value.trim();
+        let settings = {};
+        let settingsError;
+        if (rawSettings) {
+            try {
+                settings = JSON.parse(rawSettings);
+                if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+                    throw new Error('Objective settings must be a JSON object.');
+                }
+            } catch (error) {
+                settings = {};
+                settingsError = error.message || 'Objective settings contain invalid JSON.';
+            }
+        }
+        const type = row.querySelector('[data-objective-type]')?.value || 'transformation';
+        const collectedObjective = {
+            ...settings,
             id: row.dataset.objectiveId || previousObjective.id || `objective-${index + 1}`,
-            type: row.querySelector('[data-objective-type]')?.value || 'transformation',
-            from: row.querySelector('[data-objective-from]').value,
-            to: row.querySelector('[data-objective-to]').value,
+            type,
             target: Number(row.querySelector('[data-objective-target]').value),
             label: row.querySelector('[data-objective-label]').value.trim()
         };
+        if (type === 'transformation') {
+            collectedObjective.from = row.querySelector('[data-objective-from]').value;
+            collectedObjective.to = row.querySelector('[data-objective-to]').value;
+        } else {
+            delete collectedObjective.from;
+            delete collectedObjective.to;
+        }
+        if (settingsError) collectedObjective._editorSettingsError = settingsError;
+        return collectedObjective;
     });
-    return {
+    const usesLegacyEnvironmentTargets = objectives.some(objective =>
+        objective.type === 'environment-target' && !objective.targetValues);
+    const collectedMission = {
         ...previous,
         id: root.querySelector('[data-mission-field="id"]').value.trim(),
         number: Number(document.getElementById('campaignEditorNumber').value),
@@ -574,7 +699,8 @@ function collectForm() {
         world: { cols: Number(field('cols').value), rows: Number(field('rows').value) },
         resourceBudgets: { materials, machines },
         environment,
-        environmentTargets: objectives.some(objective => objective.type === 'environment-target') ? environmentTargets : undefined,
+        ...(controlLimits ? { controlLimits } : {}),
+        environmentTargets: usesLegacyEnvironmentTargets ? environmentTargets : previous.environmentTargets,
         lockedControls: [...root.querySelectorAll('[data-lock]:checked')].map(input => input.dataset.lock),
         startSelection: { material: field('startMaterial').value, drawMode: field('drawMode').value },
         visualizationModes: [...field('visualizations').selectedOptions].map(option => option.value),
@@ -589,6 +715,10 @@ function collectForm() {
             };
         })
     };
+    if (!controlLimitsText || controlLimitsError) delete collectedMission.controlLimits;
+    if (controlLimitsError) collectedMission._editorControlLimitsError = controlLimitsError;
+    else delete collectedMission._editorControlLimitsError;
+    return collectedMission;
 }
 
 function handleDraftInput(event) {
@@ -868,6 +998,7 @@ function applyStartingLayout(mission) {
 }
 
 function isSupportedLayout(layout, world) {
+    if (layout?.type === 'blank') return true;
     return layout?.type === 'floor' && typeof layout.material === 'string' && knownMaterial(layout.material) &&
         Number.isInteger(layout.rows) && layout.rows > 0 && layout.rows <= world?.rows;
 }

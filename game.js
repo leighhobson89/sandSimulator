@@ -151,6 +151,11 @@ export function startGame({ newWorld = false, alignAtGround = false } = {}) {
         illuminationContext.imageSmoothingEnabled = false;
         illuminationImageData = illuminationContext.createImageData(cols, rows);
     }
+    const placementPreviewCanvas = getElements().placementPreviewOverlay;
+    if (placementPreviewCanvas) {
+        placementPreviewCanvas.width = cols;
+        placementPreviewCanvas.height = rows;
+    }
 
     context = canvas.getContext('2d');
     context.imageSmoothingEnabled = false;
@@ -326,6 +331,11 @@ function applyCanvasZoom() {
     if (illuminationOverlay) {
         illuminationOverlay.style.width = `${width}px`;
         illuminationOverlay.style.height = `${height}px`;
+    }
+    const placementPreviewOverlay = getElements().placementPreviewOverlay;
+    if (placementPreviewOverlay) {
+        placementPreviewOverlay.style.width = `${width}px`;
+        placementPreviewOverlay.style.height = `${height}px`;
     }
     drawWorldBoundaryOverlay(width, height, canvasBaseScale * factor);
     area.dataset.zoomLevel = String(canvasZoomLevel);

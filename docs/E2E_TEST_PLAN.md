@@ -148,7 +148,22 @@ own workflow captures them. See the [Playwright HTML reporter guide](https://pla
   disabled markers, opacity, and red `DISABLED` tooltips for unavailable
   controls; usable system-action exceptions; Sandbox isolation; named climate
   slider guidance; and pristine Mission 2 climate, world, budgets, and
-  objectives after checkpoint Resume.
+  objectives after checkpoint Resume. It also verifies that Mission 2's
+  Temperature slider and numeric input expose a 30 C maximum, clamp values
+  above 30 C, and restore Sandbox's 4,000 C maximum after leaving Campaign.
+- `e2e/campaign/mission-three-staged-progression.spec.mjs` covers the blank
+  Mission 3 world, staged pile and Steam placement, climate-control unlocks,
+  the 150 C drying cap, the 2,000 C Lava phase, and campaign completion.
+  Material-phase progress is driven through the campaign transition callback;
+  the spec does not simulate a full rainfall cycle.
+- `e2e/campaign/objective-carousel.spec.mjs` verifies Mission 1's 1/1
+  objective and disabled navigation at both ends; Mission 2's four objectives,
+  progress rerender stability, and selection resets on restart, reload/resume,
+  and advance; and Mission 3's 17 objectives, locked Steam state, boundaries,
+  and completed-card selection without auto-advance. The carousel selectors
+  include `#missionObjectivePrevious`, `#missionObjectiveNext`,
+  `#missionObjectivePosition`, `#missionObjectiveCurrent`, and
+  `#missionObjectiveCheck`.
 - `e2e/campaign/checkpoint-controls.spec.mjs` covers Restart confirmation and
   cancellation, resetting the authored mission without changing the checkpoint,
   hidden unbudgeted material entries, category auto-expansion and empty-category
@@ -157,9 +172,12 @@ own workflow captures them. See the [Playwright HTML reporter guide](https://pla
   unrestricted canvas workspace, blank/edit/load flows, local draft and
   captured-save round trips, validation and mandatory review, autosave
   suspension with the resume save preserved, marker-bounded file installation,
-  replacement cancel/confirm, and source-backup metadata. It also verifies that
-  Mission 2's three `environmentTargets` fields and typed environment objective
-  persist in an editor draft.
+  replacement cancel/confirm, and source-backup metadata. It also verifies
+  round-trip persistence and validation for Mission 2's three
+  `environmentTargets` fields and 30 C `controlLimits`, blank layouts,
+  objective prerequisites, partial `targetValues` including Dewpoint, and
+  objective `unlocks.controls` / `unlocks.controlLimits`. Mission-specific
+  slider-limit JSON is entered through `#campaignEditorControlLimits`.
 - Campaign editor drafts use localStorage key
   `elemental-foundry.campaign-editor.drafts.v1`. Loading a draft with a captured
   `startingSave` resizes and clears the canvas to the saved dimensions before
@@ -172,10 +190,13 @@ own workflow captures them. See the [Playwright HTML reporter guide](https://pla
   those resources again.
 - The campaign browser contracts are exposed by `campaign.js`:
   `getMissionDefinitions()`, `getCurrentMission()`, `getCampaignState()`,
-  `recordMaterialTransition(fromId, toId)`, `canUseMaterial(name)`, and
-  `canPlaceMissionMachine(name)`. The briefing/HUD selectors include
+  `recordMaterialTransition(fromId, toId)`, `recordMaterialPlacement(name, amount)`,
+  `canUseMaterial(name)`, and `canPlaceMissionMachine(name)`. The briefing/HUD selectors include
   `#missionIntroDialog`, `#missionIntroOk`, `#missionHud`,
-  `#missionResourceList`, `#missionObjectiveProgress`, and
+  `#missionResourceList`, `#missionObjectiveCarousel`,
+  `#missionObjectivePrevious`, `#missionObjectiveNext`,
+  `#missionObjectivePosition`, `#missionObjectiveCurrent`,
+  `#missionObjectiveCheck`, and
   `#missionEventNotice`. Completion uses `#missionCompleteDialog`,
   `#missionCompleteStats`, and `#missionCompleteOk`; after dismissal the HUD
   bar exposes `#missionAdvance`. The next briefing guidance is
@@ -510,6 +531,36 @@ runs; the exploratory run is not reported as a passing suite. The final
 results cover only the listed focused selections, not the complete Campaign or
 persistence areas or the full browser suite. No full deterministic test run was
 performed for this handoff.
+
+## Staged materials, control limits, and objective carousel verification (29 September 2026)
+
+The focused Campaign browser area passed **21/21** tests:
+
+```text
+npm.cmd run test:browser -- e2e/campaign --workers=1 --trace=off
+```
+
+The editor spec was rerun by itself and passed **6/6**:
+
+```text
+npm.cmd run test:browser -- e2e/campaign/editor.spec.mjs --workers=1 --trace=off
+```
+
+The deterministic harness completed with **408 passed and 24 failed** under
+`npm.cmd test`. The 24 failures were in unrelated pre-existing seed,
+electrical, Fan, Dewpoint, and illumination checks. The Mission 2 temperature
+cap, Mission 3 staged objectives, and physical Dry Mud-to-Lava checks passed in
+that run. This result is not a clean full deterministic-suite pass.
+
+The Mission 2 checks cover the 30 C mission-specific maximum on both inputs,
+clamping, and restoration of the Sandbox 4,000 C maximum. Mission 3 begins
+blank, stages material and climate access, holds temperature to 150 C until
+drying completes, and unlocks 2,000 C for the final material transitions. The
+editor round-trip covers the mission `controlLimits` JSON field,
+`#campaignEditorControlLimits`, objective prerequisites, partial target values,
+and control unlocks. Carousel coverage verifies its 1-based position, bounded
+arrows, completed state without auto-advance, gated item visibility, and
+transient selection resets.
 
 The scale profile's allocation and pure math/CLI checks are headless Node tests
 and can be run independently from Playwright. `npm run profile:scale` reports

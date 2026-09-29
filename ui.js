@@ -61,7 +61,9 @@ import {
 import {
     startCampaign, getCampaignState, getCurrentMission, getNextMission, getPendingMission,
     queueNextMission, beginPendingMission, dismissMissionRecap, recordEnvironmentChange,
-    canUseMaterial, canPlaceMissionMachine, clearCampaign, getMissionDefinitions
+    canUseMaterial, canPlaceMissionMachine, clearCampaign, getMissionDefinitions,
+    isCampaignMaterialAvailable, isCampaignObjectiveUnlocked,
+    isCampaignClimateControlAllowed, getCampaignControlLimits
 } from './campaign.js';
 import { initCampaignEditor } from './campaignEditor.js';
 
@@ -108,6 +110,8 @@ let campaignEditorSaveControlsState = null;
 let sandboxEnvironmentBeforeCampaign = null;
 let campaignCheckpointRecordId = null;
 let campaignCatalogSandboxExpansion = null;
+let missionObjectiveMissionId = null;
+let missionObjectiveIndex = 0;
 let edgePanFrame = null;
 let edgePanLastTime = 0;
 let debugMenuReturnFocus = null;
@@ -158,6 +162,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     elements.missionCompleteOk.addEventListener('click', dismissMissionCompletion);
     elements.missionAdvance.addEventListener('click', advanceCampaignFromHud);
     elements.restartMissionButton.addEventListener('click', openMissionRestartDialog);
+    elements.missionObjectivePrevious.addEventListener('click', () => moveMissionObjective(-1));
+    elements.missionObjectiveNext.addEventListener('click', () => moveMissionObjective(1));
     elements.cancelRestartMission.addEventListener('click', closeMissionRestartDialog);
     elements.confirmRestartMission.addEventListener('click', restartCurrentMission);
     elements.missionRestartDialog.addEventListener('keydown', event => {
@@ -169,10 +175,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (button) void loadLibraryGame(button.dataset.loadSaveId);
     });
     window.addEventListener('campaign-state-change', updateCampaignUi);
-    window.addEventListener('campaign-mission-complete', () => {
-        setSimulationPaused(true);
-        updateCampaignUi();
-    });
+    window.addEventListener('campaign-mission-complete', updateCampaignUi);
     window.addEventListener('campaign-editor-selection-restored', () => {
         selectDrawingMode(getDrawMode());
         highlightSelectedParticle();
@@ -376,7 +379,8 @@ function captureEnvironmentProfile() {
 function recordCurrentMissionEnvironment() {
     recordEnvironmentChange({
         temperature: getAmbientTarget(), humidity: getAmbientHumidityTarget(),
-        illumination: getAmbientIlluminationTarget()
+        illumination: getAmbientIlluminationTarget(), dewpoint: getDewpointTarget(),
+        windStrength: getGeneralWindStrength(), gustWindStrength: getWindStrength()
     });
 }
 
@@ -386,8 +390,15 @@ function setEraserOn(on) {
 }
 
 function campaignClimateControlAllowed(control) {
-    const mission = getCurrentMission();
-    return !getCampaignState() || !mission?.lockedControls?.includes(control);
+    return isCampaignClimateControlAllowed(control);
+}
+
+function campaignClimateRange(control, fallbackMinimum, fallbackMaximum) {
+    const limits = getCampaignControlLimits(control) || {};
+    return {
+        minimum: Number.isFinite(limits.min) ? limits.min : fallbackMinimum,
+        maximum: Number.isFinite(limits.max) ? limits.max : fallbackMaximum
+    };
 }
 
 function campaignVisualizationAllowed(mode) {
@@ -413,12 +424,14 @@ function applyMissionEnvironment(mission) {
 function applyLockedMissionEnvironment(mission) {
     if (!mission?.environment) return;
     const environment = mission.environment;
-    const locked = new Set(mission.lockedControls || []);
-    if (locked.has('temperature')) setAmbientTarget(environment.temperature);
-    if (locked.has('humidity')) setAmbientHumidityTarget(environment.humidity);
-    if (locked.has('illumination')) setAmbientIlluminationTarget(environment.illumination);
-    if (locked.has('dewpoint')) setDewpointTarget(environment.dewpoint);
-    if (locked.has('wind')) {
+    const isLocked = control => getCampaignState() && getCurrentMission()?.id === mission.id
+        ? !campaignClimateControlAllowed(control)
+        : (mission.lockedControls || []).includes(control);
+    if (isLocked('temperature')) setAmbientTarget(environment.temperature);
+    if (isLocked('humidity')) setAmbientHumidityTarget(environment.humidity);
+    if (isLocked('illumination')) setAmbientIlluminationTarget(environment.illumination);
+    if (isLocked('dewpoint')) setDewpointTarget(environment.dewpoint);
+    if (isLocked('wind')) {
         setAmbientWindOn(environment.ambientWindOn);
         setGeneralWindStrength(environment.windStrength);
         setWindStrength(environment.gustWindStrength);
@@ -498,7 +511,7 @@ function syncCampaignControls(campaign, mission) {
     ];
     let climateLocked = false;
     for (const [control, ...inputs] of climateControls) {
-        const shouldLock = locked && (mission.lockedControls || []).includes(control);
+        const shouldLock = locked && !isCampaignClimateControlAllowed(control);
         climateLocked ||= shouldLock;
         const reason = 'Locked by the current mission.';
         for (const input of inputs) setCampaignLocked(input, shouldLock, reason);
@@ -509,6 +522,28 @@ function syncCampaignControls(campaign, mission) {
         };
         for (const label of labelByControl[control] || []) setCampaignLocked(label, shouldLock, reason);
     }
+    const climateSliderRanges = [
+        ['temperature', [elements.airTempInput, elements.airTempValue], MIN_AIR_TEMP, MAX_AIR_TEMP],
+        ['humidity', [elements.baseHumidityInput], 0, 100],
+        ['illumination', [elements.ambientIlluminationInput], 0, 100],
+        ['dewpoint', [elements.dewpointInput], 0, 100],
+        ['windStrength', [elements.generalWindStrengthInput], 0, 50],
+        ['gustWindStrength', [elements.windStrengthInput], 0, 50]
+    ];
+    const temperatureRange = campaignClimateRange('temperature', MIN_AIR_TEMP, MAX_AIR_TEMP);
+    for (const [control, inputs, fallbackMinimum, fallbackMaximum] of climateSliderRanges) {
+        const { minimum, maximum } = campaignClimateRange(control, fallbackMinimum, fallbackMaximum);
+        for (const input of inputs) {
+            if (!input) continue;
+            input.min = String(minimum);
+            input.max = String(maximum);
+        }
+    }
+    const currentTemperature = Math.round(getAmbientTarget());
+    const clampedTemperature = Math.max(temperatureRange.minimum, Math.min(temperatureRange.maximum, currentTemperature));
+    if (clampedTemperature !== currentTemperature) setAmbientTarget(clampedTemperature);
+    if (elements.airTempInput) elements.airTempInput.value = String(clampedTemperature);
+    if (elements.airTempValue) elements.airTempValue.value = String(clampedTemperature);
     const lockNotice = document.getElementById('missionClimateLock');
     if (lockNotice) lockNotice.hidden = !climateLocked;
     for (const input of elements.debugFeatureToggles || []) setCampaignLocked(input, locked, 'Not available in this mission.');
@@ -570,6 +605,7 @@ function closeCampaignEditorSession() {
 function startNewCampaign() {
     if (!getCampaignState()) sandboxEnvironmentBeforeCampaign = captureEnvironmentProfile();
     campaignCheckpointRecordId = null;
+    resetMissionObjectiveSelection();
     stopAutosave();
     startCampaign();
     const mission = getCurrentMission();
@@ -672,6 +708,75 @@ function advanceCampaignFromHud() {
     showMissionBriefing(mission);
 }
 
+function resetMissionObjectiveSelection(missionId = null) {
+    missionObjectiveMissionId = missionId;
+    missionObjectiveIndex = 0;
+}
+
+function moveMissionObjective(direction) {
+    const mission = getCurrentMission();
+    if (!mission?.objectives?.length) return;
+    if (missionObjectiveMissionId !== mission.id) resetMissionObjectiveSelection(mission.id);
+    missionObjectiveIndex = Math.max(0, Math.min(mission.objectives.length - 1, missionObjectiveIndex + direction));
+    updateCampaignUi();
+}
+
+function syncMissionObjectiveSelection(mission) {
+    if (!mission) {
+        resetMissionObjectiveSelection();
+        return null;
+    }
+    if (missionObjectiveMissionId !== mission.id) resetMissionObjectiveSelection(mission.id);
+    const objectives = mission.objectives || [];
+    missionObjectiveIndex = Math.max(0, Math.min(Math.max(0, objectives.length - 1), missionObjectiveIndex));
+    return objectives[missionObjectiveIndex] || null;
+}
+
+function renderMissionObjectiveCarousel(elements, campaign, mission, objective) {
+    const objectiveCount = mission.objectives?.length || 0;
+    const position = objective ? missionObjectiveIndex + 1 : 0;
+    elements.missionObjectivePosition.textContent = `${position} / ${objectiveCount}`;
+    elements.missionObjectivePrevious.disabled = !objective || missionObjectiveIndex <= 0;
+    elements.missionObjectiveNext.disabled = !objective || missionObjectiveIndex >= objectiveCount - 1;
+
+    const card = elements.missionObjectiveCurrent;
+    card.dataset.objectiveId = objective?.id || '';
+    if (!objective) {
+        card.dataset.objectiveComplete = 'false';
+        card.dataset.objectiveLocked = 'false';
+        card.classList.remove('is-complete', 'is-locked');
+        elements.missionObjectiveLabel.textContent = 'No objectives';
+        elements.missionObjectiveProgressText.textContent = '';
+        elements.missionObjectiveLockText.textContent = '';
+        elements.missionObjectiveLockText.hidden = true;
+        elements.missionObjectiveCheck.hidden = true;
+        elements.missionObjectiveStatus.textContent = 'No objectives';
+        return;
+    }
+
+    const progress = campaign.objectiveProgress[objective.id] || 0;
+    const complete = progress >= objective.target;
+    const unmet = (objective.requires || []).filter(id => {
+        const required = mission.objectives.find(item => item.id === id);
+        return required && (campaign.objectiveProgress[id] || 0) < required.target;
+    });
+    const locked = unmet.length > 0 && !isCampaignObjectiveUnlocked(objective);
+    const requirementLabels = unmet.map(id => mission.objectives.find(item => item.id === id)?.label || id);
+
+    card.dataset.objectiveComplete = String(complete);
+    card.dataset.objectiveLocked = String(locked);
+    card.classList.toggle('is-complete', complete);
+    card.classList.toggle('is-locked', locked);
+    elements.missionObjectiveLabel.textContent = objective.label || objective.id;
+    elements.missionObjectiveProgressText.textContent = `${progress} / ${objective.target}`;
+    elements.missionObjectiveLockText.textContent = locked
+        ? `Locked — complete: ${requirementLabels.join('; ')}`
+        : '';
+    elements.missionObjectiveLockText.hidden = !locked;
+    elements.missionObjectiveCheck.hidden = !complete;
+    elements.missionObjectiveStatus.textContent = complete ? 'Completed' : locked ? 'Locked' : 'In progress';
+}
+
 function openMissionRestartDialog() {
     if (!getCampaignState()) return;
     const dialog = getElements().missionRestartDialog;
@@ -690,6 +795,7 @@ function restartCurrentMission() {
     const mission = getCurrentMission();
     if (!mission || !getCampaignState()) return closeMissionRestartDialog();
     const elements = getElements();
+    resetMissionObjectiveSelection(mission.id);
     elements.missionRestartDialog.hidden = true;
     elements.missionIntroDialog.hidden = true;
     elements.missionCompleteDialog.hidden = true;
@@ -739,6 +845,7 @@ function updateCampaignUi() {
     syncCampaignControls(campaign, mission);
     elements.missionHud.hidden = !campaign || !elements.canvasContainer?.classList.contains('d-flex');
     if (campaign && mission) {
+        const selectedObjective = syncMissionObjectiveSelection(mission);
         elements.missionHudTitle.textContent = `Mission ${mission.number} · ${mission.title}`;
         const materialRows = Object.entries(campaign.resources.materials).map(([name, resource]) => {
             const row = document.createElement('div');
@@ -756,12 +863,9 @@ function updateCampaignUi() {
             row.append(label, count); return row;
         });
         elements.missionResourceList.replaceChildren(...materialRows, ...machineRows);
-        elements.missionObjectiveProgress.replaceChildren(...mission.objectives.map(objective => {
-            const line = document.createElement('p');
-            const progress = campaign.objectiveProgress[objective.id] || 0;
-            line.textContent = `${objective.label} ${progress} / ${objective.target}`;
-            return line;
-        }));
+        renderMissionObjectiveCarousel(elements, campaign, mission, selectedObjective);
+    } else {
+        resetMissionObjectiveSelection();
     }
     const missionComplete = !!campaign?.missionCompleted;
     elements.missionPassedBar.hidden = !missionComplete;
@@ -801,6 +905,7 @@ function syncCampaignCatalog(campaign) {
                 ? campaign.resources.machines[definition.machine]
                 : campaign.resources.materials[definition.name];
             available = !!resource && resource.remaining > 0 && !definition.tool;
+            if (!definition.machine && !definition.tool) available &&= isCampaignMaterialAvailable(definition.name);
         }
         wrapper.hidden = !!campaign && !available;
         button.disabled = false;
@@ -2296,7 +2401,8 @@ function setUpAirTemperature() {
             box.value = String(Math.round(getAmbientTarget()));
             return;
         }
-        const clamped = Math.max(MIN_AIR_TEMP, Math.min(MAX_AIR_TEMP, Math.round(value)));
+        const { minimum, maximum } = campaignClimateRange('temperature', MIN_AIR_TEMP, MAX_AIR_TEMP);
+        const clamped = Math.max(minimum, Math.min(maximum, Math.round(value)));
         setAmbientTarget(clamped);
         slider.value = String(clamped);
         box.value = String(clamped);
@@ -2352,7 +2458,8 @@ function setUpAmbientIllumination() {
         }
         const numeric = Number(next);
         if (!Number.isFinite(numeric)) return;
-        const value = Math.max(0, Math.min(100, Math.round(numeric)));
+        const { minimum, maximum } = campaignClimateRange('illumination', 0, 100);
+        const value = Math.max(minimum, Math.min(maximum, Math.round(numeric)));
         setAmbientIlluminationTarget(value);
         slider.value = String(value);
         output.textContent = `${value}%`;
@@ -2371,7 +2478,8 @@ function setUpBaseHumidity() {
             synchroniseRestoredControls();
             return;
         }
-        const value = Math.max(0, Math.min(100, Math.round(Number(next))));
+        const { minimum, maximum } = campaignClimateRange('humidity', 0, 100);
+        const value = Math.max(minimum, Math.min(maximum, Math.round(Number(next))));
         setAmbientHumidityTarget(value);
         slider.value = String(value);
         output.textContent = `${value}%`;
@@ -2390,10 +2498,12 @@ function setUpDewpoint() {
             synchroniseRestoredControls();
             return;
         }
-        const value = Math.max(0, Math.min(100, Math.round(Number(next))));
+        const { minimum, maximum } = campaignClimateRange('dewpoint', 0, 100);
+        const value = Math.max(minimum, Math.min(maximum, Math.round(Number(next))));
         setDewpointTarget(value);
         slider.value = String(value);
         output.textContent = `${value} °C`;
+        recordCurrentMissionEnvironment();
     };
     apply(getDewpointTarget());
     slider.addEventListener('input', event => apply(event.target.value));
@@ -2414,8 +2524,10 @@ function setUpWindStrength() {
             synchroniseRestoredControls();
             return;
         }
-        let generalValue = Math.max(0, Math.min(50, Math.round(Number(general.value))));
-        let gustValue = Math.max(0, Math.min(50, Math.round(Number(gust.value))));
+        const generalRange = campaignClimateRange('windStrength', 0, 50);
+        const gustRange = campaignClimateRange('gustWindStrength', 0, 50);
+        let generalValue = Math.max(generalRange.minimum, Math.min(generalRange.maximum, Math.round(Number(general.value))));
+        let gustValue = Math.max(gustRange.minimum, Math.min(gustRange.maximum, Math.round(Number(gust.value))));
         if (source === 'general' && generalValue > gustValue) gustValue = generalValue;
         if (source === 'gust' && gustValue < generalValue) gustValue = generalValue;
 
@@ -2429,6 +2541,7 @@ function setUpWindStrength() {
         elements.windStrengthValue.textContent = String(gustValue);
         controls.style.setProperty('--general-wind-position', `${generalValue * 2}%`);
         controls.style.setProperty('--gust-wind-position', `${gustValue * 2}%`);
+        recordCurrentMissionEnvironment();
     };
 
     general.value = String(getGeneralWindStrength());
@@ -3177,6 +3290,7 @@ function setUpCanvasInput() {
         stopEdgePan();
         lastPointerEvent = event;
         currentCell = cellFromEvent(event);
+        clearPlacementPreview();
         setHoverCell(currentCell.x, currentCell.y, event.clientX, event.clientY);
         const pointerMachine = machineAtPointer(event);
         updateMachineCursor(currentCell, event);
@@ -3276,6 +3390,7 @@ function setUpCanvasInput() {
         currentCell = cellFromEvent(event);
         setHoverCell(currentCell.x, currentCell.y, event.clientX, event.clientY);
         updateMachineCursor(currentCell, event);
+        updatePlacementPreview(currentCell);
         if (deferredMachinePortGesture || activeMachinePortGesture) {
             updateMachinePortGesture(event);
             return;
@@ -3342,11 +3457,13 @@ function setUpCanvasInput() {
         }
         if (!isPainting) return;
         finishPainting(event.button);
+        updatePlacementPreview(currentCell);
     });
 
     canvas.addEventListener('mouseleave', () => {
         lastCell = null;
         setHoverCell(-1, -1);
+        clearPlacementPreview();
         updateMachineCursor({ x: -1, y: -1 });
         hideStampPreview();
     });
@@ -3530,6 +3647,7 @@ function finishPainting(button) {
 
 function cancelPainting() {
     clearMachinePortGesture();
+    clearPlacementPreview();
     isPainting = false;
     machinePlacement = null;
     clearMachinePlacementPreview();
@@ -3624,6 +3742,43 @@ function cellFromEvent(event) {
     const x = Math.floor(((event.clientX - rect.left) / rect.width) * getGridCols());
     const y = Math.floor(((event.clientY - rect.top) / rect.height) * getGridRows());
     return { x: x, y: y };
+}
+
+function clearPlacementPreview() {
+    const canvas = getElements().placementPreviewOverlay;
+    const context = canvas?.getContext('2d');
+    if (canvas && context) context.clearRect(0, 0, canvas.width, canvas.height);
+}
+
+function updatePlacementPreview(cell) {
+    const canvas = getElements().placementPreviewOverlay;
+    if (!canvas) return;
+    if (canvas.width !== getGridCols() || canvas.height !== getGridRows()) {
+        canvas.width = getGridCols();
+        canvas.height = getGridRows();
+    }
+    const context = canvas.getContext('2d');
+    if (!context) return;
+    context.clearRect(0, 0, canvas.width, canvas.height);
+
+    const world = getWorld();
+    const x = cell?.x;
+    const y = cell?.y;
+    if (!world || isPainting || isGrabbing || getEraserOn() || getGrabberOn() ||
+        getDrawMode() !== 'brush' || activeBlueprintSlot !== null || marqueeMode ||
+        machinePlacement || selectedMachine() || !Number.isInteger(x) || !Number.isInteger(y) ||
+        x < 0 || y < 0 || x >= world.cols || y >= world.rows) return;
+
+    const materialId = getParticleTypeIdSelected();
+    const material = getDefinitions()[materialId];
+    if (!material || material.machine || material.tool === 'wind' ||
+        world.type[index(x, y)] !== 0 || !canUseMaterial(material.name)) return;
+    if (lastPointerEvent && (machineAtPointer(lastPointerEvent) ||
+        getMachinePortAtClientPoint(lastPointerEvent.clientX, lastPointerEvent.clientY,
+            materialId, 20))) return;
+
+    context.fillStyle = `rgba(${material.rgb[0]}, ${material.rgb[1]}, ${material.rgb[2]}, 0.5)`;
+    context.fillRect(x, y, 1, 1);
 }
 
 function paintAtCurrentCell() {

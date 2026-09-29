@@ -44,8 +44,16 @@ grow taller. Painting or stamping a Daffodil does not count. The configured
 completion event fires once; objective counters and fired event IDs remain in
 the active session only. The mission briefing displays the mission number,
 title, briefing, objective, and available supplies before play. During play,
-the mission HUD shows objective progress, each supply's used and total counts,
-and event notices.
+the mission HUD shows one selected objective, each supply's used and total
+counts, and event notices. The objective carousel sits at the bottom right and
+has previous/next arrow buttons, a `N / total` counter, and one objective row.
+Navigation stops at either end and includes locked objectives in the count; a
+locked row describes its unmet prerequisites. Completed objectives remain
+selected and show green completion styling and a check mark. Completion does
+not auto-advance the carousel, and ordinary HUD rerenders preserve selection.
+Selection is transient and resets to the first objective when a mission starts,
+restarts, advances, or reloads. The arrow controls have accessible names and
+the current objective status is announced to assistive technology.
 
 **Mission 2: The Icebound Grove** uses a 260×150 world with a full-width
 five-row Ice floor. The opening climate is −10 °C, 35% humidity, and 10%
@@ -70,6 +78,22 @@ are not saved. The temperature,
 humidity, and illumination controls stay available so the climate target can be
 reached; dewpoint and wind are locked for this mission.
 
+Mission 2 sets a per-mission Temperature maximum of 30 C for both the slider
+and numeric input; values above the cap are clamped. Sandbox retains the global
+4,000 C maximum.
+
+**Mission 3: The Basin in Three States** starts with a blank 260 x 150 world
+and budgets 5,000 each of Sand, Dry Mud, and Ash plus 8,000 Steam. The three
+500-cell pile objectives are active together. Steam becomes available only
+after all three piles are placed; placing 500 Steam unlocks the Humidity and
+Dewpoint controls. Reaching 100 for both climate controls enables rain and the
+three wetting objectives. Temperature starts with a 150 C maximum; after rain,
+the player sets 150 C and dries Sand, Dry Mud, then Ash. Completing the Ash
+drying objective raises the maximum to 2,000 C and enables the final Lava
+objectives. The materials transform Sand to Glass to Lava, Dry Mud directly to
+Lava at its 1,200 C melt point, and Ash to Lava. Mission-specific limits are
+resolved over the Sandbox maximum and do not change Sandbox controls.
+
 Campaign catalogs hide unavailable materials, machines, and tools. Categories
 with available entries automatically expand in Campaign; empty categories are
 collapsed and locked. Their visible headings remain keyboard focusable and
@@ -79,12 +103,14 @@ status and reason. Pause and Load remain usable during a mission. Campaign Save,
 Save to Library, export, and Autosave are disabled; Sandbox keeps the full
 catalog and its normal controls.
 
-Completing all mission objectives pauses the simulation and automatically
-opens a recap dialog with objective results and used, total, and remaining
-counts for each finite player supply. Clicking **OK** closes the recap and
-leaves the objective-passed bar in the HUD. Its **ADVANCE** action opens the
-next mission briefing; confirming that briefing initializes its authored world
-and fresh resource budgets. A Campaign checkpoint is written only when
+Completing all mission objectives automatically opens a recap dialog with
+objective results and used, total, and remaining counts for each finite player
+supply while the simulation continues. After clicking **OK**, the completed
+mission remains playable with its existing world and remaining supplies; the
+mission grants no new materials, and completed objectives cannot progress
+again. The objective-passed bar stays in the HUD. Its **ADVANCE** action opens
+the next mission briefing; confirming that briefing initializes its authored
+world and fresh resource budgets. A Campaign checkpoint is written only when
 **ADVANCE** selects an installed successor. It stores the next mission number;
 Mission start, objective completion, recap dismissal, Restart, and a final
 mission with no successor do not write a checkpoint. Restart asks for
@@ -139,7 +165,12 @@ untouched. Closing the editor restores the previous autosave timer without an
 immediate write; re-enabling Autosave after return releases the suspended-write
 guard. Installing mission data requires review and approval, then a file picker
 for `campaign.js`; the editor preserves source outside the generated mission-
-data markers and stores a recoverable source backup in localStorage.
+data markers and stores a recoverable source backup in localStorage. The
+Mission-specific slider limits JSON field is `#campaignEditorControlLimits`;
+it writes the mission-level `controlLimits` object (for example,
+`{"temperature":{"max":30}}`). The editor validates and round-trips those
+limits with blank layouts, objective prerequisites, partial environment target
+values, and objective unlocks.
 
 ## 1. Material catalogue and glossary maintenance
 
@@ -1172,6 +1203,11 @@ does not resize or scroll when the hovered content changes; the canvas gives
 up `10px` of its allocated height for the panel. No cell numbers are shown.
 Feedback follows the current pointer and simulation state; leaving the canvas
 clears the pointer-specific lines.
+
+In Brush mode, an empty, placeable cell under the pointer shows a half-transparent
+preview of the selected material. The preview uses the same one-pixel-per-cell
+grid as placement, so the target cell remains visible at cell borders and zoom
+levels. It hides for occupied cells, exhausted mission supplies, and other tools.
 
 Hovering over empty air reports local air temperature, humidity, and wind speed.
 The speed combines local advected airflow, wind-tool display samples, General

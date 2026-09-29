@@ -534,7 +534,7 @@
     },
     "18": {
       "name": "Dry Mud",
-      "description": "Dry soil that wets into Wet Mud when reached by water and holds a looser pile than wet ground.",
+      "description": "Dry soil that wets into Wet Mud when reached by water, dries back from Wet Mud, and melts into Lava under extreme heat.",
       "group": "Powders",
       "color": "rgb(142, 108, 72)",
       "category": "powder",
@@ -548,6 +548,8 @@
       "bulkInsulation": 0.38,
       "wetsInto": "Wet Mud",
       "wetChance": 1,
+      "meltPoint": 1200,
+      "meltsInto": "Lava",
       "corrodible": true
     },
     "19": {

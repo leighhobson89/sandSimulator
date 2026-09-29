@@ -44,6 +44,7 @@ const MISSION_DEFINITIONS = Object.freeze([
             "ambientWindOn": false, "windStrength": 0, "gustWindStrength": 0
         },
         "environmentTargets": { "temperature": 30, "humidity": 95, "illumination": 85 },
+        "controlLimits": { "temperature": { "max": 30 } },
         "lockedControls": ["dewpoint", "wind"],
         "startSelection": { "material": "Dry Mud", "drawMode": "brush" },
         "unlockedTools": ["brush"],
@@ -59,6 +60,52 @@ const MISSION_DEFINITIONS = Object.freeze([
             { "id": "grove-warmed", "when": { "type": "objective-complete", "objectiveId": "warm-grove" }, "message": "The grove has reached its growing climate." },
             { "id": "mud-wetted", "when": { "type": "objective-complete", "objectiveId": "wet-mud" }, "message": "The soil is ready for planting." },
             { "id": "banana-grown", "when": { "type": "objective-complete", "objectiveId": "grow-banana" }, "message": "The Icebound Grove is alive with a Banana Plant." }
+        ]
+    },
+    {
+        "id": "three-states",
+        "number": 3,
+        "title": "The Basin in Three States",
+        "briefing": "Start with a blank basin. Build dry Sand, Dry Mud, and Ash piles, bring in Steam, use humidity and dewpoint to make rain, dry each pile with the temperature capped at 150 °C, then unlock extreme heat and turn all three materials into Lava.",
+        "guidance": "Place at least 500 cells each of Sand, Dry Mud, and Ash. Steam becomes available when all three piles are placed. Place 500 Steam, then raise Humidity and Dewpoint to 100 to encourage clouds and rain. Once the piles are wet, set Temperature to 150 °C and dry them in order. Drying the Ash pile unlocks a 2,000 °C temperature limit; reach that temperature, then melt Sand through Glass, and melt Dry Mud and Ash into Lava.",
+        "world": { "cols": 260, "rows": 150 },
+        "startingLayout": { "type": "blank" },
+        "resourceBudgets": { "materials": { "Sand": 5000, "Dry Mud": 5000, "Ash": 5000, "Steam": 8000 }, "machines": {} },
+        "initiallyAvailableMaterials": ["Sand", "Dry Mud", "Ash"],
+        "environment": {
+            "temperature": 25, "humidity": 40, "illumination": 50, "dewpoint": 10,
+            "ambientWindOn": false, "windStrength": 0, "gustWindStrength": 0
+        },
+        "controlLimits": { "temperature": { "min": -60, "max": 150 } },
+        "lockedControls": ["humidity", "dewpoint", "illumination", "wind"],
+        "startSelection": { "material": "Sand", "drawMode": "brush" },
+        "unlockedTools": ["brush"],
+        "visualizationModes": ["normal", "heat", "humidity"],
+        "objectives": [
+            { "id": "place-sand", "type": "material-placement", "material": "Sand", "target": 500, "label": "Place 500 Sand cells to build the first dry pile." },
+            { "id": "place-dry-mud", "type": "material-placement", "material": "Dry Mud", "target": 500, "label": "Place 500 Dry Mud cells to build the second dry pile." },
+            { "id": "place-ash", "type": "material-placement", "material": "Ash", "target": 500, "label": "Place 500 Ash cells to build the third dry pile." },
+            { "id": "place-steam", "type": "material-placement", "material": "Steam", "target": 500, "requires": ["place-sand", "place-dry-mud", "place-ash"], "unlocks": { "controls": ["humidity", "dewpoint"] }, "label": "Place Steam above the piles to add moisture to the air." },
+            { "id": "make-rain", "type": "environment-target", "target": 1, "targetValues": { "humidity": 100, "dewpoint": 100 }, "requires": ["place-steam"], "label": "Set Humidity and Dewpoint to 100 to encourage rain." },
+            { "id": "wet-sand", "type": "transformation", "from": "Sand", "to": "Wet Sand", "target": 500, "requires": ["make-rain"], "label": "Let rain turn the Sand pile into Wet Sand." },
+            { "id": "wet-mud", "type": "transformation", "from": "Dry Mud", "to": "Wet Mud", "target": 500, "requires": ["make-rain"], "label": "Let rain turn the Dry Mud pile into Wet Mud." },
+            { "id": "wet-ash", "type": "transformation", "from": "Ash", "to": "Wet Ash", "target": 500, "requires": ["make-rain"], "label": "Let rain turn the Ash pile into Wet Ash." },
+            { "id": "set-drying-temperature", "type": "environment-target", "target": 1, "targetValues": { "temperature": 150 }, "requires": ["wet-sand", "wet-mud", "wet-ash"], "label": "Raise Temperature to the 150 °C limit to dry the piles." },
+            { "id": "dry-sand", "type": "transformation", "from": "Wet Sand", "to": "Sand", "target": 500, "requires": ["wet-sand", "set-drying-temperature"], "label": "Heat Wet Sand until it dries back into Sand." },
+            { "id": "dry-mud", "type": "transformation", "from": "Wet Mud", "to": "Dry Mud", "target": 500, "requires": ["wet-mud", "set-drying-temperature", "dry-sand"], "label": "Heat Wet Mud until it dries back into Dry Mud." },
+            { "id": "dry-ash", "type": "transformation", "from": "Wet Ash", "to": "Ash", "target": 500, "requires": ["wet-ash", "set-drying-temperature", "dry-sand", "dry-mud"], "unlocks": { "controlLimits": { "temperature": { "max": 2000 } } }, "label": "Dry the Ash pile; this unlocks the 2,000 °C temperature limit." },
+            { "id": "set-lava-temperature", "type": "environment-target", "target": 1, "targetValues": { "temperature": 2000 }, "requires": ["dry-ash"], "label": "Raise Temperature to 2,000 °C." },
+            { "id": "melt-sand-to-glass", "type": "transformation", "from": "Sand", "to": "Glass", "target": 500, "requires": ["set-lava-temperature"], "label": "Melt Sand into Glass." },
+            { "id": "melt-glass-to-lava", "type": "transformation", "from": "Glass", "to": "Lava", "target": 500, "requires": ["set-lava-temperature", "melt-sand-to-glass"], "label": "Heat Glass until it melts into Lava." },
+            { "id": "melt-dry-mud-to-lava", "type": "transformation", "from": "Dry Mud", "to": "Lava", "target": 500, "requires": ["set-lava-temperature", "dry-mud"], "label": "Melt Dry Mud into Lava." },
+            { "id": "melt-ash-to-lava", "type": "transformation", "from": "Ash", "to": "Lava", "target": 500, "requires": ["set-lava-temperature", "dry-ash"], "label": "Melt Ash into Lava." }
+        ],
+        "events": [
+            { "id": "steam-placed", "when": { "type": "objective-complete", "objectiveId": "place-steam" }, "message": "Steam has opened the Humidity and Dewpoint controls. Set both high to encourage rain." },
+            { "id": "rain-started", "when": { "type": "objective-complete", "objectiveId": "make-rain" }, "message": "The humid air and high dewpoint are ready to form clouds and rain." },
+            { "id": "drying-temperature-ready", "when": { "type": "objective-complete", "objectiveId": "set-drying-temperature" }, "message": "At the 150 °C limit, the wet piles can now dry out." },
+            { "id": "extreme-heat-unlocked", "when": { "type": "objective-complete", "objectiveId": "dry-ash" }, "message": "All three materials are dry. The Temperature control now reaches 2,000 °C." },
+            { "id": "lava-temperature-ready", "when": { "type": "objective-complete", "objectiveId": "set-lava-temperature" }, "message": "At 2,000 °C, Sand, Dry Mud, and Ash can become Lava." }
         ]
     }
 ]);
@@ -101,6 +148,55 @@ export function beginPendingMission() {
 
 export function getCampaignState() { return campaignState; }
 export function isCampaignActive() { return !!campaignState; }
+
+export function isCampaignObjectiveUnlocked(objectiveOrId) {
+    if (!campaignState) return true;
+    const mission = getCurrentMission();
+    const objective = typeof objectiveOrId === 'string'
+        ? mission?.objectives.find(item => item.id === objectiveOrId)
+        : objectiveOrId;
+    if (!objective) return false;
+    return (objective.requires || []).every(id => {
+        const prerequisite = mission.objectives.find(item => item.id === id);
+        return !!prerequisite && (campaignState.objectiveProgress[id] || 0) >= prerequisite.target;
+    });
+}
+
+export function isCampaignMaterialAvailable(name) {
+    if (!campaignState) return true;
+    const resource = campaignState.resources.materials[name];
+    if (!resource || resource.remaining <= 0) return false;
+    const mission = getCurrentMission();
+    const hasExplicitLoadout = Array.isArray(mission.initiallyAvailableMaterials);
+    const explicitlyAvailable = !hasExplicitLoadout || mission.initiallyAvailableMaterials.includes(name) ||
+        mission.objectives.some(objective =>
+            (campaignState.objectiveProgress[objective.id] || 0) >= objective.target &&
+            (objective.unlocks?.materials || []).includes(name));
+    const placementObjectives = mission.objectives.filter(objective =>
+        objective.type === 'material-placement' && objective.material === name);
+    return explicitlyAvailable || placementObjectives.some(objective => isCampaignObjectiveUnlocked(objective));
+}
+
+export function isCampaignClimateControlAllowed(control) {
+    if (!campaignState) return true;
+    const mission = getCurrentMission();
+    if (!(mission.lockedControls || []).includes(control)) return true;
+    return mission.objectives.some(objective =>
+        (campaignState.objectiveProgress[objective.id] || 0) >= objective.target &&
+        (objective.unlocks?.controls || []).includes(control));
+}
+
+export function getCampaignControlLimits(control) {
+    if (!campaignState) return null;
+    const mission = getCurrentMission();
+    let limits = { ...(mission.controlLimits?.[control] || {}) };
+    for (const objective of mission.objectives) {
+        if ((campaignState.objectiveProgress[objective.id] || 0) < objective.target) continue;
+        const unlocked = objective.unlocks?.controlLimits?.[control];
+        if (unlocked) limits = { ...limits, ...unlocked };
+    }
+    return Object.keys(limits).length ? limits : null;
+}
 
 export function startCampaign(missionId = MISSION_DEFINITIONS[0]?.id) {
     const mission = MISSION_DEFINITIONS.find(item => item.id === missionId);
@@ -189,6 +285,10 @@ export function validateCampaignState(state) {
     for (const objective of mission.objectives) {
         const progress = state.objectiveProgress[objective.id];
         if (!Number.isInteger(progress) || progress < 0 || progress > objective.target) return false;
+        if (progress > 0 && (objective.requires || []).some(id => {
+            const prerequisite = mission.objectives.find(item => item.id === id);
+            return !prerequisite || (state.objectiveProgress[id] || 0) < prerequisite.target;
+        })) return false;
     }
     if (Object.keys(state.objectiveProgress).some(id => !mission.objectives.some(objective => objective.id === id))) return false;
     return true;
@@ -197,7 +297,7 @@ export function validateCampaignState(state) {
 export function canUseMaterial(name, amount = 1) {
     if (!campaignState) return true;
     const resource = campaignState.resources.materials[name];
-    return !!resource && Number.isInteger(amount) && amount >= 0 && resource.remaining >= amount;
+    return isCampaignMaterialAvailable(name) && Number.isInteger(amount) && amount >= 0 && resource.remaining >= amount;
 }
 
 export function consumeCampaignMaterial(name, amount = 1) {
@@ -206,8 +306,21 @@ export function consumeCampaignMaterial(name, amount = 1) {
     const resource = campaignState.resources.materials[name];
     resource.used += amount;
     resource.remaining = Math.max(0, resource.limit - resource.used);
-    announceCampaignChange();
+    recordMaterialPlacement(name, amount);
     return true;
+}
+
+export function recordMaterialPlacement(name, amount = 1) {
+    if (!campaignState || !Number.isInteger(amount) || amount <= 0) return campaignState;
+    const mission = getCurrentMission();
+    for (const objective of mission.objectives) {
+        if (objective.type !== 'material-placement' || objective.material !== name ||
+            !isCampaignObjectiveUnlocked(objective)) continue;
+        incrementObjective(objective, amount, false);
+    }
+    updateMissionCompletion();
+    announceCampaignChange();
+    return campaignState;
 }
 
 export function canPlaceMissionMachine(name) {
@@ -261,15 +374,17 @@ export function recordPlantGrowthCompletion(seedId, plantId) {
     return campaignState;
 }
 
-export function recordEnvironmentChange({ temperature, humidity, illumination } = {}) {
+export function recordEnvironmentChange({ temperature, humidity, illumination, dewpoint, windStrength, gustWindStrength } = {}) {
     if (!campaignState) return null;
     const mission = getCurrentMission();
-    if (!mission?.environmentTargets) return campaignState;
-    const targets = mission.environmentTargets;
-    if (!Number.isFinite(temperature) || !Number.isFinite(humidity) || !Number.isFinite(illumination)) return campaignState;
-    if (temperature !== targets.temperature || humidity !== targets.humidity || illumination !== targets.illumination) return campaignState;
     for (const objective of mission.objectives) {
-        if (objective.type === 'environment-target') incrementObjective(objective);
+        if (objective.type !== 'environment-target' || !isCampaignObjectiveUnlocked(objective)) continue;
+        const targets = objective.targetValues || mission.environmentTargets;
+        if (!targets || Object.keys(targets).length === 0) continue;
+        const values = { temperature, humidity, illumination, dewpoint, windStrength, gustWindStrength };
+        if (Object.entries(targets).every(([key, target]) => Number.isFinite(values[key]) && values[key] === target)) {
+            incrementObjective(objective);
+        }
     }
     updateMissionCompletion();
     return campaignState;
@@ -282,11 +397,11 @@ export function dismissMissionRecap() {
     return campaignState;
 }
 
-function incrementObjective(objective) {
-    if (campaignState.missionCompleted) return;
+function incrementObjective(objective, amount = 1, announce = true) {
+    if (campaignState.missionCompleted || !isCampaignObjectiveUnlocked(objective)) return;
     const current = campaignState.objectiveProgress[objective.id] || 0;
     if (current >= objective.target) return;
-    const next = Math.min(objective.target, current + 1);
+    const next = Math.min(objective.target, current + amount);
     campaignState.objectiveProgress[objective.id] = next;
     if (next === objective.target) {
         const eventId = `objective:${objective.id}:complete`;
@@ -296,7 +411,7 @@ function incrementObjective(objective) {
             triggerCampaignEvent('objective-complete', { objectiveId: objective.id });
         }
     }
-    announceCampaignChange();
+    if (announce) announceCampaignChange();
 }
 
 function updateMissionCompletion() {
