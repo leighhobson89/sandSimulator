@@ -671,11 +671,11 @@ function runEcologyClimateRegressions() {
     const rainObjective = missionObjectives.find(objective => objective.type === 'environment-target' &&
         Number.isFinite(objective.targetValues?.humidity) && Number.isFinite(objective.targetValues?.dewpoint));
     const guidance = missionThree?.guidance || '';
-    check('Mission 3 authors 500-cell piles, 150-cell wet milestones, 500-cell drying goals, and 95/20 rain targets',
+    check('Mission 3 authors 500-cell piles, 150-cell wet and dry goals, and 95/20 rain targets',
         pileTargets.every(target => target === 500) && wetTargets.every(target => target === 150) &&
-        dryTargets.every(target => target === 500) &&
+        dryTargets.every(target => target === 150) &&
         rainObjective?.targetValues?.humidity === 95 && rainObjective?.targetValues?.dewpoint === 20 &&
-        /rain/i.test(guidance) && /500.*wet|wet.*500/i.test(guidance) && /dry|heat/i.test(guidance),
+        /rain/i.test(guidance) && /150.*wet|wet.*150/i.test(guidance) && /dry|heat/i.test(guidance),
         JSON.stringify({ pileTargets, wetTargets, dryTargets, rainObjective, guidance }));
 
     console.log('\nExtreme heat and mature Banana Plant growth');
@@ -778,10 +778,10 @@ function runDewpointClimateRegressions() {
         objectives.find(objective => objective.type === 'transformation' &&
             objective.from === from && objective.to === to)?.target);
     const guidance = missionThree?.guidance || '';
-    check('Mission 3 uses 95% humidity, 20C dewpoint, 150 wet milestones, and 500 drying goals',
+    check('Mission 3 uses 95% humidity, 20C dewpoint, and 150-cell wet and dry goals',
         rainObjective?.targetValues?.humidity === 95 && rainObjective?.targetValues?.dewpoint === 20 &&
-        wetTargets.every(target => target === 150) && dryTargets.every(target => target === 500) &&
-        /rain/i.test(guidance) && /500.*wet|wet.*500/i.test(guidance),
+        wetTargets.every(target => target === 150) && dryTargets.every(target => target === 150) &&
+        /rain/i.test(guidance) && /150.*wet|wet.*150/i.test(guidance),
         JSON.stringify({ rainObjective, wetTargets, dryTargets, guidance }));
 
     if (ID.Cloud > 0 && ID.Water > 0) {
@@ -4781,15 +4781,28 @@ section('Steam condenses only when humidity and dewpoint conditions are met');
 const steamWeatherState = snapshotSimulationState();
 const steamWeatherSeed = getRandomSeed();
 try {
-    function steamWeatherFixture({ airTemp, humidity, dewpoint }) {
+    function steamWeatherFixture({ airTemp, humidity, dewpoint, steamCount = 1, steamY = 20, matchSteamToAir = true }) {
         resetThermalContractFixture(airTemp);
         physics.setAmbientHumidityTarget(humidity);
         physics.setDewpointTarget(dewpoint);
         getWorld().humidity.fill(humidity);
         setRandomSeed(904);
-        setCell(28, 20, ID.Steam);
-        getWorld().temp[index(28, 20)] = airTemp;
+        for (let offset = 0; offset < steamCount; offset++) setCell(28 + offset, steamY, ID.Steam);
+        if (matchSteamToAir) getWorld().temp[index(28, steamY)] = airTemp;
     }
+
+    steamWeatherFixture({ airTemp: 25, humidity: 95, dewpoint: 10, steamCount: 24, matchSteamToAir: false });
+    const steamTemperatures = Array.from({ length: 24 }, (_, offset) => tempAt(28 + offset, 20));
+    check('new Steam particles vary around their 200C default temperature',
+        Math.min(...steamTemperatures) >= 194 && Math.max(...steamTemperatures) <= 206 &&
+        Math.max(...steamTemperatures) - Math.min(...steamTemperatures) >= 8,
+        `${Math.min(...steamTemperatures).toFixed(1)}C to ${Math.max(...steamTemperatures).toFixed(1)}C`);
+
+    steamWeatherFixture({ airTemp: 20, humidity: 95, dewpoint: 20, steamCount: 24, steamY: 22, matchSteamToAir: false });
+    run(1);
+    check('Steam at one shared air temperature condenses across its particle dewpoint spread',
+        countOf(ID.Steam) > 0 && countOf(ID.Water) > 0,
+        `${countOf(ID.Steam)} Steam, ${countOf(ID.Water)} Water`);
 
     steamWeatherFixture({ airTemp: 25, humidity: 10, dewpoint: 10 });
     const drySteamStart = countOf(ID.Steam);
@@ -6860,9 +6873,15 @@ if (hasHumidityApi && seedNames.every(name => ID[name] > 0) && plantNames.every(
     const dryObjectives = dryTransitions.map(findTransitionObjective);
     const dryingHeatObjective = missionThree?.objectives?.find(objective => objective.type === 'environment-target' &&
         objective.targetValues?.temperature === 150);
+    const glassHeatObjective = missionThree?.objectives?.find(objective => objective.type === 'environment-target' &&
+        objective.targetValues?.temperature === 350);
+    const sandGlassObjective = missionThree?.objectives?.find(objective =>
+        objective.type === 'transformation' && objective.from === 'Sand' && objective.to === 'Glass');
     const highHeatObjective = missionThree?.objectives?.find(objective => objective.type === 'environment-target' &&
         objective.targetValues?.temperature === 2000);
-    const highHeatUnlock = dryObjectives.find(objective => objective?.unlocks?.controlLimits?.temperature?.max === 2000);
+    const highHeatUnlock = sandGlassObjective?.unlocks?.controlLimits?.temperature?.max === 2000
+        ? sandGlassObjective : null;
+    const dryMudDefinition = defs.find(definition => definition?.name === 'Dry Mud');
     const lavaTransitions = [
         ['Sand', 'Glass'], ['Glass', 'Lava'], ['Dry Mud', 'Lava'], ['Ash', 'Lava']
     ];
@@ -6882,29 +6901,31 @@ if (hasHumidityApi && seedNames.every(name => ID[name] > 0) && plantNames.every(
     check('completing the Steam placement objective unlocks Humidity and Dewpoint',
         ['humidity', 'dewpoint'].every(control => steamPlacementObjective?.unlocks?.controls?.includes(control)),
         JSON.stringify(steamPlacementObjective?.unlocks));
-    check('Mission 3 uses the rain climate target, wets 150 per pile, and keeps 500-cell drying targets',
+    check('Mission 3 uses the rain climate target and wets and dries 150 cells per pile',
         rainObjective?.targetValues?.humidity === 95 && rainObjective?.targetValues?.dewpoint === 20 &&
         rainObjective.requires?.includes(steamPlacementObjective?.id) &&
         wetObjectives.every(objective => objective?.target === 150 && objective.requires?.includes(rainObjective.id)) &&
-        dryObjectives.every((objective, index) => objective?.target === 500 &&
+        dryObjectives.every((objective, index) => objective?.target === 150 &&
             objective.requires?.includes(wetObjectives[index]?.id)) &&
-        /rain/i.test(missionThree?.guidance || '') && /500.*wet|wet.*500/i.test(missionThree?.guidance || '') &&
+        /rain/i.test(missionThree?.guidance || '') && /150.*wet|wet.*150/i.test(missionThree?.guidance || '') &&
         /dry|heat/i.test(missionThree?.guidance || '') &&
         !!dryingHeatObjective && dryObjectives.every(objective => objective.requires?.includes(dryingHeatObjective.id)),
         JSON.stringify({ rainObjective, wetObjectives, dryingHeatObjective, dryObjectives }));
-    check('the final Ash-drying objective unlocks 2,000C after Sand and Mud have dried, before Lava',
-        !!highHeatObjective && !!highHeatUnlock && highHeatUnlock === dryObjectives[2] &&
-        highHeatUnlock.requires?.includes(dryObjectives[0]?.id) &&
-        highHeatUnlock.requires?.includes(dryObjectives[1]?.id) &&
-        highHeatUnlock.requires?.includes(dryingHeatObjective?.id) &&
-        highHeatObjective.requires?.includes(highHeatUnlock.id) &&
-        lavaObjectives.every(objective => objective?.target > 0 && objective.requires?.includes(highHeatObjective.id)),
-        JSON.stringify({ highHeatObjective, highHeatUnlock, dryingHeatObjective, lavaObjectives }));
+    check('Ash drying unlocks 350C glass heat; 200 Glass unlocks 2,000C Lava heat',
+        !!glassHeatObjective && !!highHeatObjective && !!highHeatUnlock && highHeatUnlock === sandGlassObjective &&
+        dryObjectives[2]?.unlocks?.controlLimits?.temperature?.max === 350 &&
+        glassHeatObjective.targetValues?.temperature === 350 &&
+        sandGlassObjective?.target === 200 && sandGlassObjective.requires?.includes(glassHeatObjective.id) &&
+        highHeatObjective.requires?.includes(sandGlassObjective.id) &&
+        lavaObjectives.slice(1).every(objective => objective?.target > 0 && objective.requires?.includes(highHeatObjective.id)) &&
+        dryMudDefinition?.meltPoint === 1200 && defs[dryMudDefinition.meltsInto]?.name === 'Lava',
+        JSON.stringify({ glassHeatObjective, sandGlassObjective, highHeatObjective, highHeatUnlock, lavaObjectives }));
 
     const canTrackPlacement = typeof campaign.recordMaterialPlacement === 'function';
     check('campaign runtime exports material-placement objective tracking', canTrackPlacement);
     if (missionThree && canTrackPlacement && dryPlacementObjectives.every(Boolean) && steamPlacementObjective &&
-        rainObjective && wetObjectives.every(Boolean) && dryObjectives.every(Boolean) && dryingHeatObjective && highHeatObjective &&
+        rainObjective && wetObjectives.every(Boolean) && dryObjectives.every(Boolean) && dryingHeatObjective &&
+        glassHeatObjective && sandGlassObjective && highHeatObjective &&
         lavaObjectives.every(Boolean)) {
         try {
             campaign.startCampaign(missionThree.id);
@@ -6958,12 +6979,18 @@ if (hasHumidityApi && seedNames.every(name => ID[name] > 0) && plantNames.every(
                 wetObjectives.concat(dryObjectives).every(objective =>
                     campaign.getCampaignState().objectiveProgress[objective.id] === objective.target),
                 JSON.stringify(campaign.getCampaignState().objectiveProgress));
+            campaign.recordEnvironmentChange({ temperature: 350 });
+            recordTransition('Sand', 'Glass', sandGlassObjective.target);
+            check('forming 200 Glass unlocks the 2,000C temperature limit',
+                campaign.getCampaignControlLimits('temperature')?.max === 2000 &&
+                campaign.getCampaignState().objectiveProgress[sandGlassObjective.id] === sandGlassObjective.target,
+                JSON.stringify(campaign.getCampaignState().objectiveProgress));
             campaign.recordEnvironmentChange({ temperature: 2000 });
             check('the gated high-heat target accepts a temperature-only environment target',
                 campaign.getCampaignState().objectiveProgress[highHeatObjective.id] === highHeatObjective.target,
                 JSON.stringify(campaign.getCampaignState().objectiveProgress));
 
-            for (const [from, to] of lavaTransitions) {
+            for (const [from, to] of lavaTransitions.slice(1)) {
                 const objective = findTransitionObjective([from, to]);
                 recordTransition(from, to, objective.target);
             }

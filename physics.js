@@ -240,6 +240,12 @@ export function resetRandomSource() {
 
 function random() { return randomSource(); }
 
+function temperatureWithParticleVariance(def, temperature, shadeValue) {
+    if (!def || !Number.isFinite(def.temperatureVariance) || def.temperatureVariance <= 0) return temperature;
+    const variation = (shadeValue / 255 - 0.5) * 2;
+    return temperature + variation * def.temperatureVariance;
+}
+
 // The plant that wet mud grows, worked out from the sprout rules when the
 // definitions are prepared. A plant rooted in both wet mud and wet sand grows
 // as this one, wet mud being the richer of the two soils.
@@ -448,6 +454,7 @@ export function prepareDefinitions(json) {
             // rising, for as long as there is fuel beside it.
             clings: p.clings || 0,
             defaultTemp: p.defaultTemp === undefined ? AMBIENT : p.defaultTemp,
+            temperatureVariance: Math.max(0, p.temperatureVariance || 0),
             emit: p.emit || 0,
             emitRate: p.emitRate || 0,
             // The temperature the colour fade treats as fully hot. A heat
@@ -3914,6 +3921,7 @@ export function setCell(x, y, id, keepTemp) {
         machineCollisionMaskDirty = true;
     }
     const wasSameRay = previousType === id && def?.forceRate > 0;
+    world.shade[i] = random() * 255;
     if (previousType !== id) invalidateLocalIlluminationForTypes(previousType, id);
     if (participatesInElectricalNetwork(previousDef) || participatesInElectricalNetwork(def)) {
         invalidateElectricalState({ topology: true });
@@ -3932,7 +3940,8 @@ export function setCell(x, y, id, keepTemp) {
         // Ray tools ramp from the local air temperature instead of arriving as
         // a fully hot or cold cell on the first painted frame.
         world.temp[i] = wasSameRay ? world.temp[i]
-            : (def.forceRate > 0 ? getAirTempAt(y) : def.defaultTemp);
+            : (def.forceRate > 0 ? getAirTempAt(y)
+                : temperatureWithParticleVariance(def, def.defaultTemp, world.shade[i]));
     }
     world.heat[i] = 0;
     world.plantHealth[i] = def?.isPlant ? 0.5 : 0;
@@ -3957,7 +3966,6 @@ export function setCell(x, y, id, keepTemp) {
     world.power[i] = 0;
     world.powerDelay[i] = 0;
     world.charge[i] = 0;
-    world.shade[i] = random() * 255;
     world.moved[i] = 1;
 }
 
@@ -5876,11 +5884,15 @@ function applyStateChange(x, y, i, def) {
             const spot = findEmptyNeighbour(x, y);
             if (spot >= 0) {
                 transform(spot, def.boilEmits);
-                world.temp[spot] = Math.max(world.temp[spot], DEFS[def.boilEmits].defaultTemp);
+                const emittedDef = DEFS[def.boilEmits];
+                world.temp[spot] = Math.max(world.temp[spot], temperatureWithParticleVariance(
+                    emittedDef, emittedDef.defaultTemp, world.shade[spot]));
             }
         }
         transform(i, def.boilsInto);
-        world.temp[i] = Math.max(world.temp[i], DEFS[def.boilsInto].defaultTemp);
+        const boiledDef = DEFS[def.boilsInto];
+        world.temp[i] = Math.max(world.temp[i], temperatureWithParticleVariance(
+            boiledDef, boiledDef.defaultTemp, world.shade[i]));
         return true;
     }
 
@@ -5968,13 +5980,16 @@ function applyReactions(x, y, i, def) {
         updatePlantHealth(x, y, i, def)) return true;
 
     // Steam and Cloud share one dewpoint rule. Local humidity determines
-    // saturation; the air temperature determines whether condensation occurs
-    // and whether it settles as liquid rain or solid snow.
+    // saturation; air temperature and any material-specific particle offset
+    // determine when condensation occurs and whether it settles as rain or snow.
     if (def.dewpointCondensation) {
         const localAirTemp = getAirTempAt(y);
         const humidity = humidityNearCell(x, y);
         const requiredHumidity = def.precipitationChance > 0 ? 88 : 82;
-        const reachesDewpoint = localAirTemp <= dewpointTarget;
+        const particleDewpointOffset = def.temperatureVariance > 0
+            ? (world.shade[i] / 255 - 0.5) * 2 * def.temperatureVariance
+            : 0;
+        const reachesDewpoint = localAirTemp <= dewpointTarget - particleDewpointOffset;
         const precipitates = def.precipitationChance > 0 && reachesDewpoint &&
             humidity >= requiredHumidity && random() < def.precipitationChance;
         const steamCondenses = def.precipitationChance === 0 && reachesDewpoint && humidity >= requiredHumidity;
@@ -6151,7 +6166,8 @@ function applyReactions(x, y, i, def) {
             if (typeAt(nx, ny) !== water) continue;
             const ni = ny * COLS + nx;
             transform(ni, idOf('Steam'));
-            world.temp[ni] = Math.max(world.temp[ni], 160);
+            world.temp[ni] = Math.max(world.temp[ni], temperatureWithParticleVariance(
+                DEFS[world.type[ni]], 160, world.shade[ni]));
             transform(i, def.quenchedInto);
             world.temp[i] = Math.min(world.temp[i], 400);
             return true;

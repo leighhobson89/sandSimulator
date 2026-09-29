@@ -178,12 +178,12 @@ test('Mission 2 selection survives progress rerenders and resets after restart, 
     await advanceFromMissionRecap(page, 3);
     await page.locator('#missionIntroOk').click();
     await expect(page.locator('#missionHud')).toBeVisible();
-    await expect(page.locator(positionLabel)).toHaveText('1 / 17');
+    await expect(page.locator(positionLabel)).toHaveText('1 / 18');
     await expect(page.locator(currentCard)).toHaveAttribute('data-objective-id', 'place-sand');
     await expect(page.locator(previousButton)).toBeDisabled();
 });
 
-test('Mission 3 carousel counts 17 objectives, marks gates, and keeps completed cards selected', async ({ page }) => {
+test('Mission 3 carousel counts 18 objectives, marks gates, and keeps completed cards selected', async ({ page }) => {
     await startMissionThree(page);
     await expect(page.locator('#missionObjectiveCarousel')).toBeVisible();
     const missionData = await page.evaluate(async () => {
@@ -194,32 +194,32 @@ test('Mission 3 carousel counts 17 objectives, marks gates, and keeps completed 
             steamId: campaign.getCurrentMission().objectives.find(objective => objective.id === 'place-steam')?.id
         };
     });
-    expect(missionData.count).toBe(17);
+    expect(missionData.count).toBe(18);
     expect(missionData.firstId).toBe('place-sand');
     expect(missionData.steamId).toBe('place-steam');
-    await expect(page.locator(positionLabel)).toHaveText('1 / 17');
+    await expect(page.locator(positionLabel)).toHaveText('1 / 18');
     await expect(page.locator(previousButton)).toBeDisabled();
     await expect(page.locator(nextButton)).toBeEnabled();
 
     await page.evaluate(async () => (await import('/campaign.js')).recordMaterialPlacement('Sand', 500));
-    await expectCompletedCard(page, 'place-sand', '1 / 17');
+    await expectCompletedCard(page, 'place-sand', '1 / 18');
 
     for (let count = 0; count < 3; count++) await page.locator(nextButton).click();
-    await expect(page.locator(positionLabel)).toHaveText('4 / 17');
+    await expect(page.locator(positionLabel)).toHaveText('4 / 18');
     await expect(page.locator(currentCard)).toHaveAttribute('data-objective-id', 'place-steam');
     await expect(page.locator(currentCard)).toHaveAttribute('data-objective-locked', 'true');
     await expect(page.locator(currentCard)).toContainText(/locked/i);
 
-    for (let count = 4; count < 17; count++) await page.locator(nextButton).click();
-    await expect(page.locator(positionLabel)).toHaveText('17 / 17');
+    for (let count = 4; count < 18; count++) await page.locator(nextButton).click();
+    await expect(page.locator(positionLabel)).toHaveText('18 / 18');
     await expect(page.locator(nextButton)).toBeDisabled();
     await expect(page.locator(previousButton)).toBeEnabled();
 
-    for (let count = 0; count < 16; count++) await page.locator(previousButton).click();
-    await expect(page.locator(positionLabel)).toHaveText('1 / 17');
+    for (let count = 0; count < 17; count++) await page.locator(previousButton).click();
+    await expect(page.locator(positionLabel)).toHaveText('1 / 18');
     await expect(page.locator(previousButton)).toBeDisabled();
     await expect(page.locator(currentCard)).toHaveAttribute('data-objective-id', 'place-sand');
-    await expectCompletedCard(page, 'place-sand', '1 / 17');
+    await expectCompletedCard(page, 'place-sand', '1 / 18');
 });
 
 test('objective carousel has labelled controls, supports Enter, and truncates narrow labels accessibly', async ({ page }) => {
@@ -236,10 +236,10 @@ test('objective carousel has labelled controls, supports Enter, and truncates na
     await next.focus();
     await expect(next).toBeFocused();
     await page.keyboard.press('Enter');
-    await expect(page.locator(positionLabel)).toHaveText('2 / 17');
+    await expect(page.locator(positionLabel)).toHaveText('2 / 18');
     await next.click();
     await next.click();
-    await expect(page.locator(positionLabel)).toHaveText('4 / 17');
+    await expect(page.locator(positionLabel)).toHaveText('4 / 18');
     await expect(page.locator(currentCard)).toHaveAttribute('data-objective-id', 'place-steam');
     await expect(page.locator(currentCard)).toHaveAttribute('data-objective-locked', 'true');
     await expect(page.locator(currentCard)).toHaveAttribute('aria-live', 'polite');

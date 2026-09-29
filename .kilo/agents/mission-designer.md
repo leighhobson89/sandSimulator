@@ -376,6 +376,7 @@ Before finalising each mission, internally answer:
 11. Does it feel meaningfully different from nearby missions?
 12. Is the player being asked to understand rather than merely follow instructions?
 13. Have I considered what scenario I will set up for the start of the mission i.e. solid box of glass with acid in it for a mission that teaches what acid does, in order to hold it there without corroding as an example, etc, as I need to create starting scenarios for each mission and blank is also valid in some earlier cases.
+14. Have I considered how I will express what the developer agent is going to build in the scenario?  Do I know how the code works to successfully explain what I want in the level?
 
 # Mission Dependencies
 

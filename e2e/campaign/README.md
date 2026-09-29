@@ -40,15 +40,15 @@ values above the cap clamp to 30 C. Leaving Campaign restores Sandbox's normal
 4,000 C maximum. Mission 3, **The Basin in Three States**, starts from a blank
 world with Sand, Dry Mud, and Ash placement stages, then gates Steam, Humidity,
 Dewpoint, rain at 95% Humidity / 20 C Dewpoint, drying, and the Lava phase.
-Each wet milestone is 150 transitions; guidance and the staged spec keep rain
-going until 500 units of each pile are wet before heating to 150 C and drying
-500 of each. Completing the Ash-drying objective raises the cap to 2,000 C.
+Each wet and dry milestone is 150 transitions. Completing the Ash-drying
+objective raises the cap to 350 C for the Sand-to-Glass stage; forming 200
+Glass then raises it to 2,000 C for Lava.
 
 `objective-carousel.spec.mjs` covers the single selected objective row and
 1-based `N / total` counter, bounded previous/next buttons, completion status
 without auto-advance, and locked items remaining in the count. It verifies
 Mission 1's 1/1 boundaries, Mission 2's four-step navigation and selection
-stability, Mission 3's 17-item sequence and locked Steam objective, and
+stability, Mission 3's 18-item sequence and locked Steam objective, and
 selection reset after restart, reload/resume, and advance. Selection is
 transient and resets to the first item for each new or resumed mission.
 At desktop and narrow viewport widths, it also checks the single-row layout,

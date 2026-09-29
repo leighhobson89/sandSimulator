@@ -158,14 +158,15 @@ own workflow captures them. See the [Playwright HTML reporter guide](https://pla
 - `e2e/campaign/mission-three-staged-progression.spec.mjs` covers the blank
   Mission 3 world, staged pile and Steam placement, climate-control unlocks,
   Humidity 95% / Dewpoint 20 C rain targets, 150-transition wet milestones,
-  continuing rain until 500 of each material is wet, the 150 C drying cap, the
-  2,000 C Lava phase, and campaign completion. Material-phase progress is
+  150-transition drying goals, the 150 C and 350 C temperature stages, 200
+  Sand-to-Glass transformations, the 2,000 C Lava phase, and campaign
+  completion. Material-phase progress is
   driven through the campaign transition callback; the spec does not simulate
   a full rainfall cycle.
 - `e2e/campaign/objective-carousel.spec.mjs` verifies Mission 1's 1/1
   objective and disabled navigation at both ends; Mission 2's four objectives,
   progress rerender stability, and selection resets on restart, reload/resume,
-  and advance; and Mission 3's 17 objectives, locked Steam state, boundaries,
+  and advance; and Mission 3's 18 objectives, locked Steam state, boundaries,
   and completed-card selection without auto-advance. The carousel selectors
   include `#missionObjectivePrevious`, `#missionObjectiveNext`,
   `#missionObjectivePosition`, `#missionObjectiveCurrent`, and
@@ -568,9 +569,9 @@ Dry Mud-to-Lava checks were also verified.
 
 The Mission 2 checks cover the 30 C mission-specific maximum on both inputs,
 clamping, and restoration of the Sandbox 4,000 C maximum. Mission 3 begins
-blank, stages material and climate access, holds temperature to 150 C until
-drying completes, and unlocks 2,000 C for the final material transitions. The
-editor round-trip covers the mission `controlLimits` JSON field,
+blank, stages material and climate access, dries 150 cells of each material at
+150 C, unlocks 350 C for Sand-to-Glass, then unlocks 2,000 C after 200 Glass.
+The editor round-trip covers the mission `controlLimits` JSON field,
 `#campaignEditorControlLimits`, objective prerequisites, partial target values,
 and control unlocks. Carousel coverage verifies its 1-based position, bounded
 arrows, completed state without auto-advance, gated item visibility, and

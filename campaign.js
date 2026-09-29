@@ -66,8 +66,8 @@ const MISSION_DEFINITIONS = Object.freeze([
         "id": "three-states",
         "number": 3,
         "title": "The Basin in Three States",
-        "briefing": "Start with a blank basin. Build dry Sand, Dry Mud, and Ash piles, bring in Steam, and use moderate humidity and dewpoint settings to make rain. Wet 150 cells of each pile to unlock the drying stage, then let all three piles get fully wet before drying them at the 150 \u00B0C limit. Drying Ash unlocks extreme heat so you can transform each material into Lava.",
-        "guidance": "Place at least 500 cells each of Sand, Dry Mud, and Ash. Steam becomes available when all three piles are placed. Place 500 Steam, then set Humidity to 95% and Dewpoint to 20 \u00B0C. Steam will rise and condense in cooler air, making rain. Wetting 150 cells of each pile unlocks the next stage; keep the rain going until all 500 cells in each pile are wet before heating to 150 \u00B0C and drying them in order. Drying the Ash pile unlocks a 2,000 \u00B0C temperature limit; reach that temperature, then melt Sand through Glass, and melt Dry Mud and Ash into Lava.",
+        "briefing": "Start with a blank basin. Build dry Sand, Dry Mud, and Ash piles, bring in Steam, and make rain. Dry 150 cells of each pile, then use 350 \u00B0C to turn Sand into 200 Glass. That unlocks 2,000 \u00B0C for the Lava stage.",
+        "guidance": "Place at least 500 cells each of Sand, Dry Mud, and Ash. Steam becomes available when all three piles are placed. Place 500 Steam, then set Humidity to 95% and Dewpoint to 20 \u00B0C. Steam will rise and condense in cooler air, making rain. Let 150 cells of each pile get wet, then raise Temperature to 150 \u00B0C and dry 150 Sand, Dry Mud, and Ash cells in order. Drying Ash unlocks a 350 \u00B0C limit. Raise Temperature to 350 \u00B0C and form 200 Glass from Sand; this unlocks the 2,000 \u00B0C limit. Then heat to 2,000 \u00B0C to turn Glass, Dry Mud, and Ash into Lava.",
         "world": { "cols": 260, "rows": 150 },
         "startingLayout": { "type": "blank" },
         "resourceBudgets": { "materials": { "Sand": 5000, "Dry Mud": 5000, "Ash": 5000, "Steam": 8000 }, "machines": {} },
@@ -91,12 +91,13 @@ const MISSION_DEFINITIONS = Object.freeze([
             { "id": "wet-mud", "type": "transformation", "from": "Dry Mud", "to": "Wet Mud", "target": 150, "requires": ["make-rain"], "label": "Let rain wet 150 Dry Mud cells." },
             { "id": "wet-ash", "type": "transformation", "from": "Ash", "to": "Wet Ash", "target": 150, "requires": ["make-rain"], "label": "Let rain wet 150 Ash cells." },
             { "id": "set-drying-temperature", "type": "environment-target", "target": 1, "targetValues": { "temperature": 150 }, "requires": ["wet-sand", "wet-mud", "wet-ash"], "label": "Raise Temperature to the 150 °C limit to dry the piles." },
-            { "id": "dry-sand", "type": "transformation", "from": "Wet Sand", "to": "Sand", "target": 500, "requires": ["wet-sand", "set-drying-temperature"], "label": "Heat Wet Sand until it dries back into Sand." },
-            { "id": "dry-mud", "type": "transformation", "from": "Wet Mud", "to": "Dry Mud", "target": 500, "requires": ["wet-mud", "set-drying-temperature", "dry-sand"], "label": "Heat Wet Mud until it dries back into Dry Mud." },
-            { "id": "dry-ash", "type": "transformation", "from": "Wet Ash", "to": "Ash", "target": 500, "requires": ["wet-ash", "set-drying-temperature", "dry-sand", "dry-mud"], "unlocks": { "controlLimits": { "temperature": { "max": 2000 } } }, "label": "Dry the Ash pile; this unlocks the 2,000 °C temperature limit." },
-            { "id": "set-lava-temperature", "type": "environment-target", "target": 1, "targetValues": { "temperature": 2000 }, "requires": ["dry-ash"], "label": "Raise Temperature to 2,000 °C." },
-            { "id": "melt-sand-to-glass", "type": "transformation", "from": "Sand", "to": "Glass", "target": 500, "requires": ["set-lava-temperature"], "label": "Melt Sand into Glass." },
-            { "id": "melt-glass-to-lava", "type": "transformation", "from": "Glass", "to": "Lava", "target": 500, "requires": ["set-lava-temperature", "melt-sand-to-glass"], "label": "Heat Glass until it melts into Lava." },
+            { "id": "dry-sand", "type": "transformation", "from": "Wet Sand", "to": "Sand", "target": 150, "requires": ["wet-sand", "set-drying-temperature"], "label": "Dry 150 Wet Sand cells back into Sand." },
+            { "id": "dry-mud", "type": "transformation", "from": "Wet Mud", "to": "Dry Mud", "target": 150, "requires": ["wet-mud", "set-drying-temperature", "dry-sand"], "label": "Dry 150 Wet Mud cells back into Dry Mud." },
+            { "id": "dry-ash", "type": "transformation", "from": "Wet Ash", "to": "Ash", "target": 150, "requires": ["wet-ash", "set-drying-temperature", "dry-sand", "dry-mud"], "unlocks": { "controlLimits": { "temperature": { "max": 350 } } }, "label": "Dry 150 Wet Ash cells; this unlocks the 350 °C glass stage." },
+            { "id": "set-glass-temperature", "type": "environment-target", "target": 1, "targetValues": { "temperature": 350 }, "requires": ["dry-ash"], "label": "Raise Temperature to 350 °C to melt Sand into Glass." },
+            { "id": "melt-sand-to-glass", "type": "transformation", "from": "Sand", "to": "Glass", "target": 200, "requires": ["set-glass-temperature"], "unlocks": { "controlLimits": { "temperature": { "max": 2000 } } }, "label": "Form 200 Glass from Sand; this unlocks the 2,000 °C Lava stage." },
+            { "id": "set-lava-temperature", "type": "environment-target", "target": 1, "targetValues": { "temperature": 2000 }, "requires": ["melt-sand-to-glass"], "label": "Raise Temperature to 2,000 °C." },
+            { "id": "melt-glass-to-lava", "type": "transformation", "from": "Glass", "to": "Lava", "target": 200, "requires": ["set-lava-temperature", "melt-sand-to-glass"], "label": "Heat 200 Glass cells until they melt into Lava." },
             { "id": "melt-dry-mud-to-lava", "type": "transformation", "from": "Dry Mud", "to": "Lava", "target": 500, "requires": ["set-lava-temperature", "dry-mud"], "label": "Melt Dry Mud into Lava." },
             { "id": "melt-ash-to-lava", "type": "transformation", "from": "Ash", "to": "Lava", "target": 500, "requires": ["set-lava-temperature", "dry-ash"], "label": "Melt Ash into Lava." }
         ],
@@ -104,8 +105,9 @@ const MISSION_DEFINITIONS = Object.freeze([
             { "id": "steam-placed", "when": { "type": "objective-complete", "objectiveId": "place-steam" }, "message": "Steam has opened the Humidity and Dewpoint controls. Set Humidity to 95% and Dewpoint to 20 °C so Steam can rise before condensing into rain." },
             { "id": "rain-started", "when": { "type": "objective-complete", "objectiveId": "make-rain" }, "message": "At 95% Humidity and a 20 °C Dewpoint, rising Steam can condense in cooler air and fall as rain." },
             { "id": "drying-temperature-ready", "when": { "type": "objective-complete", "objectiveId": "set-drying-temperature" }, "message": "At the 150 °C limit, the wet piles can now dry out." },
-            { "id": "extreme-heat-unlocked", "when": { "type": "objective-complete", "objectiveId": "dry-ash" }, "message": "All three materials are dry. The Temperature control now reaches 2,000 °C." },
-            { "id": "lava-temperature-ready", "when": { "type": "objective-complete", "objectiveId": "set-lava-temperature" }, "message": "At 2,000 °C, Sand, Dry Mud, and Ash can become Lava." }
+            { "id": "glass-heat-unlocked", "when": { "type": "objective-complete", "objectiveId": "dry-ash" }, "message": "All three materials are dry. The Temperature control now reaches 350 °C for the Sand-to-Glass stage." },
+            { "id": "glass-formed", "when": { "type": "objective-complete", "objectiveId": "melt-sand-to-glass" }, "message": "You formed 200 Glass. The Temperature control now reaches 2,000 °C for the Lava stage." },
+            { "id": "lava-temperature-ready", "when": { "type": "objective-complete", "objectiveId": "set-lava-temperature" }, "message": "At 2,000 °C, Glass, Dry Mud, and Ash can become Lava. Dry Mud melts above 1,200 °C." }
         ]
     }
 ]);

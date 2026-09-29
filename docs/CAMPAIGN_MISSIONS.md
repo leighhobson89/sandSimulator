@@ -31,18 +31,18 @@ Thaw the frozen ground, prepare a warm growing climate, and bring a Banana Plant
 
 ## 3. The Basin in Three States
 
-Begin with a blank basin, build three dry material piles, make rain with Steam and climate controls, then dry the piles under a 150 °C limit before unlocking extreme heat and turning them into Lava.
+Begin with a blank basin, build three dry material piles, make rain with Steam and climate controls, dry 150 cells of each pile, then form 200 Glass at 350 °C before unlocking 2,000 °C for the Lava stage.
 
 **Objectives**
 
 - Place 500 cells each of Sand, Dry Mud, and Ash. Steam becomes available after all three piles are placed; then place 500 Steam above the piles.
-- Set Humidity to 95% and Dewpoint to 20 °C to make rain; reach the 150-cell wetting milestone for each pile, then keep rain going until at least 500 cells of each pile are wet.
-- Raise Temperature to the 150 °C limit and dry 500 Sand, Dry Mud, and Ash cells back to their original forms.
-- After all three piles are dry, use the newly unlocked 2,000 °C Temperature limit.
-- Melt Sand through Glass into Lava, then turn Dry Mud and Ash into Lava.
+- Set Humidity to 95% and Dewpoint to 20 °C to make rain; let 150 cells of each pile become wet.
+- Raise Temperature to the 150 °C limit and dry 150 Sand, Dry Mud, and Ash cells back to their original forms.
+- Drying Ash unlocks a 350 °C temperature limit. Raise Temperature to 350 °C and form 200 Glass from Sand.
+- Forming 200 Glass unlocks the 2,000 °C limit. Raise Temperature to 2,000 °C, then melt Glass, Dry Mud, and Ash into Lava. Dry Mud melts above 1,200 °C.
 
 **Equipment:** Sand (5,000), Dry Mud (5,000), Ash (5,000), Steam (8,000), Brush.  
-**Controls:** Temperature (maximum 150 °C, then 2,000 °C), Humidity and Dewpoint (unlocked after Steam); Ambient Light and Wind remain locked.
+**Controls:** Temperature (maximum 150 °C, then 350 °C, then 2,000 °C), Humidity and Dewpoint (unlocked after Steam); Ambient Light and Wind remain locked.
 ## 4. The Snowmelt Run
 
 Guide Snow through its change into Water and use the melt to wet nearby ground.

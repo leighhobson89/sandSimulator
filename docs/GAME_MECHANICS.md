@@ -93,13 +93,19 @@ and budgets 5,000 each of Sand, Dry Mud, and Ash plus 8,000 Steam. The three
 after all three piles are placed; placing 500 Steam unlocks the Humidity and
 Dewpoint controls. Setting Humidity to 95% and Dewpoint to 20 C enables the
 rain objective and three wetting milestones, each at 150 transformations.
-Keep rain and Steam in place until at least 500 cells of each pile are wet
-before raising Temperature. The 150 C temperature cap then gates the three
-500-cell drying objectives. Completing the Ash-drying objective raises the
-maximum to 2,000 C and enables the final Lava objectives. The materials
-transform Sand to Glass to Lava, Dry Mud directly to Lava at its 1,200 C melt
-point, and Ash to Lava. Mission-specific limits are resolved over the Sandbox
-maximum and do not change Sandbox controls.
+Once 150 cells of each pile are wet, the 150 C temperature cap gates three
+150-cell drying objectives. Completing the Ash-drying objective raises the
+maximum to 350 C for the Sand-to-Glass stage. Forming 200 Glass raises the
+maximum to 2,000 C for the Lava stage. Sand melts into Glass above 320 C,
+Glass melts into Lava above 375 C, Dry Mud melts directly into Lava above
+1,200 C, and Ash melts into Lava above 900 C. Mission-specific limits are
+resolved over the Sandbox maximum and do not change Sandbox controls.
+
+Steam particles begin within 6 C of their default temperature. A cooler
+particle has a higher dewpoint threshold and condenses first; a warmer particle
+has a lower threshold and waits until the local air cools further. This spreads
+condensation across a 12 C band instead of turning a whole group of Steam into
+rain at one shared air temperature.
 
 Campaign catalogs hide unavailable materials, machines, and tools. Categories
 with available entries automatically expand in Campaign; empty categories are
@@ -277,7 +283,7 @@ simulation description in [`PROGRAM_OVERVIEW.md`](PROGRAM_OVERVIEW.md).
 | --- | --- |
 | Powders | Loose materials fall and slide diagonally. Water wets Sand, Dry Mud, and Ash into Wet Sand, Wet Mud, and Wet Ash. Corrosion falls as a powder and melts into Lava at high heat. Powders do not sort themselves by density against other powders. |
 | Liquids | Water, Oil, Lava, and Acid flow and seek a level. Liquid storage also accepts molten metals. Water changes phase at its configured thresholds; Lava and Acid have their own material-defined heat and reaction rules. |
-| Gases | Fire, Steam, Smoke, Toxic Gas, and Cloud rise and spread. Steam and Cloud use humidity and dewpoint condensation. Gas storage accepts non-flaming gases, so Fire is not accepted by a Gas Storage Bin. |
+| Gases | Fire, Steam, Smoke, Toxic Gas, and Cloud rise and spread. Steam and Cloud use humidity and dewpoint condensation; Steam's per-particle temperature spread staggers condensation across a 12 C band. Gas storage accepts non-flaming gases, so Fire is not accepted by a Gas Storage Bin. |
 | Solids | Ice, Stone, Wood, Glass, Wall, Clay, Ceramic, and Insulation provide the fixed, structural, or phase-change behavior declared by their definitions. |
 | Seeds | Eight viable powder seed types wait for suitable local temperature, humidity, and substrate moisture before germinating. Species rules in `particles.json` set their substrate, aquatic depth, and germination requirements. |
 | Vegetation | Plant, grass, moss, aquatic plants, and flowering species use the environmental viability, growth, flowering, and seed-setting rules declared in `particles.json`; their leaves, pads, blooms, and fruit appear in this group too. |

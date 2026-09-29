@@ -114,7 +114,7 @@ async function setControlValue(page, selector, value) {
     }, value);
 }
 
-test('Mission 3 gates Steam, rain controls, and 2,000C behind the three material stages', async ({ page }) => {
+test('Mission 3 stages rain, drying, Glass, and the 2,000C Lava limit', async ({ page }) => {
     await startMissionThree(page);
     await page.locator('#pauseButton').click();
 
@@ -138,8 +138,14 @@ test('Mission 3 gates Steam, rain controls, and 2,000C behind the three material
                 objectives.find(objective => objective.type === 'transformation' && objective.from === from && objective.to === to)),
             dryingHeatObjective: objectives.find(objective => objective.type === 'environment-target' &&
                 objective.targetValues?.temperature === 150),
+            glassHeatObjective: objectives.find(objective => objective.type === 'environment-target' &&
+                objective.targetValues?.temperature === 350),
+            sandGlassObjective: objectives.find(objective => objective.type === 'transformation' &&
+                objective.from === 'Sand' && objective.to === 'Glass'),
             highHeatObjective: objectives.find(objective => objective.type === 'environment-target' &&
-                objective.targetValues?.temperature === 2000)
+                objective.targetValues?.temperature === 2000),
+            dryMudDefinition: physics.getDefinitions().find(definition => definition?.name === 'Dry Mud'),
+            definitions: physics.getDefinitions()
         };
     });
 
@@ -156,9 +162,9 @@ test('Mission 3 gates Steam, rain controls, and 2,000C behind the three material
     expect(authoredMission.rainObjective?.targetValues).toEqual({ humidity: 95, dewpoint: 20 });
     expect(authoredMission.dryingHeatObjective?.targetValues).toEqual({ temperature: 150 });
     expect(authoredMission.wetObjectives.map(objective => objective?.target)).toEqual([150, 150, 150]);
-    expect(authoredMission.dryObjectives.map(objective => objective?.target)).toEqual([500, 500, 500]);
+    expect(authoredMission.dryObjectives.map(objective => objective?.target)).toEqual([150, 150, 150]);
     expect(authoredMission.mission.guidance).toMatch(/rain/i);
-    expect(authoredMission.mission.guidance).toMatch(/500.*wet|wet.*500/i);
+    expect(authoredMission.mission.guidance).toMatch(/150.*wet|wet.*150/i);
     expect(authoredMission.mission.guidance).toMatch(/dry|heat/i);
     expect(authoredMission.wetObjectives.every(objective => objective?.requires?.includes(authoredMission.rainObjective.id))).toBe(true);
     expect(authoredMission.dryObjectives.map(objective => objective?.from)).toEqual(['Wet Sand', 'Wet Mud', 'Wet Ash']);
@@ -167,9 +173,14 @@ test('Mission 3 gates Steam, rain controls, and 2,000C behind the three material
         authoredMission.dryObjectives[1].id,
         authoredMission.dryingHeatObjective.id
     ]));
-    expect(authoredMission.dryObjectives[2].unlocks.controlLimits.temperature.max).toBe(2000);
-    expect(authoredMission.highHeatObjective.requires).toContain(authoredMission.dryObjectives[2].id);
+    expect(authoredMission.dryObjectives[2].unlocks.controlLimits.temperature.max).toBe(350);
+    expect(authoredMission.glassHeatObjective.targetValues).toEqual({ temperature: 350 });
+    expect(authoredMission.sandGlassObjective.target).toBe(200);
+    expect(authoredMission.sandGlassObjective.unlocks.controlLimits.temperature.max).toBe(2000);
+    expect(authoredMission.highHeatObjective.requires).toContain(authoredMission.sandGlassObjective.id);
     expect(authoredMission.highHeatObjective?.targetValues).toEqual({ temperature: 2000 });
+    expect(authoredMission.dryMudDefinition?.meltPoint).toBe(1200);
+    expect(authoredMission.definitions[authoredMission.dryMudDefinition.meltsInto]?.name).toBe('Lava');
 
     await expect(page.locator('#airTemp')).toHaveAttribute('max', '150');
     await expect(page.locator('#airTempValue')).toHaveAttribute('max', '150');
@@ -232,11 +243,10 @@ test('Mission 3 gates Steam, rain controls, and 2,000C behind the three material
     });
     expect(rainProgress).toBe(authoredMission.rainObjective.target);
 
-    // Wetting objectives are 150-cell milestones. Keep the rain stage active
-    // for the full 500 cells needed by each existing drying objective.
+    // The 150-cell wetting milestones match the following drying objectives.
     await recordMissionTransitions(page, [
         ['Sand', 'Wet Sand'], ['Dry Mud', 'Wet Mud'], ['Ash', 'Wet Ash']
-    ], 500);
+    ], 150);
     const wetMilestoneProgress = await page.evaluate(async () => {
         const campaign = await import('/campaign.js');
         const state = campaign.getCampaignState();
@@ -254,6 +264,11 @@ test('Mission 3 gates Steam, rain controls, and 2,000C behind the three material
     await recordMissionTransitions(page, [
         ['Wet Sand', 'Sand'], ['Wet Mud', 'Dry Mud'], ['Wet Ash', 'Ash']
     ]);
+    await expect(page.locator('#airTemp')).toHaveAttribute('max', '350');
+    await expect(page.locator('#airTempValue')).toHaveAttribute('max', '350');
+
+    await setControlValue(page, '#airTemp', 350);
+    await recordMissionTransitions(page, [['Sand', 'Glass']], 200);
     await expect(page.locator('#airTemp')).toHaveAttribute('max', '2000');
     await expect(page.locator('#airTempValue')).toHaveAttribute('max', '2000');
 
@@ -277,7 +292,7 @@ test('Mission 3 gates Steam, rain controls, and 2,000C behind the three material
     await expect(page.locator('#airTemp')).toHaveValue('2000');
 
     await recordMissionTransitions(page, [
-        ['Sand', 'Glass'], ['Glass', 'Lava'], ['Dry Mud', 'Lava'], ['Ash', 'Lava']
+        ['Glass', 'Lava'], ['Dry Mud', 'Lava'], ['Ash', 'Lava']
     ]);
     const completion = await page.evaluate(async () => (await import('/campaign.js')).getCampaignState().missionCompleted);
     expect(completion).toBe(true);
