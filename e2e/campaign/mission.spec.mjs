@@ -75,8 +75,8 @@ test('Mission 1 counts Daffodil seed germination and fires its completion event 
     expect(completed.progress).toBe(target);
     expect(completed.firedAfterCompletion.length).toBeGreaterThan(0);
     expect(completed.firedAfterRepeat).toEqual(completed.firedAfterCompletion);
-    await expect(page.locator('#missionEventNotice')).toBeVisible();
-    await expect(page.locator('#missionEventNotice')).toContainText(/objective complete/i);
+    await expect(page.locator('#missionToast')).toBeVisible();
+    await expect(page.locator('#missionToast')).toContainText(/objective complete/i);
 });
 
 test('objective completion toast times out while the final advance status persists', async ({ page }) => {
@@ -95,7 +95,7 @@ test('objective completion toast times out while the final advance status persis
     await page.locator('#missionCompleteOk').click();
     await expect(page.locator('#missionCompleteDialog')).toBeHidden();
 
-    const toast = page.locator('#missionCompleteToast');
+    const toast = page.locator('#missionToast');
     await expect(toast).toBeVisible();
     await expect(toast).toHaveAttribute('role', 'status');
     await expect(toast).toHaveAttribute('aria-live', 'polite');

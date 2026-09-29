@@ -1969,7 +1969,7 @@ test('Battery charge trend renders once per touching storage group', async ({ pa
         'a separate Battery entity receives its own trend marker').toHaveLength(1);
 });
 
-test('Electrical effects debug switch hides Battery trend glyphs without changing charge or logical power', async ({ page }) => {
+test('Electrical effects feature flag hides Battery trend glyphs without changing charge or logical power', async ({ page }) => {
     const game = new GamePage(page);
     await page.clock.install({ time: new Date('2026-01-01T00:00:00Z') });
     await game.openMenu();
@@ -2012,12 +2012,12 @@ test('Electrical effects debug switch hides Battery trend glyphs without changin
             logicalPower: Array.from(world.logicalPower).join('')
         };
     }, battery);
-    await page.keyboard.press('NumpadSubtract');
-    const toggle = page.locator('[data-debug-feature="electricalEffects"]');
-    await expect(page.locator('#debugMenu')).toBeVisible();
-    await expect(toggle).toBeVisible();
-    await expect(toggle).toBeChecked();
-    await toggle.uncheck();
+    await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        const game = await import('/game.js');
+        physics.setDebugFeatureEnabled('electricalEffects', false);
+        game.renderWorld();
+    });
     await expect(glyph).toHaveCount(0);
 
     const disabled = await page.evaluate(async battery => {
@@ -2030,7 +2030,12 @@ test('Electrical effects debug switch hides Battery trend glyphs without changin
     }, battery);
     expect(disabled).toEqual(before);
 
-    await toggle.check();
+    await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        const game = await import('/game.js');
+        physics.setDebugFeatureEnabled('electricalEffects', true);
+        game.renderWorld();
+    });
     await expect(glyph).toHaveCount(1);
     const reenabled = await page.evaluate(async battery => {
         const physics = await import('/physics.js');

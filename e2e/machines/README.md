@@ -6,10 +6,9 @@ Exhaustive browser workflows for machines and material transfer.
   bounds/default, settings bounds, and tooltip behavior.
 - `powered.spec.mjs` checks powered/unpowered Fan, Heater, and Cooler outcomes,
   including air-only transport near the default 200-cell reach and direct
-  particle or material effects confined to the 28-cell cone. The runtime
-  distance can be adjusted through the Debug features menu.
+  particle or material effects confined to the 28-cell cone.
 - `electrical.spec.mjs` checks Battery charge sharing, steady binary bright
-  powered-wire bases, and the runtime-only Electrical effects display switch.
+  powered-wire bases, and the Electrical effects physics feature flag.
   Electrical effects hides presentation glyphs without changing charge or
   logical power. Battery cells never emit Spark particles. One centered green
   charging/red discharging glyph appears per connected Battery group, and

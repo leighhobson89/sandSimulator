@@ -152,9 +152,9 @@ own workflow captures them. See the [Playwright HTML reporter guide](https://pla
   Temperature slider and numeric input expose a 30 C maximum, clamp values
   above 30 C, and restore Sandbox's 4,000 C maximum after leaving Campaign.
 - `e2e/campaign/mission.spec.mjs` checks the bottom-right
-  `#missionCompleteToast`, its status semantics and ten-second fade, confirms
+  `#missionToast`, its status semantics and ten-second fade, confirms
   the old full-width `#missionPassedBar` stays hidden, and verifies that the
-  persistent `#missionAdvance` action remains enabled after the toast expires.
+  top-right `#missionAdvance` action remains enabled after the toast expires.
 - `e2e/campaign/mission-three-staged-progression.spec.mjs` covers the blank
   Mission 3 world, staged pile and Steam placement, climate-control unlocks,
   Humidity 95% / Dewpoint 20 C rain targets, 150-transition wet milestones,
@@ -202,13 +202,11 @@ own workflow captures them. See the [Playwright HTML reporter guide](https://pla
   `#missionResourceList`, `#missionObjectiveCarousel`,
   `#missionObjectivePrevious`, `#missionObjectiveNext`,
   `#missionObjectivePosition`, `#missionObjectiveCurrent`,
-  `#missionObjectiveCheck`, and
-  `#missionEventNotice`. Completion uses `#missionCompleteDialog`,
-  `#missionCompleteStats`, `#missionCompleteOk`, and the timed
-  `#missionCompleteToast`; after recap dismissal, the persistent compact HUD
-  action exposes `#missionAdvance`. Its availability does not depend on the
-  toast timer. The next briefing guidance is
-  `#missionIntroGuidance`.
+  `#missionObjectiveCheck`, and the floating `#missionToast`. Completion uses
+  `#missionCompleteDialog`, `#missionCompleteStats`, and `#missionCompleteOk`;
+  after recap dismissal, the canvas action exposes `#missionAdvance` inside
+  `#missionAdvanceFloat`. The debug menu's Campaign mission picker is
+  `#debugMissionSelect`. The next briefing guidance is `#missionIntroGuidance`.
 - `e2e/tools/` covers painting, shapes, Grabber, and environment controls. The
   environment specs check the Visualizations section and Environment order,
   equal-width rows, narrow sidebar fit, existing control behavior, Heat
@@ -324,10 +322,11 @@ own workflow captures them. See the [Playwright HTML reporter guide](https://pla
   behavior, and the live Autosave checkbox. `multi-save-registry.spec.mjs`
   checks separate named Sandbox and Campaign snapshots, active-record switching,
   that fresh Sandbox and Campaign starts preserve existing records, and that the
-  first Campaign record is created only on ADVANCE. `campaign-checkpoints.spec.mjs`
+  first Campaign record is created on ADVANCE to unlock its successor, with the
+  checkpoint renamed to the newly unlocked mission. `campaign-checkpoints.spec.mjs`
   checks the mission-number-only v3 payload, no checkpoint before ADVANCE,
-  blocked in-mission Save/export and timed autosave, pristine Resume, and
-  migration of legacy full-state v3 Campaign autosaves. Resume must leave the
+  hidden in-mission Save/export controls and disabled timed autosave, pristine
+  Resume, and migration of legacy full-state v3 Campaign autosaves. Resume must leave the
   checkpoint `saveString` and `updatedAt` unchanged. Portable v1 and v2 saves
   remain readable as Sandbox; v3 Campaign checkpoints store only the mission
   number. Registry assertions use `saveGameToLibrary(name)`,

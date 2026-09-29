@@ -256,7 +256,7 @@ export function writeCampaignCheckpoint(missionNumber, requestedName = '', reuse
     const saveString = createCampaignCheckpointString(missionNumber);
     const { records } = readSaveLibrary(false);
     const active = records.find(record => record.id === reuseRecordId && record.type === 'campaign');
-    let name = active?.name || String(requestedName || `Campaign - Mission ${missionNumber}`).trim();
+    let name = String(requestedName || active?.name || `Campaign - Mission ${missionNumber}`).trim();
     if (!active) {
         const names = new Set(records.map(record => record.name));
         const base = name;
@@ -370,12 +370,14 @@ export async function writeAutosave() {
     const generation = autosaveGeneration;
     autosaveWriting = true;
     savingListener(true);
+    let saved = false;
     try {
         await nextPaint();
         if (!autosaveEnabled || generation !== autosaveGeneration) return false;
         const replacement = createSaveString();
         localStorage.setItem(AUTOSAVE_STORAGE_KEY, replacement);
         storeSnapshotInActiveRecord(replacement);
+        saved = true;
         return true;
     } catch (error) {
         console.warn('Could not autosave Elemental Foundry game:', error);
@@ -384,7 +386,7 @@ export async function writeAutosave() {
         return false;
     } finally {
         autosaveWriting = false;
-        savingListener(false);
+        savingListener(false, saved);
     }
 }
 

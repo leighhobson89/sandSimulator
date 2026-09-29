@@ -19,6 +19,10 @@ Agents may use `write`, but should prefer `apply_patch` and other patch-based
 editing over `write` or `edit` because patch operations are more reliable for
 small, reviewable changes.
 
+### Mission Design Mode
+
+When a user includes the exact code word `MDESIGN` in a development prompt, including if it is in a steering prompt, ie one that is sent during activity from a previous prompt, the main agent will hand this prompot off to the mission-designer agent, who will then return their work to the main agent who will then get the documentation agent to write up the changes to the appropriate files, and in this mode we do this without running tests.
+
 ### Quick Mode
 
 When a user includes the exact code word `QMODE` in a development prompt, including if it is in a steering prompt, ie one that is sent during activity from a previous prompt, the main agent may make the requested minor change directly without handing it through the specialist workflow and without running tests. The main agent must decide whether the change is minor enough for Quick Mode and whether any documentation needs updating; if it is not clearly minor, use the normal handoff workflow instead.

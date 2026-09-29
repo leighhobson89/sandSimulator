@@ -17,7 +17,7 @@ The main menu starts either a **Sandbox** or a **New Campaign**. Sandbox keeps
 the freeform world-size chooser and normal unlimited painting and machine
 placement. Campaign starts a story mission with an authored world, finite
 player-placement resources, machine limits, cumulative objectives, and event
-notices. The menu stacks New Campaign above Sandbox, followed by Resume Game
+notifications. The menu stacks New Campaign above Sandbox, followed by Resume Game
 when a resume record exists and Load Game; its theme panel sits below the
 actions. Theme-specific presentation keeps the menu centered in Terminal.
 
@@ -44,9 +44,12 @@ grow taller. Painting or stamping a Daffodil does not count. The configured
 completion event fires once; objective counters and fired event IDs remain in
 the active session only. The mission briefing displays the mission number,
 title, briefing, objective, and available supplies before play. During play,
-the mission HUD shows one selected objective, each supply's used and total
-counts, and event notices. The objective carousel sits at the bottom right and
-has previous/next arrow buttons, a `N / total` counter, and one objective row.
+the mission HUD stays at the bottom and shows one selected objective and each
+supply's used and total counts. Objective, event, save, and load messages use a
+separate bottom-right notification that fades after ten seconds and never takes
+a HUD row. The objective carousel sits at the bottom right and has
+previous/next arrow buttons, one `N / total` counter at the left, and one
+objective row.
 Navigation stops at either end and includes locked objectives in the count; a
 locked row describes its unmet prerequisites. Completed objectives remain
 selected and show green completion styling and a check mark. Completion does
@@ -103,29 +106,30 @@ with available entries automatically expand in Campaign; empty categories are
 collapsed and locked. Their visible headings remain keyboard focusable and
 explain that no items are available. Other unavailable controls use disabled
 semantics, reduced opacity, and a focusable tooltip with a bold red **DISABLED**
-status and reason. Pause and Load remain usable during a mission. Campaign Save,
-Save to Library, export, and Autosave are disabled; Sandbox keeps the full
-catalog and its normal controls.
+status and reason. Pause and Load remain usable during a mission. Campaign Save
+and Save to Library controls are hidden, and Autosave is disabled; Sandbox keeps
+the full catalog and its normal controls.
 
 Completing all mission objectives automatically opens a recap dialog with
 objective results and used, total, and remaining counts for each finite player
-supply while the simulation continues. A bottom-right completion toast fades
-after ten seconds. After clicking **OK**, the completed mission remains
+supply while the simulation continues. A separate bottom-right notification
+fades after ten seconds. After clicking **OK**, the completed mission remains
 playable with its existing world and remaining supplies; the mission grants
-no new materials, and completed objectives cannot progress again. The compact
-persistent mission-HUD action shows **ADVANCE** for an installed successor or
-**CAMPAIGN COMPLETE** at the end; its availability is independent of the toast
-timer. **ADVANCE** opens the next mission briefing; confirming that briefing
-initializes its authored world and fresh resource budgets. A Campaign
-checkpoint is written only when
-**ADVANCE** selects an installed successor. It stores the next mission number;
+no new materials, and completed objectives cannot progress again. The
+**ADVANCE** button floats at the canvas top right after objectives complete and
+is enabled after the recap is dismissed. It hides while the next mission
+briefing is pending and while that mission runs. **CAMPAIGN COMPLETE** appears
+at the end. **ADVANCE** opens the next mission briefing; confirming that
+briefing initializes its authored world and fresh resource budgets. A Campaign
+checkpoint is written as soon as
+**ADVANCE** unlocks an installed successor. It stores the next mission number;
 Mission start, objective completion, recap dismissal, Restart, and a final
 mission with no successor do not write a checkpoint. Restart asks for
 confirmation, then rebuilds the authored scenario without changing the saved
 mission number. Resume resolves the checkpoint's number and reconstructs a
 pristine world, environment, full budgets, and zeroed objectives/events. The
 completion recap and current run progress do not persist. When no later mission
-is installed, the persistent HUD action reports **CAMPAIGN COMPLETE** and is
+is installed, the floating action reports **CAMPAIGN COMPLETE** and is
 disabled.
 
 Portable LZString save payloads are version 3. Sandbox saves contain the full
@@ -141,18 +145,23 @@ Named local saves are stored as individual compressed records in the local save
 library. Each record has an ID, name, automatically assigned Sandbox or
 Campaign type, `saveString`, and update time. A separate active-save ID selects
 the record restored by Resume Game. Five-minute Autosave updates the active
-Sandbox record only. Starting a Campaign creates no record; its first Campaign
-checkpoint is written only when **ADVANCE** selects a successor after mission
-completion. Later advances update that Campaign record with only the next
-`missionNumber`. A new Campaign creates its own checkpoint at its first
-ADVANCE, preserving existing Campaign records. Starting a new autosaved Sandbox
-creates a fresh uniquely named Sandbox record so it preserves Campaign records.
+Sandbox record only and displays a notification when it succeeds. Starting a
+Campaign creates no record; its first Campaign checkpoint is written when
+**ADVANCE** unlocks a successor after mission completion. Later advances update
+that Campaign record with only the newly unlocked `missionNumber` and its
+`Campaign - Mission N: Title` name. A new Campaign creates its own checkpoint
+at its first ADVANCE, preserving existing Campaign records. Starting a new
+autosaved Sandbox creates a fresh uniquely named Sandbox record so it preserves
+Campaign records.
 Players can name or update Sandbox records through **Save to Library** in the
-Load/Save dialog. Campaign Save, Save to Library, export, and timed Autosave
-are unavailable during play. The dialog lists local records and offers a Load
-action for each, while portable string copy/paste remains available for
-Sandbox. Existing version-1 single-slot autosaves are migrated into the library
-as a named record and become the active resume game. When migration succeeds,
+Load/Save dialog. Campaign Save and Save to Library controls are hidden during
+play; advancing creates the loadable checkpoint from the mission's authored
+start, never from the live simulation. Campaign timed Autosave is unavailable.
+The dialog lists local records and offers a Load action for each, while
+portable string copy/paste remains available for Sandbox. Loading a saved game
+displays a confirmation notification. Existing version-1 single-slot autosaves
+are migrated into the library as a named record and become the active resume
+game. When migration succeeds,
 the legacy slot is removed; the library record remains authoritative for
 active-session autosave and resume.
 
@@ -1311,44 +1320,14 @@ only in Normal view, while alternate visualization palettes remain unchanged.
 Clipping at the world/canvas edge does not alter field values. A Lamp icon's
 glow is decorative and separate from the simulated field.
 
-### Runtime debug feature menu
+### Runtime debug menu
 
-Press **Numpad −** to open or close the debug menu. The panel starts closed;
+Press **Numpad minus** to open or close the debug menu. The panel starts closed;
 its **Close** button and `Escape` also close it. The shortcut ignores key
-repeat and does not intercept typing in text-entry controls. Its four switches
-start enabled and are runtime-only; reloading the page restores the defaults.
-Changing them does not reset the world.
-
-The **Machine air-blow distance** input starts at 200 cells. Enter a whole
-number and select **Set** to change the maximum air-only reach for powered Fans,
-Heaters, and Coolers. The value is limited to the current world's useful
-diagonal reach. This control resets to 200 on page reload; direct material
-effects and Fan particle pushes remain within 28 cells.
-
-- **Source light off** skips local emitter and explosion-flash field builds,
-  clears cached local intensity and tint, and hides the local-light overlay.
-  Ambient illumination still applies.
-- **World illumination off** makes `getIlluminationAt` use the Ambient Light
-  slider value uniformly for the ambient contribution. The ambient field array
-  is left unused and is not rewritten when the slider changes; sky visibility,
-  reflection, and gas-ray calculations are skipped. Local source light can
-  still contribute.
-- **Humidity off** sets the humidity field to the Environment slider value
-  when disabled, when the slider changes, and when re-enabled. Humidity queries
-  and visualization use `getHumidityAt`, so readings stay uniform; per-cell
-  diffusion, local humidity exchange, and cloud nucleation are skipped.
-- **Electricity off** clears the power, logical-power, gate-output, legacy
-  pulse-delay, and charge planes once, then skips electrical refresh,
-  network/load traversal, charge transfer, Battery Spark charging, logical
-  signals, and electrical rendering. Batteries retain their material identity
-  and thermal behavior but stay empty and provide no electrical or storage
-  behavior. Re-enabling electricity rebuilds the network with Batteries still
-  empty. Power-consuming actuators use their always-powered fallback; gates,
-  switches, and signal sensors remain electrically inactive.
-
-The electricity override also removes powered-wire tint and Battery trend
-signs. The former **No wire sparks** preference has been removed because the
-electrical renderer no longer animates current.
+repeat and does not intercept typing in text-entry controls. The menu contains
+one control: the Campaign mission picker. It is disabled in Sandbox and active
+in Campaign. Options use `N - Mission title`; choosing one opens that mission's
+briefing and authored starting scenario with fresh objectives and supplies.
 
 Hovering empty air or a particle reports numeric local illumination alongside
 the ordinary temperature, humidity, and transition details. Machine hover also

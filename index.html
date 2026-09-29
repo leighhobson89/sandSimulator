@@ -114,6 +114,9 @@
             </aside>
 
             <div class="canvasColumn">
+                <div id="missionAdvanceFloat" class="mission-advance-float" hidden>
+                    <button id="missionAdvance" class="btn btn-primary" type="button" disabled>ADVANCE</button>
+                </div>
                 <main id="canvasArea" data-zoom-level="1" tabindex="0"
                   aria-label="Simulation canvas viewport. Use arrow keys to scroll when zoomed.">
                 <div id="zoomStatus" class="zoom-status" role="status" aria-live="polite"
@@ -520,7 +523,6 @@
                     <span id="missionObjectivePosition" class="mission-objective-position">0 / 0</span>
                     <span class="mission-objective-copy">
                         <span id="missionObjectiveLabel" class="mission-objective-label"></span>
-                        <span id="missionObjectiveProgressText" class="mission-objective-progress-text"></span>
                         <span id="missionObjectiveLockText" class="mission-objective-lock-text" hidden></span>
                     </span>
                     <span id="missionObjectiveCheck" class="mission-objective-check" data-objective-check aria-hidden="true" hidden>✓</span>
@@ -528,12 +530,8 @@
                 </div>
                 <button id="missionObjectiveNext" class="mission-objective-arrow" type="button" aria-label="Next objective" title="Next objective" disabled>›</button>
             </div>
-            <p id="missionEventNotice" class="mission-event-notice" role="status" aria-live="polite" hidden></p>
-            <div id="missionHudActions" class="mission-hud-actions" hidden>
-                <button id="missionAdvance" class="btn btn-primary" type="button" disabled>ADVANCE</button>
-            </div>
         </aside>
-        <div id="missionCompleteToast" class="mission-complete-toast" role="status" aria-live="polite" aria-atomic="true" hidden></div>
+        <div id="missionToast" class="mission-toast" role="status" aria-live="polite" aria-atomic="true" hidden></div>
 
     </div>
 
@@ -567,46 +565,20 @@
         <div class="debug-menu-heading">
             <div>
                 <span class="tools-kicker">Runtime controls</span>
-                <h2 id="debugMenuTitle">Debug features</h2>
+                <h2 id="debugMenuTitle">Debug menu</h2>
             </div>
             <button id="closeDebugMenu" class="btn btn-ghost debug-menu-close" type="button"
-                    aria-label="Close debug features">Close</button>
+                    aria-label="Close debug menu">Close</button>
         </div>
-        <p id="debugMenuHint" class="debug-menu-hint">Press Numpad − to open or close this menu. These runtime controls reset when the page reloads.</p>
-        <div class="debug-range-setting">
-            <label for="machineAirMixRange">
-                <strong>Machine air-blow distance</strong>
-                <small>Set the air-only reach in cells. Direct material effects and particle pushes stay at 28 cells.</small>
-            </label>
-            <div class="debug-range-controls">
-                <input id="machineAirMixRange" type="number" min="28" step="1" value="200"
-                       inputmode="numeric" aria-describedby="machineAirMixRangeStatus">
-                <button id="setMachineAirMixRange" class="btn btn-primary" type="button">Set</button>
-            </div>
-            <p id="machineAirMixRangeStatus" class="debug-range-status" role="status" aria-live="polite">Current reach: 200 cells.</p>
-        </div>
-        <div class="debug-feature-list">
-            <label class="debug-feature-option">
-                <input type="checkbox" data-debug-feature="localLight" checked>
-                <span><strong>Source light</strong><small>Off: lamps, fire, lava, and flashes add no local light. Ambient world illumination remains.</small></span>
-            </label>
-            <label class="debug-feature-option">
-                <input type="checkbox" data-debug-feature="worldIllumination" checked>
-                <span><strong>World illumination</strong><small>Off: ambient illumination uses the slider value uniformly; local source light remains.</small></span>
-            </label>
-            <label class="debug-feature-option">
-                <input type="checkbox" data-debug-feature="humidity" checked>
-                <span><strong>Humidity</strong><small>Off: humidity uses the base humidity setting everywhere; local humidity sources and diffusion are ignored.</small></span>
-            </label>
-            <label class="debug-feature-option">
-                <input type="checkbox" data-debug-feature="electricity" checked>
-                <span><strong>Electricity</strong><small>Off: batteries and wires carry no current; powered actuators use their always-on fallback, while logic signals stay inactive.</small></span>
-            </label>
-            <label class="debug-feature-option">
-                <input type="checkbox" data-debug-feature="electricalEffects" checked>
-                <span><strong>Electrical effects</strong><small>Off: hide Battery charge direction markers. Battery charge and circuit state keep updating.</small></span>
-            </label>
-        </div>
+        <p id="debugMenuHint" class="debug-menu-hint">Press Numpad − to open or close this menu. Choose a mission to jump to it while Campaign is active.</p>
+        <label class="debug-mission-setting" for="debugMissionSelect">
+            <strong>Campaign mission</strong>
+            <small>Directly load a mission and its authored starting scenario.</small>
+            <select id="debugMissionSelect" class="select-input" disabled aria-describedby="debugMissionStatus">
+                <option value="">Campaign mode only</option>
+            </select>
+        </label>
+        <p id="debugMissionStatus" class="debug-mission-status" role="status" aria-live="polite">Start a Campaign to select a mission.</p>
     </section>
 
     <div id="autosaveStatus" class="autosave-status" hidden role="status" aria-live="polite">

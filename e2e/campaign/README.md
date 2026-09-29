@@ -23,11 +23,11 @@ and limit unlocks.
 
 `mission-progression.spec.mjs` verifies Mission 1's automatic completion recap
 and used/total/remaining resource counts, **OK** dismissal, the transient
-bottom-right completion toast, and persistent **ADVANCE** into the Mission 2
+bottom-right notification, and floating **ADVANCE** into the Mission 2
 briefing and Ice scenario. `mission.spec.mjs` checks the 10-second toast,
 confirms the replaced full-width passed bar is hidden, and verifies that
-`#missionAdvance` remains enabled after the toast fades. The specs check the
-Mission 2 climate target, starting world and budgets,
+the top-right `#missionAdvance` remains enabled after the toast fades. The
+specs check the Mission 2 climate target, starting world and budgets,
 campaign-only disabled-control marker, reduced opacity and bold red
 `DISABLED` tooltip, usable system-action exceptions, Sandbox isolation, and
 pristine reconstruction of checkpointed missions on Resume. The briefing guides
@@ -70,10 +70,11 @@ Mission UI selectors include `#missionIntroDialog`, `#missionIntroOk`,
 `#missionHud`, `#missionResourceList`, `#missionObjectiveCarousel`,
 `#missionObjectivePrevious`, `#missionObjectiveNext`,
 `#missionObjectivePosition`, `#missionObjectiveCurrent`,
-`#missionObjectiveCheck`, and `#missionEventNotice`. Completion uses
-`#missionCompleteDialog`, `#missionCompleteStats`, `#missionCompleteOk`, and
-the timed `#missionCompleteToast`; the persistent mission HUD action is
-`#missionAdvance`, and briefing instructions use `#missionIntroGuidance`.
+`#missionObjectiveCheck`, and the floating `#missionToast`. Completion uses
+`#missionCompleteDialog`, `#missionCompleteStats`, and `#missionCompleteOk`;
+the top-right canvas action is `#missionAdvance` inside
+`#missionAdvanceFloat`. Debug mission selection uses `#debugMissionSelect`, and
+briefing instructions use `#missionIntroGuidance`.
 Editor drafts use localStorage key
 `elemental-foundry.campaign-editor.drafts.v1`.
 

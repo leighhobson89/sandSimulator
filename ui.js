@@ -31,7 +31,6 @@ import {
 } from './game.js';
 import {
     getDefinitions, setAmbientTarget, getAmbientTarget,
-    getDebugFeatureFlags, setDebugFeatureEnabled,
     setAmbientIlluminationTarget, getAmbientIlluminationTarget,
     setAmbientHumidityTarget, getAmbientHumidityTarget, setDewpointTarget, getDewpointTarget,
     setAmbientWindOn, getAmbientWindOn, restoreSimulationState,
@@ -44,7 +43,6 @@ import {
     isDrainModeEnabled, setDrainModeEnabled,
     getMachineSensorRule, setMachineSensorRule, getMachineSensorThreshold,
     setMachineSensorThreshold, getMachineSensorStatus, getIlluminationAt,
-    getMachineAirMixRange, getMaxMachineAirMixRange, setMachineAirMixRange,
     getTubingFlows, getSprinklerTubingRate, getMixerInventory, purgeMixerBin, setCell,
     isMixerReleaseEnabled, setMixerReleaseEnabled, isMachinePoweredAt,
     migrateLegacyMachinePortEndpointRemap
@@ -101,8 +99,8 @@ let machineTooltipTimer = null;
 let machineTooltipTarget = null;
 let machineTooltipAnchor = null;
 let sharedTooltipOwner = null;
-let missionCompleteToastTimer = null;
-let missionCompleteToastFadeTimer = null;
+let missionToastTimer = null;
+let missionToastFadeTimer = null;
 let machineDialogTimer = null;
 let mixerPurgeSlot = null;
 let visualizationsDialogInvoker = null;
@@ -112,6 +110,7 @@ let campaignEditorAutosaveWasEnabled = false;
 let campaignEditorSaveControlsState = null;
 let sandboxEnvironmentBeforeCampaign = null;
 let campaignCheckpointRecordId = null;
+let campaignCheckpointNotice = null;
 let campaignCatalogSandboxExpansion = null;
 let missionObjectiveMissionId = null;
 let missionObjectiveIndex = 0;
@@ -181,7 +180,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     window.addEventListener('campaign-mission-complete', () => {
         updateCampaignUi();
         const campaign = getCampaignState();
-        showMissionCompleteToast(campaign?.campaignComplete
+        showMissionToast(campaign?.campaignComplete
             ? 'Campaign complete — every available mission has been passed.'
             : 'Mission objective complete — objectives passed. Your next mission briefing is ready.');
     });
@@ -190,17 +189,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         highlightSelectedParticle();
     });
     window.addEventListener('campaign-objective-complete', event => {
-        const notice = elements.missionEventNotice;
-        notice.textContent = `Objective complete — ${event.detail?.label || 'Mission objective completed.'}`;
-        notice.hidden = false;
         updateCampaignUi();
+        showMissionToast(`Objective complete — ${event.detail?.label || 'Mission objective completed.'}`);
     });
     window.addEventListener('campaign-event', event => {
-        const notice = elements.missionEventNotice;
         const message = event.detail?.message || 'Mission event triggered.';
-        notice.textContent = event.detail?.type === 'objective-complete'
-            ? `Objective complete — ${message}` : message;
-        notice.hidden = false;
+        showMissionToast(event.detail?.type === 'objective-complete'
+            ? `Objective complete — ${message}` : message);
     });
     setUpSaveDialogs();
     setUpVisualizationsDialog();
@@ -230,7 +225,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             closeMachineDialog();
         }
     });
-    setSavingListener(saving => {
+    setSavingListener((saving, saved = false) => {
         if (saving) {
             elements.autosaveStatus.classList.remove('autosave-status-error');
             elements.autosaveStatus.hidden = false;
@@ -238,6 +233,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         } else if (!elements.autosaveStatus.classList.contains('autosave-status-error')) {
             elements.autosaveStatus.hidden = true;
             elements.autosaveStatusMessage.textContent = '';
+            if (saved) showMissionToast('Game autosaved.');
         }
     });
     setAutosaveErrorListener(showAutosaveFailure);
@@ -364,6 +360,7 @@ async function startNewGame() {
             updateResumeButton();
             clearAutosaveFailure();
             syncAutosaveToggle();
+            showMissionToast('Game saved as the resume game.');
         }
         catch (error) { showAutosaveFailure(error); }
     }
@@ -489,9 +486,15 @@ function syncCampaignControls(campaign, mission) {
     const saveRestricted = locked || campaignEditorSessionActive;
     const allowed = tool => !locked || (mission.unlockedTools || ['brush']).includes(tool);
     const elements = getElements();
-    for (const control of [elements.exportGameButton, elements.saveToLibraryButton, elements.autosaveToggle]) {
-        if (control) control.disabled = saveRestricted;
+    for (const control of [elements.exportGameButton, elements.saveToLibraryButton]) {
+        if (!control) continue;
+        control.hidden = saveRestricted;
+        control.disabled = saveRestricted;
     }
+    if (elements.librarySaveControls) {
+        elements.librarySaveControls.hidden = saveRestricted || !elements.canvasContainer?.classList.contains('d-flex');
+    }
+    if (elements.autosaveToggle) elements.autosaveToggle.disabled = saveRestricted;
     if (locked) {
         stopAutosave();
         if (elements.autosaveToggle) elements.autosaveToggle.checked = false;
@@ -555,9 +558,6 @@ function syncCampaignControls(campaign, mission) {
     if (elements.airTempValue) elements.airTempValue.value = String(clampedTemperature);
     const lockNotice = document.getElementById('missionClimateLock');
     if (lockNotice) lockNotice.hidden = !climateLocked;
-    for (const input of elements.debugFeatureToggles || []) setCampaignLocked(input, locked, 'Not available in this mission.');
-    setCampaignLocked(elements.machineAirMixRangeInput, locked, 'Not available in this mission.');
-    setCampaignLocked(document.getElementById('setMachineAirMixRange'), locked, 'Not available in this mission.');
     const mode = getDrawMode();
     elements.brushSizeInput.disabled = (mode !== 'brush' && mode !== 'line') || (locked && !allowed(mode));
 }
@@ -614,6 +614,7 @@ function closeCampaignEditorSession() {
 function startNewCampaign() {
     if (!getCampaignState()) sandboxEnvironmentBeforeCampaign = captureEnvironmentProfile();
     campaignCheckpointRecordId = null;
+    campaignCheckpointNotice = null;
     resetMissionObjectiveSelection();
     stopAutosave();
     startCampaign();
@@ -625,6 +626,7 @@ function startNewCampaign() {
 
 function prepareCampaignMissionWorld(mission) {
     const elements = getElements();
+    if (!campaignCheckpointNotice) clearMissionToast();
     resetBlueprintLibrary();
     setBeginGameStatus(true);
     setGameInProgress(true);
@@ -674,7 +676,7 @@ function prepareCampaignMissionWorld(mission) {
 
 function showMissionBriefing(mission) {
     const elements = getElements();
-    clearMissionCompleteToast();
+    clearMissionToast();
     elements.missionIntroNumber.textContent = String(mission.number);
     elements.missionIntroTitle.textContent = mission.title;
     elements.missionIntroBriefing.textContent = mission.briefing;
@@ -690,8 +692,6 @@ function showMissionBriefing(mission) {
         item.textContent = objective.label;
         return item;
     }));
-    elements.missionEventNotice.hidden = true;
-    elements.missionEventNotice.textContent = '';
     elements.missionIntroDialog.hidden = false;
     elements.missionIntroOk.focus();
 }
@@ -703,8 +703,19 @@ function saveCampaignCheckpoint(mission) {
         const record = writeCampaignCheckpoint(mission.number,
             `Campaign - Mission ${mission.number}: ${mission.title}`, campaignCheckpointRecordId);
         campaignCheckpointRecordId = record.id;
+        campaignCheckpointNotice = `Campaign saved — Mission ${mission.number}: ${mission.title} is ready to resume.`;
         updateResumeButton();
-    } catch (error) { showAutosaveFailure(error); }
+        renderSavedGames();
+        clearAutosaveFailure();
+        showMissionToast(campaignCheckpointNotice);
+    } catch (error) { showCampaignCheckpointFailure(error); }
+}
+
+function showCampaignCheckpointFailure(error) {
+    const elements = getElements();
+    elements.autosaveStatusMessage.textContent = `Campaign checkpoint could not be saved. The next mission will not appear in Load Game. ${error?.message || ''}`.trim();
+    elements.autosaveStatus.classList.add('autosave-status-error');
+    elements.autosaveStatus.hidden = false;
 }
 
 function dismissMissionCompletion() {
@@ -714,8 +725,8 @@ function dismissMissionCompletion() {
 function advanceCampaignFromHud() {
     const mission = queueNextMission();
     if (!mission) return;
-    saveCampaignCheckpoint(mission);
     showMissionBriefing(mission);
+    saveCampaignCheckpoint(mission);
 }
 
 function resetMissionObjectiveSelection(missionId = null) {
@@ -756,7 +767,6 @@ function renderMissionObjectiveCarousel(elements, campaign, mission, objective) 
         card.dataset.objectiveLocked = 'false';
         card.classList.remove('is-complete', 'is-locked');
         elements.missionObjectiveLabel.textContent = 'No objectives';
-        elements.missionObjectiveProgressText.textContent = '';
         elements.missionObjectiveLockText.textContent = '';
         elements.missionObjectiveLockText.hidden = true;
         elements.missionObjectiveCheck.hidden = true;
@@ -778,7 +788,6 @@ function renderMissionObjectiveCarousel(elements, campaign, mission, objective) 
     card.classList.toggle('is-complete', complete);
     card.classList.toggle('is-locked', locked);
     elements.missionObjectiveLabel.textContent = objective.label || objective.id;
-    elements.missionObjectiveProgressText.textContent = `${progress} / ${objective.target}`;
     elements.missionObjectiveLockText.textContent = locked
         ? `Locked — complete: ${requirementLabels.join('; ')}`
         : '';
@@ -787,34 +796,45 @@ function renderMissionObjectiveCarousel(elements, campaign, mission, objective) 
     elements.missionObjectiveStatus.textContent = complete ? 'Completed' : locked ? 'Locked' : 'In progress';
 }
 
-function clearMissionCompleteToast() {
-    if (missionCompleteToastTimer) clearTimeout(missionCompleteToastTimer);
-    if (missionCompleteToastFadeTimer) clearTimeout(missionCompleteToastFadeTimer);
-    missionCompleteToastTimer = null;
-    missionCompleteToastFadeTimer = null;
-    const toast = getElements()?.missionCompleteToast;
+function clearMissionToast() {
+    if (missionToastTimer) clearTimeout(missionToastTimer);
+    if (missionToastFadeTimer) clearTimeout(missionToastFadeTimer);
+    missionToastTimer = null;
+    missionToastFadeTimer = null;
+    const toast = getElements()?.missionToast;
     if (!toast) return;
     toast.hidden = true;
     toast.classList.remove('is-fading');
     toast.textContent = '';
 }
 
-function showMissionCompleteToast(message) {
-    clearMissionCompleteToast();
-    const toast = getElements().missionCompleteToast;
+function showMissionToast(message) {
+    clearMissionToast();
+    const toast = getElements().missionToast;
     toast.textContent = message;
     toast.hidden = false;
     toast.classList.remove('is-fading');
-    missionCompleteToastTimer = setTimeout(() => {
+    missionToastTimer = setTimeout(() => {
         toast.classList.add('is-fading');
-        missionCompleteToastFadeTimer = setTimeout(() => {
+        missionToastFadeTimer = setTimeout(() => {
             toast.hidden = true;
             toast.classList.remove('is-fading');
             toast.textContent = '';
-            missionCompleteToastTimer = null;
-            missionCompleteToastFadeTimer = null;
+            missionToastTimer = null;
+            missionToastFadeTimer = null;
         }, 350);
     }, 10000);
+}
+
+function showGameLoadedToast(payload) {
+    const mission = payload?.mode === 'campaign'
+        ? (Number.isInteger(payload.missionNumber)
+            ? getMissionDefinitions().find(item => item.number === payload.missionNumber)
+            : getCurrentMission())
+        : null;
+    showMissionToast(mission
+        ? `Campaign Mission ${mission.number} loaded — ${mission.title}.`
+        : 'Game loaded.');
 }
 
 function openMissionRestartDialog() {
@@ -864,6 +884,7 @@ function beginCampaignWorkspace() {
         elements.pauseButton.textContent = 'Pause';
         startGame();
         updateCampaignUi();
+        showPendingCampaignCheckpointNotice();
         return;
     }
     applyMissionEnvironment(getCurrentMission());
@@ -875,6 +896,13 @@ function beginCampaignWorkspace() {
     elements.pauseButton.textContent = 'Pause';
     startGame();
     updateCampaignUi();
+    showPendingCampaignCheckpointNotice();
+}
+
+function showPendingCampaignCheckpointNotice() {
+    if (!campaignCheckpointNotice) return;
+    if (getElements().missionToast.hidden) showMissionToast(campaignCheckpointNotice);
+    campaignCheckpointNotice = null;
 }
 
 function updateCampaignUi() {
@@ -882,6 +910,7 @@ function updateCampaignUi() {
     if (!elements?.missionHud) return;
     const campaign = getCampaignState();
     const mission = getCurrentMission();
+    syncDebugMissionPicker(campaign, getPendingMission() || mission);
     syncCampaignControls(campaign, mission);
     elements.missionHud.hidden = !campaign || !elements.canvasContainer?.classList.contains('d-flex');
     if (campaign && mission) {
@@ -908,12 +937,10 @@ function updateCampaignUi() {
         resetMissionObjectiveSelection();
     }
     const missionComplete = !!campaign?.missionCompleted;
-    elements.missionHudActions.hidden = !missionComplete;
+    elements.missionAdvanceFloat.hidden = !missionComplete || !!getPendingMission();
     elements.missionAdvance.textContent = campaign?.campaignComplete ? 'CAMPAIGN COMPLETE' : 'ADVANCE';
     elements.missionAdvance.disabled = !missionComplete || !campaign?.recapDismissed || !!campaign?.campaignComplete;
-    if (!missionComplete || elements.missionHud.hidden) {
-        clearMissionCompleteToast();
-    }
+    if (elements.missionHud.hidden) clearMissionToast();
     const showRecap = missionComplete && !campaign.recapDismissed;
     const wasHidden = elements.missionCompleteDialog.hidden;
     elements.missionCompleteDialog.hidden = !showRecap;
@@ -1046,10 +1073,13 @@ function saveCurrentGameToLibrary() {
     try {
         const record = saveGameToLibrary(elements.librarySaveName.value);
         elements.librarySaveName.value = record.name;
-        elements.saveDialogDescription.textContent = `Saved “${record.name}” as a ${record.type} game on this device.`;
+        elements.saveDialogDescription.textContent = `Saved “${record.name}” as a Sandbox game on this device.`;
         clearSaveError();
+        clearAutosaveFailure();
         renderSavedGames();
         updateResumeButton();
+        closeSaveDialog();
+        showMissionToast(`Game saved: ${record.name}.`);
     } catch (error) {
         showSaveError(error.message || 'Unable to save this game to the library.');
     }
@@ -1095,6 +1125,7 @@ async function loadLibraryGame(id) {
         updateResumeButton();
         syncAutosaveToggle();
         updateCampaignUi();
+        showGameLoadedToast(payload);
     } catch (error) {
         showSaveError(error.message || 'The saved game could not be loaded.');
     }
@@ -1177,6 +1208,7 @@ async function resumeGame() {
         resumeAutosaveWrites();
         const payload = await restoreAutosave();
         beginLoadedGame(payload);
+        showGameLoadedToast(payload);
         if (payload.mode === 'campaign' || isAutosaveEnabled()) clearAutosaveFailure();
         else showAutosaveFailure(new Error('Local storage is not available in this browser.'));
         syncAutosaveToggle();
@@ -1189,6 +1221,7 @@ async function resumeGame() {
 }
 
 function beginLoadedGame(payload) {
+    campaignCheckpointNotice = null;
     if (payload?.mode === 'campaign' && Number.isInteger(payload.missionNumber)) {
         const mission = getMissionDefinitions().find(item => item.number === payload.missionNumber);
         if (!mission) throw new Error('This campaign checkpoint refers to an unavailable mission.');
@@ -1354,9 +1387,7 @@ function openExportDialog() {
         elements.saveDialogDescription.textContent = 'Copy this LZString save to keep or share a portable snapshot of this world.';
         elements.saveString.value = createSaveString();
         elements.librarySaveControls.hidden = false;
-        elements.librarySaveName.value = getCampaignState()
-            ? `Campaign ${getCurrentMission()?.number || ''} - ${getCurrentMission()?.title || 'Mission'}`
-            : 'Sandbox save';
+        elements.librarySaveName.value = 'Sandbox save';
         renderSavedGames();
         elements.saveString.readOnly = true;
         elements.copySaveString.classList.remove('d-none');
@@ -1374,7 +1405,8 @@ function openImportDialog() {
     elements.saveDialogTitle.textContent = 'Load Game';
     elements.saveDialogDescription.textContent = 'Paste an Elemental Foundry LZString save here to load it.';
     elements.saveString.value = '';
-    elements.librarySaveControls.hidden = !getElements().canvasContainer.classList.contains('d-flex');
+    elements.librarySaveControls.hidden = getCampaignState() ||
+        !getElements().canvasContainer.classList.contains('d-flex');
     renderSavedGames();
     elements.saveString.readOnly = false;
     elements.copySaveString.classList.add('d-none');
@@ -1395,6 +1427,7 @@ async function copySaveString() {
             if (!document.execCommand || !document.execCommand('copy')) throw new Error('Clipboard access was denied.');
         }
         saveDialogDescription.textContent = 'Save string copied. Keep it somewhere safe before sharing it.';
+        showMissionToast('Save string copied.');
     } catch { showSaveError('Could not copy automatically. Select the string and copy it manually.'); }
 }
 
@@ -1418,9 +1451,19 @@ async function importFromDialog() {
     beginLoadedGame(payload);
     updateCampaignUi();
     closeSaveDialog();
+    showGameLoadedToast(payload);
     if (useAsResumeGame) {
         try {
-            await replaceAutosaveWithCurrentGame();
+            if (payload.mode === 'campaign') {
+                const mission = getPendingMission() || getCurrentMission();
+                if (!mission) throw new Error('The loaded campaign mission is unavailable.');
+                const record = writeCampaignCheckpoint(mission.number,
+                    `Campaign - Mission ${mission.number}: ${mission.title}`);
+                campaignCheckpointRecordId = record.id;
+                renderSavedGames();
+            } else {
+                await replaceAutosaveWithCurrentGame();
+            }
             updateResumeButton();
             clearAutosaveFailure();
             syncAutosaveToggle();
@@ -3048,9 +3091,7 @@ function stampActiveBlueprint() {
     if (!before) return;
     const stamped = stampBlueprint(blueprint, currentCell.x, currentCell.y);
     if (stamped === 0 && getCampaignState()) {
-        const notice = getElements().missionEventNotice;
-        notice.textContent = 'Mission resource limits prevent this blueprint stamp.';
-        notice.hidden = false;
+        showMissionToast('Mission resource limits prevent this blueprint stamp.');
         return;
     }
     const after = captureBlueprint(before.left, before.top,
@@ -3882,53 +3923,48 @@ function stopPaintTimer() {
 }
 
 function setUpDebugMenu(elements) {
-    const flags = getDebugFeatureFlags() || {};
-    for (const toggle of elements.debugFeatureToggles || []) {
-        const feature = toggle.dataset.debugFeature;
-        if (!feature) continue;
-        toggle.checked = flags[feature] !== false;
-        toggle.addEventListener('change', () => {
-            if (getCampaignState()) {
-                toggle.checked = (getDebugFeatureFlags() || {})[feature] !== false;
+    const select = elements.debugMissionSelect;
+    if (select) {
+        const missions = getMissionDefinitions().sort((left, right) => left.number - right.number);
+        select.replaceChildren(
+            new Option('Campaign mode only', ''),
+            ...missions.map(mission => new Option(`${mission.number} - ${mission.title}`, mission.id))
+        );
+        select.addEventListener('change', () => {
+            const campaign = getCampaignState();
+            const mission = missions.find(item => item.id === select.value);
+            if (!campaign || !mission) {
+                syncDebugMissionPicker(campaign, getCurrentMission());
                 return;
             }
-            setDebugFeatureEnabled(feature, toggle.checked);
-            if (getWorld()) renderWorld();
+            campaignCheckpointRecordId = null;
+            campaignCheckpointNotice = null;
+            resetMissionObjectiveSelection(mission.id);
+            stopAutosave();
+            startCampaign(mission.id);
+            getElements().missionIntroDialog.hidden = true;
+            getElements().missionCompleteDialog.hidden = true;
+            getElements().missionRestartDialog.hidden = true;
+            prepareCampaignMissionWorld(mission);
+            showMissionBriefing(mission);
+            updateCampaignUi();
         });
     }
-    const rangeInput = elements.machineAirMixRangeInput;
-    const rangeButton = elements.setMachineAirMixRangeButton;
-    const rangeStatus = elements.machineAirMixRangeStatus;
-    if (rangeInput && rangeButton) {
-        rangeInput.value = String(getMachineAirMixRange());
-        rangeInput.max = String(getMaxMachineAirMixRange());
-        const applyRange = () => {
-            if (getCampaignState()) return;
-            const requested = Number(rangeInput.value);
-            if (!Number.isInteger(requested) || requested < 28) {
-                rangeStatus.textContent = 'Enter a whole number of at least 28 cells.';
-                rangeInput.focus();
-                return;
-            }
-            const applied = setMachineAirMixRange(requested);
-            rangeInput.value = String(applied);
-            rangeStatus.textContent = applied === requested
-                ? `Machine air-blow distance set to ${applied} cells.`
-                : `Set to ${applied} cells, the maximum useful reach for this world.`;
-            if (getWorld()) renderWorld();
-        };
-        rangeButton.addEventListener('click', applyRange);
-        rangeInput.addEventListener('keydown', event => {
-            if (event.key === 'Enter') {
-                event.preventDefault();
-                if (getCampaignState()) return;
-                applyRange();
-            }
-        });
-    }
+    syncDebugMissionPicker(getCampaignState(), getCurrentMission());
     elements.closeDebugMenuButton?.addEventListener('click', () => {
         setDebugMenuOpen(elements, false);
     });
+}
+
+function syncDebugMissionPicker(campaign, mission) {
+    const elements = getElements();
+    const select = elements.debugMissionSelect;
+    if (!select) return;
+    select.disabled = !campaign;
+    select.value = campaign && mission ? mission.id : '';
+    elements.debugMissionStatus.textContent = campaign
+        ? 'Select a mission to load its authored starting scenario.'
+        : 'Start a Campaign to select a mission.';
 }
 
 function setDebugMenuOpen(elements, open) {
@@ -3936,9 +3972,6 @@ function setDebugMenuOpen(elements, open) {
     if (!menu) return;
     if (open) {
         debugMenuReturnFocus = document.activeElement;
-        if (elements.machineAirMixRangeInput) {
-            elements.machineAirMixRangeInput.max = String(getMaxMachineAirMixRange());
-        }
         menu.hidden = false;
         elements.closeDebugMenuButton?.focus({ preventScroll: true });
         return;
