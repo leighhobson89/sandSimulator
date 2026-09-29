@@ -15,6 +15,12 @@ test('Save and Load round-trip restores world and tool settings', async ({ page 
     await page.getByRole('button', { name: 'Save' }).click();
     const save = await page.locator('#saveString').inputValue();
     expect(save.length).toBeGreaterThan(20);
+    const saveHeader = await page.evaluate(async value => {
+        const saves = await import('/saveLoadGame.js');
+        const payload = saves.parseSaveString(value);
+        return { format: payload.format, version: payload.version };
+    }, save);
+    expect(saveHeader).toEqual({ format: 'elemental-foundry', version: 3 });
     await page.locator('#closeSaveDialog').click();
     await page.getByRole('button', { name: 'Clear' }).click();
     await page.getByRole('button', { name: 'Clear World' }).click();

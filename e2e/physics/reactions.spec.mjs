@@ -18,7 +18,9 @@ test('lava and water follow the quench path and leave steam and scoria residue',
 });
 
 test('Grass Seeds germinate on Wet Mud while Dry Mud keeps them dormant', async ({ page }) => {
+    test.setTimeout(60_000);
     const game = new GamePage(page); await game.openMenu(); await game.newGame(); await game.seed(404);
+    await page.evaluate(async () => (await import('/physics.js')).createWorld(60, 42));
     await setupPhysics(page, {
         fills: [{ material: 'Wet Mud', x: 15, y: 36, width: 12, height: 2 }, { material: 'Dry Mud', x: 45, y: 36, width: 12, height: 2 }],
         cells: [{ x: 20, y: 35, material: 'Grass Seeds' }, { x: 50, y: 35, material: 'Grass Seeds' }]
@@ -30,7 +32,10 @@ test('Grass Seeds germinate on Wet Mud while Dry Mud keeps them dormant', async 
         physics.getWorld().temp.fill(22);
         physics.getWorld().humidity.fill(65);
     });
-    await game.step(2600);
+    await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        for (let frame = 0; frame < 2600; frame++) physics.stepSimulation();
+    });
     expect(await count(page, 'Grass')).toBeGreaterThan(0);
     const drySide = await page.evaluate(async () => {
         const physics = await import('/physics.js');

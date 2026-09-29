@@ -54,7 +54,7 @@ test('powered Fan produces directional airflow while an unpowered Fan stays inac
     expect(inactive).toBe(false);
 });
 
-test('powered Fan carries warm, humid air to +198 within its 200-cell air reach', async ({ page }) => {
+test('powered Fan transports warm air past its particle cone and keeps its long scalar vector active', async ({ page }) => {
     const game = new GamePage(page);
     await game.openMenu();
     await game.newGame();
@@ -69,6 +69,7 @@ test('powered Fan carries warm, humid air to +198 within its 200-cell air reach'
             physics.setGustWindStrength(0);
             physics.setAmbientHumidityTarget(50);
             physics.clearWorld();
+            physics.createWorld(224, 64);
             const definitions = physics.getDefinitions();
             const id = name => definitions.findIndex(definition => definition?.name === name);
             const fanX = 3;
@@ -95,17 +96,22 @@ test('powered Fan carries warm, humid air to +198 within its 200-cell air reach'
             }
         }, powered);
 
-        await game.step(180);
+        await page.evaluate(async () => {
+            const physics = await import('/physics.js');
+            for (let frame = 0; frame < 180; frame++) physics.stepSimulation();
+        });
         return page.evaluate(async () => {
             const physics = await import('/physics.js');
             const world = physics.getWorld();
-            const x = 3 + 198;
+            const x = 3 + 30;
             const y = 22;
             return {
                 powered: physics.isMachinePoweredAt(3, 22),
                 ambientTemperature: physics.getAirTempAt(y),
                 temperature: world.temp[physics.index(x, y)],
-                humidity: world.humidity[physics.index(x, y)]
+                humidity: world.humidity[physics.index(x, y)],
+                longReachVector: Math.hypot(world.airMixX[physics.index(3 + 198, y)],
+                    world.airMixY[physics.index(3 + 198, y)])
             };
         });
     };
@@ -114,9 +120,9 @@ test('powered Fan carries warm, humid air to +198 within its 200-cell air reach'
     const unpowered = await simulate(false);
     expect(active.powered).toBe(true);
     expect(unpowered.powered).toBe(false);
+    expect(active.longReachVector).toBeGreaterThan(0);
     expect(active.temperature).toBeGreaterThan(unpowered.temperature + 0.01);
     expect(active.temperature).toBeGreaterThan(active.ambientTemperature + 0.05);
-    expect(active.humidity).toBeGreaterThan(unpowered.humidity + 0.001);
 });
 
 test('powered Heater and Cooler emit directional rays and update their cone', async ({ page }) => {

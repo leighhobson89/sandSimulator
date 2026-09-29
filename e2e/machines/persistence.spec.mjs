@@ -85,7 +85,7 @@ test('machine settings, inventories, tubing, and mixer inputs survive portable S
         };
     }, saveString);
     expect(currentSaveVersions).toEqual({
-        format: 2, simulation: 2, blueprints: 2,
+        format: 3, simulation: 2, blueprints: 2,
         simulationPortLayout: 2, blueprintPortLayout: 2
     });
     await page.getByRole('button', { name: 'Close', exact: true }).click();
@@ -534,7 +534,7 @@ test('v1 saves migrate Drain Mode and legacy Sprinkler credits in worlds and blu
         };
     }, migratedSave);
     expect(migratedWire).toEqual({
-        formatVersion: 2,
+        formatVersion: 3,
         simulationModeVersion: 2,
         simulationMarker: 50,
         worldFanSpeed: 23,

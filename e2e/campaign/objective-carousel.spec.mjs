@@ -222,7 +222,7 @@ test('Mission 3 carousel counts 17 objectives, marks gates, and keeps completed 
     await expectCompletedCard(page, 'place-sand', '1 / 17');
 });
 
-test('objective carousel has labelled controls, supports Enter, and wraps within a narrow HUD', async ({ page }) => {
+test('objective carousel has labelled controls, supports Enter, and truncates narrow labels accessibly', async ({ page }) => {
     await startMissionThree(page);
     await page.setViewportSize({ width: 390, height: 844 });
 
@@ -242,6 +242,11 @@ test('objective carousel has labelled controls, supports Enter, and wraps within
     await expect(page.locator(positionLabel)).toHaveText('4 / 17');
     await expect(page.locator(currentCard)).toHaveAttribute('data-objective-id', 'place-steam');
     await expect(page.locator(currentCard)).toHaveAttribute('data-objective-locked', 'true');
+    await expect(page.locator(currentCard)).toHaveAttribute('aria-live', 'polite');
+    await expect(page.locator(currentCard)).toHaveAttribute('aria-atomic', 'true');
+    await expect(page.locator('#missionObjectiveLabel')).toHaveText(
+        'Place Steam above the piles to add moisture to the air.'
+    );
 
     const layout = await page.evaluate(() => {
         const hud = document.querySelector('#missionHud');
@@ -250,15 +255,71 @@ test('objective carousel has labelled controls, supports Enter, and wraps within
         const label = document.querySelector('#missionObjectiveLabel');
         const hudRect = hud.getBoundingClientRect();
         const carouselRect = carouselElement.getBoundingClientRect();
+        const labelStyle = getComputedStyle(label);
         return {
             carouselInsideHud: carouselRect.left >= hudRect.left - 1 && carouselRect.right <= hudRect.right + 1,
             carouselFits: carouselElement.scrollWidth <= carouselElement.clientWidth + 1,
             cardFits: card.scrollWidth <= card.clientWidth + 1,
-            labelWraps: label.getBoundingClientRect().height > parseFloat(getComputedStyle(label).lineHeight) * 1.5
+            labelIsSingleLine: label.getBoundingClientRect().height <= parseFloat(labelStyle.lineHeight) + 1,
+            labelEllipsized: labelStyle.whiteSpace === 'nowrap' && labelStyle.textOverflow === 'ellipsis' &&
+                ['hidden', 'clip'].includes(labelStyle.overflowX) && label.scrollWidth > label.clientWidth + 1
         };
     });
     expect(layout.carouselInsideHud).toBe(true);
     expect(layout.carouselFits).toBe(true);
     expect(layout.cardFits).toBe(true);
-    expect(layout.labelWraps).toBe(true);
+    expect(layout.labelIsSingleLine).toBe(true);
+    expect(layout.labelEllipsized).toBe(true);
+});
+
+test('objective carousel stays on one row with a left counter and centered copy at desktop and mobile widths', async ({ page }) => {
+    await startMissionTwo(page);
+
+    for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
+        await page.setViewportSize(viewport);
+        const layout = await page.evaluate(() => {
+            const hud = document.querySelector('#missionHud');
+            const carousel = document.querySelector('#missionObjectiveCarousel');
+            const previous = document.querySelector('#missionObjectivePrevious');
+            const current = document.querySelector('#missionObjectiveCurrent');
+            const next = document.querySelector('#missionObjectiveNext');
+            const position = document.querySelector('#missionObjectivePosition');
+            const copy = document.querySelector('.mission-objective-copy');
+            const label = document.querySelector('#missionObjectiveLabel');
+            const rect = element => element.getBoundingClientRect();
+            const hudRect = rect(hud);
+            const carouselRect = rect(carousel);
+            const currentRect = rect(current);
+            const positionRect = rect(position);
+            const copyRect = rect(copy);
+            const labelRect = rect(label);
+            const textRange = document.createRange();
+            textRange.selectNodeContents(label);
+            const textRects = [...textRange.getClientRects()];
+            const textCenter = textRects.length
+                ? textRects.reduce((sum, item) => sum + (item.left + item.right) / 2, 0) / textRects.length
+                : NaN;
+            const rowCenters = [previous, current, next].map(element => {
+                const bounds = rect(element);
+                return (bounds.top + bounds.bottom) / 2;
+            });
+            return {
+                insideHud: carouselRect.left >= hudRect.left - 1 && carouselRect.right <= hudRect.right + 1,
+                carouselFits: carousel.scrollWidth <= carousel.clientWidth + 1,
+                oneControlRow: Math.max(...rowCenters) - Math.min(...rowCenters) <= 2,
+                counterOnLeft: positionRect.right <= copyRect.left,
+                labelCentered: getComputedStyle(label).textAlign === 'center' &&
+                    Math.abs(textCenter - (currentRect.left + currentRect.right) / 2) <= 28,
+                labelFits: label.scrollWidth <= label.clientWidth + 1,
+                labelRectWidth: labelRect.width
+            };
+        });
+        expect(layout.insideHud, `carousel fits inside HUD at ${viewport.width}px`).toBe(true);
+        expect(layout.carouselFits, `carousel has no horizontal overflow at ${viewport.width}px`).toBe(true);
+        expect(layout.oneControlRow, `arrows and objective share one row at ${viewport.width}px`).toBe(true);
+        expect(layout.counterOnLeft, `counter stays left of the objective at ${viewport.width}px`).toBe(true);
+        expect(layout.labelCentered, `objective copy stays centered at ${viewport.width}px`).toBe(true);
+        expect(layout.labelFits, `objective copy has no horizontal overflow at ${viewport.width}px`).toBe(true);
+        expect(layout.labelRectWidth).toBeGreaterThan(0);
+    }
 });

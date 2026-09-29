@@ -45,6 +45,57 @@ test('catalog groups materials, selects them accessibly, and describes their beh
     expect(state.definitions.some(definition => definition?.name === 'Water')).toBe(true);
 });
 
+test('catalog and tools tooltips clear when leaving panels while machine hover keeps its tooltip', async ({ page }) => {
+    const game = new GamePage(page);
+    await game.openMenu();
+    await game.newGame();
+
+    const tooltip = page.locator('#toolTooltip');
+    const sand = page.getByRole('button', { name: 'Sand', exact: true });
+    await sand.hover();
+    await expect(tooltip).toBeVisible();
+    await expect(tooltip).toContainText('Sand');
+    await page.locator('#canvas').hover({ position: { x: 10, y: 10 } });
+    await expect(tooltip).toBeHidden();
+
+    const brushSize = page.locator('#brushSizeLabel');
+    await brushSize.hover();
+    await expect(tooltip).toBeVisible();
+    await expect(tooltip).toContainText(/Width used by Brush/);
+    await page.locator('#floatingContainer').hover({ position: { x: 8, y: 8 } });
+    await expect(tooltip).toBeHidden();
+
+    const machineCell = { x: 25, y: 20 };
+    await page.evaluate(async cell => {
+        const physics = await import('/physics.js');
+        const fan = physics.getDefinitions().findIndex(definition => definition?.name === 'Fan');
+        physics.setCell(cell.x, cell.y, fan);
+        physics.stepSimulation();
+    }, machineCell);
+    await game.step(0);
+    const machinePoint = await page.locator('#canvas').evaluate((canvas, cell) => {
+        const rect = canvas.getBoundingClientRect();
+        return {
+            x: rect.left + ((cell.x + 0.5) / canvas.width) * rect.width + 12,
+            y: rect.top + ((cell.y + 0.5) / canvas.height) * rect.height
+        };
+    }, machineCell);
+
+    await brushSize.hover();
+    await expect(tooltip).toContainText(/Width used by Brush/);
+    await page.mouse.move(machinePoint.x, machinePoint.y);
+    await expect(tooltip).toBeVisible();
+    await expect(tooltip).toContainText('Fan');
+    await expect(tooltip).toContainText('Wind speed');
+
+    await page.locator('#canvas').hover({ position: { x: 10, y: 10 } });
+    await expect(tooltip).toBeHidden();
+    await sand.hover();
+    await expect(tooltip).toContainText('Sand');
+    await page.locator('#floatingContainer').hover({ position: { x: 8, y: 8 } });
+    await expect(tooltip).toBeHidden();
+});
+
 test('Space on a focused catalog button selects it without toggling simulation pause', async ({ page }) => {
     const game = new GamePage(page);
     await game.openMenu();
@@ -79,7 +130,11 @@ test('Vegetation is last in the catalog, starts collapsed, and resets after a ne
 
     // Start another world through the menu flow without triggering the
     // unrelated autosave replacement confirmation.
-    await page.evaluate(() => localStorage.removeItem('elemental-foundry.autosave.v1'));
+    await page.evaluate(() => {
+        localStorage.removeItem('elemental-foundry.autosave.v1');
+        localStorage.removeItem('elemental-foundry.saves.v1');
+        localStorage.removeItem('elemental-foundry.active-save.v1');
+    });
     await game.openMenu();
     await game.newGame();
     const resetHeading = page.locator('#particleButtons .panel-heading')

@@ -2003,7 +2003,7 @@
     },
     "82": {
       "name": "Elec",
-      "description": "High-purity copper electrical wire that carries steady binary ON/OFF current, draws a small amount of Battery charge, and resists Corrosion longer than ordinary Copper.",
+      "description": "High-purity copper electrical wire that conducts heat and electricity, carries steady binary ON/OFF current, draws a small amount of Battery charge, and resists Corrosion longer than ordinary Copper.",
       "group": "Electricals",
       "color": "rgb(218, 153, 91)",
       "category": "static",

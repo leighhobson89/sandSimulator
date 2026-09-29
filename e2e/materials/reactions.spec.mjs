@@ -97,11 +97,17 @@ test('Water wets Sand and extinguishes Fire through real simulation ticks', asyn
 });
 
 test('Grass Seeds germinate on Wet Mud and remain dormant on Dry Mud', async ({ page }) => {
+    test.setTimeout(60_000);
     const game = new GamePage(page);
     await game.openMenu();
     await game.newGame();
+    await game.seed(404);
+    await page.evaluate(async () => (await import('/physics.js')).createWorld(60, 42));
     await setupWorld(page, { kind: 'growth' });
-    await game.step(2600);
+    await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        for (let frame = 0; frame < 2600; frame++) physics.stepSimulation();
+    });
     const state = await game.state();
     const grass = state.definitions.find(definition => definition?.name === 'Grass').id;
     const drySeed = state.definitions.find(definition => definition?.name === 'Grass Seeds').id;

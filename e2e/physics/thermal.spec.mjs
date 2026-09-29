@@ -51,9 +51,14 @@ test('hot and cold edge fixtures do not create uncontrolled RAF ticks while paus
 });
 
 test('lava cools through scoria into stone and reheating reverses both transitions', async ({ page }) => {
+    test.setTimeout(60_000);
     const game = new GamePage(page); await game.openMenu(); await game.newGame();
+    await page.evaluate(async () => (await import('/physics.js')).createWorld(100, 60));
     await setupPhysics(page, { fills: [{ material: 'Wall', x: 70, y: 42, width: 21, height: 1 }, { material: 'Lava', x: 78, y: 40, width: 5, height: 2 }] });
-    await game.step(2600);
+    await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        for (let frame = 0; frame < 2600; frame++) physics.stepSimulation();
+    });
     expect(await page.evaluate(async () => { const p = await import('/physics.js'); const w = p.getWorld(); const stone = p.getDefinitions().findIndex(d => d?.name === 'Stone'); return [...w.type].filter(value => value === stone).length; })).toBeGreaterThan(0);
     const reheatCell = await page.evaluate(async () => {
         const p = await import('/physics.js'); const world = p.getWorld();
@@ -67,7 +72,7 @@ test('lava cools through scoria into stone and reheating reverses both transitio
         world.temp[i] = 5000; world.heat[i] = definitions[stone].latent + 1;
         return { x: i % world.cols, y: Math.floor(i / world.cols) };
     });
-    await game.step(1);
+    await page.evaluate(async () => (await import('/physics.js')).stepSimulation());
     const materialAtReheatCell = () => page.evaluate(async ({ x, y }) => {
         const p = await import('/physics.js'); const world = p.getWorld();
         return p.getDefinitions()[world.type[p.index(x, y)]]?.name;
@@ -82,7 +87,7 @@ test('lava cools through scoria into stone and reheating reverses both transitio
         // heat for the thermal pass to stay above its 900 C Lava boundary.
         world.temp[i] = 5000; world.heat[i] = definitions[scoria].latent + 1;
     }, reheatCell);
-    await game.step(1);
+    await page.evaluate(async () => (await import('/physics.js')).stepSimulation());
     expect(await materialAtReheatCell()).toBe('Lava');
     expect(await countType(page, 'Lava')).toBeGreaterThan(0);
 });

@@ -254,9 +254,9 @@ export function setElements() {
         missionObjectiveCheck: document.getElementById('missionObjectiveCheck'),
         missionObjectiveStatus: document.getElementById('missionObjectiveStatus'),
         missionEventNotice: document.getElementById('missionEventNotice'),
-        missionPassedBar: document.getElementById('missionPassedBar'),
-        missionPassedMessage: document.getElementById('missionPassedMessage'),
+        missionHudActions: document.getElementById('missionHudActions'),
         missionAdvance: document.getElementById('missionAdvance'),
+        missionCompleteToast: document.getElementById('missionCompleteToast'),
         librarySaveControls: document.getElementById('librarySaveControls')
     };
 }

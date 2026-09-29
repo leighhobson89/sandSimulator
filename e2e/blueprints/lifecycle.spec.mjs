@@ -70,7 +70,7 @@ test('workspace and marquee lifecycle supports reverse and edge selections', asy
     await expect(game.state()).resolves.toMatchObject({ cols: expect.any(Number) });
 });
 
-test('stamping preserves every blueprint field and overwrites air', async ({ page }) => {
+test('stamping preserves durable blueprint fields, resets transient power, and overwrites air', async ({ page }) => {
     const game = new GamePage(page);
     await game.openMenu();
     await game.newGame();
@@ -89,7 +89,13 @@ test('stamping preserves every blueprint field and overwrites air', async ({ pag
         const blueprint = game.captureBlueprint(20, 20, 21, 21);
         return Object.fromEntries(game.BLUEPRINT_FIELDS.map(field => [field, Array.from(blueprint.cells[field])]));
     });
-    for (const field of seeded.fields) expect(stamped[field], field).toEqual(seeded.source[field]);
+    for (const field of seeded.fields) {
+        if (field === 'power' || field === 'powerDelay') {
+            expect(stamped[field], `${field} is reset on stamp`).toEqual([0, 0, 0, 0]);
+        } else {
+            expect(stamped[field], field).toEqual(seeded.source[field]);
+        }
+    }
     expect(state.arrays.type[21 + 21 * state.cols]).toBe(0);
 });
 

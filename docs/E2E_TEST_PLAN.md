@@ -142,7 +142,7 @@ own workflow captures them. See the [Playwright HTML reporter guide](https://pla
   supplies disappear from the material catalog rather than remaining as
   disabled buttons.
 - `e2e/campaign/mission-progression.spec.mjs` covers Mission 1 recap resource
-  statistics, **OK** dismissal, the persistent objective-passed bar, and
+  statistics, **OK** dismissal, the completion toast, and persistent
   **ADVANCE** into Mission 2's briefing and Ice scenario. It also checks the
   Mission 2 climate target, initial climate, floor and budgets; hidden Water;
   disabled markers, opacity, and red `DISABLED` tooltips for unavailable
@@ -151,11 +151,17 @@ own workflow captures them. See the [Playwright HTML reporter guide](https://pla
   objectives after checkpoint Resume. It also verifies that Mission 2's
   Temperature slider and numeric input expose a 30 C maximum, clamp values
   above 30 C, and restore Sandbox's 4,000 C maximum after leaving Campaign.
+- `e2e/campaign/mission.spec.mjs` checks the bottom-right
+  `#missionCompleteToast`, its status semantics and ten-second fade, confirms
+  the old full-width `#missionPassedBar` stays hidden, and verifies that the
+  persistent `#missionAdvance` action remains enabled after the toast expires.
 - `e2e/campaign/mission-three-staged-progression.spec.mjs` covers the blank
   Mission 3 world, staged pile and Steam placement, climate-control unlocks,
-  the 150 C drying cap, the 2,000 C Lava phase, and campaign completion.
-  Material-phase progress is driven through the campaign transition callback;
-  the spec does not simulate a full rainfall cycle.
+  Humidity 95% / Dewpoint 20 C rain targets, 150-transition wet milestones,
+  continuing rain until 500 of each material is wet, the 150 C drying cap, the
+  2,000 C Lava phase, and campaign completion. Material-phase progress is
+  driven through the campaign transition callback; the spec does not simulate
+  a full rainfall cycle.
 - `e2e/campaign/objective-carousel.spec.mjs` verifies Mission 1's 1/1
   objective and disabled navigation at both ends; Mission 2's four objectives,
   progress rerender stability, and selection resets on restart, reload/resume,
@@ -198,8 +204,10 @@ own workflow captures them. See the [Playwright HTML reporter guide](https://pla
   `#missionObjectivePosition`, `#missionObjectiveCurrent`,
   `#missionObjectiveCheck`, and
   `#missionEventNotice`. Completion uses `#missionCompleteDialog`,
-  `#missionCompleteStats`, and `#missionCompleteOk`; after dismissal the HUD
-  bar exposes `#missionAdvance`. The next briefing guidance is
+  `#missionCompleteStats`, `#missionCompleteOk`, and the timed
+  `#missionCompleteToast`; after recap dismissal, the persistent compact HUD
+  action exposes `#missionAdvance`. Its availability does not depend on the
+  toast timer. The next briefing guidance is
   `#missionIntroGuidance`.
 - `e2e/tools/` covers painting, shapes, Grabber, and environment controls. The
   environment specs check the Visualizations section and Environment order,
@@ -209,7 +217,9 @@ own workflow captures them. See the [Playwright HTML reporter guide](https://pla
   switching, and Normal restoration. `e2e/tools/environment.spec.mjs`
   also checks the accessible General Wind and Gust Strength range handles,
   their `0-50` bounds, keyboard push-through and lower-bound clamping behavior,
-  and Breeze as their shared master toggle.
+  and Breeze as their shared master toggle. Base Humidity and player-facing
+  Dewpoint sliders both expose `0-100`; the physics API and campaign-editor
+  environment profile accept Dewpoint down to `-60`.
 - `e2e/tools/zoom.spec.mjs` covers the transient four-level standard-world zoom
   and five-level 520×300 zoom. Both sizes start fitted at level 1 with all edges
   visible and no scrolling; the level factors are `[1, 1.5, 2, 3]` and
@@ -221,7 +231,10 @@ own workflow captures them. See the [Playwright HTML reporter guide](https://pla
   machine-overlay hit testing, and the optional five-percent edge-pan behavior.
   `e2e/tools/painting.spec.mjs` covers all four eligible
   drawing modes, empty-cell and active-tool no-ops, selection synchronization,
-  and cancellation of pending Line, Rectangle, and Ellipse gestures.
+  cancellation of pending Line, Rectangle, and Ellipse gestures, and a real
+  held-brush gesture that repeats paint until release. In the `?e2e` adapter,
+  that gesture test advances simulation steps while the pointer remains held
+  because requestAnimationFrame is suppressed for deterministic stepping.
   `e2e/blueprints/lifecycle.spec.mjs` verifies middle-click no-ops during
   marquee selection and blueprint stamping.
   Horizontal and Shift + wheel remain browser-owned rather than entering the
@@ -236,6 +249,8 @@ own workflow captures them. See the [Playwright HTML reporter guide](https://pla
   and powered Fan/Heater/Cooler machines. `rendering.spec.mjs` checks local glow
   color interpolation for solid Copper, Battery, Iron, Fan, Cooler, Tubing, and
   Heater, while preserving existing molten gradients.
+  It also verifies that shared catalog/tooltips clear when leaving those panels
+  or entering the canvas, while machine-owned hover tooltips remain visible.
 - `e2e/feedback/hover.spec.mjs` covers the fixed, non-scrolling feedback panel,
   preserved FPS/particle-count readout, cleared feedback outside the canvas,
   empty-air measurements, particle category/environment/state-transition
@@ -546,11 +561,11 @@ The editor spec was rerun by itself and passed **6/6**:
 npm.cmd run test:browser -- e2e/campaign/editor.spec.mjs --workers=1 --trace=off
 ```
 
-The deterministic harness completed with **408 passed and 24 failed** under
-`npm.cmd test`. The 24 failures were in unrelated pre-existing seed,
-electrical, Fan, Dewpoint, and illumination checks. The Mission 2 temperature
-cap, Mission 3 staged objectives, and physical Dry Mud-to-Lava checks passed in
-that run. This result is not a clean full deterministic-suite pass.
+An earlier deterministic-harness checkpoint completed with **408 passed and
+24 failed** under `npm.cmd test`, before follow-up repairs. The later full
+deterministic harness passed **436/436**; see the final verification section
+below. The Mission 2 temperature cap, Mission 3 staged objectives, and physical
+Dry Mud-to-Lava checks were also verified.
 
 The Mission 2 checks cover the 30 C mission-specific maximum on both inputs,
 clamping, and restoration of the Sandbox 4,000 C maximum. Mission 3 begins
@@ -561,6 +576,30 @@ editor round-trip covers the mission `controlLimits` JSON field,
 and control unlocks. Carousel coverage verifies its 1-based position, bounded
 arrows, completed state without auto-advance, gated item visibility, and
 transient selection resets.
+
+## Final campaign feedback and air-transport verification (29 September 2026)
+
+The latest full browser bundle completed **297/299**. The two failures were
+followed up individually and each now passes its focused rerun:
+
+- The Base Humidity and Dewpoint slider test now expects the player-facing
+  Dewpoint slider minimum to be `0`, matching the control's `0-100` range. The
+  physics API and campaign-editor environment profile still accept `-60`.
+  The focused environment test passed **1/1**:
+  `npm.cmd run test:browser -- e2e/tools/environment.spec.mjs --grep "Base Humidity and Dewpoint sliders" --workers=1 --trace=off`
+- The real held-brush test manually advances deterministic simulation while
+  the pointer remains held, because `?e2e` suppresses requestAnimationFrame.
+  The focused painting test passed **1/1**:
+  `npm.cmd run test:browser -- e2e/tools/painting.spec.mjs --grep "holding a real brush gesture" --workers=1 --trace=off`
+
+The full browser bundle was not rerun after those focused fixes, following the
+user's instruction not to run another full suite. The recorded full-browser
+result therefore remains **297/299**; the focused results do not establish a
+full-suite pass. The full deterministic simulation harness passed **436/436**
+with `npm.cmd test`. The focused air-circulation harness passed **67/67** with
+`npm.cmd test -- --focus=air-circulation`; the solver remained unchanged, and
+no scalar-transport behavior defect was reproduced. Existing calm-roll,
+uniform-field, and reach-boundary checks passed against the current solver.
 
 The scale profile's allocation and pure math/CLI checks are headless Node tests
 and can be run independently from Playwright. `npm run profile:scale` reports

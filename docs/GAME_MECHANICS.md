@@ -53,7 +53,9 @@ selected and show green completion styling and a check mark. Completion does
 not auto-advance the carousel, and ordinary HUD rerenders preserve selection.
 Selection is transient and resets to the first objective when a mission starts,
 restarts, advances, or reloads. The arrow controls have accessible names and
-the current objective status is announced to assistive technology.
+the current objective status is announced to assistive technology. Shared
+tooltips clear when the pointer leaves the catalog or tool column or enters
+the canvas or another area without a tooltip trigger.
 
 **Mission 2: The Icebound Grove** uses a 260×150 world with a full-width
 five-row Ice floor. The opening climate is −10 °C, 35% humidity, and 10%
@@ -86,13 +88,15 @@ and numeric input; values above the cap are clamped. Sandbox retains the global
 and budgets 5,000 each of Sand, Dry Mud, and Ash plus 8,000 Steam. The three
 500-cell pile objectives are active together. Steam becomes available only
 after all three piles are placed; placing 500 Steam unlocks the Humidity and
-Dewpoint controls. Reaching 100 for both climate controls enables rain and the
-three wetting objectives. Temperature starts with a 150 C maximum; after rain,
-the player sets 150 C and dries Sand, Dry Mud, then Ash. Completing the Ash
-drying objective raises the maximum to 2,000 C and enables the final Lava
-objectives. The materials transform Sand to Glass to Lava, Dry Mud directly to
-Lava at its 1,200 C melt point, and Ash to Lava. Mission-specific limits are
-resolved over the Sandbox maximum and do not change Sandbox controls.
+Dewpoint controls. Setting Humidity to 95% and Dewpoint to 20 C enables the
+rain objective and three wetting milestones, each at 150 transformations.
+Keep rain and Steam in place until at least 500 cells of each pile are wet
+before raising Temperature. The 150 C temperature cap then gates the three
+500-cell drying objectives. Completing the Ash-drying objective raises the
+maximum to 2,000 C and enables the final Lava objectives. The materials
+transform Sand to Glass to Lava, Dry Mud directly to Lava at its 1,200 C melt
+point, and Ash to Lava. Mission-specific limits are resolved over the Sandbox
+maximum and do not change Sandbox controls.
 
 Campaign catalogs hide unavailable materials, machines, and tools. Categories
 with available entries automatically expand in Campaign; empty categories are
@@ -105,12 +109,15 @@ catalog and its normal controls.
 
 Completing all mission objectives automatically opens a recap dialog with
 objective results and used, total, and remaining counts for each finite player
-supply while the simulation continues. After clicking **OK**, the completed
-mission remains playable with its existing world and remaining supplies; the
-mission grants no new materials, and completed objectives cannot progress
-again. The objective-passed bar stays in the HUD. Its **ADVANCE** action opens
-the next mission briefing; confirming that briefing initializes its authored
-world and fresh resource budgets. A Campaign checkpoint is written only when
+supply while the simulation continues. A bottom-right completion toast fades
+after ten seconds. After clicking **OK**, the completed mission remains
+playable with its existing world and remaining supplies; the mission grants
+no new materials, and completed objectives cannot progress again. The compact
+persistent mission-HUD action shows **ADVANCE** for an installed successor or
+**CAMPAIGN COMPLETE** at the end; its availability is independent of the toast
+timer. **ADVANCE** opens the next mission briefing; confirming that briefing
+initializes its authored world and fresh resource budgets. A Campaign
+checkpoint is written only when
 **ADVANCE** selects an installed successor. It stores the next mission number;
 Mission start, objective completion, recap dismissal, Restart, and a final
 mission with no successor do not write a checkpoint. Restart asks for
@@ -118,7 +125,8 @@ confirmation, then rebuilds the authored scenario without changing the saved
 mission number. Resume resolves the checkpoint's number and reconstructs a
 pristine world, environment, full budgets, and zeroed objectives/events. The
 completion recap and current run progress do not persist. When no later mission
-is installed, the bar reports **CAMPAIGN COMPLETE** and cannot advance.
+is installed, the persistent HUD action reports **CAMPAIGN COMPLETE** and is
+disabled.
 
 Portable LZString save payloads are version 3. Sandbox saves contain the full
 world and tool state. A Campaign checkpoint contains the standard format,
@@ -490,7 +498,9 @@ that starts at `50%`, and **Dewpoint**, a `0-100 C` slider that starts at
 `10 C`. Base Humidity is the open-air field's slow return target; nearby Water,
 Steam, Cloud, and plants add moisture, while Sand and Dry Mud absorb it. The
 Dewpoint setting is the temperature threshold used by cloud precipitation and
-Steam condensation. Both settings are saved with the world.
+Steam condensation. Both settings are saved with the world. The player-facing
+Dewpoint slider is limited to `0-100 C`; the physics API and campaign-editor
+environment profile accept values down to `-60 C`.
 
 The **Wind Strength** control has two keyboard-accessible handles on one
 `0-50` scale: **General Wind** and **Gust Strength**. Both start at `7`, and
@@ -1067,7 +1077,8 @@ or Dry Mud, add a moisture source, or raise Base Humidity; keep the substrate
 wet even when the air is humid.
 
 The Dewpoint slider sets a configurable `0-100 C` threshold, defaulting to
-`10 C`. When exposed upper air is at or below the dewpoint and local humidity
+`10 C`; physics and campaign-editor profiles can set it from `-60 C` to
+`100 C`. When exposed upper air is at or below the dewpoint and local humidity
 reaches `88%`, sparse Cloud gas particles can nucleate without an existing
 cloud. Enclosed chambers retain and diffuse humidity but do not spontaneously
 spawn weather. Cloud gas rises/drifts and, at or below the dewpoint in air at

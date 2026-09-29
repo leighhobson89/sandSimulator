@@ -79,6 +79,60 @@ test('Mission 1 counts Daffodil seed germination and fires its completion event 
     await expect(page.locator('#missionEventNotice')).toContainText(/objective complete/i);
 });
 
+test('objective completion toast times out while the final advance status persists', async ({ page }) => {
+    await startCampaign(page);
+    await page.clock.install();
+
+    await page.evaluate(async () => {
+        const campaign = await import('/campaign.js');
+        const definitions = (await import('/physics.js')).getDefinitions();
+        campaign.recordMaterialTransition(
+            definitions.findIndex(definition => definition?.name === 'Daffodil Seeds'),
+            definitions.findIndex(definition => definition?.name === 'Daffodil')
+        );
+    });
+    await expect(page.locator('#missionCompleteDialog')).toBeVisible();
+    await page.locator('#missionCompleteOk').click();
+    await expect(page.locator('#missionCompleteDialog')).toBeHidden();
+
+    const toast = page.locator('#missionCompleteToast');
+    await expect(toast).toBeVisible();
+    await expect(toast).toHaveAttribute('role', 'status');
+    await expect(toast).toHaveAttribute('aria-live', 'polite');
+    await expect(toast).toHaveAttribute('aria-atomic', 'true');
+    await expect(toast).toContainText(/objective complete/i);
+    const toastBounds = await toast.evaluate(element => {
+        const rect = element.getBoundingClientRect();
+        return {
+            rightOffset: window.innerWidth - rect.right,
+            bottomOffset: window.innerHeight - rect.bottom,
+            left: rect.left,
+            top: rect.top,
+            position: getComputedStyle(element).position,
+            viewportWidth: window.innerWidth,
+            viewportHeight: window.innerHeight
+        };
+    });
+    expect(toastBounds.position).toBe('fixed');
+    expect(toastBounds.rightOffset).toBeLessThanOrEqual(32);
+    expect(toastBounds.bottomOffset).toBeLessThanOrEqual(160);
+    expect(toastBounds.left).toBeGreaterThan(0.5 * toastBounds.viewportWidth);
+    expect(toastBounds.top).toBeGreaterThan(0.5 * toastBounds.viewportHeight);
+
+    await expect(page.locator('#missionPassedBar')).toBeHidden();
+    await expect(page.locator('#missionAdvance')).toBeVisible();
+    await expect(page.locator('#missionAdvance')).toBeEnabled();
+    await expect(page.locator('#missionAdvance')).toHaveText('ADVANCE');
+    await page.clock.fastForward(9000);
+    await expect(toast).toBeVisible();
+    await page.clock.fastForward(2000);
+    await expect(toast).toBeHidden();
+    await expect(page.locator('#missionPassedBar')).toBeHidden();
+    await expect(page.locator('#missionAdvance')).toBeVisible();
+    await expect(page.locator('#missionAdvance')).toBeEnabled();
+    await expect(page.locator('#missionAdvance')).toHaveText('ADVANCE');
+});
+
 test('Mission 1 supplies an authored seed habitat, ideal climate, finite budgets, and campaign locks', async ({ page }) => {
     await page.goto('/?e2e');
     await page.evaluate(() => localStorage.clear());

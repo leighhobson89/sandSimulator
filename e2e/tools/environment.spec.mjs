@@ -311,6 +311,9 @@ test('Base Humidity and Dewpoint sliders expose their ranges and update the envi
     await expect(dewpoint).toHaveValue('10');
 
     await humidity.evaluate(input => { input.value = '73'; input.dispatchEvent(new Event('input', { bubbles: true })); });
+    await dewpoint.evaluate(input => { input.value = '0'; input.dispatchEvent(new Event('input', { bubbles: true })); });
+    await expect.poll(async () => page.evaluate(async () =>
+        (await import('/physics.js')).getDewpointTarget())).toBe(0);
     await dewpoint.evaluate(input => { input.value = '14'; input.dispatchEvent(new Event('input', { bubbles: true })); });
     const targets = await page.evaluate(async () => {
         const physics = await import('/physics.js');

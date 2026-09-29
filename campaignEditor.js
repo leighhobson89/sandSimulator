@@ -28,7 +28,7 @@ export function initCampaignEditor({ startSession, closeSession } = {}) {
     root = document.getElementById('campaignEditorWorkspace');
     editorSessionStart = startSession || (() => {});
     editorSessionClose = closeSession || (() => {});
-    if (!root) return;
+    if (!root?.querySelector('[data-mission-field="startMaterial"]')) return;
     populateMaterialChoices();
     loadDraftStore();
     renderMissionList();
@@ -327,16 +327,22 @@ function bindEditorEvents() {
 
 function populateMaterialChoices() {
     const names = getDefinitions().filter(definition => definition && !definition.machine && !definition.tool).map(definition => definition.name);
+    const createOption = name => {
+        const option = document.createElement('option');
+        option.value = name;
+        option.textContent = name;
+        return option;
+    };
     for (const id of ['campaignObjectiveFrom', 'campaignObjectiveTo']) {
         const select = document.getElementById(id);
-        select.replaceChildren(...names.map(name => new Option(name, name)));
+        select.replaceChildren(...names.map(createOption));
     }
     const select = root.querySelector('[data-mission-field="startMaterial"]');
-    select.replaceChildren(...names.map(name => new Option(name, name)));
+    select.replaceChildren(...names.map(createOption));
     const firstFrom = root.querySelector('[data-objective-from]');
     const firstTo = root.querySelector('[data-objective-to]');
-    firstFrom.replaceChildren(...names.map(name => new Option(name, name)));
-    firstTo.replaceChildren(...names.map(name => new Option(name, name)));
+    firstFrom.replaceChildren(...names.map(createOption));
+    firstTo.replaceChildren(...names.map(createOption));
     const machines = [...new Set(getDefinitions().filter(definition => definition?.machine).map(definition => definition.machine))];
     const machineNames = new Map(getDefinitions().filter(definition => definition?.machine).map(definition => [definition.machine, definition.name]));
     root.dataset.machineNames = JSON.stringify(Object.fromEntries(machineNames));

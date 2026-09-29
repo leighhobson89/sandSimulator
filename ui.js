@@ -100,6 +100,9 @@ let editingMachine = null;
 let machineTooltipTimer = null;
 let machineTooltipTarget = null;
 let machineTooltipAnchor = null;
+let sharedTooltipOwner = null;
+let missionCompleteToastTimer = null;
+let missionCompleteToastFadeTimer = null;
 let machineDialogTimer = null;
 let mixerPurgeSlot = null;
 let visualizationsDialogInvoker = null;
@@ -175,7 +178,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (button) void loadLibraryGame(button.dataset.loadSaveId);
     });
     window.addEventListener('campaign-state-change', updateCampaignUi);
-    window.addEventListener('campaign-mission-complete', updateCampaignUi);
+    window.addEventListener('campaign-mission-complete', () => {
+        updateCampaignUi();
+        const campaign = getCampaignState();
+        showMissionCompleteToast(campaign?.campaignComplete
+            ? 'Campaign complete — every available mission has been passed.'
+            : 'Mission objective complete — objectives passed. Your next mission briefing is ready.');
+    });
     window.addEventListener('campaign-editor-selection-restored', () => {
         selectDrawingMode(getDrawMode());
         highlightSelectedParticle();
@@ -665,6 +674,7 @@ function prepareCampaignMissionWorld(mission) {
 
 function showMissionBriefing(mission) {
     const elements = getElements();
+    clearMissionCompleteToast();
     elements.missionIntroNumber.textContent = String(mission.number);
     elements.missionIntroTitle.textContent = mission.title;
     elements.missionIntroBriefing.textContent = mission.briefing;
@@ -777,6 +787,36 @@ function renderMissionObjectiveCarousel(elements, campaign, mission, objective) 
     elements.missionObjectiveStatus.textContent = complete ? 'Completed' : locked ? 'Locked' : 'In progress';
 }
 
+function clearMissionCompleteToast() {
+    if (missionCompleteToastTimer) clearTimeout(missionCompleteToastTimer);
+    if (missionCompleteToastFadeTimer) clearTimeout(missionCompleteToastFadeTimer);
+    missionCompleteToastTimer = null;
+    missionCompleteToastFadeTimer = null;
+    const toast = getElements()?.missionCompleteToast;
+    if (!toast) return;
+    toast.hidden = true;
+    toast.classList.remove('is-fading');
+    toast.textContent = '';
+}
+
+function showMissionCompleteToast(message) {
+    clearMissionCompleteToast();
+    const toast = getElements().missionCompleteToast;
+    toast.textContent = message;
+    toast.hidden = false;
+    toast.classList.remove('is-fading');
+    missionCompleteToastTimer = setTimeout(() => {
+        toast.classList.add('is-fading');
+        missionCompleteToastFadeTimer = setTimeout(() => {
+            toast.hidden = true;
+            toast.classList.remove('is-fading');
+            toast.textContent = '';
+            missionCompleteToastTimer = null;
+            missionCompleteToastFadeTimer = null;
+        }, 350);
+    }, 10000);
+}
+
 function openMissionRestartDialog() {
     if (!getCampaignState()) return;
     const dialog = getElements().missionRestartDialog;
@@ -868,12 +908,12 @@ function updateCampaignUi() {
         resetMissionObjectiveSelection();
     }
     const missionComplete = !!campaign?.missionCompleted;
-    elements.missionPassedBar.hidden = !missionComplete;
-    elements.missionPassedMessage.textContent = campaign?.campaignComplete
-        ? 'Campaign complete. Every available mission has been passed.'
-        : 'Objectives passed. Your next mission briefing is ready.';
+    elements.missionHudActions.hidden = !missionComplete;
     elements.missionAdvance.textContent = campaign?.campaignComplete ? 'CAMPAIGN COMPLETE' : 'ADVANCE';
     elements.missionAdvance.disabled = !missionComplete || !campaign?.recapDismissed || !!campaign?.campaignComplete;
+    if (!missionComplete || elements.missionHud.hidden) {
+        clearMissionCompleteToast();
+    }
     const showRecap = missionComplete && !campaign.recapDismissed;
     const wasHidden = elements.missionCompleteDialog.hidden;
     elements.missionCompleteDialog.hidden = !showRecap;
@@ -2609,8 +2649,14 @@ function setUpTooltips() {
     const tooltip = document.getElementById('toolTooltip');
     const controls = panels.flatMap(panel => Array.from(panel.querySelectorAll('.tooltip-control')));
 
-    const hide = () => { tooltip.hidden = true; };
+    const hide = () => {
+        if (sharedTooltipOwner !== 'control') return;
+        tooltip.hidden = true;
+        sharedTooltipOwner = null;
+    };
     const show = control => {
+        if (sharedTooltipOwner === 'machine') hideMachineTooltip();
+        sharedTooltipOwner = 'control';
         const disabledReason = control.dataset.campaignDisabled === 'true'
             ? control.dataset.campaignDisabledReason || 'Not available in this mission.' : '';
         if (disabledReason) {
@@ -2649,6 +2695,11 @@ function setUpTooltips() {
         control.addEventListener('focusout', hide);
     });
     panels.forEach(panel => panel.addEventListener('scroll', hide));
+    document.addEventListener('pointerover', event => {
+        const target = event.target instanceof Element ? event.target : null;
+        if (sharedTooltipOwner === 'control' && !target?.closest('.tooltip-control')) hide();
+        else if (sharedTooltipOwner === 'machine' && !getElements().canvas?.contains(target)) hideMachineTooltip();
+    }, true);
     window.addEventListener('resize', () => { hide(); hideMachineTooltip(); });
 }
 
@@ -2712,6 +2763,7 @@ function machineTooltipText(machine) {
 function renderMachineTooltip(machine, event) {
     const tooltip = document.getElementById('toolTooltip');
     if (!tooltip) return;
+    sharedTooltipOwner = 'machine';
     if (!machine.tubing && (machine.def.machine === 'temperatureSwitch' ||
         machine.def.machine === 'humiditySwitch' || machine.def.machine === 'lightSwitch')) {
         tooltip.textContent = '';
@@ -2735,6 +2787,11 @@ function renderMachineTooltip(machine, event) {
 }
 
 function showMachineTooltip(machine, event) {
+    if (sharedTooltipOwner === 'control') {
+        const tooltip = document.getElementById('toolTooltip');
+        if (tooltip) tooltip.hidden = true;
+    }
+    sharedTooltipOwner = 'machine';
     machineTooltipTarget = { x: machine.x, y: machine.y, id: machine.id, tubing: !!machine.tubing };
     machineTooltipAnchor = { clientX: event.clientX, clientY: event.clientY };
     renderMachineTooltip(machine, machineTooltipAnchor);
@@ -2759,7 +2816,10 @@ function hideMachineTooltip() {
     machineTooltipTarget = null;
     machineTooltipAnchor = null;
     const tooltip = document.getElementById('toolTooltip');
-    if (tooltip) tooltip.hidden = true;
+    if (sharedTooltipOwner === 'machine') {
+        if (tooltip) tooltip.hidden = true;
+        sharedTooltipOwner = null;
+    }
 }
 
 function selectDrawingMode(mode) {

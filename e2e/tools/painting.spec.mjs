@@ -69,6 +69,7 @@ test('brush size changes the circular footprint and keyboard bounds', async ({ p
 
 test('holding a real brush gesture repeats paint until release', async ({ page }) => {
     const game = await start(page);
+    await page.getByRole('button', { name: 'Play' }).click();
     await page.getByRole('button', { name: 'Sand', exact: true }).click();
     await page.locator('#brushSize').fill('3');
     const point = await canvasPoint(page, { x: 64, y: 50 });
@@ -77,6 +78,11 @@ test('holding a real brush gesture repeats paint until release', async ({ page }
     const initial = await game.state();
     const sand = initial.definitions.find(definition => definition?.name === 'Sand').id;
     const initiallyPainted = initial.typeCounts[String(sand)] || 0;
+    // E2E mode disables automatic animation frames. Advance the world while
+    // the real pointer remains down, then let the brush's browser timer refill
+    // the cells Sand just vacated.
+    await game.step(20);
+    await page.waitForTimeout(50);
     await expect.poll(async () => (await game.state()).typeCounts[String(sand)] || 0)
         .toBeGreaterThan(initiallyPainted);
     await page.mouse.up();

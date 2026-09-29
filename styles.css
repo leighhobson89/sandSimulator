@@ -2406,7 +2406,7 @@ body[data-theme="terminal"] .menu-title {
 .mission-hud {
     z-index: 4;
     display: grid;
-    grid-template-columns: minmax(150px, 1fr) auto minmax(220px, 1.5fr);
+    grid-template-columns: minmax(120px, 0.8fr) minmax(140px, 1fr) minmax(0, 2fr) minmax(0, auto);
     align-items: center;
     gap: 0.4rem 1.1rem;
     min-height: 3.2rem;
@@ -2442,7 +2442,7 @@ body[data-theme="terminal"] .menu-title {
     align-items: center;
     justify-self: end;
     gap: 0.45rem;
-    width: min(100%, 46rem);
+    width: min(100%, 64rem);
     min-width: 0;
 }
 .mission-objective-arrow {
@@ -2473,10 +2473,10 @@ body[data-theme="terminal"] .menu-title {
     background: color-mix(in srgb, var(--bg-raised) 78%, var(--bg));
 }
 .mission-objective-position { color: var(--text-dim); font: 600 0.72rem/1.2 var(--mono); white-space: nowrap; }
-.mission-objective-copy { display: grid; min-width: 0; gap: 0.12rem; }
-.mission-objective-label { min-width: 0; color: var(--text); font-size: 0.76rem; line-height: 1.25; overflow-wrap: anywhere; }
-.mission-objective-progress-text { color: var(--text-dim); font: 0.68rem/1.2 var(--mono); }
-.mission-objective-lock-text { color: var(--accent-hover); font-size: 0.66rem; line-height: 1.25; overflow-wrap: anywhere; }
+.mission-objective-copy { display: flex; align-items: center; justify-content: center; min-width: 0; gap: 0.55rem; text-align: center; }
+.mission-objective-label { flex: 1 1 auto; min-width: 0; overflow: hidden; color: var(--text); font-size: 0.76rem; line-height: 1.25; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
+.mission-objective-progress-text { flex: 0 0 auto; color: var(--text-dim); font: 0.68rem/1.2 var(--mono); white-space: nowrap; }
+.mission-objective-lock-text { flex: 0 1 auto; max-width: 13rem; overflow: hidden; color: var(--accent-hover); font-size: 0.66rem; line-height: 1.25; text-overflow: ellipsis; white-space: nowrap; }
 .mission-objective-lock-text[hidden],
 .mission-objective-check[hidden] { display: none; }
 .mission-objective-check {
@@ -2509,22 +2509,41 @@ body[data-theme="terminal"] .menu-title {
     animation: menu-rise-in 0.25s ease-out both;
 }
 .mission-event-notice[hidden] { display: none; }
-.mission-passed-bar {
-    grid-column: 1 / -1;
+.mission-hud-actions {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: flex-end;
     gap: 0.65rem;
-    padding: 0.45rem 0.65rem;
-    border: 1px solid color-mix(in srgb, var(--accent) 65%, var(--line));
-    border-radius: var(--radius-sm);
-    color: var(--accent-ink);
-    background: var(--accent);
+    min-width: 0;
+    color: var(--text);
     font-size: 0.76rem;
     font-weight: 700;
 }
-.mission-passed-bar[hidden] { display: none; }
-.mission-passed-bar .btn { min-width: 8rem; }
+.mission-hud-actions[hidden] { display: none; }
+.mission-hud-actions .btn { min-width: 8rem; white-space: nowrap; }
+.mission-complete-toast {
+    position: fixed;
+    z-index: 18;
+    right: 1rem;
+    bottom: calc(4.75rem + env(safe-area-inset-bottom, 0px));
+    width: max-content;
+    max-width: min(30rem, calc(100vw - 2rem));
+    padding: 0.7rem 0.9rem;
+    border: 1px solid color-mix(in srgb, var(--success) 70%, var(--line));
+    border-radius: var(--radius-sm);
+    color: var(--success-ink);
+    background: color-mix(in srgb, var(--success) 88%, var(--bg-raised));
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.32);
+    font-size: 0.82rem;
+    font-weight: 750;
+    line-height: 1.35;
+    pointer-events: none;
+    opacity: 1;
+    transform: translateY(0);
+    transition: opacity 350ms ease, transform 350ms ease;
+}
+.mission-complete-toast[hidden] { display: none; }
+.mission-complete-toast.is-fading { opacity: 0; transform: translateY(0.45rem); }
 .mission-complete-card { width: min(600px, 100%); gap: 0.9rem; border-color: color-mix(in srgb, var(--accent) 58%, var(--line)); }
 .mission-complete-stats { display: grid; gap: 0.3rem; max-height: min(55vh, 420px); overflow: auto; }
 .mission-complete-stats h3 { margin: 0.3rem 0 0; color: var(--accent); font-size: 0.68rem; letter-spacing: var(--heading-tracking); text-transform: uppercase; }
@@ -2647,8 +2666,10 @@ body[data-theme="terminal"] .menu-title {
     .menu-card { width: min(510px, 94vw); padding: 1.6rem 1.35rem; }
     .menu-title { font-size: clamp(1.9rem, 8vw, 2.55rem); }
     .menu-subtitle { max-width: 34ch; font-size: 0.88rem; }
-    .mission-hud { grid-template-columns: 1fr 1fr; gap: 0.4rem 0.75rem; }
+    .mission-hud { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0.4rem 0.75rem; }
     .mission-objective-carousel { grid-column: 1 / -1; justify-self: stretch; width: 100%; }
+    .mission-hud-actions { grid-column: 1 / -1; justify-self: end; }
+    .mission-complete-toast { right: 0.75rem; max-width: calc(100vw - 1.5rem); }
     #workspace { overflow-x: auto; }
     .canvasColumn { flex: 1 0 320px; }
     .campaign-editor-workspace { flex-basis: min(320px, 80vw); width: min(320px, 80vw); padding: 0.8rem; }
@@ -2670,8 +2691,10 @@ body[data-theme="terminal"] .menu-title {
     .menu-card,
     .menu-actions > button,
     .mission-pulse,
-    .mission-event-notice {
+    .mission-event-notice,
+    .mission-complete-toast {
         animation: none !important;
+        transition: none !important;
     }
     .menu-actions .btn-campaign { transition: none; }
     .campaign-editor-workspace { animation: none; }

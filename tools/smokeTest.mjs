@@ -50,6 +50,7 @@ function makeElement(id, tagName = 'DIV') {
         tagName: String(tagName).toUpperCase(),
         attributes: {},
         setAttribute(name, value) { this.attributes[name] = String(value); },
+        removeAttribute(name) { delete this.attributes[name]; },
         getAttribute(name) { return this.attributes[name]; },
         blur() { this.fire('blur', {}); },
         focus() {},
@@ -71,6 +72,7 @@ function makeElement(id, tagName = 'DIV') {
         },
         closest() { return null; },
         appendChild(child) { ownTextContent = ''; this.children.push(child); },
+        append(...children) { ownTextContent = ''; this.children.push(...children); },
         replaceChildren(...children) { ownTextContent = ''; this.children = children; },
         // Good enough for ".particle-button": walks the tree and matches on
         // class name, since the panel nests buttons inside group grids.
@@ -115,10 +117,12 @@ function makeElement(id, tagName = 'DIV') {
             return elements.canvasArea;
         },
         getContext() {
+            const element = this;
             return {
                 imageSmoothingEnabled: true,
                 createImageData: (w, h) => ({ width: w, height: h, data: new Uint8ClampedArray(w * h * 4) }),
-                putImageData(data) { putCount++; lastImageData = data; },
+                putImageData(data) { putCount++; if (element.id === 'canvas') lastImageData = data; },
+                clearRect() {},
                 strokeRect() { strokeCount++; },
                 beginPath() {},
                 moveTo() {},
@@ -179,6 +183,7 @@ globalThis.getComputedStyle = () => ({
 const windowListeners = {};
 globalThis.window = {
     addEventListener(type, handler) { (windowListeners[type] ||= []).push(handler); },
+    dispatchEvent(event) { (windowListeners[event.type] || []).forEach(handler => handler(event)); return true; },
     fire(type, event = {}) { (windowListeners[type] || []).forEach(handler => handler(event)); }
 };
 // Nowhere to remember the chosen theme, which is one of the cases themes.js has

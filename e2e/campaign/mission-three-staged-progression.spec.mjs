@@ -81,8 +81,8 @@ async function paintPlacementBlock(page, material, startX) {
     }, { material, startX });
 }
 
-async function recordMissionTransitions(page, pairs) {
-    await page.evaluate(async pairs => {
+async function recordMissionTransitions(page, pairs, transitionCount = null) {
+    await page.evaluate(async ({ pairs, transitionCount }) => {
         const campaign = await import('/campaign.js');
         const physics = await import('/physics.js');
         const definitions = physics.getDefinitions();
@@ -96,13 +96,14 @@ async function recordMissionTransitions(page, pairs) {
                 if (!objective) throw new Error(`Missing ${from} to ${to} mission objective.`);
                 const fromId = definitions.findIndex(definition => definition?.name === from);
                 const toId = definitions.findIndex(definition => definition?.name === to);
-                for (let count = 0; count < objective.target; count++) campaign.recordMaterialTransition(fromId, toId);
+                const total = transitionCount ?? objective.target;
+                for (let count = 0; count < total; count++) campaign.recordMaterialTransition(fromId, toId);
             }
         } finally {
             window.dispatchEvent = dispatch;
             dispatch(new Event('campaign-state-change'));
         }
-    }, pairs);
+    }, { pairs, transitionCount });
 }
 
 async function setControlValue(page, selector, value) {
@@ -152,8 +153,13 @@ test('Mission 3 gates Steam, rain controls, and 2,000C behind the three material
     expect(authoredMission.steamPlacement?.target).toBe(500);
     expect(authoredMission.steamPlacement.requires).toEqual(expect.arrayContaining(
         authoredMission.dryPlacements.map(objective => objective.id)));
-    expect(authoredMission.rainObjective?.targetValues).toMatchObject({ humidity: 100, dewpoint: 100 });
+    expect(authoredMission.rainObjective?.targetValues).toEqual({ humidity: 95, dewpoint: 20 });
     expect(authoredMission.dryingHeatObjective?.targetValues).toEqual({ temperature: 150 });
+    expect(authoredMission.wetObjectives.map(objective => objective?.target)).toEqual([150, 150, 150]);
+    expect(authoredMission.dryObjectives.map(objective => objective?.target)).toEqual([500, 500, 500]);
+    expect(authoredMission.mission.guidance).toMatch(/rain/i);
+    expect(authoredMission.mission.guidance).toMatch(/500.*wet|wet.*500/i);
+    expect(authoredMission.mission.guidance).toMatch(/dry|heat/i);
     expect(authoredMission.wetObjectives.every(objective => objective?.requires?.includes(authoredMission.rainObjective.id))).toBe(true);
     expect(authoredMission.dryObjectives.map(objective => objective?.from)).toEqual(['Wet Sand', 'Wet Mud', 'Wet Ash']);
     expect(authoredMission.dryObjectives[2].requires).toEqual(expect.arrayContaining([
@@ -208,6 +214,15 @@ test('Mission 3 gates Steam, rain controls, and 2,000C behind the three material
 
     await setControlValue(page, '#baseHumidity', authoredMission.rainObjective.targetValues.humidity);
     await setControlValue(page, '#dewpoint', authoredMission.rainObjective.targetValues.dewpoint);
+    const appliedRainClimate = await page.evaluate(async () => {
+        const physics = await import('/physics.js');
+        return {
+            temperature: physics.getAmbientTarget(),
+            humidity: physics.getAmbientHumidityTarget(),
+            dewpoint: physics.getDewpointTarget()
+        };
+    });
+    expect(appliedRainClimate).toEqual({ temperature: 25, humidity: 95, dewpoint: 20 });
     const rainProgress = await page.evaluate(async () => {
         const campaign = await import('/campaign.js');
         const mission = campaign.getCurrentMission();
@@ -217,9 +232,17 @@ test('Mission 3 gates Steam, rain controls, and 2,000C behind the three material
     });
     expect(rainProgress).toBe(authoredMission.rainObjective.target);
 
+    // Wetting objectives are 150-cell milestones. Keep the rain stage active
+    // for the full 500 cells needed by each existing drying objective.
     await recordMissionTransitions(page, [
         ['Sand', 'Wet Sand'], ['Dry Mud', 'Wet Mud'], ['Ash', 'Wet Ash']
-    ]);
+    ], 500);
+    const wetMilestoneProgress = await page.evaluate(async () => {
+        const campaign = await import('/campaign.js');
+        const state = campaign.getCampaignState();
+        return ['wet-sand', 'wet-mud', 'wet-ash'].map(id => state.objectiveProgress[id]);
+    });
+    expect(wetMilestoneProgress).toEqual([150, 150, 150]);
     await setControlValue(page, '#airTemp', 150);
     const dryingHeatProgress = await page.evaluate(async () => {
         const campaign = await import('/campaign.js');

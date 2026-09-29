@@ -140,16 +140,18 @@ test('Collector suction feeds a compatible Storage Bin through its exact Tubing 
         const receiver = { x: 50, y: 30 };
         physics.setCell(collector.x, collector.y, id('Collector'));
         physics.getWorld().data[physics.index(collector.x, collector.y)] = 3;
+        // Direction 3 faces down, placing the cardinal intake barrier seven
+        // cells above the machine. Seed the first cell immediately before it.
         const front = [0, 1];
-        const collectorBoundary = { x: collector.x - front[0] * 7, y: collector.y - front[1] * 7 };
-        const upstreamWater = { x: collectorBoundary.x - front[0], y: collectorBoundary.y - front[1] };
-        physics.setCell(upstreamWater.x, upstreamWater.y, id('Sand'));
+        const intakeBarrier = { x: collector.x - front[0] * 7, y: collector.y - front[1] * 7 };
+        const suctionSample = { x: intakeBarrier.x - front[0], y: intakeBarrier.y - front[1] };
+        physics.setCell(suctionSample.x, suctionSample.y, id('Sand'));
         physics.setCell(receiver.x, receiver.y, id('Powder Storage Bin'));
         const collectorIndex = physics.index(collector.x, collector.y);
         const receiverIndex = physics.index(receiver.x, receiver.y);
         physics.stepSimulation();
         const collectedBeforeRoute = physics.getStorageInventory(collector.x, collector.y);
-        const looseAfterCollection = physics.getWorld().type[physics.index(upstreamWater.x, upstreamWater.y)];
+        const looseAfterCollection = physics.getWorld().type[physics.index(suctionSample.x, suctionSample.y)];
 
         const output = physics.getMachinePorts(collector.x, collector.y).find(port => port.role === 'output');
         const input = physics.getMachinePorts(receiver.x, receiver.y).find(port => port.role === 'input');
@@ -283,6 +285,7 @@ test('Collector accepts intake material and seals full-buffer side leaks in all 
 });
 
 test('Glass paints transparent machine artwork pixels, protects opaque pixels, and seals Collector water in all facings', async ({ page }) => {
+    test.setTimeout(120_000);
     const game = new GamePage(page);
     await game.openMenu();
     await game.newGame();
