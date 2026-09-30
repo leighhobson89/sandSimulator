@@ -1376,8 +1376,33 @@ export function invalidateLocalIlluminationForTypes(previousType, nextType) {
     }
 }
 
-function flushAmbientPendingChanges() {
-    if (!world || ambientPendingIndices.length === 0) return;
+const AMBIENT_PENDING_FLUSH_SUBPHASES = [
+    'simulationStage:postProcessing:ambientFlush:pendingClassificationFilter',
+    'simulationStage:postProcessing:ambientFlush:columnRefresh',
+    'simulationStage:postProcessing:ambientFlush:rowRefresh',
+    'simulationStage:postProcessing:ambientFlush:shadowWedgeEnqueueFallback'
+];
+
+function recordEmptyAmbientPendingFlushSubphases(recorder, startAt = 0) {
+    if (!recorder) return;
+    const emptyCounters = [
+        { pendingCells: 0, changedCells: 0, uniqueColumns: 0, uniqueRows: 0 },
+        { uniqueColumns: 0, columnsRefreshed: 0, columnCellsVisited: 0 },
+        { uniqueRows: 0, rowsRefreshed: 0, fullRowPrefixCells: 0, fullRowSuffixCells: 0 },
+        { changedCells: 0, wedgeEnqueueAttempts: 0, queuedWork: 0, fallbackCount: 0 }
+    ];
+    for (let index = startAt; index < AMBIENT_PENDING_FLUSH_SUBPHASES.length; index++) {
+        recorder.record(AMBIENT_PENDING_FLUSH_SUBPHASES[index], 0, emptyCounters[index]);
+    }
+}
+
+function flushAmbientPendingChanges(recorder = null) {
+    if (!world || ambientPendingIndices.length === 0) {
+        recordEmptyAmbientPendingFlushSubphases(recorder);
+        return;
+    }
+
+    const filteringStartedAt = recorder ? performance.now() : 0;
     const pending = ambientPendingIndices;
     ambientPendingIndices = [];
     ambientPendingGeneration = 0;
@@ -1395,20 +1420,53 @@ function flushAmbientPendingChanges() {
         columns.add(cell % COLS);
         rows.add(Math.floor(cell / COLS));
     }
-    if (!changedCells.length) return;
-    if (!ambientFieldBuilt) {
-        ambientIlluminationDirty = true;
+    if (recorder) recorder.record(AMBIENT_PENDING_FLUSH_SUBPHASES[0],
+        performance.now() - filteringStartedAt, {
+            pendingCells: pending.length,
+            changedCells: changedCells.length,
+            uniqueColumns: columns.size,
+            uniqueRows: rows.size
+        });
+    if (!changedCells.length) {
+        recordEmptyAmbientPendingFlushSubphases(recorder, 1);
         return;
     }
+    if (!ambientFieldBuilt) {
+        ambientIlluminationDirty = true;
+        recordEmptyAmbientPendingFlushSubphases(recorder, 1);
+        return;
+    }
+
     advanceAmbientDirtyGeneration(scratch);
+    const columnRefreshStartedAt = recorder ? performance.now() : 0;
     for (const x of columns) refreshAmbientColumn(scratch, x);
+    if (recorder) recorder.record(AMBIENT_PENDING_FLUSH_SUBPHASES[1],
+        performance.now() - columnRefreshStartedAt, {
+            uniqueColumns: columns.size,
+            columnsRefreshed: columns.size,
+            columnCellsVisited: columns.size * ROWS * 2
+        });
+
+    const rowRefreshStartedAt = recorder ? performance.now() : 0;
     refreshAmbientRows(scratch, rows);
+    if (recorder) recorder.record(AMBIENT_PENDING_FLUSH_SUBPHASES[2],
+        performance.now() - rowRefreshStartedAt, {
+            uniqueRows: rows.size,
+            rowsRefreshed: rows.size,
+            fullRowPrefixCells: ROWS,
+            fullRowSuffixCells: ROWS
+        });
+
+    const shadowWedgeStartedAt = recorder ? performance.now() : 0;
+    const queuedBeforeWedges = recorder ? scratch.dirtyQueue.length - ambientDirtyHead : 0;
+    const fallbackBeforeWedges = recorder ? ambientFallbackCount : 0;
     for (const cell of changedCells) {
         const x = cell % COLS;
         const y = Math.floor(cell / COLS);
         enqueueAmbientShadowWedge(scratch, x, y, true);
         enqueueAmbientShadowWedge(scratch, x, y, false);
     }
+    const queuedAfterWedges = recorder ? scratch.dirtyQueue.length - ambientDirtyHead : 0;
     const queued = scratch.dirtyQueue.length - ambientDirtyHead;
     if (queued > scratch.chunkCount * 0.4) {
         scratch.dirtyQueue.length = 0;
@@ -1419,6 +1477,13 @@ function flushAmbientPendingChanges() {
         ambientFullRefreshCursor = 0;
         ambientFallbackCount++;
     }
+    if (recorder) recorder.record(AMBIENT_PENDING_FLUSH_SUBPHASES[3],
+        performance.now() - shadowWedgeStartedAt, {
+            changedCells: changedCells.length,
+            wedgeEnqueueAttempts: changedCells.length * 2,
+            queuedWork: Math.max(0, queuedAfterWedges - queuedBeforeWedges),
+            fallbackCount: ambientFallbackCount - fallbackBeforeWedges
+        });
 }
 
 export function invalidateAmbientIlluminationForTypes(previousType, nextType, cell) {
@@ -5309,9 +5374,15 @@ function processMaturePlantGrowthCandidates() {
     }
 }
 
+function recordSimulationStage(recorder, name, startedAt, worldCells) {
+    recorder.record(name, performance.now() - startedAt, { worldCells });
+}
+
 export function stepSimulation() {
     const recorder = activeP0PerformanceRecorder();
     const startedAt = recorder ? performance.now() : 0;
+    const worldCells = recorder ? world.type.length : 0;
+    let stageStartedAt = recorder ? performance.now() : 0;
     frameCount++;
     if (debugFeatureFlags.localLight && illuminationFlashes.length) {
         illuminationFlashes = illuminationFlashes.filter(flash =>
@@ -5329,6 +5400,9 @@ export function stepSimulation() {
     }
     markOpenAirCells();
     openAirClassificationDirty = false;
+    if (recorder) recordSimulationStage(recorder, 'simulationStage:environmentOpenAir', stageStartedAt, worldCells);
+
+    stageStartedAt = recorder ? performance.now() : 0;
     // Thermal masks must be ready before this frame's contact diffusion. The
     // active-machine update rebuilds them again after electrical power has
     // refreshed, so changes to topology or storage barriers are reflected in
@@ -5338,6 +5412,9 @@ export function stepSimulation() {
     diffuseHeat();
     radiateHeat();
     computeLiquidSurfaces();
+    if (recorder) recordSimulationStage(recorder, 'simulationStage:thermalSurfaces', stageStartedAt, worldCells);
+
+    stageStartedAt = recorder ? performance.now() : 0;
     world.moved.fill(0);
     refreshStorageFunnelMachines();
     if (debugFeatureFlags.electricity) updateElectricalPower();
@@ -5351,12 +5428,16 @@ export function stepSimulation() {
     // A newly delivered item can use release credit accumulated earlier in
     // this frame, but the rate is accrued only once per frame.
     updateSprinklers(false);
+    if (recorder) recordSimulationStage(recorder, 'simulationStage:machinesPower', stageStartedAt, worldCells);
 
+    stageStartedAt = recorder ? performance.now() : 0;
     // Natural wind applies on freshly cleared moved flags, before gravity and
     // particle motion, so a carried item still moves at most once this tick.
     updateAmbientWind();
     advectAirScalars();
+    if (recorder) recordSimulationStage(recorder, 'simulationStage:airTransport', stageStartedAt, worldCells);
 
+    stageStartedAt = recorder ? performance.now() : 0;
     // Bottom row upwards, so a falling particle is not processed again after it
     // lands. The left/right scan order flips every frame, otherwise piles drift
     // steadily to one side.
@@ -5404,11 +5485,34 @@ export function stepSimulation() {
             else if (def.category === 'gas' && !sluggish) moveGas(x, y, i, def);
         }
     }
-    flushAmbientPendingChanges();
+    if (recorder) recordSimulationStage(recorder, 'simulationStage:particleScan', stageStartedAt, worldCells);
+
+    stageStartedAt = recorder ? performance.now() : 0;
+    let postProcessingSubphaseStartedAt = recorder ? performance.now() : 0;
+    const pendingAmbientCells = recorder ? ambientPendingIndices.length : 0;
+    flushAmbientPendingChanges(recorder);
+    if (recorder) recorder.record('simulationStage:postProcessing:flushAmbientPendingChanges',
+        performance.now() - postProcessingSubphaseStartedAt, {
+            worldCells,
+            pendingCells: pendingAmbientCells
+        });
+
+    postProcessingSubphaseStartedAt = recorder ? performance.now() : 0;
     processAmbientIlluminationWork();
+    if (recorder) recorder.record('simulationStage:postProcessing:processAmbientIlluminationWork',
+        performance.now() - postProcessingSubphaseStartedAt, { worldCells });
+
+    postProcessingSubphaseStartedAt = recorder ? performance.now() : 0;
     processMaturePlantGrowthCandidates();
+    if (recorder) recorder.record('simulationStage:postProcessing:processMaturePlantGrowthCandidates',
+        performance.now() - postProcessingSubphaseStartedAt, { worldCells });
+
+    postProcessingSubphaseStartedAt = recorder ? performance.now() : 0;
     try { simulationStepListener(); }
     catch (error) { console.error('Campaign simulation-step handler failed:', error); }
+    if (recorder) recorder.record('simulationStage:postProcessing:simulationStepListener',
+        performance.now() - postProcessingSubphaseStartedAt, { worldCells });
+    if (recorder) recordSimulationStage(recorder, 'simulationStage:postProcessing', stageStartedAt, worldCells);
     if (recorder) {
         recorder.record('stepSimulation', performance.now() - startedAt, {
             worldCells: world.type.length
@@ -9422,6 +9526,7 @@ const ACTIVE_AIR_JET_TURBULENT_MIX_RATE = 0.08;
 // keeping each update's bounded face flux unchanged.
 const AIR_SCALAR_TRANSPORT_INTERVAL_TICKS = 2;
 let airScalarTransportSkipCount = 0;
+let airScalarClassTwoIndices = new Int32Array(0);
 
 function processAirScalarFace(field, i, j, face, faceRate,
     equalizationRate, turbulentRate, unstableVertical, phase) {
@@ -9478,7 +9583,8 @@ function processAirScalarFace(field, i, j, face, faceRate,
     field.delta[j] += accepted;
 }
 
-function visitAirScalarFaces(fields, carryHumidity, intervalTicks, phase, work, cellClass) {
+function visitAirScalarFaces(fields, carryHumidity, intervalTicks, phase, work, cellClass,
+    classTwoIndices, classTwoCells) {
     const activeJet = world.airMixActiveMask;
     // Cadence changes update frequency only. Do not multiply face rates by the
     // skipped tick count: each due run retains the original bounded response.
@@ -9487,103 +9593,101 @@ function visitAirScalarFaces(fields, carryHumidity, intervalTicks, phase, work, 
     const equalizationRate = CALM_AIR_EQUALIZATION_RATE * dt;
     const turbulentRate = ACTIVE_AIR_JET_TURBULENT_MIX_RATE * dt;
 
-    for (let y = 0; y < ROWS; y++) {
-        const row = y * COLS;
-        for (let x = 0; x < COLS; x++) {
-            const i = row + x;
-            if (cellClass[i] !== 2) continue;
-            work.airCellsVisited++;
-            let horizontalJ = -1;
-            let verticalJ = -1;
+    for (let entry = 0; entry < classTwoCells; entry++) {
+        const i = classTwoIndices[entry];
+        const y = Math.floor(i / COLS);
+        const x = i - y * COLS;
+        if (work) work.airCellsVisited++;
+        let horizontalJ = -1;
+        let verticalJ = -1;
 
-            if (x + 1 < COLS) {
-                const j = i + 1;
-                if (cellClass[j] === 2) {
-                    work.horizontalFacesVisited++;
-                    const uniformBackground = world.temp[i] === AMBIENT &&
-                        world.temp[j] === AMBIENT && (!carryHumidity ||
-                            (world.humidity[i] === ambientHumidityTarget &&
-                                world.humidity[j] === ambientHumidityTarget));
-                    if (uniformBackground) {
-                        if (phase === 0) work.uniformBackgroundEdgesSkipped++;
-                    } else {
-                        horizontalJ = j;
-                    }
+        if (x + 1 < COLS) {
+            const j = i + 1;
+            if (cellClass[j] === 2) {
+                if (work) work.horizontalFacesVisited++;
+                const uniformBackground = world.temp[i] === AMBIENT &&
+                    world.temp[j] === AMBIENT && (!carryHumidity ||
+                        (world.humidity[i] === ambientHumidityTarget &&
+                            world.humidity[j] === ambientHumidityTarget));
+                if (uniformBackground) {
+                    if (phase === 0 && work) work.uniformBackgroundEdgesSkipped++;
+                } else {
+                    horizontalJ = j;
                 }
             }
+        }
 
-            if (y + 1 < ROWS) {
-                const j = i + COLS;
-                if (cellClass[j] === 2) {
-                    work.verticalFacesVisited++;
-                    const uniformBackground = world.temp[i] === AMBIENT &&
-                        world.temp[j] === AMBIENT && (!carryHumidity ||
-                            (world.humidity[i] === ambientHumidityTarget &&
-                                world.humidity[j] === ambientHumidityTarget));
-                    if (uniformBackground) {
-                        if (phase === 0) work.uniformBackgroundEdgesSkipped++;
-                    } else {
-                        verticalJ = j;
-                    }
+        if (y + 1 < ROWS) {
+            const j = i + COLS;
+            if (cellClass[j] === 2) {
+                if (work) work.verticalFacesVisited++;
+                const uniformBackground = world.temp[i] === AMBIENT &&
+                    world.temp[j] === AMBIENT && (!carryHumidity ||
+                        (world.humidity[i] === ambientHumidityTarget &&
+                            world.humidity[j] === ambientHumidityTarget));
+                if (uniformBackground) {
+                    if (phase === 0 && work) work.uniformBackgroundEdgesSkipped++;
+                } else {
+                    verticalJ = j;
                 }
             }
+        }
 
-            if (horizontalJ < 0 && verticalJ < 0) continue;
+        if (horizontalJ < 0 && verticalJ < 0) continue;
 
-            const vx = world.airMixX[i] +
-                (world.generalWindX[i] + world.gustWindX[i]) * naturalWindScale;
-            const vy = world.airMixY[i] +
-                (world.generalWindY[i] + world.gustWindY[i]) * naturalWindScale;
+        const vx = world.airMixX[i] +
+            (world.generalWindX[i] + world.gustWindX[i]) * naturalWindScale;
+        const vy = world.airMixY[i] +
+            (world.generalWindY[i] + world.gustWindY[i]) * naturalWindScale;
 
-            if (horizontalJ >= 0) {
-                const j = horizontalJ;
-                const jvx = world.airMixX[j] +
-                    (world.generalWindX[j] + world.gustWindX[j]) * naturalWindScale;
-                const jvy = world.airMixY[j] +
-                    (world.generalWindY[j] + world.gustWindY[j]) * naturalWindScale;
-                const drivenFace = (vx + jvx) * 0.5;
-                const calmFace = calmAirRollHorizontalFace(x, y);
-                const face = drivenFace + calmFace;
-                const crossFace = (vy + jvy) * 0.5 +
-                    calmAirRollVerticalFace(x, y);
-                const faceRate = Math.abs(face) > 0.01
-                    ? airScalarFaceRate(face, crossFace) *
-                        (Math.abs(drivenFace) > 0.01
-                            ? AIR_SCALAR_ADVECTION_SPEED_SCALE : 1) * dt : 0;
-                const turbulence = activeJet[i] && activeJet[j]
-                    ? turbulentRate : 0;
-                processAirScalarFace(fields.temperature, i, j, face,
-                    faceRate, equalizationRate, turbulence, false, phase);
-                if (carryHumidity) processAirScalarFace(fields.humidity, i, j,
-                    face, faceRate, equalizationRate, turbulence, false, phase);
-            }
+        if (horizontalJ >= 0) {
+            const j = horizontalJ;
+            const jvx = world.airMixX[j] +
+                (world.generalWindX[j] + world.gustWindX[j]) * naturalWindScale;
+            const jvy = world.airMixY[j] +
+                (world.generalWindY[j] + world.gustWindY[j]) * naturalWindScale;
+            const drivenFace = (vx + jvx) * 0.5;
+            const calmFace = calmAirRollHorizontalFace(x, y);
+            const face = drivenFace + calmFace;
+            const crossFace = (vy + jvy) * 0.5 +
+                calmAirRollVerticalFace(x, y);
+            const faceRate = Math.abs(face) > 0.01
+                ? airScalarFaceRate(face, crossFace) *
+                    (Math.abs(drivenFace) > 0.01
+                        ? AIR_SCALAR_ADVECTION_SPEED_SCALE : 1) * dt : 0;
+            const turbulence = activeJet[i] && activeJet[j]
+                ? turbulentRate : 0;
+            processAirScalarFace(fields.temperature, i, j, face,
+                faceRate, equalizationRate, turbulence, false, phase);
+            if (carryHumidity) processAirScalarFace(fields.humidity, i, j,
+                face, faceRate, equalizationRate, turbulence, false, phase);
+        }
 
-            if (verticalJ >= 0) {
-                const j = verticalJ;
-                const jvy = world.airMixY[j] +
-                    (world.generalWindY[j] + world.gustWindY[j]) * naturalWindScale;
-                const jvx = world.airMixX[j] +
-                    (world.generalWindX[j] + world.gustWindX[j]) * naturalWindScale;
-                const drivenFace = (vy + jvy) * 0.5;
-                const calmFace = calmAirRollVerticalFace(x, y);
-                const face = drivenFace + calmFace;
-                const crossFace = (vx + jvx) * 0.5 +
-                    calmAirRollHorizontalFace(x, y);
-                const faceRate = Math.abs(face) > 0.01
-                    ? airScalarFaceRate(face, crossFace) *
-                        (Math.abs(drivenFace) > 0.01
-                            ? AIR_SCALAR_ADVECTION_SPEED_SCALE : 1) * dt : 0;
-                const turbulence = activeJet[i] && activeJet[j]
-                    ? turbulentRate : 0;
-                const unstableVertical = !world.openAir[i] && !world.openAir[j] &&
-                    world.temp[j] > world.temp[i];
-                processAirScalarFace(fields.temperature, i, j, face,
-                    faceRate, equalizationRate, turbulence,
-                    unstableVertical, phase);
-                if (carryHumidity) processAirScalarFace(fields.humidity, i, j,
-                    face, faceRate, equalizationRate, turbulence,
-                    unstableVertical, phase);
-            }
+        if (verticalJ >= 0) {
+            const j = verticalJ;
+            const jvy = world.airMixY[j] +
+                (world.generalWindY[j] + world.gustWindY[j]) * naturalWindScale;
+            const jvx = world.airMixX[j] +
+                (world.generalWindX[j] + world.gustWindX[j]) * naturalWindScale;
+            const drivenFace = (vy + jvy) * 0.5;
+            const calmFace = calmAirRollVerticalFace(x, y);
+            const face = drivenFace + calmFace;
+            const crossFace = (vx + jvx) * 0.5 +
+                calmAirRollHorizontalFace(x, y);
+            const faceRate = Math.abs(face) > 0.01
+                ? airScalarFaceRate(face, crossFace) *
+                    (Math.abs(drivenFace) > 0.01
+                        ? AIR_SCALAR_ADVECTION_SPEED_SCALE : 1) * dt : 0;
+            const turbulence = activeJet[i] && activeJet[j]
+                ? turbulentRate : 0;
+            const unstableVertical = !world.openAir[i] && !world.openAir[j] &&
+                world.temp[j] > world.temp[i];
+            processAirScalarFace(fields.temperature, i, j, face,
+                faceRate, equalizationRate, turbulence,
+                unstableVertical, phase);
+            if (carryHumidity) processAirScalarFace(fields.humidity, i, j,
+                face, faceRate, equalizationRate, turbulence,
+                unstableVertical, phase);
         }
     }
 }
@@ -9629,12 +9733,13 @@ function advectAirScalars() {
     const ran = frameCount % intervalTicks === 0;
     let topologyMaskBuildMs = 0;
     let topologyMaskCells = 0;
-    const work = {
+    let classTwoCells = 0;
+    const work = recorder ? {
         airCellsVisited: 0,
         horizontalFacesVisited: 0,
         verticalFacesVisited: 0,
         uniformBackgroundEdgesSkipped: 0
-    };
+    } : null;
 
     if (ran) {
         const maskBuildStartedAt = recorder ? performance.now() : 0;
@@ -9643,11 +9748,20 @@ function advectAirScalars() {
         const storageWalls = storageBarrierMask;
         const type = world.type;
         const count = type.length;
-        for (let i = 0; i < count; i++) {
-            if (!AIR_SPACE_BY_TYPE[type[i]]) cellClass[i] = 0;
-            else cellClass[i] = storageWalls?.[i] ? 1 : 2;
+        if (airScalarClassTwoIndices.length < count) {
+            airScalarClassTwoIndices = new Int32Array(count);
         }
-        topologyMaskCells = count;
+        for (let i = 0; i < count; i++) {
+            if (!AIR_SPACE_BY_TYPE[type[i]]) {
+                cellClass[i] = 0;
+            } else if (storageWalls?.[i]) {
+                cellClass[i] = 1;
+            } else {
+                cellClass[i] = 2;
+                airScalarClassTwoIndices[classTwoCells++] = i;
+            }
+        }
+        if (recorder) topologyMaskCells = count;
         if (recorder) topologyMaskBuildMs = performance.now() - maskBuildStartedAt;
 
         const fields = {
@@ -9694,20 +9808,21 @@ function advectAirScalars() {
         // donor budgets. This is one cell pass for both transported fields.
         for (let i = 0; i < count; i++) {
             if (cellClass[i] === 0) continue;
-            work.airCellsVisited++;
+            if (recorder) work.airCellsVisited++;
             for (const field of activeFields) {
                 field.minValue = Math.min(field.minValue, field.values[i]);
             }
         }
 
         // Pass one budgets independent active-flow and calm-mixing requests.
-        visitAirScalarFaces(fields, carryHumidity, intervalTicks, 0, work, cellClass);
+        visitAirScalarFaces(fields, carryHumidity, intervalTicks, 0, work, cellClass,
+            airScalarClassTwoIndices, classTwoCells);
 
         // Preserve separate active and calm donor budgets before reusing the
         // outflow buffers as their per-cell scale factors.
         for (let i = 0; i < count; i++) {
             const air = cellClass[i] !== 0;
-            if (air) work.airCellsVisited++;
+            if (air && recorder) work.airCellsVisited++;
             for (const field of activeFields) {
                 if (!air) {
                     field.outflow[i] = 0;
@@ -9731,27 +9846,26 @@ function advectAirScalars() {
         }
 
         // Pass two aggregates each cell's gross positive and negative requests.
-        visitAirScalarFaces(fields, carryHumidity, intervalTicks, 1, work, cellClass);
+        visitAirScalarFaces(fields, carryHumidity, intervalTicks, 1, work, cellClass,
+            airScalarClassTwoIndices, classTwoCells);
 
         // One positive/negative endpoint scale per cell keeps every accepted
         // signed face transfer inside its original cardinal air-neighbor range.
-        for (let y = 0; y < ROWS; y++) {
-            const row = y * COLS;
-            for (let x = 0; x < COLS; x++) {
-                const i = row + x;
-                if (cellClass[i] === 0) continue;
-                work.airCellsVisited++;
-                for (const field of activeFields) {
-                    setAirScalarReceiverScales(field, i, x, y, cellClass);
-                }
+        for (let entry = 0; entry < classTwoCells; entry++) {
+            const i = airScalarClassTwoIndices[entry];
+            const y = Math.floor(i / COLS);
+            const x = i - y * COLS;
+            if (recorder) work.airCellsVisited++;
+            for (const field of activeFields) {
+                setAirScalarReceiverScales(field, i, x, y, cellClass);
             }
         }
-
         // Pass three applies equal and opposite face deltas for both fields.
-        visitAirScalarFaces(fields, carryHumidity, intervalTicks, 2, work, cellClass);
+        visitAirScalarFaces(fields, carryHumidity, intervalTicks, 2, work, cellClass,
+            airScalarClassTwoIndices, classTwoCells);
         for (let i = 0; i < count; i++) {
             if (cellClass[i] === 0) continue;
-            work.airCellsVisited++;
+            if (recorder) work.airCellsVisited++;
             for (const field of activeFields) {
                 const next = field.values[i] + field.delta[i];
                 field.values[i] = field === fields.humidity
@@ -9769,6 +9883,8 @@ function advectAirScalars() {
             airCellsVisited: work.airCellsVisited,
             horizontalFacesVisited: work.horizontalFacesVisited,
             verticalFacesVisited: work.verticalFacesVisited,
+            classTwoCells,
+            faceSweepCellVisits: classTwoCells * 3,
             activeMachineCount: activeAirMixMachineCount,
             activeMaskCells: activeMachineThermalMaskCellCount,
             limiterPasses: ran ? 1 : 0,

@@ -39,7 +39,7 @@ import {
 } from './physics.js';
 import {
     canUseMaterial, consumeCampaignMaterial, canPlaceMissionMachine, getCampaignState,
-    consumeCampaignMachine, isCampaignActive
+    consumeCampaignMachine, isCampaignActive, withCampaignMaterialPlacementBatch
 } from './campaign.js';
 
 let context = null;
@@ -50,6 +50,9 @@ let illuminationImageData = null;
 let frames = 0;
 let lastFpsCheck = 0;
 let fps = 0;
+let animationFrameIndex = 0;
+let lastAnimationFrameTimestampMs = null;
+const pendingCanvasInputs = [];
 let loopRunning = false;
 let resizeListenerAttached = false;
 let scrollRenderAttached = false;
@@ -87,6 +90,28 @@ const MACHINE_HIT_BUCKET_SIZE = 96;
 function activeP0PerformanceRecorder() {
     const recorder = typeof window !== 'undefined' ? window.__P0_PERF__ : null;
     return recorder?.enabled && typeof recorder.record === 'function' ? recorder : null;
+}
+
+export function markCanvasInputForTelemetry(event) {
+    if (!activeP0PerformanceRecorder()) return;
+    const timestampMs = Number.isFinite(event?.timeStamp) ? event.timeStamp : performance.now();
+    pendingCanvasInputs.push({ timestampMs, brushSize: getBrushSize() });
+}
+
+function recordPendingCanvasInputCompletions(recorder, completedAt) {
+    if (!pendingCanvasInputs.length) return;
+    if (!recorder) {
+        pendingCanvasInputs.length = 0;
+        return;
+    }
+
+    const inputs = pendingCanvasInputs.splice(0);
+    for (const input of inputs) {
+        recorder.record('inputToNextDrawCompleteMs', Math.max(0, completedAt - input.timestampMs), {
+            inputCount: 1,
+            brushSize: input.brushSize
+        });
+    }
 }
 
 function invalidateMachineHitCache() {
@@ -477,6 +502,14 @@ export function gameLoop(now) {
         return;
     }
 
+    const recorder = activeP0PerformanceRecorder();
+    const frameStartedAt = recorder ? performance.now() : 0;
+    const frameIndex = recorder ? ++animationFrameIndex : 0;
+    const previousRafTimestampMs = lastAnimationFrameTimestampMs;
+    lastAnimationFrameTimestampMs = now;
+    const rafIntervalMs = recorder && Number.isFinite(previousRafTimestampMs)
+        ? Math.max(0, now - previousRafTimestampMs) : 0;
+
     if (!getSimulationPaused()) {
         stepSimulation();
     }
@@ -485,6 +518,18 @@ export function gameLoop(now) {
     // hanging on the screen.
     decayWindTrails();
     drawWorld();
+    const drawCompletedAt = recorder ? performance.now() : 0;
+    recordPendingCanvasInputCompletions(recorder, drawCompletedAt);
+    if (recorder) {
+        recorder.record('drawComplete', drawCompletedAt - frameStartedAt, {
+            frameIndex,
+            rafTimestampMs: now
+        });
+        recorder.record('animationFrame', rafIntervalMs, {
+            frameIndex,
+            rafTimestampMs: now
+        });
+    }
     updateFeedback();
 
     frames++;
@@ -2532,6 +2577,11 @@ function machineFaceBlocksPaint(cellX, cellY) {
 // cares about. rayDirection is the hand-painted ray's stored cardinal heading;
 // machine-emitted ray markers are never created by this brush path.
 export function paintCell(centreX, centreY, dragX, dragY, rayDirection = null, portSnap = null) {
+    return withCampaignMaterialPlacementBatch(() =>
+        paintCellInBatch(centreX, centreY, dragX, dragY, rayDirection, portSnap));
+}
+
+function paintCellInBatch(centreX, centreY, dragX, dragY, rayDirection = null, portSnap = null) {
     const id = getEraserOn() ? EMPTY : getParticleTypeIdSelected();
     if (id !== EMPTY && isCampaignActive() && !canPaintMissionMaterial(id)) return;
 
@@ -2681,54 +2731,58 @@ export function faceFan(x, y, direction = 0) {
 // continuous stroke instead of a dotted one. The direction of the drag is
 // handed on, since the wind tool blows whichever way the mouse is going.
 export function paintLine(x0, y0, x1, y1, rayDirection = null) {
-    const dragX = x1 - x0;
-    const dragY = y1 - y0;
-    const steps = Math.max(Math.abs(dragX), Math.abs(dragY));
-    if (steps === 0) {
-        paintCell(x1, y1, 0, 0, rayDirection);
-        return;
-    }
-    for (let s = 0; s <= steps; s++) {
-        const t = s / steps;
-        paintCell(Math.round(x0 + dragX * t), Math.round(y0 + dragY * t), dragX, dragY, rayDirection);
-    }
+    return withCampaignMaterialPlacementBatch(() => {
+        const dragX = x1 - x0;
+        const dragY = y1 - y0;
+        const steps = Math.max(Math.abs(dragX), Math.abs(dragY));
+        if (steps === 0) {
+            paintCell(x1, y1, 0, 0, rayDirection);
+            return;
+        }
+        for (let s = 0; s <= steps; s++) {
+            const t = s / steps;
+            paintCell(Math.round(x0 + dragX * t), Math.round(y0 + dragY * t), dragX, dragY, rayDirection);
+        }
+    });
 }
 
 // Filled shapes use one-cell placement so their footprint is exact and the
 // material's air-only rule is preserved for every cell inside the shape.
 export function paintShape(shape, x0, y0, x1, y1, rayDirection = null) {
-    if (shape !== 'rectangle' && shape !== 'ellipse') return;
+    return withCampaignMaterialPlacementBatch(() => {
+        if (shape !== 'rectangle' && shape !== 'ellipse') return;
 
-    const id = getEraserOn() ? EMPTY : getParticleTypeIdSelected();
-    if (id !== EMPTY && isCampaignActive() && !canPaintMissionMaterial(id)) return;
-    const left = Math.min(x0, x1);
-    const right = Math.max(x0, x1);
-    const top = Math.min(y0, y1);
-    const bottom = Math.max(y0, y1);
-    const width = right - left + 1;
-    const height = bottom - top + 1;
-    const centreX = left + width / 2;
-    const centreY = top + height / 2;
-    const radiusX = Math.max(0.5, width / 2);
-    const radiusY = Math.max(0.5, height / 2);
-    const isWind = id !== EMPTY && getDefinitions()[id]?.tool === 'wind';
+        const id = getEraserOn() ? EMPTY : getParticleTypeIdSelected();
+        if (id !== EMPTY && isCampaignActive() && !canPaintMissionMaterial(id)) return;
+        const left = Math.min(x0, x1);
+        const right = Math.max(x0, x1);
+        const top = Math.min(y0, y1);
+        const bottom = Math.max(y0, y1);
+        const width = right - left + 1;
+        const height = bottom - top + 1;
+        const centreX = left + width / 2;
+        const centreY = top + height / 2;
+        const radiusX = Math.max(0.5, width / 2);
+        const radiusY = Math.max(0.5, height / 2);
+        const isWind = id !== EMPTY && getDefinitions()[id]?.tool === 'wind';
 
-    for (let y = top; y <= bottom; y++) {
-        for (let x = left; x <= right; x++) {
-            if (shape === 'ellipse') {
-                const dx = (x + 0.5 - centreX) / radiusX;
-                const dy = (y + 0.5 - centreY) / radiusY;
-                if (dx * dx + dy * dy > 1) continue;
-            }
-            if (isWind) {
-                if (machineFaceCoversCell(x, y)) continue;
-                applyWind(x, y, 0, 0, Math.max(3, getBrushSize()),
-                    windStrengthToLegacyScale(getWindStrength()));
-            } else {
-                paintSingleCell(x, y, id, true, rayDirection);
+        for (let y = top; y <= bottom; y++) {
+            for (let x = left; x <= right; x++) {
+                if (shape === 'ellipse') {
+                    const dx = (x + 0.5 - centreX) / radiusX;
+                    const dy = (y + 0.5 - centreY) / radiusY;
+                    if (dx * dx + dy * dy > 1) continue;
+                }
+                if (isWind) {
+                    if (machineFaceCoversCell(x, y)) continue;
+                    applyWind(x, y, 0, 0, Math.max(3, getBrushSize()),
+                        windStrengthToLegacyScale(getWindStrength()));
+                } else {
+                    paintSingleCell(x, y, id, true, rayDirection);
+                }
             }
         }
-    }
+    });
 }
 
 function paintSingleCell(x, y, id, fillLooseMaterial = false, rayDirection = null) {

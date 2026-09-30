@@ -90,7 +90,7 @@ The upper soil holds the last usable moisture while Sand beneath it is dry. Move
 
 Ignite the exposed top of a broad Wood bridge, let the burn spread briefly, then pour unlimited Water over it. Finish after the Fire is out while some Wood remains.
 
-**Starting Scenario:** Use a captured 260×150 Sandbox snapshot with the existing full-width, five-row Sand floor and a substantial Wood structure beside the planting ground. The structure has two supporting legs, a wide overhead span, and an open bay underneath. Leave an exposed Wood surface at the top for the Fire placement. No Fire or Water is preplaced. Temperature is fixed at 25 °C and all climate controls are locked. Save this terrain as a captured Sandbox snapshot rather than adding a new declarative layout type.
+**Starting Scenario:** Use a captured 260×150 Sandbox snapshot with the existing full-width, five-row Sand floor and a substantial Wood structure beside the planting ground. The structure has two supporting legs, a five-cell-thick overhead span, and an open bay underneath. Leave an exposed Wood surface at the top for the Fire placement. No Fire or Water is preplaced. Temperature is fixed at 25 °C and all climate controls are locked. Save this terrain as a captured Sandbox snapshot rather than adding a new declarative layout type.
 
 **Objectives**
 

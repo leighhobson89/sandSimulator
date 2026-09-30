@@ -10,6 +10,7 @@
 // -----------------------------------------------------------------------------
 
 import { readFileSync } from 'fs';
+import { createHash } from 'node:crypto';
 import {
     prepareDefinitions, createWorld, getWorld, clearWorld, stepSimulation,
     setCell, index, getDefinitions, setAmbientTarget, getAmbientTemp,
@@ -1377,6 +1378,230 @@ function runAirCirculationRegressions() {
     } finally {
         restoreSimulationState(previousState);
         if (previousSeed !== null) setRandomSeed(previousSeed);
+    }
+}
+
+function runAirScalarIndexRegressions() {
+    const previousState = snapshotSimulationState();
+    const previousSeed = getRandomSeed();
+    const previousHumidityEnabled = physics.isDebugFeatureEnabled('humidity');
+    const previousWindow = globalThis.window;
+    const recorder = {
+        enabled: false,
+        events: [],
+        record(name, durationMs, counters = {}) {
+            if (this.enabled) this.events.push({ name, durationMs, counters });
+        },
+        reset() { this.events.length = 0; }
+    };
+    globalThis.window = { __P0_PERF__: recorder };
+
+    const hashWorld = world => {
+        const hash = createHash('sha256');
+        for (const field of ['type', 'temp', 'humidity', 'data', 'machineSetting',
+            'charge', 'storageType', 'storageCount']) {
+            hash.update(field);
+            const values = world[field];
+            hash.update(Buffer.from(values.buffer, values.byteOffset, values.byteLength));
+        }
+        return hash.digest('hex');
+    };
+    const classCounts = world => {
+        const counts = [0, 0, 0];
+        for (const value of world.airScalarCellClass) counts[value]++;
+        return counts;
+    };
+    const expectedClassTwoFaces = world => {
+        const cellClass = world.airScalarCellClass;
+        let classTwoCells = 0;
+        let horizontalFaces = 0;
+        let verticalFaces = 0;
+        for (let y = 0; y < world.rows; y++) {
+            for (let x = 0; x < world.cols; x++) {
+                const i = y * world.cols + x;
+                if (cellClass[i] !== 2) continue;
+                classTwoCells++;
+                if (x + 1 < world.cols && cellClass[i + 1] === 2) horizontalFaces++;
+                if (y + 1 < world.rows && cellClass[i + world.cols] === 2) verticalFaces++;
+            }
+        }
+        return { classTwoCells, horizontalFaces, verticalFaces };
+    };
+    const makeFixture = humidityEnabled => {
+        physics.setDebugFeatureEnabled('humidity', humidityEnabled);
+        physics.resetRandomSource();
+        setRandomSeed(0x6a09e667);
+        createWorld(64, 64);
+        physics.setAmbientTargetImmediately(20);
+        physics.setAmbientHumidityTarget(50);
+        physics.setDewpointTarget(10);
+        physics.setAmbientWindOn(false);
+        physics.setGeneralWindStrength(0);
+        physics.setGustWindStrength(0);
+        const world = getWorld();
+        world.temp.fill(20);
+        world.tempNext.fill(20);
+        world.humidity.fill(50);
+
+        const fanX = 10;
+        const fanY = 32;
+        const collectorX = 48;
+        const collectorY = 32;
+        setCell(fanX, fanY, ID.Fan);
+        physics.setMachineSetting(fanX, fanY, 50);
+        const powered = powerMachineForFrames(fanX, fanY, fanX - 1, fanY, 24);
+        setCell(collectorX, collectorY, ID.Collector);
+        physics.isCollectorRimCell(collectorX, collectorY);
+
+        for (let y = 27; y <= 37; y++) {
+            for (let x = 19; x <= 26; x++) {
+                const i = index(x, y);
+                world.temp[i] = 82;
+                world.tempNext[i] = 82;
+                world.humidity[i] = 88;
+            }
+        }
+        for (let y = 29; y <= 34; y++) {
+            for (let x = 31; x <= 35; x++) {
+                const i = index(x, y);
+                world.temp[i] = -18;
+                world.tempNext[i] = -18;
+                world.humidity[i] = 14;
+            }
+        }
+
+        const startingState = snapshotSimulationState();
+        startingState.frameCount = 0;
+        return { startingState, powered, collectorX, collectorY };
+    };
+    const runPass = (startingState, instrumented) => {
+        restoreSimulationState(startingState);
+        physics.resetRandomSource();
+        setRandomSeed(0x243f6a88);
+        recorder.enabled = instrumented;
+        recorder.reset();
+        const tickHashes = [];
+        const rngStates = [];
+        for (let tick = 0; tick < 12; tick++) {
+            stepSimulation();
+            tickHashes.push(hashWorld(getWorld()));
+            rngStates.push(getRandomSeed());
+        }
+        const world = getWorld();
+        return {
+            tickHashes,
+            rngStates,
+            events: recorder.events.slice(),
+            maskCounts: classCounts(world),
+            expectedFaces: expectedClassTwoFaces(world),
+            fanPowered: physics.isMachinePoweredAt(10, 32)
+        };
+    };
+
+    try {
+        console.log('\nAir scalar row-major index preserves seeded transport and skips storage barriers');
+        const goldenTickHashes = {
+            humidityOn: [
+                '702a08178077fbee2db4009f99e9bb4fed4b258b29e11de04419e358e4407f8d',
+                '5254db7ba3b11179e4be964e3dab24c2060360bd9882d82ae3f823489467588e',
+                '6a4bbf5ab143f1c8ab534aa55d6f485150f4eafd4b18e683cf03b2e7717a139f',
+                '77ab1636398712690c0efe798c547f3adf28b17369aec852b2d6735635d1dfa7',
+                '5de7c30316cdc19203f5310005a3bd80806209f5c1622dd8cc90f67f94ed3210',
+                '5bf79f2e48c89eb87c9e2897bcb510a050caa5aa756c6d35c4f96e5332d01c7b',
+                'fbb38c908b542a4f6ef38ed5f17561d5215fe451ffc6220b05d4e9d19f01eed9',
+                '726b93cb4d26dad90a994f56a23a818b72b28e56b87b54daa4135ffff8877eb6',
+                'eb992b26ee6b20d3ad27d7167e2cf71008a679f6bf641e136825d22eb0e1fe9a',
+                '4e27943c027638e350daf09a40ebdbdc51005c89e2c841eb9d01b62b4c05d797',
+                '08dc1eb9c2b6166d464c3ea1384a04253dbbd60bfab9ba0c2453e6b79360e8b2',
+                'adc01c1d6659535dd5a0d64bc873c499de26519c021213678c8fbcfd5a25e2b3'
+            ],
+            humidityOff: [
+                '2d51032ce78dc5c8ff00a295ea910796c233723920195d2f0fb1ab64fb4568a5',
+                '6bf08a5a8c8cee5bcfcf4a1d0fc164ad311c07a535cee867a4d499cd6fa38360',
+                'ba3dcb96e53c5c3e4dc8fac08d3211603320c3bc04cc81f1db2c1eb00657d1bd',
+                'e7e2cf640bfe01768b505e5641405b0ec401215c54a47b7e320bd477c721d5ba',
+                'e08b638bb881cabe0d300fa86511dcb19ffa420fd35f825d57085e6e4a149487',
+                'd5ffc9a9d3d6cc8ca0ad1157c38f2ab10b5cdad385dad259671fa790a07dbd33',
+                '433a784d70f8a814b7394031e3688816b6493e8afe9be6f9914564a08b326aa3',
+                'b92f2c308af2389086200f31cb7127006e5756d0a3a6e888f7965811ec6c87a9',
+                'e421c623f138ff0ba4ad8e42fb1437b90b580b489689ff48aea6fd2da658693c',
+                '8e85198fb6414fe58f3dedea44b85f7b7a53f127c5e9d7c3369e3fd62106d224',
+                '9d0631afa223362f6984eef49085ece20c86189a314a54a43236deafcafb1fba',
+                '5afa58792bdda01a3055947acfca56c6458f685b0f2b3b70c5a83bb947e82a96'
+            ]
+        };        const results = {};
+        for (const humidityEnabled of [true, false]) {
+            const fixture = makeFixture(humidityEnabled);
+            const off = runPass(fixture.startingState, false);
+            const on = runPass(fixture.startingState, true);
+            const mode = humidityEnabled ? 'humidityOn' : 'humidityOff';
+            results[mode] = { fixture, off, on };
+            console.log(`  baseline ${mode}: ${JSON.stringify(on.tickHashes)}`);
+            const firstHashMismatch = on.tickHashes.findIndex((hash, tick) =>
+                hash !== goldenTickHashes[mode][tick]);
+
+            check(`${mode} seeded temperature, humidity, particles, and machine data match the captured solver baseline`,
+                JSON.stringify(on.tickHashes) === JSON.stringify(goldenTickHashes[mode]),
+                `first mismatching tick ${firstHashMismatch + 1}: expected ` +
+                    `${goldenTickHashes[mode][firstHashMismatch]}, got ${on.tickHashes[firstHashMismatch]}`);
+            check(`${mode} recorder on/off runs preserve exact seeded state`,
+                JSON.stringify(on.tickHashes) === JSON.stringify(off.tickHashes) &&
+                    JSON.stringify(on.rngStates) === JSON.stringify(off.rngStates) && off.events.length === 0,
+                `instrumented/uninstrumented per-tick hashes match ${JSON.stringify(on.tickHashes) === JSON.stringify(off.tickHashes)}, ` +
+                    `RNG states match ${JSON.stringify(on.rngStates) === JSON.stringify(off.rngStates)}, ` +
+                    `off events ${off.events.length}`);
+            check(`${mode} fixture keeps the powered Fan active and classifies storage barrier air`,
+                fixture.powered && on.fanPowered && on.maskCounts[1] > 0 && on.maskCounts[2] > 0,
+                `setup powered ${fixture.powered}, final powered ${on.fanPowered}, class 1/2 ${on.maskCounts[1]}/${on.maskCounts[2]}`);
+
+            const transportEvents = on.events.filter(event => event.name === 'airScalarTransport');
+            const ranEvents = transportEvents.filter(event => event.counters?.ran === 1);
+            const counterContract = ranEvents.length === 6 && ranEvents.every(event => {
+                const counters = event.counters;
+                const expectedAirCellsVisited = 3 * (on.maskCounts[1] +
+                    on.expectedFaces.classTwoCells) +
+                    4 * on.expectedFaces.classTwoCells;
+                return counters.airCellsVisited === expectedAirCellsVisited &&
+                    counters.classTwoCells === on.expectedFaces.classTwoCells &&
+                    counters.faceSweepCellVisits === 3 * on.expectedFaces.classTwoCells &&
+                    counters.horizontalFacesVisited === 3 * on.expectedFaces.horizontalFaces &&
+                    counters.verticalFacesVisited === 3 * on.expectedFaces.verticalFaces &&
+                    Number.isFinite(counters.uniformBackgroundEdgesSkipped);
+            });
+            check(`${mode} transport reports only eligible class-2 face work and all three face sweeps`,
+                counterContract,
+                `ran events ${ranEvents.length}, class-2 cells ${on.expectedFaces.classTwoCells}, ` +
+                    `face visits ${ranEvents.map(event => event.counters?.faceSweepCellVisits).join('/')}, ` +
+                    `expected horizontal/vertical ${on.expectedFaces.horizontalFaces}/${on.expectedFaces.verticalFaces}, ` +
+                    `actual ${JSON.stringify(ranEvents.map(event => ({
+                        classTwoCells: event.counters?.classTwoCells,
+                        faceSweepCellVisits: event.counters?.faceSweepCellVisits,
+                        horizontalFacesVisited: event.counters?.horizontalFacesVisited,
+                        verticalFacesVisited: event.counters?.verticalFacesVisited,
+                        uniformBackgroundEdgesSkipped: event.counters?.uniformBackgroundEdgesSkipped
+                    })))}`);
+        }
+
+        const lifecycle = results.humidityOn.fixture;
+        restoreSimulationState(lifecycle.startingState);
+        run(2);
+        const restoredClassOne = classCounts(getWorld())[1];
+        setCell(lifecycle.collectorX, lifecycle.collectorY, EMPTY);
+        run(2);
+        const removedClassOne = classCounts(getWorld())[1];
+        restoreSimulationState(lifecycle.startingState);
+        run(2);
+        const reloadedClassOne = classCounts(getWorld())[1];
+        check('storage barrier classes are rebuilt after edits and state restore',
+            restoredClassOne > 0 && removedClassOne === 0 && reloadedClassOne > 0,
+            `after restore ${restoredClassOne}, after Collector removal ${removedClassOne}, after re-restore ${reloadedClassOne}`);
+    } finally {
+        recorder.enabled = false;
+        physics.setDebugFeatureEnabled('humidity', previousHumidityEnabled);
+        restoreSimulationState(previousState);
+        if (previousSeed !== null) setRandomSeed(previousSeed);
+        if (previousWindow === undefined) delete globalThis.window;
+        else globalThis.window = previousWindow;
     }
 }
 
@@ -4272,8 +4497,15 @@ if (process.argv.includes('--focus=fan-wind-scale-alignment')) {
 }
 
 if (process.argv.includes('--focus=air-circulation')) {
+    runAirScalarIndexRegressions();
     runAirCirculationRegressions();
     runAirflowBoundaryRegressions();
+    console.log(`\n${passed} passed, ${failed} failed\n`);
+    process.exit(failed > 0 ? 1 : 0);
+}
+
+if (process.argv.includes('--focus=air-scalar-index')) {
+    runAirScalarIndexRegressions();
     console.log(`\n${passed} passed, ${failed} failed\n`);
     process.exit(failed > 0 ? 1 : 0);
 }

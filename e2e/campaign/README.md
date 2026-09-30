@@ -62,7 +62,7 @@ and protects the 75 Cloud-to-Snow, 60 Snow-to-Water, and 50 Sand-to-Wet-Sand
 targets. Mission 5 has no preplaced Cloud or player Cloud supply: the open-air
 weather system must naturally form Cloud and precipitate Snow after cooldown
 at −10 C and 20 C Dewpoint. At 8 C, its open-air profile is above freezing.
-Mission 6 restores a two-leg Wood bridge with an overhead span and open space
+Mission 6 restores a two-leg Wood bridge with a five-cell-thick overhead span and open space
 beneath it. Fire starts against the exposed top of the span; there is no
 preplaced Fire or Water, and the Fire budget is 10. After 60 active simulation
 steps Water unlocks without a finite supply limit, and the largest Brush is

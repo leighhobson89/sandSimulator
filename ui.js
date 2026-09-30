@@ -27,7 +27,8 @@ import {
     setShapePreview, clearShapePreview, paintShape,
     getMachinePortAtClientPoint, paintMachinePortConnector, setMachinePortConnectorPreview,
     getMachineArtworkAtClientPoint, preloadMachineArtworkAlpha,
-    captureBlueprint, stampBlueprint, stampBlueprintAt, BLUEPRINT_SLOT_COUNT, renderWorld
+    captureBlueprint, stampBlueprint, stampBlueprintAt, BLUEPRINT_SLOT_COUNT, renderWorld,
+    markCanvasInputForTelemetry
 } from './game.js';
 import {
     getDefinitions, setAmbientTarget, setAmbientTargetImmediately, getAmbientTarget,
@@ -3470,6 +3471,7 @@ function setUpCanvasInput() {
             selectParticleType(type);
             return;
         }
+        markCanvasInputForTelemetry(event);
         stopEdgePan();
         lastPointerEvent = event;
         currentCell = cellFromEvent(event);

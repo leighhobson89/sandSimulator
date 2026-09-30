@@ -148,7 +148,7 @@ function workingTreeStatus() {
 async function startBenchmarkWorld(page, worldSize) {
     const game = new GamePage(page);
     await game.openMenu();
-    await page.getByRole('button', { name: 'New Game', exact: true }).click();
+    await page.getByRole('button', { name: 'Sandbox', exact: true }).click();
     const sizeDialog = page.locator('#worldSizeDialog');
     if (await sizeDialog.isVisible()) {
         if (worldSize.includes('520')) {

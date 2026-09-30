@@ -89,6 +89,47 @@ test('holding a real brush gesture repeats paint until release', async ({ page }
     await expect(game.state()).resolves.toMatchObject({ frameCount: expect.any(Number) });
 });
 
+test('large campaign brush commits one placement state change for its whole footprint', async ({ page }) => {
+    await start(page);
+    const result = await page.evaluate(async () => {
+        const campaign = await import('/campaign.js');
+        const physics = await import('/physics.js');
+        const shared = await import('/constantsAndGlobalVars.js');
+        const painter = await import('/game.js');
+
+        physics.clearWorld();
+        campaign.startCampaign('three-states');
+        const definitions = physics.getDefinitions();
+        const sandId = definitions.findIndex(definition => definition?.name === 'Sand');
+        shared.setParticleTypeIdSelected(sandId);
+        shared.setBrushSize(31);
+
+        let stateChanges = 0;
+        const onCampaignChange = () => { stateChanges++; };
+        window.addEventListener('campaign-state-change', onCampaignChange);
+        painter.paintCell(130, 40, 0, 0);
+        window.removeEventListener('campaign-state-change', onCampaignChange);
+
+        const world = physics.getWorld();
+        const state = campaign.getCampaignState();
+        const resource = state.resources.materials.Sand;
+        return {
+            stateChanges,
+            placed: Array.from(world.type).filter(id => id === sandId).length,
+            used: resource.used,
+            remaining: resource.remaining,
+            limit: resource.limit,
+            objectiveProgress: state.objectiveProgress['place-sand']
+        };
+    });
+
+    expect(result.placed).toBeGreaterThan(0);
+    expect(result.used).toBe(result.placed);
+    expect(result.remaining).toBe(result.limit - result.placed);
+    expect(result.objectiveProgress).toBe(Math.min(500, result.placed));
+    expect(result.stateChanges).toBe(1);
+});
+
 function dataAt(state, { x, y }) {
     return state.arrays.data[y * state.cols + x];
 }
