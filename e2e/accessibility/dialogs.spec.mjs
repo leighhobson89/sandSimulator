@@ -134,9 +134,9 @@ test('keyboard tools expose pressed state and focus tooltips through the shared 
     await expect(page.locator('#visualizationHeatButton')).toHaveAttribute('aria-pressed', 'false');
     await page.locator('#closeVisualizationsDialog').click();
     await page.keyboard.press('[');
-    await expect(page.locator('#brushSizeValue')).toHaveText('1');
+    await expect(page.locator('#brushSizeValue')).toHaveValue('1');
     await page.keyboard.press(']');
-    await expect(page.locator('#brushSizeValue')).toHaveText('3');
+    await expect(page.locator('#brushSizeValue')).toHaveValue('3');
     await page.keyboard.press('Tab');
     await expect(page.locator('#toolTooltip')).toBeVisible();
     await expect(game.state()).resolves.toMatchObject({ frameCount: expect.any(Number) });

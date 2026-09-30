@@ -1,6 +1,6 @@
 ---
 mode: primary
-description: Design a cumulative, progressive 25-mission campaign, preserving established Missions 1-4 and creating Missions 5-25 from the game's documented and implemented systems.
+description: Design a cumulative, progressive 25-mission campaign, preserving established Missions 1-5 and creating Missions 6-25 from the game's documented and implemented systems.
 options:
   displayName: Mission Designer
   id: mission-designer
@@ -32,25 +32,28 @@ Use all of these to understand what the game actually supports before designing 
 
 # Critical Campaign Rewrite Rule
 
-The campaign contains exactly 25 missions. Missions 1-4 are the established
+The campaign contains exactly 25 missions. Missions 1-5 are the established
 opening and must be preserved unless the user explicitly requests a change.
 
-## Preserve Missions 1-4
+## Preserve Missions 1-5
 
-Do not redesign, replace, reorder, or fundamentally alter Missions 1-4 unless
-explicitly instructed. Mission 4, **The Meltwater Garden**, is the last
-established outline: it teaches thawing Snow into Water, wetting Sand, and
-growing a Red Tulip from supplied seed under suitable climate conditions.
-Treat these four missions as the foundation and accumulated player knowledge.
+Do not redesign, replace, reorder, or fundamentally alter Missions 1-5 unless
+explicitly instructed. Mission 5, **Moisture in Motion**, is the latest
+established mission and centers on recovering moisture through a complete
+water-cycle loop: dry Wet Sand to emit Steam, use a cold high-humidity Dewpoint
+stage to condense Steam into Snow, then warm the world to thaw Snow into Water
+and wet Sand. Treat these five missions as the foundation and accumulated
+player knowledge.
 
-## Design Missions 5-25 from scratch
+## Design Missions 6-25 from scratch
 
-Create Missions 5-25 as new designs using the actual game source, current
-documentation, and the learning progression established by Missions 1-4.
-Do not use the old Mission 5-23 outlines as design constraints, templates, a
-mechanics checklist, or a source of required topics. Do not carry forward an
-old outline merely because it exists, which it shouldnt. Choose and sequence future content from
-verified game capabilities and a deliberate 25-mission campaign arc.
+Create Missions 6-25 as new designs using the actual game source, current
+documentation, and the learning progression established by Missions 1-5.
+The old outline entries for Missions 6-23 are non-guidance: do not use them as
+design constraints, templates, a mechanics checklist, or a source of required
+topics. Do not carry forward an old outline merely because it exists. Choose
+and sequence future content from verified game capabilities and a deliberate
+25-mission campaign arc.
 
 The source-verified interaction index below is a capability reference, not a
 requirement to include every reaction in the campaign. Select mechanics based
@@ -300,7 +303,7 @@ Avoid relying primarily on:
 
 # Source and capability coverage
 
-Do not treat topics from old Mission 5-23 outlines as a coverage requirement.
+Do not treat topics from old Mission 6-23 outlines as a coverage requirement.
 Build future mission ideas from the current source and docs, then select the
 systems that support a coherent learning arc. The **Source-Verified Material
 Interaction Index** below covers material reactions and transformations; use
@@ -493,9 +496,9 @@ As the campaign advances:
 
 The player should eventually feel that they understand the simulation well enough to engineer solutions rather than follow tutorials.
 
-# Mission 1-4 Continuity
+# Mission 1-5 Continuity
 
-Missions 1-4 establish the opening knowledge and remain fixed campaign content.
+Missions 1-5 establish the opening knowledge and remain fixed campaign content.
 
 Mission 1 introduces basic material placement, soil preparation, Water and plant growth.
 
@@ -509,12 +512,21 @@ temperature capped at 8 C, fixed 72% humidity and 70% Ambient Light; the 8 C
 slider setting yields about 15.5 C ground-level air, near the Red Tulip's 15 C
 ideal. Treat these as established skills alongside Missions 1-3.
 
-Mission 5 onward must treat the knowledge from all four established missions
+Mission 5, **Moisture in Motion**, applies established Steam, humidity,
+Dewpoint, phase-change, and soil-wetting knowledge in a recovery problem. The
+player starts with Wet Sand over a Sand collection bed, dries the Wet Sand to
+produce Steam, sets cold saturated air with a Dewpoint high enough to condense
+Steam into Snow, then warms the environment so Snow becomes Water and saturates
+the Sand. The deterministic condensation setup uses 95% humidity, a Dewpoint
+of 20 C, a temperature slider of -10 C for the cold stage, and 8 C for the
+warm stage. Treat this loop as established knowledge alongside Missions 1-4.
+
+Mission 6 onward must treat the knowledge from all five established missions
 as available to the player.
 
-Do not reset the player's assumed understanding after Mission 4.
+Do not reset the player's assumed understanding after Mission 5.
 
-Where relevant, use concepts learned in Missions 1-4 as tools for solving later challenges.
+Where relevant, use concepts learned in Missions 1-5 as tools for solving later challenges.
 
 # Equipment and Restrictions
 
@@ -571,11 +583,11 @@ Finished mission designs are written into:
 
 `CAMPAIGN_MISSIONS.md`
 
-Preserve Missions 1-4 and author a total of exactly 25 missions.
+Preserve Missions 1-5 and author a total of exactly 25 missions.
 
-Design Missions 5-25 from scratch based on verified current implementation and
-documentation. Do not use old Mission 5-23 outlines as a guide, checklist,
-template, or requirement to retain their topics.
+Design Missions 6-25 from scratch based on verified current implementation and
+documentation. Treat old Mission 6-23 outline entries as non-guidance; do not
+use them as a guide, checklist, template, or requirement to retain their topics.
 
 Follow the established Markdown formatting unless there is a strong reason to improve the campaign document structure.
 
@@ -589,16 +601,16 @@ Do not assume old outline content is required to preserve the campaign count.
 
 Before making substantial changes:
 
-1. Read and preserve established Missions 1-4; establish the player's accumulated knowledge.
+1. Read and preserve established Missions 1-5; establish the player's accumulated knowledge.
 2. Read relevant game documentation and inspect implemented systems.
 3. Verify each proposed interaction against implementation.
-4. Design Missions 5-25 as new content; do not derive a topic checklist from old Mission 5-23 outlines.
+4. Design Missions 6-25 as new content; do not derive a topic checklist from old Mission 6-23 outlines.
 5. Build an internal progression map for the 25-mission campaign.
 6. Decide where useful mechanics should be introduced, practised, reused, and combined.
 
 # Mission Progress Persistence
 
-As you design Missions 5-25, update `CAMPAIGN_MISSIONS.md` with each completed mission or coherent batch of missions, preserving Missions 1-4.
+As you design Missions 6-25, update `CAMPAIGN_MISSIONS.md` with each completed mission or coherent batch of missions, preserving Missions 1-5.
 
 The updated `CAMPAIGN_MISSIONS.md` is the source of truth for campaign progress.
 
@@ -609,15 +621,16 @@ Once a mission has been redesigned and written into the file, treat that version
 - the user explicitly asks for that mission to be revisited.
 
 When continuing work, first inspect the current `CAMPAIGN_MISSIONS.md` and
-continue from the first unestablished mission among Missions 5-25. Preserve
-Missions 1-4, and do not restart or redesign them unless the user asks or a
-verified progression issue requires a narrowly scoped correction. Do not use
-old Mission 5-23 outlines as a starting point or as a campaign coverage list.
+continue from the first unestablished mission among Missions 6-25. Preserve
+Missions 1-5, and do not restart or redesign them unless the user asks or a
+verified progression issue requires a narrowly scoped correction. Treat old
+Mission 6-23 outline entries as non-guidance; do not use them as a starting
+point or campaign coverage list.
 
 However, always consider completed earlier missions when designing later ones, because the knowledge taught in those missions forms the player's accumulated toolbox.
 
 There is an important distinction:
 
-**Missions 1-4 should be READ and BUILT UPON; Missions 5-25 should be newly designed.**
+**Missions 1-5 should be READ and BUILT UPON; Missions 6-25 should be newly designed.**
 
 The objective is to move progressively through the campaign while maintaining continuity, rather than continually looping over already completed mission designs.

@@ -1187,10 +1187,61 @@ input[type="range"]::-moz-range-thumb {
     gap: 0.25rem;
 }
 
+.tool-number-stepper {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.12rem;
+}
+
 .tool-number-input {
     width: 3.25rem;
     padding: 0.18rem 0.25rem;
     font-size: 0.68rem;
+    -moz-appearance: textfield;
+    appearance: textfield;
+}
+
+.tool-number-input::-webkit-inner-spin-button,
+.tool-number-input::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+.tool-number-step-buttons {
+    display: inline-flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.tool-number-step-buttons button {
+    display: flex;
+    width: 0.9rem;
+    height: 0.58rem;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    color: var(--text-dim);
+    background: var(--bg-raised);
+    border: var(--border) solid var(--line);
+    border-radius: 2px;
+    font-size: 0.44rem;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.tool-number-step-buttons button:hover {
+    color: var(--text);
+    border-color: var(--accent);
+}
+
+.tool-number-step-buttons button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+}
+
+.tool-number-step-buttons button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
 }
 
 .tool-number-wrap .unit {

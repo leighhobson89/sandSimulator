@@ -44,7 +44,7 @@ test('brush size changes the circular footprint and keyboard bounds', async ({ p
     const game = await start(page);
     await page.getByRole('button', { name: 'Water', exact: true }).click();
     await page.locator('#brushSize').fill('5');
-    await expect(page.locator('#brushSizeValue')).toHaveText('5');
+    await expect(page.locator('#brushSizeValue')).toHaveValue('5');
     await clickCanvasCell(page, { x: 50, y: 50 });
 
     const state = await game.state();

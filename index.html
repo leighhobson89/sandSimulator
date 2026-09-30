@@ -206,7 +206,14 @@
                         <div class="tool-slider-block">
                             <div class="tool-slider-heading">
                                 <span>Brush size</span>
-                                <output id="brushSizeValue" for="brushSize">3</output>
+                                <span class="tool-number-stepper" data-tool-number-stepper>
+                                    <input id="brushSizeValue" class="number-input tool-number-input" type="number"
+                                           min="1" max="31" step="2" value="3" aria-label="Brush size">
+                                    <span class="tool-number-step-buttons">
+                                        <button type="button" data-step="1" aria-label="Increase brush size">▲</button>
+                                        <button type="button" data-step="-1" aria-label="Decrease brush size">▼</button>
+                                    </span>
+                                </span>
                             </div>
                             <input id="brushSize" type="range" min="1" max="31" step="2" value="3">
                         </div>
@@ -227,7 +234,14 @@
                         <div class="tool-slider-block">
                             <div class="tool-slider-heading">
                                 <label id="grabberSizeLabel" for="grabberSize">Grab size</label>
-                                <output id="grabberSizeValue" for="grabberSize">15</output>
+                                <span class="tool-number-stepper" data-tool-number-stepper>
+                                    <input id="grabberSizeValue" class="number-input tool-number-input" type="number"
+                                           min="1" max="60" step="1" value="15" aria-label="Grabber size">
+                                    <span class="tool-number-step-buttons">
+                                        <button type="button" data-step="1" aria-label="Increase grabber size">▲</button>
+                                        <button type="button" data-step="-1" aria-label="Decrease grabber size">▼</button>
+                                    </span>
+                                </span>
                             </div>
                             <input id="grabberSize" type="range" min="1" max="60" step="1" value="15">
                         </div>
@@ -283,20 +297,26 @@
 
                     <div class="tool-slider-row">
                         <label id="airTempLabel" class="tool-slider-icon tooltip-control" for="airTemp"
-                               data-tooltip="Set the world's air temperature">
+                               data-tooltip="Set the world's air temp">
                             <svg class="tool-icon" viewBox="0 0 24 24" aria-hidden="true">
                                 <path d="M10 14.8V5a2 2 0 1 1 4 0v9.8a4.5 4.5 0 1 1-4 0Z"/>
                                 <path d="M12 9v8"/>
                             </svg>
-                            <span class="sr-only">Air temperature</span>
+                            <span class="sr-only">Air temp</span>
                         </label>
                         <div class="tool-slider-block">
                             <div class="tool-slider-heading">
-                                <span>Air temperature</span>
+                                <span>Air temp</span>
                                 <span class="tool-number-wrap">
-                                    <input id="airTempValue" class="number-input tool-number-input" type="number"
-                                           min="-60" max="4000" step="1" value="8"
-                                           title="Type a temperature, then click away or press Enter">
+                                    <span class="tool-number-stepper" data-tool-number-stepper>
+                                        <input id="airTempValue" class="number-input tool-number-input" type="number"
+                                               min="-60" max="4000" step="1" value="8" aria-label="Air temp"
+                                               title="Type a temperature, then click away or press Enter">
+                                        <span class="tool-number-step-buttons">
+                                            <button type="button" data-step="1" aria-label="Increase air temp">▲</button>
+                                            <button type="button" data-step="-1" aria-label="Decrease air temp">▼</button>
+                                        </span>
+                                    </span>
                                     <span class="unit">&deg;C</span>
                                 </span>
                             </div>
@@ -313,7 +333,17 @@
                         <div class="tool-slider-block">
                             <div class="tool-slider-heading">
                                 <label for="ambientIllumination">Ambient Light</label>
-                                <output id="ambientIlluminationValue" for="ambientIllumination">50%</output>
+                                <span class="tool-number-wrap">
+                                    <span class="tool-number-stepper" data-tool-number-stepper>
+                                        <input id="ambientIlluminationValue" class="number-input tool-number-input" type="number"
+                                               min="0" max="100" step="1" value="50" aria-label="Ambient Light">
+                                        <span class="tool-number-step-buttons">
+                                            <button type="button" data-step="1" aria-label="Increase ambient light">▲</button>
+                                            <button type="button" data-step="-1" aria-label="Decrease ambient light">▼</button>
+                                        </span>
+                                    </span>
+                                    <span class="unit">%</span>
+                                </span>
                             </div>
                             <input id="ambientIllumination" type="range" min="0" max="100" step="1" value="50" aria-label="Ambient Light">
                         </div>
@@ -328,7 +358,17 @@
                         <div class="tool-slider-block">
                             <div class="tool-slider-heading">
                                 <label for="baseHumidity">Humidity</label>
-                                <output id="baseHumidityValue" for="baseHumidity">50%</output>
+                                <span class="tool-number-wrap">
+                                    <span class="tool-number-stepper" data-tool-number-stepper>
+                                        <input id="baseHumidityValue" class="number-input tool-number-input" type="number"
+                                               min="0" max="100" step="1" value="50" aria-label="Humidity">
+                                        <span class="tool-number-step-buttons">
+                                            <button type="button" data-step="1" aria-label="Increase humidity">▲</button>
+                                            <button type="button" data-step="-1" aria-label="Decrease humidity">▼</button>
+                                        </span>
+                                    </span>
+                                    <span class="unit">%</span>
+                                </span>
                             </div>
                             <input id="baseHumidity" type="range" min="0" max="100" step="1" value="50" aria-label="Base Humidity">
                         </div>
@@ -343,7 +383,17 @@
                         <div class="tool-slider-block">
                             <div class="tool-slider-heading">
                                 <label for="dewpoint">Dew Point</label>
-                                <output id="dewpointValue" for="dewpoint">10 &deg;C</output>
+                                <span class="tool-number-wrap">
+                                    <span class="tool-number-stepper" data-tool-number-stepper>
+                                        <input id="dewpointValue" class="number-input tool-number-input" type="number"
+                                               min="0" max="100" step="1" value="10" aria-label="Dewpoint">
+                                        <span class="tool-number-step-buttons">
+                                            <button type="button" data-step="1" aria-label="Increase dew point">▲</button>
+                                            <button type="button" data-step="-1" aria-label="Decrease dew point">▼</button>
+                                        </span>
+                                    </span>
+                                    <span class="unit">&deg;C</span>
+                                </span>
                             </div>
                             <input id="dewpoint" type="range" min="0" max="100" step="1" value="10" aria-label="Dewpoint">
                         </div>

@@ -99,9 +99,9 @@ panel to its right contains Brush/Line mode and size, Grabber, Visualizations,
 and Environment controls. Open Options for
 Heat, Humidity, and Wind views; Normal restores ordinary rendering. The
 Environment section places the Breeze toggle above General Wind and Gust
-Strength, Air Temperature, Humidity, and Dew Point, separate from the Wind
+Strength, Air Temp, Humidity, and Dew Point, separate from the Wind
 visualization. Open air follows the natural `15 C` vertical temperature
-gradient centered on Air Temperature. Hover an icon for a short explanation;
+gradient centered on Air Temp. Hover an icon for a short explanation;
 hover or focus any material button for its glossary description, properties and
 implemented reactions. The material and machine mechanics reference, including
 the glossary maintenance contract, is in

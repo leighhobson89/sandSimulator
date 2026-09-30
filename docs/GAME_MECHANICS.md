@@ -1153,9 +1153,9 @@ particles load as Grass Seeds.
 
 The sidebar places **Visualizations** immediately above **Environment**. The
 Visualizations row has **Normal** and **Options**. Environment controls are
-**Breeze**, the dual-handle Wind Strength control, Air Temperature, Humidity,
+**Breeze**, the dual-handle Wind Strength control, Air Temp, Humidity,
 and Dew Point. Open-air temperature follows a smooth fixed profile centered on
-the Air Temperature setting: the top is `7.5 C` cooler and the surface is
+the Air Temp setting: the top is `7.5 C` cooler and the surface is
 `7.5 C` warmer, a `15 C` top-to-surface difference. The natural gradient is
 always active as part of the whole open-air atmosphere. Enclosed air keeps its
 local temperature. Breeze is the master switch for General Wind and Gusts.
@@ -1164,6 +1164,11 @@ active fields; already drawn wind trails and other airflow momentum can decay
 naturally. Turning it on restores generation according to the two selected
 strengths. The Wind visualization is a separate display mode and does not
 enable or configure Breeze.
+
+Brush size, Grabber size, Air Temp, Ambient Light, Base Humidity, and Dew Point
+each pair a slider with a numeric field and up/down step buttons. The two Wind
+strength values remain readouts above their shared dual-handle slider. Stepping
+Air Temp downward from a negative value moves farther below zero.
 
 General Wind is a persistent background field with smooth spatial variation;
 the selected value is a local maximum, not a uniform speed. The field has calmer

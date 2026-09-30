@@ -273,9 +273,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         elements.eraserButton.classList.toggle('active-toggle', getEraserOn());
     });
 
-    elements.brushSizeInput.addEventListener('input', event => {
-        setBrushSize(parseInt(event.target.value));
-        elements.brushSizeValue.textContent = String(getBrushSize());
+    const applyBrushSize = value => {
+        const size = snapNumberToStep(value, 1, 31, 2);
+        setBrushSize(size);
+        elements.brushSizeInput.value = String(size);
+        elements.brushSizeValue.value = String(size);
+    };
+    elements.brushSizeInput.addEventListener('input', event => applyBrushSize(event.target.value));
+    bindToolNumberStepper(elements.brushSizeValue, {
+        step: 2, getValue: getBrushSize, onValue: applyBrushSize
     });
 
     elements.brushModeButton.addEventListener('click', () => selectDrawingMode('brush'));
@@ -290,11 +296,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         setGrabberMode(!getGrabberOn());
     });
 
-    elements.grabberSizeInput.addEventListener('input', event => {
+    const applyGrabberSize = value => {
         if (!campaignToolAllowed('grabber')) return;
-        const size = Math.max(1, Math.min(60, parseInt(event.target.value)));
+        const size = snapNumberToStep(value, 1, 60);
         setGrabberSize(size);
-        elements.grabberSizeValue.textContent = String(size);
+        elements.grabberSizeInput.value = String(size);
+        elements.grabberSizeValue.value = String(size);
+    };
+    elements.grabberSizeInput.addEventListener('input', event => applyGrabberSize(event.target.value));
+    bindToolNumberStepper(elements.grabberSizeValue, {
+        step: 1, getValue: getGrabberSize, onValue: applyGrabberSize
     });
 
     setGameState(getMenuState());
@@ -407,6 +418,69 @@ function campaignClimateRange(control, fallbackMinimum, fallbackMaximum) {
     };
 }
 
+function bindToolNumberStepper(input, { step = 1, getValue, onValue }) {
+    if (!input) return;
+
+    let typing = false;
+    const commit = rawValue => {
+        if (String(rawValue).trim() === '') {
+            typing = false;
+            input.value = String(getValue());
+            return;
+        }
+        const value = Number(rawValue);
+        if (!Number.isFinite(value)) {
+            typing = false;
+            input.value = String(getValue());
+            return;
+        }
+        typing = false;
+        onValue(value);
+    };
+    const stepBy = direction => {
+        const current = input.value.trim() === '' ? Number.NaN : Number(input.value);
+        const base = Number.isFinite(current) ? current : getValue();
+        typing = false;
+        // Keep the sign in the arithmetic: Down from -10 must produce -11.
+        onValue(base + direction * step);
+    };
+
+    input.addEventListener('keydown', event => {
+        if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+            event.preventDefault();
+            stepBy(event.key === 'ArrowUp' ? 1 : -1);
+            return;
+        }
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            commit(input.value);
+            input.blur();
+            return;
+        }
+        typing = true;
+    });
+    input.addEventListener('input', () => {
+        if (!typing) commit(input.value);
+    });
+    input.addEventListener('change', () => commit(input.value));
+    input.addEventListener('blur', () => {
+        typing = false;
+        commit(input.value);
+    });
+
+    input.closest('[data-tool-number-stepper]')?.querySelectorAll('button[data-step]').forEach(button => {
+        button.addEventListener('click', () => stepBy(Number(button.dataset.step)));
+    });
+}
+
+function snapNumberToStep(value, minimum, maximum, step = 1) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return minimum;
+    const clamped = Math.max(minimum, Math.min(maximum, Math.round(numeric)));
+    const snapped = minimum + Math.round((clamped - minimum) / step) * step;
+    return Math.max(minimum, Math.min(maximum, snapped));
+}
+
 function campaignVisualizationAllowed(mode) {
     const campaign = getCampaignState();
     if (!campaign) return true;
@@ -448,6 +522,11 @@ function applyLockedMissionEnvironment(mission) {
 
 function setCampaignLocked(element, locked, reason = 'Not available in this mission.') {
     if (!element) return;
+    if (element.type === 'number') {
+        element.closest('[data-tool-number-stepper]')?.querySelectorAll('button[data-step]').forEach(button => {
+            setCampaignLocked(button, locked, reason);
+        });
+    }
     if (locked) {
         if (!Object.hasOwn(element.dataset, 'campaignPreviousDisabled')) {
             element.dataset.campaignPreviousDisabled = String(!!element.disabled);
@@ -514,12 +593,16 @@ function syncCampaignControls(campaign, mission) {
         setCampaignLocked(button, locked);
     }
     setCampaignLocked(elements.clearButton, locked, 'Not available in this mission.');
-    setCampaignLocked(elements.grabberSizeInput, locked && !allowed('grabber'), 'Not available in this mission.');
+    const grabberSizeLocked = locked && !allowed('grabber');
+    setCampaignLocked(elements.grabberSizeInput, grabberSizeLocked, 'Not available in this mission.');
+    setCampaignLocked(elements.grabberSizeValue, grabberSizeLocked, 'Not available in this mission.');
     const climateControls = [
         ['temperature', elements.airTempInput, elements.airTempValue],
-        ['humidity', elements.baseHumidityInput], ['illumination', elements.ambientIlluminationInput],
-        ['dewpoint', elements.dewpointInput], ['wind', elements.ambientWindCheckbox,
-            elements.generalWindStrengthInput, elements.windStrengthInput]
+        ['humidity', elements.baseHumidityInput, elements.baseHumidityValue],
+        ['illumination', elements.ambientIlluminationInput, elements.ambientIlluminationValue],
+        ['dewpoint', elements.dewpointInput, elements.dewpointValue],
+        ['wind', elements.ambientWindCheckbox, elements.generalWindStrengthInput,
+            elements.windStrengthInput]
     ];
     let climateLocked = false;
     for (const [control, ...inputs] of climateControls) {
@@ -536,9 +619,9 @@ function syncCampaignControls(campaign, mission) {
     }
     const climateSliderRanges = [
         ['temperature', [elements.airTempInput, elements.airTempValue], MIN_AIR_TEMP, MAX_AIR_TEMP],
-        ['humidity', [elements.baseHumidityInput], 0, 100],
-        ['illumination', [elements.ambientIlluminationInput], 0, 100],
-        ['dewpoint', [elements.dewpointInput], 0, 100],
+        ['humidity', [elements.baseHumidityInput, elements.baseHumidityValue], 0, 100],
+        ['illumination', [elements.ambientIlluminationInput, elements.ambientIlluminationValue], 0, 100],
+        ['dewpoint', [elements.dewpointInput, elements.dewpointValue], 0, 100],
         ['windStrength', [elements.generalWindStrengthInput], 0, 50],
         ['gustWindStrength', [elements.windStrengthInput], 0, 50]
     ];
@@ -559,7 +642,9 @@ function syncCampaignControls(campaign, mission) {
     const lockNotice = document.getElementById('missionClimateLock');
     if (lockNotice) lockNotice.hidden = !climateLocked;
     const mode = getDrawMode();
-    elements.brushSizeInput.disabled = (mode !== 'brush' && mode !== 'line') || (locked && !allowed(mode));
+    const brushSizeDisabled = (mode !== 'brush' && mode !== 'line') || (locked && !allowed(mode));
+    elements.brushSizeInput.disabled = brushSizeDisabled;
+    setCampaignLocked(elements.brushSizeValue, brushSizeDisabled, 'Not available in this mission.');
 }
 
 function startCampaignEditorSession({ clear = true, cols = 260, rows = 150 } = {}) {
@@ -1267,16 +1352,16 @@ function synchroniseRestoredControls() {
     elements.grabberButton.setAttribute('aria-pressed', String(getGrabberOn()));
     synchroniseVisualizationButtons();
     elements.brushSizeInput.value = String(getBrushSize());
-    elements.brushSizeValue.textContent = String(getBrushSize());
+    elements.brushSizeValue.value = String(getBrushSize());
     elements.grabberSizeInput.value = String(getGrabberSize());
-    elements.grabberSizeValue.textContent = String(getGrabberSize());
+    elements.grabberSizeValue.value = String(getGrabberSize());
     elements.airTempInput.value = String(Math.round(getAmbientTarget()));
     elements.airTempValue.value = String(Math.round(getAmbientTarget()));
     synchroniseAmbientIlluminationControl();
     elements.baseHumidityInput.value = String(Math.round(getAmbientHumidityTarget()));
-    elements.baseHumidityValue.textContent = `${Math.round(getAmbientHumidityTarget())}%`;
+    elements.baseHumidityValue.value = String(Math.round(getAmbientHumidityTarget()));
     elements.dewpointInput.value = String(Math.round(getDewpointTarget()));
-    elements.dewpointValue.textContent = `${Math.round(getDewpointTarget())} °C`;
+    elements.dewpointValue.value = String(Math.round(getDewpointTarget()));
     elements.generalWindStrengthInput.value = String(getGeneralWindStrength());
     elements.generalWindStrengthValue.textContent = String(getGeneralWindStrength());
     elements.windStrengthInput.value = String(getWindStrength());
@@ -2469,7 +2554,7 @@ function synchroniseAmbientIlluminationControl() {
         elements.ambientIlluminationInput.value = String(value);
     }
     if (elements.ambientIlluminationValue) {
-        elements.ambientIlluminationValue.textContent = `${value}%`;
+        elements.ambientIlluminationValue.value = String(value);
     }
 }
 
@@ -2496,43 +2581,16 @@ function setUpAirTemperature() {
 
     slider.addEventListener('input', event => apply(parseInt(event.target.value)));
 
-    // Typed digits are held back until the number is finished, so half typed
-    // ones do not send the weather somewhere strange on the way to the one that
-    // was meant. Anything else that changes the box - the spinner buttons, the
-    // arrow keys, the scroll wheel - is a finished number already, so it takes
-    // effect on the spot.
-    let typing = false;
-
-    box.addEventListener('keydown', event => {
-        if (event.key === 'Enter') {
-            event.preventDefault();
-            typing = false;
-            commitAirTemperature(apply, box);
-            box.blur();
-            return;
-        }
-        // The arrow keys step the box the same way the spinner buttons do.
-        if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') typing = true;
-    });
-
-    box.addEventListener('input', () => {
-        if (typing) return;
-        commitAirTemperature(apply, box);
-    });
-
-    // Clicking away commits what was typed, rather than silently throwing the
-    // number the person just entered away.
-    box.addEventListener('blur', () => {
-        typing = false;
-        commitAirTemperature(apply, box);
+    bindToolNumberStepper(box, {
+        step: 1, getValue: () => Math.round(getAmbientTarget()), onValue: apply
     });
 }
 
 function setUpAmbientIllumination() {
     const elements = getElements();
     const slider = elements.ambientIlluminationInput;
-    const output = elements.ambientIlluminationValue;
-    if (!slider || !output) return;
+    const numberInput = elements.ambientIlluminationValue;
+    if (!slider || !numberInput) return;
     const apply = next => {
         if (!campaignClimateControlAllowed('illumination')) {
             applyMissionEnvironment(getCurrentMission());
@@ -2545,16 +2603,20 @@ function setUpAmbientIllumination() {
         const value = Math.max(minimum, Math.min(maximum, Math.round(numeric)));
         setAmbientIlluminationTarget(value);
         slider.value = String(value);
-        output.textContent = `${value}%`;
+        numberInput.value = String(value);
         recordCurrentMissionEnvironment();
     };
     apply(getAmbientIlluminationTarget());
     slider.addEventListener('input', event => apply(event.target.value));
+    bindToolNumberStepper(numberInput, {
+        step: 1, getValue: () => Math.round(getAmbientIlluminationTarget()), onValue: apply
+    });
 }
 
 function setUpBaseHumidity() {
-    const slider = getElements().baseHumidityInput;
-    const output = getElements().baseHumidityValue;
+    const elements = getElements();
+    const slider = elements.baseHumidityInput;
+    const numberInput = elements.baseHumidityValue;
     const apply = next => {
         if (!campaignClimateControlAllowed('humidity')) {
             applyMissionEnvironment(getCurrentMission());
@@ -2565,16 +2627,20 @@ function setUpBaseHumidity() {
         const value = Math.max(minimum, Math.min(maximum, Math.round(Number(next))));
         setAmbientHumidityTarget(value);
         slider.value = String(value);
-        output.textContent = `${value}%`;
+        numberInput.value = String(value);
         recordCurrentMissionEnvironment();
     };
     apply(getAmbientHumidityTarget());
     slider.addEventListener('input', event => apply(event.target.value));
+    bindToolNumberStepper(numberInput, {
+        step: 1, getValue: () => Math.round(getAmbientHumidityTarget()), onValue: apply
+    });
 }
 
 function setUpDewpoint() {
-    const slider = getElements().dewpointInput;
-    const output = getElements().dewpointValue;
+    const elements = getElements();
+    const slider = elements.dewpointInput;
+    const numberInput = elements.dewpointValue;
     const apply = next => {
         if (!campaignClimateControlAllowed('dewpoint')) {
             applyMissionEnvironment(getCurrentMission());
@@ -2585,11 +2651,14 @@ function setUpDewpoint() {
         const value = Math.max(minimum, Math.min(maximum, Math.round(Number(next))));
         setDewpointTarget(value);
         slider.value = String(value);
-        output.textContent = `${value} °C`;
+        numberInput.value = String(value);
         recordCurrentMissionEnvironment();
     };
     apply(getDewpointTarget());
     slider.addEventListener('input', event => apply(event.target.value));
+    bindToolNumberStepper(numberInput, {
+        step: 1, getValue: () => Math.round(getDewpointTarget()), onValue: apply
+    });
 }
 
 // Two native range inputs share one track. General Wind is the lower handle;
@@ -2632,7 +2701,6 @@ function setUpWindStrength() {
     apply('');
     general.addEventListener('input', () => apply('general'));
     gust.addEventListener('input', () => apply('gust'));
-
     // The transparent portions of the overlapping native inputs leave one
     // clean track. Clicking or dragging that track selects the nearest thumb,
     // while keyboard input and assistive technology continue to operate each
@@ -3230,15 +3298,6 @@ function updateBlueprintControls() {
     elements.blueprintSlots.querySelectorAll('.blueprint-slot').forEach(button => {
         button.classList.toggle('active-toggle', parseInt(button.dataset.blueprintSlot) === activeBlueprintSlot);
     });
-}
-
-function commitAirTemperature(apply, box) {
-    const typed = parseInt(box.value);
-    if (Number.isNaN(typed)) {
-        box.value = String(Math.round(getAmbientTarget()));
-        return;
-    }
-    apply(typed);
 }
 
 //------------------------------------------------------------- canvas input
@@ -4069,7 +4128,7 @@ function adjustBrush(delta) {
     const size = Math.max(1, Math.min(31, getBrushSize() + delta));
     setBrushSize(size);
     getElements().brushSizeInput.value = String(size);
-    getElements().brushSizeValue.textContent = String(size);
+    getElements().brushSizeValue.value = String(size);
 }
 
 export function disableActivateButton(button, action, activeClass) {
