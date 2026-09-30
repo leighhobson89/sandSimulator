@@ -4098,7 +4098,8 @@ function transform(i, id, life, residue, transitionContext) {
                 root: i,
                 seedType: previousType,
                 plantType: id,
-                species: def.plantSpecies
+                species: def.plantSpecies,
+                initialGrowthBudget: 0
             });
         }
     }
@@ -5334,16 +5335,20 @@ function processMaturePlantGrowthCandidates() {
             pendingPlantGrowthCompletions.splice(candidateIndex, 1);
             continue;
         }
+        // Read this on the first post-processing pass so seed-specific growth
+        // budgets (such as submerged Water Grass) have finished initializing.
+        if (!(candidate.initialGrowthBudget > 0)) {
+            candidate.initialGrowthBudget = world.data[candidate.root];
+        }
 
         const queue = [candidate.root];
         const visited = new Set(queue);
-        let hasGrowthRemaining = false;
-        for (let cursor = 0; cursor < queue.length && !hasGrowthRemaining; cursor++) {
+        let highestRemainingGrowthBudget = 0;
+        for (let cursor = 0; cursor < queue.length; cursor++) {
             const index = queue[cursor];
             const definition = DEFS[world.type[index]];
-            if (definition.growHeight > 0 && world.data[index] > 1) {
-                hasGrowthRemaining = true;
-                break;
+            if (definition.growHeight > 0) {
+                highestRemainingGrowthBudget = Math.max(highestRemainingGrowthBudget, world.data[index]);
             }
 
             const x = index % COLS;
@@ -5364,7 +5369,11 @@ function processMaturePlantGrowthCandidates() {
             }
         }
 
-        if (hasGrowthRemaining) continue;
+        // Wait until the connected tip with the most budget remaining has
+        // spent half of the seed's original budget, so a side shoot cannot
+        // complete the objective early.
+        if (candidate.initialGrowthBudget > 1 &&
+            highestRemainingGrowthBudget * 2 > candidate.initialGrowthBudget) continue;
         try {
             plantGrowthCompletionListener(candidate.seedType, candidate.plantType);
         } catch (error) {

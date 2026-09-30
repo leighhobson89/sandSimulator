@@ -20,7 +20,7 @@ async function enterMissionTwo(page) {
         const definitions = physics.getDefinitions();
         const fromId = definitions.findIndex(definition => definition?.name === objective.from);
         const toId = definitions.findIndex(definition => definition?.name === objective.to);
-        for (let count = 0; count < objective.target; count++) campaign.recordMaterialTransition(fromId, toId);
+        for (let count = 0; count < objective.target; count++) campaign.recordPlantGrowthCompletion(fromId, toId);
     });
     await expect(page.locator('#missionCompleteDialog')).toBeVisible();
     await page.locator('#missionCompleteOk').click();

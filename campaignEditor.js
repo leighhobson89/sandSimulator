@@ -255,7 +255,7 @@ export function validateCampaignMission(mission, { missions = getMissionDefiniti
             errors.push('Mission 1 climate must stay at the Daffodil ideal profile: 14 °C, 68% humidity, 65% light, 10 °C dewpoint, and calm wind.');
         }
         const flower = mission.objectives?.some(item => item.from === 'Daffodil Seeds' && item.to === 'Daffodil' && item.target === 1);
-        if (!flower) errors.push('Mission 1 must count one Daffodil Seeds-to-Daffodil germination.');
+        if (!flower) errors.push('Mission 1 must count one Daffodil Seeds-to-Daffodil growth objective.');
         if (!mission.lockedControls?.includes('temperature') || !mission.lockedControls?.includes('humidity') ||
             !mission.lockedControls?.includes('illumination') || !mission.lockedControls?.includes('dewpoint') ||
             !mission.lockedControls?.includes('wind')) errors.push('Mission 1 must lock its climate and wind controls.');

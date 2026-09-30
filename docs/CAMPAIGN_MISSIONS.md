@@ -60,7 +60,7 @@ A dry Mud basin has no Water supply, but a reserve of Snow and five Red Tulip Se
 
 **Controls:** Temperature (starts at −10 °C; maximum 8 °C), Humidity (fixed at 72%), Ambient Light (fixed at 70%), Dewpoint (fixed at 10 °C), Wind (off).
 
-**Design Notes:** Combines temperature and thaw from Mission 2, soil wetting from Mission 3, and flowering-plant growth introduced in Mission 1. Snow is the only water source; the fixed humidity and light support the Red Tulip while the player solves thaw and moisture. Red Tulip seeds require at least 4 °C, 38% humidity, and 20% light; mature plants thrive from 4–28 °C, with ideal conditions at 15 °C, 72% humidity, and 70% light. The temperature cap yields at most 15.5 °C at the documented ground-level profile, meeting the temperature ideal. Five seeds allow retries; one fully grown Red Tulip satisfies the growth objective. This prepares Mission 5's water-cycle work without introducing Steam or Dewpoint as new focus.
+**Design Notes:** Combines temperature and thaw from Mission 2, soil wetting from Mission 3, and flowering-plant growth introduced in Mission 1. Snow is the only water source; the fixed humidity and light support the Red Tulip while the player solves thaw and moisture. Red Tulip seeds require at least 4 °C, 38% humidity, and 20% light; mature plants thrive from 4–28 °C, with ideal conditions at 15 °C, 72% humidity, and 70% light. The temperature cap yields at most 15.5 °C at the documented ground-level profile, meeting the temperature ideal. Five seeds allow retries; one Red Tulip that uses half its initial growth budget satisfies the growth objective. This prepares Mission 5's water-cycle work without introducing Steam or Dewpoint as new focus.
 
 ## 5. Moisture in Motion
 

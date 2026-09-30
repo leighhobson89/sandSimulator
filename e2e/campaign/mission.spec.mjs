@@ -39,7 +39,7 @@ async function commitMachineLead(page, label) {
     await expect(preview, `${label} commits after its lead click`).toHaveCount(0);
 }
 
-test('Mission 1 counts Daffodil seed germination and fires its completion event once', async ({ page }) => {
+test('Mission 1 counts halfway Daffodil growth and fires its completion event once', async ({ page }) => {
     await startCampaign(page);
     const target = await page.evaluate(async () => {
         const campaign = await import('/campaign.js');
@@ -57,13 +57,13 @@ test('Mission 1 counts Daffodil seed germination and fires its completion event 
         if (fromId < 0 || toId < 0) throw new Error('Mission objective references an unknown material.');
 
         for (let count = 0; count < conversionCount; count++) {
-            campaign.recordMaterialTransition(fromId, toId);
+            campaign.recordPlantGrowthCompletion(fromId, toId);
         }
         const state = campaign.getCampaignState();
         const progress = state.objectiveProgress[objective.id];
         const firedAfterCompletion = [...state.firedEventIds];
         for (let count = 0; count < conversionCount; count++) {
-            campaign.recordMaterialTransition(fromId, toId);
+            campaign.recordPlantGrowthCompletion(fromId, toId);
         }
         return {
             progress,
@@ -86,7 +86,7 @@ test('objective completion toast times out while the final advance status persis
     await page.evaluate(async () => {
         const campaign = await import('/campaign.js');
         const definitions = (await import('/physics.js')).getDefinitions();
-        campaign.recordMaterialTransition(
+        campaign.recordPlantGrowthCompletion(
             definitions.findIndex(definition => definition?.name === 'Daffodil Seeds'),
             definitions.findIndex(definition => definition?.name === 'Daffodil')
         );

@@ -4,8 +4,8 @@ Mission 1, **The First Daffodil**, starts with a full-width Sand floor and
 player supplies of 100 Dry Mud, 1,000 Water, and five Daffodil Seeds for
 retries. Its fixed
 ideal climate is 14 °C, 68% humidity, 65% illumination, 10 °C dewpoint, and no
-wind. Its objective counts one actual Daffodil Seeds-to-Daffodil germination
-transition and fires its configured event once.
+wind. Its objective counts one Daffodil Seeds-to-Daffodil plant after it uses
+half its initial growth budget, then fires the configured event once.
 
 `mission.spec.mjs` verifies the mission definition, Sand-only starting habitat,
 climate, budgets and locks, placement from supplies, and one successful growth
@@ -79,10 +79,10 @@ frames, unlimited-Water and max-Brush selection, quench cause, and final
 world-state requirements. This also protects decoding of encoded `startingSave`
 arrays before physics restore while preserving the active Campaign state.
 
-`tools/simTest.mjs --focus=campaign-germination` drives the Mission 4 Red Tulip
-through full maturity and verifies the growth objective completes only at the
-documented mature stage. Mission 1 and Mission 2 have five seed attempts in
-their loadouts; each growth objective still counts one successful plant.
+`tools/simTest.mjs --focus=campaign-germination` checks Missions 1, 2, and 4:
+each seed-growth objective completes once its plant has used half its initial
+growth budget. Mission 1 and Mission 2 have five seed attempts in their
+loadouts; each objective counts one successful plant.
 
 The snapshot-restore subset passed **3/3** on 30 September 2026:
 

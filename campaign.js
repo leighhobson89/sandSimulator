@@ -893,8 +893,7 @@ export function recordMaterialTransition(fromId, toId, context = {}) {
     for (const objective of mission.objectives) {
         if (objective.type !== 'transformation' || objective.from !== from || objective.to !== to) continue;
         if (objective.cause && context?.cause !== objective.cause) continue;
-        if (context.plantGrowthPending && seedDefinition?.isSeed &&
-            plantDefinition?.isPlant && plantDefinition.growHeight > 0) continue;
+        if (seedDefinition?.isSeed && plantDefinition?.isPlant && plantDefinition.growHeight > 0) continue;
         incrementObjective(objective);
     }
     updateMissionCompletion();

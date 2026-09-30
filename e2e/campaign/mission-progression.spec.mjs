@@ -23,7 +23,7 @@ async function completeFirstMission(page) {
         const fromId = definitions.findIndex(definition => definition?.name === objective.from);
         const toId = definitions.findIndex(definition => definition?.name === objective.to);
         if (fromId < 0 || toId < 0) throw new Error('Mission objective references an unknown material.');
-        for (let count = 0; count < objective.target; count++) campaign.recordMaterialTransition(fromId, toId);
+        for (let count = 0; count < objective.target; count++) campaign.recordPlantGrowthCompletion(fromId, toId);
     });
     await expect(page.locator('#missionCompleteDialog')).toBeVisible();
 }

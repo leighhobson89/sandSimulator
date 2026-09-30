@@ -4369,7 +4369,7 @@ function runSpotlampLightSwitchRegressions() {
 }
 
 function runCampaignGerminationRegressions() {
-    const runScenario = ({ mission, seedId, plantId, growthCompletionPlantId, substrateId, temperature, humidity,
+    const runScenario = ({ mission, seedId, plantId, substrateId, temperature, humidity,
         illumination, dewpoint, randomSeed, frames, rows, prepareCampaign }) => {
         campaign.startCampaign(mission.id);
         try {
@@ -4402,23 +4402,25 @@ function runCampaignGerminationRegressions() {
                 if (objective && campaign.getCampaignState().objectiveProgress[objective.id] >= objective.target) break;
             }
             const state = campaign.getCampaignState();
-            check(`${mission.title} germination fixture reaches its real plant transition`,
+            check(`${mission.title} growth fixture reaches its real plant transition`,
                 countOf(ID[plantId]) > 0 && countOf(ID[seedId]) === 0,
                 `${countOf(ID[plantId])} plants, ${countOf(ID[seedId])} seeds; objective ${JSON.stringify(state.objectiveProgress)}`);
-            check(`${mission.title} records the germination objective`,
+            check(`${mission.title} records the halfway growth objective`,
                 !!objective && state.objectiveProgress[objective.id] === objective.target,
                 JSON.stringify(state.objectiveProgress));
-            if (growthCompletionPlantId) {
-                const world = getWorld();
-                const plantId = ID[growthCompletionPlantId];
-                const outstandingGrowth = world.type.reduce((count, typeId, cell) => {
-                    const definition = defs[typeId];
-                    return count + (typeId === plantId && definition?.growHeight > 0 && world.data[cell] > 1 ? 1 : 0);
-                }, 0);
-                check(`${mission.title} completes its seed objective only after plant growth is exhausted`,
-                    !!objective && state.objectiveProgress[objective.id] === objective.target && outstandingGrowth === 0,
-                    `${outstandingGrowth} ${growthCompletionPlantId} cells retain growth; ${JSON.stringify(state.objectiveProgress)}`);
-            }
+            const world = getWorld();
+            const plantType = ID[plantId];
+            const plantDefinition = defs[plantType];
+            const initialGrowthBudget = plantDefinition?.growHeightMin || plantDefinition?.growHeight || 0;
+            const remainingGrowthBudget = world.type.reduce((remaining, typeId, cell) => {
+                const definition = defs[typeId];
+                return definition?.plantSpecies === plantDefinition?.plantSpecies && definition.growHeight > 0
+                    ? Math.max(remaining, world.data[cell]) : remaining;
+            }, 0);
+            check(`${mission.title} reaches the objective at half its initial growth budget`,
+                !!objective && state.objectiveProgress[objective.id] === objective.target &&
+                remainingGrowthBudget > 0 && remainingGrowthBudget * 2 <= initialGrowthBudget,
+                `${remainingGrowthBudget} growth budget remains from ${initialGrowthBudget}; ${JSON.stringify(state.objectiveProgress)}`);
         } finally {
             campaign.clearCampaign();
             physics.resetRandomSource();
@@ -4429,7 +4431,7 @@ function runCampaignGerminationRegressions() {
     const missionOne = campaign.getMissionDefinitions().find(item => item.number === 1);
     const missionTwo = campaign.getMissionDefinitions().find(item => item.number === 2);
     const missionFour = campaign.getMissionDefinitions().find(item => item.number === 4);
-    section('Focused campaign germination progressions');
+    section('Focused campaign plant-growth milestones');
     check('Mission 1 preserves its one-growth target while allowing five Daffodil seed attempts',
         missionOne?.objectives?.some(item => item.from === 'Daffodil Seeds' && item.to === 'Daffodil' && item.target === 1) &&
         missionOne?.resourceBudgets?.materials?.['Daffodil Seeds'] === 5,
@@ -4445,7 +4447,6 @@ function runCampaignGerminationRegressions() {
     if (missionFour) {
         const definitions = physics.getDefinitions();
         runScenario({ mission: missionFour, seedId: 'Red Tulip Seeds', plantId: 'Red Tulip',
-            growthCompletionPlantId: 'Red Tulip',
             substrateId: 'Wet Mud', temperature: 8, humidity: 72, illumination: 70, dewpoint: 10,
             randomSeed: 9144, frames: 1000, rows: 30, prepareCampaign: () => {
                 for (const [from, to, count] of [['Snow', 'Water', 150], ['Dry Mud', 'Wet Mud', 100]]) {

@@ -41,7 +41,12 @@ async function recordMissionCompletion(page) {
             const fromId = definitions.findIndex(definition => definition?.name === objective.from);
             const toId = definitions.findIndex(definition => definition?.name === objective.to);
             if (fromId <= 0 || toId <= 0) throw new Error(`Unknown objective transition: ${objective.from} to ${objective.to}`);
-            for (let count = 0; count < objective.target; count++) campaign.recordMaterialTransition(fromId, toId);
+            const from = definitions[fromId];
+            const to = definitions[toId];
+            for (let count = 0; count < objective.target; count++) {
+                if (from?.isSeed && to?.isPlant && to.growHeight > 0) campaign.recordPlantGrowthCompletion(fromId, toId);
+                else campaign.recordMaterialTransition(fromId, toId);
+            }
         }
     });
 }

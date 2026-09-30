@@ -26,7 +26,8 @@ The current first mission is **Mission 1: The First Daffodil**. It uses a
 the only material in the starting scene; Dry Mud and Daffodil Seeds are player
 supplies. The player can place 100 Dry Mud, 1,000 Water, and five Daffodil
 Seeds for retries, with no machine allowance. The growth objective still
-requires one mature Daffodil. Mission data also fixes the ideal growing climate:
+counts a Daffodil after it spends half its initial growth budget. Mission data
+also fixes the ideal growing climate:
 14 °C temperature, 68% humidity, 65% illumination, 10 °C dewpoint, and no wind.
 Climate controls are locked during play, while Normal, Heat, Humidity, and Wind
 visualizations remain available.
@@ -39,9 +40,8 @@ Mission starting-layout cells and particles created by simulation reactions
 do not use player supplies. Sandbox bypasses all campaign limits.
 
 Mission objectives count actual simulation transitions. **Grow one Daffodil
-from seed** counts one `Daffodil Seeds → Daffodil` germination only after the
-connected plant cells exhaust their growth budgets, so the plant can no longer
-grow taller. Painting or stamping a Daffodil does not count. The configured
+from seed** counts one `Daffodil Seeds → Daffodil` growth milestone after
+half of the initial growth budget is used. Painting or stamping a Daffodil does not count. The configured
 completion event fires once; objective counters and fired event IDs remain in
 the active session only. The mission briefing displays the mission number,
 title, briefing, objective, and available supplies before play. During play,
@@ -77,10 +77,9 @@ temperature/humidity ideals from the authored 85% illumination target.
 
 The four guided Mission 2 objectives each have target one: count an actual
 Ice-to-Water transition, reach all three authored climate targets at once,
-count a Dry Mud-to-Wet Mud transition, then count a Banana Seeds-to-Banana Plant
-germination after all connected plant cells exhaust their growth budgets, so it
-can no longer grow taller. Painting or blueprint stamping the resulting
-materials does not satisfy transition objectives. Each objective event fires
+count a Dry Mud-to-Wet Mud transition, then count the Banana Seeds-to-Banana
+Plant growth after half of its initial growth budget is used. Painting or blueprint stamping
+those materials does not satisfy transition objectives. Each objective event fires
 once per run; progress, used supplies, and fired event IDs are session state and
 are not saved. The temperature,
 humidity, and illumination controls stay available so the climate target can be
