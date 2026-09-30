@@ -136,15 +136,16 @@ own workflow captures them. See the [Playwright HTML reporter guide](https://pla
   before the workspace opens. The navigation area also retains Load, Resume,
   theme, pause, and workspace-tab coverage.
 - `e2e/campaign/mission.spec.mjs` covers Mission 1, **The First Daffodil**:
-  the Sand-only starting habitat, 100 Dry Mud / 1,000 Water / one Daffodil Seed
-  player budgets, ideal fixed climate and locks, supply placement, and the
-  actual seed-germination objective/event firing once. Exhausted budgeted
+  the Sand-only starting habitat, 100 Dry Mud / 1,000 Water / five Daffodil
+  Seeds for retries, ideal fixed climate and locks, supply placement, and the
+  actual one-growth objective/event firing once. Exhausted budgeted
   supplies disappear from the material catalog rather than remaining as
   disabled buttons.
 - `e2e/campaign/mission-progression.spec.mjs` covers Mission 1 recap resource
   statistics, **OK** dismissal, the completion toast, and persistent
   **ADVANCE** into Mission 2's briefing and Ice scenario. It also checks the
-  Mission 2 climate target, initial climate, floor and budgets; hidden Water;
+  Mission 2 climate target, initial climate, floor, 500 Dry Mud and five Banana
+  Seeds for retries; hidden Water;
   disabled markers, opacity, and red `DISABLED` tooltips for unavailable
   controls; usable system-action exceptions; Sandbox isolation; named climate
   slider guidance; and pristine Mission 2 climate, world, budgets, and
@@ -152,11 +153,15 @@ own workflow captures them. See the [Playwright HTML reporter guide](https://pla
   Temperature slider and numeric input expose a 30 C maximum, clamp values
   above 30 C, and restore Sandbox's 4,000 C maximum after leaving Campaign.
 - `e2e/campaign/mission.spec.mjs` checks the bottom-right
-  `#missionToast`, its status semantics and ten-second fade, confirms
+  `#missionToast`, its status semantics and five-second fade at the updated
+  position 50 px higher than its previous baseline, confirms
   the old full-width `#missionPassedBar` stays hidden, and verifies that the
   top-right `#missionAdvance` action remains enabled after the toast expires.
+  The five-second lifetime and 50 px upward offset apply to all notices using
+  shared `showMissionToast`, including campaign, save/load, autosave, and
+  checkpoint messages.
 - `e2e/campaign/mission-three-staged-progression.spec.mjs` covers the blank
-  Mission 3 world, staged pile and Steam placement, climate-control unlocks,
+  Mission 3 world, staged pile and finite Cloud placement, climate-control unlocks,
   Humidity 95% / Dewpoint 20 C rain targets, 150-transition wet milestones,
   150-transition drying goals, the 150 C and 350 C temperature stages, 200
   Sand-to-Glass transformations, the 2,000 C Lava phase, and campaign
@@ -166,7 +171,8 @@ own workflow captures them. See the [Playwright HTML reporter guide](https://pla
 - `e2e/campaign/objective-carousel.spec.mjs` verifies Mission 1's 1/1
   objective and disabled navigation at both ends; Mission 2's four objectives,
   progress rerender stability, and selection resets on restart, reload/resume,
-  and advance; and Mission 3's 18 objectives, locked Steam state, boundaries,
+  and advance; and Mission 3's 18 objectives, locked Cloud placement state,
+  stable `place-steam` objective ID, Cloud material, briefing copy, boundaries,
   and completed-card selection without auto-advance. The carousel selectors
   include `#missionObjectivePrevious`, `#missionObjectiveNext`,
   `#missionObjectivePosition`, `#missionObjectiveCurrent`, and
@@ -175,6 +181,15 @@ own workflow captures them. See the [Playwright HTML reporter guide](https://pla
   cancellation, resetting the authored mission without changing the checkpoint,
   hidden unbudgeted material entries, category auto-expansion and empty-category
   locking/tooltips, and Sandbox catalog and Save-to-Library behavior.
+- `e2e/campaign/missions-four-to-six.spec.mjs` protects the M4–M6 data,
+  temperature setup and captured snapshots: Mission 4's 150 Snow-to-Water
+  target and five Red Tulip seed retries; Mission 5's decoded/restored 150-cell
+  Wet Sand row, 75 Cloud-to-Snow and 60 Snow-to-Water targets, 95% Humidity,
+  20 C Dewpoint and temperature targets, and no player Cloud supply. Mission
+  6 coverage verifies the captured two-leg Wood bridge, exposed top ignition,
+  no preplaced Fire or Water, Fire budget 10, the 60-active-step Water delay
+  with pause behavior, unlimited Water with Brush size 31 auto-selected,
+  Water-caused quench accounting, and the final Wood-remains/no-Fire condition.
 - `e2e/campaign/editor.spec.mjs` covers the main-menu editor entry and docked
   unrestricted canvas workspace, blank/edit/load flows, local draft and
   captured-save round trips, validation and mandatory review, autosave
@@ -184,7 +199,9 @@ own workflow captures them. See the [Playwright HTML reporter guide](https://pla
   `environmentTargets` fields and 30 C `controlLimits`, blank layouts,
   objective prerequisites, partial `targetValues` including Dewpoint, and
   objective `unlocks.controls` / `unlocks.controlLimits`. Mission-specific
-  slider-limit JSON is entered through `#campaignEditorControlLimits`.
+  slider-limit JSON is entered through `#campaignEditorControlLimits`. The
+  built-in Mission 1's five-seed invariant is validated, the next blank draft
+  suggests Mission 7, and the custom draft fixture uses unused number 88.
 - Campaign editor drafts use localStorage key
   `elemental-foundry.campaign-editor.drafts.v1`. Loading a draft with a captured
   `startingSave` resizes and clears the canvas to the saved dimensions before
@@ -671,3 +688,68 @@ reset behavior, and preserve deterministic seed and state diagnostics.
 - If scheduling or delta-time behavior changes, retain exact-step coverage and
   add zero, nominal, oversized-gap, and background-tab cases without allowing
   timing to become a physics assertion boundary.
+
+## Focused campaign headroom verification (30 September 2026)
+
+The particle-loss/headroom documentation pass records the completed focused
+verification. The Campaign browser area passed **26 tests**, the deterministic
+`campaign-germination` focus passed **9 tests**, and the Materials catalog spec
+passed **15 tests**. Coverage includes five-seed retry budgets with one
+successful-growth objective, Mission 4 Red Tulip maturity, Mission 5's captured
+150-cell Wet Sand scenario and 75/60 phase targets, Mission 6's staged Water
+unlock, the Mission 7–15 outline headroom, shared five-second toast behavior,
+and pointer-leave tooltip hiding. No full suite was run.
+
+```text
+npm.cmd run test:browser -- e2e/campaign --workers=1 --trace=off
+npm.cmd test -- --focus=campaign-germination
+npm.cmd run test:browser -- e2e/materials/catalog.spec.mjs --workers=1 --trace=off
+```
+
+## Campaign Cloud weather correction verification (30 September 2026)
+
+Focused verification for the M3/M5 Cloud correction passed:
+
+- `mission-three-staged-progression.spec.mjs`: **2 passed**. Covers M3's finite
+  8,000-Cloud budget, 500-Cloud stage, unchanged rain/wet/dry sequence, and
+  migration of a legacy Steam allowance to Cloud while preserving
+  `place-steam` progress and campaign validity.
+- `objective-carousel.spec.mjs`: **5 passed**. Covers the M3 18-objective
+  carousel, Cloud material and briefing for the stable `place-steam` ID, and
+  the locked stage before earlier piles are complete.
+- `missions-four-to-six.spec.mjs`: **3 passed**. Covers M5's captured 150-cell
+  Wet Sand scenario, 95% local/Base Humidity, no preplaced or player-supplied
+  Cloud, `Cloud → Snow` target 75, `Snow → Water` target 60, `Sand → Wet Sand`
+  target 50, and the −10 °C / 20 °C Dewpoint and 8 °C targets.
+- `dewpoint-climate` simulation focus: **5 passed**. Under the −10 °C target,
+  allow atmospheric cooldown to complete and verify at least 75 Snow from
+  natural Cloud formation with no Water; then verify the 8 °C open-air profile
+  remains above freezing at the top and surface.
+
+Mission 8's Water-to-Steam quench byproduct remains unchanged and separate from
+weather Cloud. No full suite was run.
+
+```text
+npm.cmd run test:browser -- e2e/campaign/mission-three-staged-progression.spec.mjs --workers=1 --trace=off
+npm.cmd run test:browser -- e2e/campaign/objective-carousel.spec.mjs --workers=1 --trace=off
+npm.cmd run test:browser -- e2e/campaign/missions-four-to-six.spec.mjs --workers=1 --trace=off
+npm.cmd test -- --focus=dewpoint-climate
+```
+
+## Mission 6 timed controlled burn verification (30 September 2026)
+
+The focused Mission 4–6 browser spec passed **7 tests** in 23.1 seconds. Its
+Mission 6 checks cover the captured overhead Wood bridge and open bay, ignition
+at the exposed top, coordinate-free campaign copy, Fire budget 10 with no
+preplaced Fire or Water, Water remaining locked through 59 active steps and
+unlocking at step 60, and paused frames not advancing the timer. It also
+verifies unlimited Water availability and automatic selection of the largest
+Brush, natural Fire expiry earning no water-quench credit, direct Water dousing
+earning the one required Fire-to-Smoke conversion, and completion only when
+some Wood remains and no active Fire remains.
+
+```text
+npm.cmd run test:browser -- e2e/campaign/missions-four-to-six.spec.mjs --workers=1 --trace=off
+```
+
+No full suite was run.

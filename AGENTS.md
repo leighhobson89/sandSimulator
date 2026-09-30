@@ -21,7 +21,7 @@ small, reviewable changes.
 
 ### Mission Design Mode
 
-When a user includes the exact code word `MDESIGN` in a development prompt, including if it is in a steering prompt, ie one that is sent during activity from a previous prompt, the main agent will hand this prompot off to the mission-designer agent, who will then return their work to the main agent who will then get the documentation agent to write up the changes to the appropriate files, and in this mode we do this without running tests.
+`MDESIGN` activates only when the exact codeword appears in the current user prompt. It applies only to mission design edits in `docs/CAMPAIGN_MISSIONS.md`, which are handed to the `mission-designer` agent and then documented by the `docs-specialist`. Design-only documentation work can skip tests. A later request to implement a mission design in code, including campaign implementation, follows the standard Development Handoff Workflow and requires focused regression tests; `MDESIGN` does not exempt implementation from that workflow or verification.
 
 ### Quick Mode
 

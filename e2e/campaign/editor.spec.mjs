@@ -42,9 +42,9 @@ async function paintSandFloor(page) {
 
 async function populateDraft(page) {
     await page.locator('#campaignEditorNewBlank').click();
-    await expect(page.locator('#campaignEditorNumber')).toHaveValue('4');
+    await expect(page.locator('#campaignEditorNumber')).toHaveValue('7');
     await page.locator('[data-mission-field="id"]').fill('editor-flower-test');
-    await page.locator('#campaignEditorNumber').fill('4');
+    await page.locator('#campaignEditorNumber').fill('88');
     await page.locator('#campaignEditorTitle').fill('Editor Flower Test');
     await page.locator('#campaignEditorBriefing').fill('A captured sand bed for a draft persistence check.');
     await page.locator('#campaignObjectiveFrom').selectOption({ label: 'Daffodil Seeds' });
@@ -105,7 +105,7 @@ test('Campaign Editor starts an unrestricted authoring Sandbox and persists blan
     expect(draftValue).toBeTruthy();
     await page.locator('#campaignMissionList').selectOption(draftValue);
     await page.locator('#campaignEditorLoadMission').click();
-    await expect(page.locator('#campaignEditorNumber')).toHaveValue('4');
+    await expect(page.locator('#campaignEditorNumber')).toHaveValue('88');
     await expect(page.locator('#campaignEditorTitle')).toHaveValue('Editor Flower Test');
     await expect(page.locator('#campaignEditorBriefing')).toHaveValue(
         'A captured sand bed for a draft persistence check.'
@@ -123,10 +123,10 @@ test('Campaign Editor starts an unrestricted authoring Sandbox and persists blan
     expect(await page.evaluate(key => localStorage.getItem(key), SOURCE_BACKUP_KEY)).toBeNull();
 });
 
-test('Campaign Editor validation blocks incomplete drafts and review approval gates installation', async ({ page }) => {
+test('Campaign Editor validates the five-seed Mission 1 budget and gates installation on review', async ({ page }) => {
     await openEditor(page);
     await page.locator('#campaignEditorNewBlank').click();
-    await expect(page.locator('#campaignEditorNumber')).toHaveValue('4');
+    await expect(page.locator('#campaignEditorNumber')).toHaveValue('7');
     await expect(page.locator('#campaignEditorInstall')).toBeDisabled();
 
     await page.locator('#campaignEditorValidate').click();
@@ -134,7 +134,9 @@ test('Campaign Editor validation blocks incomplete drafts and review approval ga
     await expect(page.locator('#campaignEditorInstall')).toBeDisabled();
     await expect(page.locator('#campaignEditorReviewDialog')).toBeHidden();
 
-    const mission = await page.evaluate(async () => (await import('/campaign.js')).getMissionDefinitions()[0]);
+    const mission = await page.evaluate(async () =>
+        (await import('/campaign.js')).getMissionDefinitions().find(item => item.number === 1));
+    expect(mission.resourceBudgets.materials['Daffodil Seeds']).toBe(5);
     await selectMission(page, mission.title);
     await page.locator('#campaignEditorValidate').click();
     await expect(page.locator('#campaignEditorStatus')).toContainText(/^Mission valid\./i);

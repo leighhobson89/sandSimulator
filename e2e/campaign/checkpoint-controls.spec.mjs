@@ -109,7 +109,7 @@ test('Mission 2 restart restores its authored world without changing the ADVANCE
     expect(restarted.simulation.ambientHumidity).toBe(35);
     expect(restarted.simulation.ambientIllumination).toBe(10);
     expect(restarted.state.resources.materials['Dry Mud']).toEqual({ limit: 500, used: 0, remaining: 500 });
-    expect(restarted.state.resources.materials['Banana Seeds']).toEqual({ limit: 1, used: 0, remaining: 1 });
+    expect(restarted.state.resources.materials['Banana Seeds']).toEqual({ limit: 5, used: 0, remaining: 5 });
     expect(Object.values(restarted.state.objectiveProgress)).toEqual([0, 0, 0, 0]);
     expect(restarted.state.firedEventIds).toEqual([]);
     expect(restarted.state.missionCompleted).not.toBe(true);
@@ -158,8 +158,12 @@ test('Campaign catalog expands only supplied categories and locks empty groups w
     await expect(page.locator('#toolTooltip')).toBeVisible();
     await expect(page.locator('#toolTooltip')).toContainText('No items available in this mission.');
     await expect(page.locator('#toolTooltip .tool-tooltip-disabled')).toHaveText('DISABLED');
+    await page.locator('#canvas').hover({ position: { x: 10, y: 10 } });
+    await expect(page.locator('#toolTooltip')).toBeHidden();
+    expect(await page.locator('#toolTooltip').evaluate(element => getComputedStyle(element).display)).toBe('none');
     await emptyToggle.focus();
     await expect(emptyToggle).toBeFocused();
+    await expect(page.locator('#toolTooltip')).toBeVisible();
     await expect(page.locator('#toolTooltip')).toContainText('No items available in this mission.');
     await emptyToggle.dispatchEvent('click');
     await expect(page.locator('#particleGroup-liquids')).toBeHidden();

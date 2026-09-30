@@ -40,7 +40,7 @@ async function openMissionTwoBriefing(page) {
 
 async function expectDisabledTooltip(page, triggerOrSelector, expectedCopy) {
     const trigger = typeof triggerOrSelector === 'string' ? page.locator(triggerOrSelector) : triggerOrSelector;
-    await trigger.evaluate(element => element.dispatchEvent(new MouseEvent('mouseenter')));
+    await trigger.hover();
     const tooltip = page.locator('#toolTooltip');
     await expect(tooltip).toBeVisible();
     const disabled = tooltip.locator('.tool-tooltip-disabled');
@@ -59,6 +59,7 @@ async function expectDisabledTooltip(page, triggerOrSelector, expectedCopy) {
     await trigger.evaluate(element => element.dispatchEvent(new FocusEvent('focusin', { bubbles: true })));
     await expect(tooltip.locator('.tool-tooltip-disabled')).toHaveText('DISABLED');
     await expect(tooltip).toContainText(expectedCopy);
+    await expect(tooltip).toBeVisible();
 }
 
 async function expectNoDisabledTooltip(page, selector) {
@@ -132,7 +133,7 @@ test('Mission 1 recap reports objective and supplies; ADVANCE opens Mission 2 wi
     expect(scenario.mission.number).toBe(2);
     expect(scenario.mission.world).toEqual({ cols: 260, rows: 150 });
     expect(scenario.mission.startingLayout).toMatchObject({ type: 'floor', material: 'Ice', rows: 5 });
-    expect(scenario.mission.resourceBudgets.materials).toEqual({ 'Dry Mud': 500, 'Banana Seeds': 1 });
+    expect(scenario.mission.resourceBudgets.materials).toEqual({ 'Dry Mud': 500, 'Banana Seeds': 5 });
     expect(scenario.mission.environment).toMatchObject({
         temperature: -10, humidity: 35, illumination: 10, dewpoint: -15,
         ambientWindOn: false, windStrength: 0, gustWindStrength: 0
@@ -168,6 +169,15 @@ test('Mission 2 keeps required climate controls available and explains disabled 
     await openMissionTwoBriefing(page);
     await page.locator('#missionIntroOk').click();
     await expect(page.locator('#missionHud')).toBeVisible();
+
+    const seedRetries = await page.evaluate(async () => {
+        const campaign = await import('/campaign.js');
+        return {
+            fiveAvailable: campaign.canUseMaterial('Banana Seeds', 5),
+            sixthUnavailable: !campaign.canUseMaterial('Banana Seeds', 6)
+        };
+    });
+    expect(seedRetries).toEqual({ fiveAvailable: true, sixthUnavailable: true });
 
     for (const selector of ['#airTemp', '#baseHumidity', '#ambientIllumination']) {
         await expect(page.locator(selector), `${selector} remains available to reach the Banana targets`).toBeEnabled();
@@ -212,7 +222,12 @@ test('Mission 2 keeps required climate controls available and explains disabled 
     await expect(dewpoint).toHaveAttribute('data-campaign-disabled', 'true');
     const dewpointOpacity = await dewpoint.evaluate(element => Number(getComputedStyle(element).opacity));
     expect(dewpointOpacity).toBeLessThan(1);
-    await expectDisabledTooltip(page, '#dewpointLabel', 'Locked by the current mission.');
+    const lineTool = page.locator('#lineModeButton');
+    await expect(lineTool).toHaveAttribute('data-campaign-disabled', 'true');
+    await expectDisabledTooltip(page, lineTool, 'Not available in this mission.');
+    await page.locator('#canvas').hover({ position: { x: 10, y: 10 } });
+    await expect(page.locator('#toolTooltip')).toBeHidden();
+    expect(await page.locator('#toolTooltip').evaluate(element => getComputedStyle(element).display)).toBe('none');
 
     await expect(page.locator('#exportGame')).toBeDisabled();
     const saveToLibrary = page.locator('#saveToLibraryButton, #saveToLibrary').first();
@@ -267,7 +282,7 @@ test('Mission 2 reload reconstructs the clean authored state from its mission-nu
     expect(restoredClimate).toMatchObject({
         temperature: -10, humidity: 35, illumination: 10, mission: 'ice-banana', iceCount: 260 * 5,
         dryMud: { limit: 500, used: 0, remaining: 500 },
-        seeds: { limit: 1, used: 0, remaining: 1 }, firedEventIds: []
+        seeds: { limit: 5, used: 0, remaining: 5 }, firedEventIds: []
     });
     expect(Object.values(restoredClimate.progress)).toEqual([0, 0, 0, 0]);
 });

@@ -136,6 +136,16 @@ export function parseSaveString(compressed) {
     return payload;
 }
 
+// Campaign mission starting saves are parsed before restoration because they
+// must not replace the active Campaign state. Expose only the simulation
+// decoder so callers can restore the world without routing the Sandbox payload
+// through restoreSavePayload's campaign-clearing behavior.
+export function decodeSaveSimulation(payload) {
+    const simulation = decodeSimulation(payload?.simulation);
+    if (payload?.version === 1) simulation.sprinklerModeVersion = 1;
+    return simulation;
+}
+
 export function restoreSavePayload(payload) {
     const checkpoint = campaignCheckpointPayload(payload);
     if (checkpoint) {
@@ -143,8 +153,7 @@ export function restoreSavePayload(payload) {
         clearCampaign();
         return checkpoint;
     }
-    const simulation = decodeSimulation(payload.simulation);
-    if (payload.version === 1) simulation.sprinklerModeVersion = 1;
+    const simulation = decodeSaveSimulation(payload);
     restoreSimulationState(simulation);
     restoreTools(payload.tools);
     blueprintStateRestorer(decodeBlueprintState(payload.blueprints, payload.version));

@@ -188,15 +188,16 @@ test('Mission 3 carousel counts 18 objectives, marks gates, and keeps completed 
     await expect(page.locator('#missionObjectiveCarousel')).toBeVisible();
     const missionData = await page.evaluate(async () => {
         const campaign = await import('/campaign.js');
+        const weatherObjective = campaign.getCurrentMission().objectives.find(objective => objective.id === 'place-steam');
         return {
             count: campaign.getCurrentMission().objectives.length,
             firstId: campaign.getCurrentMission().objectives[0].id,
-            steamId: campaign.getCurrentMission().objectives.find(objective => objective.id === 'place-steam')?.id
+            weatherObjective: weatherObjective ? { id: weatherObjective.id, material: weatherObjective.material } : null
         };
     });
     expect(missionData.count).toBe(18);
     expect(missionData.firstId).toBe('place-sand');
-    expect(missionData.steamId).toBe('place-steam');
+    expect(missionData.weatherObjective).toEqual({ id: 'place-steam', material: 'Cloud' });
     await expect(page.locator(positionLabel)).toHaveText('1 / 18');
     await expect(page.locator(previousButton)).toBeDisabled();
     await expect(page.locator(nextButton)).toBeEnabled();
@@ -245,7 +246,7 @@ test('objective carousel has labelled controls, supports Enter, and truncates na
     await expect(page.locator(currentCard)).toHaveAttribute('aria-live', 'polite');
     await expect(page.locator(currentCard)).toHaveAttribute('aria-atomic', 'true');
     await expect(page.locator('#missionObjectiveLabel')).toHaveText(
-        'Place Steam above the piles to add moisture to the air.'
+        'Place Cloud above the piles to add moisture to the air.'
     );
 
     const layout = await page.evaluate(() => {

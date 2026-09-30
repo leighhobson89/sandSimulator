@@ -805,6 +805,33 @@ function runDewpointClimateRegressions() {
         check('25C, 95% humidity, and 20C dewpoint form clouds and rain', false,
             'Cloud or Water material is unavailable');
     }
+
+    createWorld(64, 36);
+    setExactAirConditions(150);
+    physics.setAmbientHumidityTarget(95);
+    physics.setDewpointTarget(10);
+    getWorld().humidity.fill(95);
+    physics.setAmbientTarget(-10);
+    physics.setDewpointTarget(20);
+    setRandomSeed(5505);
+    let missionFiveSnowTargetReached = false;
+    for (let frame = 0; frame < 6000; frame++) {
+        stepSimulation();
+        if (countOf(ID.Snow) >= 75) {
+            missionFiveSnowTargetReached = true;
+            break;
+        }
+    }
+    check('Mission 5 natural Cloud reaches its 75-Snow target under a -10C cold target',
+        missionFiveSnowTargetReached && countOf(ID.Water) === 0,
+        `${countOf(ID.Snow)} Snow, ${countOf(ID.Water)} Water, upper air=${physics.getAirTempAt(0)} C`);
+
+    setExactAirConditions(8);
+    physics.setAmbientTarget(8);
+    const thawProfile = [physics.getAirTempAt(0), physics.getAirTempAt(35)];
+    check('Mission 5 8C thaw target keeps the open-air profile above freezing',
+        thawProfile.every(temperature => temperature > 0),
+        `${thawProfile[0]} C top, ${thawProfile[1]} C surface`);
     physics.setRandomSeed(TEST_SEED);
 }
 
@@ -4117,7 +4144,7 @@ function runSpotlampLightSwitchRegressions() {
 }
 
 function runCampaignGerminationRegressions() {
-    const runScenario = ({ mission, seedId, plantId, substrateId, temperature, humidity,
+    const runScenario = ({ mission, seedId, plantId, growthCompletionPlantId, substrateId, temperature, humidity,
         illumination, dewpoint, randomSeed, frames, rows, prepareCampaign }) => {
         campaign.startCampaign(mission.id);
         try {
@@ -4156,6 +4183,17 @@ function runCampaignGerminationRegressions() {
             check(`${mission.title} records the germination objective`,
                 !!objective && state.objectiveProgress[objective.id] === objective.target,
                 JSON.stringify(state.objectiveProgress));
+            if (growthCompletionPlantId) {
+                const world = getWorld();
+                const plantId = ID[growthCompletionPlantId];
+                const outstandingGrowth = world.type.reduce((count, typeId, cell) => {
+                    const definition = defs[typeId];
+                    return count + (typeId === plantId && definition?.growHeight > 0 && world.data[cell] > 1 ? 1 : 0);
+                }, 0);
+                check(`${mission.title} completes its seed objective only after plant growth is exhausted`,
+                    !!objective && state.objectiveProgress[objective.id] === objective.target && outstandingGrowth === 0,
+                    `${outstandingGrowth} ${growthCompletionPlantId} cells retain growth; ${JSON.stringify(state.objectiveProgress)}`);
+            }
         } finally {
             campaign.clearCampaign();
             physics.resetRandomSource();
@@ -4165,10 +4203,35 @@ function runCampaignGerminationRegressions() {
 
     const missionOne = campaign.getMissionDefinitions().find(item => item.number === 1);
     const missionTwo = campaign.getMissionDefinitions().find(item => item.number === 2);
+    const missionFour = campaign.getMissionDefinitions().find(item => item.number === 4);
     section('Focused campaign germination progressions');
+    check('Mission 1 preserves its one-growth target while allowing five Daffodil seed attempts',
+        missionOne?.objectives?.some(item => item.from === 'Daffodil Seeds' && item.to === 'Daffodil' && item.target === 1) &&
+        missionOne?.resourceBudgets?.materials?.['Daffodil Seeds'] === 5,
+        missionOne ? JSON.stringify({ objectives: missionOne.objectives, resources: missionOne.resourceBudgets?.materials }) : 'Mission 1 is missing');
     if (missionOne) runScenario({ mission: missionOne, seedId: 'Daffodil Seeds', plantId: 'Daffodil',
         substrateId: 'Wet Mud', temperature: 14, humidity: 68, illumination: 65, dewpoint: 10,
         randomSeed: 7141, frames: 180, rows: 24 });
+    check('Mission 4 assigns the real Red Tulip growth to grow-tulip and allows five seed attempts',
+        missionFour?.objectives?.some(item => item.id === 'grow-tulip' && item.from === 'Red Tulip Seeds' &&
+            item.to === 'Red Tulip' && item.target === 1) &&
+        missionFour?.resourceBudgets?.materials?.['Red Tulip Seeds'] === 5,
+        missionFour ? JSON.stringify({ objectives: missionFour.objectives, resources: missionFour.resourceBudgets?.materials }) : 'Mission 4 is missing');
+    if (missionFour) {
+        const definitions = physics.getDefinitions();
+        runScenario({ mission: missionFour, seedId: 'Red Tulip Seeds', plantId: 'Red Tulip',
+            growthCompletionPlantId: 'Red Tulip',
+            substrateId: 'Wet Mud', temperature: 8, humidity: 72, illumination: 70, dewpoint: 10,
+            randomSeed: 9144, frames: 1000, rows: 30, prepareCampaign: () => {
+                for (const [from, to, count] of [['Snow', 'Water', 150], ['Dry Mud', 'Wet Mud', 100]]) {
+                    const fromId = definitions.findIndex(definition => definition?.name === from);
+                    const toId = definitions.findIndex(definition => definition?.name === to);
+                    if (fromId > 0 && toId > 0) {
+                        for (let i = 0; i < count; i++) campaign.recordMaterialTransition(fromId, toId);
+                    }
+                }
+            } });
+    }
     if (missionTwo) {
         const definitions = physics.getDefinitions();
         runScenario({ mission: missionTwo, seedId: 'Banana Seeds', plantId: 'Banana Plant',
@@ -6762,9 +6825,9 @@ if (hasHumidityApi && seedNames.every(name => ID[name] > 0) && plantNames.every(
     check('Mission 2 caps the Temperature slider and number field at its 30C Banana target',
         missionTwo?.controlLimits?.temperature?.max === 30,
         missionTwo ? JSON.stringify(missionTwo.controlLimits) : 'Mission 2 is missing');
-    check('Mission 2 supplies 500 Dry Mud and one Banana seed',
+    check('Mission 2 supplies 500 Dry Mud and five Banana seed attempts',
         missionTwo?.resourceBudgets?.materials?.['Dry Mud'] === 500 &&
-        missionTwo.resourceBudgets.materials['Banana Seeds'] === 1,
+        missionTwo.resourceBudgets.materials['Banana Seeds'] === 5,
         missionTwo ? JSON.stringify(missionTwo.resourceBudgets?.materials) : 'Mission 2 is missing');
     if (missionTwo) {
         const transitionSteps = [
@@ -6785,6 +6848,11 @@ if (hasHumidityApi && seedNames.every(name => ID[name] > 0) && plantNames.every(
 
         try {
             campaign.startCampaign(missionTwo.id);
+            check('Mission 2 allows five Banana seed attempts without changing its one-growth objective',
+                campaign.canUseMaterial('Banana Seeds', 5) && !campaign.canUseMaterial('Banana Seeds', 6) &&
+                transitionObjectives[2]?.target === 1,
+                JSON.stringify({ five: campaign.canUseMaterial('Banana Seeds', 5),
+                    six: campaign.canUseMaterial('Banana Seeds', 6), target: transitionObjectives[2]?.target }));
             const canRecordEnvironment = typeof campaign.recordEnvironmentChange === 'function';
             check('campaign runtime exports environment-target objective tracking', canRecordEnvironment);
             if (canRecordEnvironment) {
@@ -6861,8 +6929,8 @@ if (hasHumidityApi && seedNames.every(name => ID[name] > 0) && plantNames.every(
     const requiredDryMaterials = ['Sand', 'Dry Mud', 'Ash'];
     const dryPlacementObjectives = requiredDryMaterials.map(material =>
         missionThree?.objectives?.find(objective => objective.type === 'material-placement' && objective.material === material));
-    const steamPlacementObjective = missionThree?.objectives?.find(objective =>
-        objective.type === 'material-placement' && objective.material === 'Steam');
+    const cloudPlacementObjective = missionThree?.objectives?.find(objective =>
+        objective.type === 'material-placement' && objective.material === 'Cloud');
     const rainObjective = missionThree?.objectives?.find(objective => objective.type === 'environment-target' &&
         Number.isFinite(objective.targetValues?.humidity) && Number.isFinite(objective.targetValues?.dewpoint));
     const wetTransitions = [['Sand', 'Wet Sand'], ['Dry Mud', 'Wet Mud'], ['Ash', 'Wet Ash']];
@@ -6887,29 +6955,31 @@ if (hasHumidityApi && seedNames.every(name => ID[name] > 0) && plantNames.every(
     ];
     const lavaObjectives = lavaTransitions.map(findTransitionObjective);
 
-    check('Mission 3 is a blank-start scenario with 5,000 each of the three dry materials and 8,000 Steam',
+    check('Mission 3 is a blank-start scenario with 5,000 each of the three dry materials and 8,000 Cloud',
         missionThree?.number === 3 && missionThree.startingLayout?.type === 'blank' &&
         !missionThree.startingSave && missionThreeMaterials.Sand === 5000 &&
         missionThreeMaterials['Dry Mud'] === 5000 && missionThreeMaterials.Ash === 5000 &&
-        missionThreeMaterials.Steam === 8000,
+        missionThreeMaterials.Cloud === 8000,
         missionThree ? JSON.stringify({ layout: missionThree.startingLayout, budgets: missionThreeMaterials }) : 'Mission 3 is missing');
-    check('Mission 3 requires 500 committed placements of Sand, Dry Mud, and Ash before Steam',
+    check('Mission 3 requires 500 committed placements of Sand, Dry Mud, and Ash before Cloud',
         dryPlacementObjectives.every(objective => objective?.target === 500) &&
-        steamPlacementObjective?.target === 500 &&
-        dryPlacementObjectives.every(objective => steamPlacementObjective.requires?.includes(objective.id)),
-        JSON.stringify({ dryPlacementObjectives, steamPlacementObjective }));
-    check('completing the Steam placement objective unlocks Humidity and Dewpoint',
-        ['humidity', 'dewpoint'].every(control => steamPlacementObjective?.unlocks?.controls?.includes(control)),
-        JSON.stringify(steamPlacementObjective?.unlocks));
-    check('Mission 3 uses the rain climate target and wets and dries 150 cells per pile',
+        cloudPlacementObjective?.target === 500 &&
+        dryPlacementObjectives.every(objective => cloudPlacementObjective.requires?.includes(objective.id)),
+        JSON.stringify({ dryPlacementObjectives, cloudPlacementObjective }));
+    check('completing the Cloud placement objective unlocks Humidity and Dewpoint',
+        ['humidity', 'dewpoint'].every(control => cloudPlacementObjective?.unlocks?.controls?.includes(control)),
+        JSON.stringify(cloudPlacementObjective?.unlocks));
+    check('Mission 3 uses the rain climate target and wets and dries 150 cells per pile in any order',
         rainObjective?.targetValues?.humidity === 95 && rainObjective?.targetValues?.dewpoint === 20 &&
-        rainObjective.requires?.includes(steamPlacementObjective?.id) &&
+        rainObjective.requires?.includes(cloudPlacementObjective?.id) &&
         wetObjectives.every(objective => objective?.target === 150 && objective.requires?.includes(rainObjective.id)) &&
         dryObjectives.every((objective, index) => objective?.target === 150 &&
-            objective.requires?.includes(wetObjectives[index]?.id)) &&
+            objective.requires?.includes(wetObjectives[index]?.id) &&
+            objective.requires?.includes(dryingHeatObjective?.id) &&
+            !objective.requires.some(id => dryObjectives.some((other, otherIndex) =>
+                otherIndex !== index && other?.id === id))) &&
         /rain/i.test(missionThree?.guidance || '') && /150.*wet|wet.*150/i.test(missionThree?.guidance || '') &&
-        /dry|heat/i.test(missionThree?.guidance || '') &&
-        !!dryingHeatObjective && dryObjectives.every(objective => objective.requires?.includes(dryingHeatObjective.id)),
+        /any order/i.test(missionThree?.guidance || '') && !!dryingHeatObjective,
         JSON.stringify({ rainObjective, wetObjectives, dryingHeatObjective, dryObjectives }));
     check('Ash drying unlocks 350C glass heat; 200 Glass unlocks 2,000C Lava heat',
         !!glassHeatObjective && !!highHeatObjective && !!highHeatUnlock && highHeatUnlock === sandGlassObjective &&
@@ -6917,26 +6987,27 @@ if (hasHumidityApi && seedNames.every(name => ID[name] > 0) && plantNames.every(
         glassHeatObjective.targetValues?.temperature === 350 &&
         sandGlassObjective?.target === 200 && sandGlassObjective.requires?.includes(glassHeatObjective.id) &&
         highHeatObjective.requires?.includes(sandGlassObjective.id) &&
-        lavaObjectives.slice(1).every(objective => objective?.target > 0 && objective.requires?.includes(highHeatObjective.id)) &&
+        lavaObjectives.slice(1).every(objective => objective?.target === 150 &&
+            objective.requires?.includes(highHeatObjective.id)) &&
         dryMudDefinition?.meltPoint === 1200 && defs[dryMudDefinition.meltsInto]?.name === 'Lava',
         JSON.stringify({ glassHeatObjective, sandGlassObjective, highHeatObjective, highHeatUnlock, lavaObjectives }));
 
     const canTrackPlacement = typeof campaign.recordMaterialPlacement === 'function';
     check('campaign runtime exports material-placement objective tracking', canTrackPlacement);
-    if (missionThree && canTrackPlacement && dryPlacementObjectives.every(Boolean) && steamPlacementObjective &&
+    if (missionThree && canTrackPlacement && dryPlacementObjectives.every(Boolean) && cloudPlacementObjective &&
         rainObjective && wetObjectives.every(Boolean) && dryObjectives.every(Boolean) && dryingHeatObjective &&
         glassHeatObjective && sandGlassObjective && highHeatObjective &&
         lavaObjectives.every(Boolean)) {
         try {
             campaign.startCampaign(missionThree.id);
-            check('Steam is unavailable until all three dry-pile placement objectives are complete',
+            check('Cloud is unavailable until all three dry-pile placement objectives are complete',
                 requiredDryMaterials.every(material => campaign.canUseMaterial(material)) &&
-                !campaign.canUseMaterial('Steam'),
-                JSON.stringify(Object.fromEntries(requiredDryMaterials.concat('Steam').map(material =>
+                !campaign.canUseMaterial('Cloud'),
+                JSON.stringify(Object.fromEntries(requiredDryMaterials.concat('Cloud').map(material =>
                     [material, campaign.canUseMaterial(material)]))));
-            campaign.recordMaterialPlacement('Steam', steamPlacementObjective.target);
-            check('a gated Steam placement cannot progress before the dry piles',
-                campaign.getCampaignState().objectiveProgress[steamPlacementObjective.id] === 0,
+            campaign.recordMaterialPlacement('Cloud', cloudPlacementObjective.target);
+            check('a gated Cloud placement cannot progress before the dry piles',
+                campaign.getCampaignState().objectiveProgress[cloudPlacementObjective.id] === 0,
                 JSON.stringify(campaign.getCampaignState().objectiveProgress));
 
             for (const material of requiredDryMaterials) campaign.recordMaterialPlacement(material, 500);
@@ -6944,9 +7015,9 @@ if (hasHumidityApi && seedNames.every(name => ID[name] > 0) && plantNames.every(
                 campaign.getCampaignState().objectiveProgress[objective.id] === objective.target);
             check('all three 500-cell placement objectives progress from committed material placement', dryPlacementComplete,
                 JSON.stringify(campaign.getCampaignState().objectiveProgress));
-            check('Steam becomes available after the three dry piles are placed', campaign.canUseMaterial('Steam'));
+            check('Cloud becomes available after the three dry piles are placed', campaign.canUseMaterial('Cloud'));
 
-            campaign.recordMaterialPlacement('Steam', steamPlacementObjective.target);
+            campaign.recordMaterialPlacement('Cloud', cloudPlacementObjective.target);
             const climateTargets = rainObjective.targetValues;
             campaign.recordEnvironmentChange({ humidity: climateTargets.humidity, dewpoint: climateTargets.dewpoint });
             check('the partial humidity/dewpoint objective completes without requiring unrelated climate fields',
@@ -6971,7 +7042,7 @@ if (hasHumidityApi && seedNames.every(name => ID[name] > 0) && plantNames.every(
             check('the temperature-150 target completes before any pile can dry',
                 campaign.getCampaignState().objectiveProgress[dryingHeatObjective.id] === dryingHeatObjective.target,
                 JSON.stringify(campaign.getCampaignState().objectiveProgress));
-            for (const [from, to] of dryTransitions) {
+            for (const [from, to] of [...dryTransitions].reverse()) {
                 const objective = findTransitionObjective([from, to]);
                 recordTransition(from, to, objective.target);
             }

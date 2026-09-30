@@ -194,7 +194,7 @@ rule based on the surface of connected liquid, not a Navier–Stokes solution.
 
 - Campaign definitions live in `campaign.js`. Mission 1, **The First Daffodil**,
   starts with a full-width Sand floor and player supplies of 100 Dry Mud,
-  1,000 Water, and one Daffodil Seed. It fixes the growing climate at 14 °C,
+  1,000 Water, and five Daffodil Seeds for retries. It fixes the growing climate at 14 °C,
   68% humidity, 65% illumination, 10 °C dewpoint, and calm wind, with those
   player controls locked. Its objective counts one actual Daffodil Seeds-to-
   Daffodil germination transition. Progress and its completion event are
@@ -206,7 +206,7 @@ rule based on the surface of connected liquid, not a Navier–Stokes solution.
 - Mission 2, **The Icebound Grove**, starts with a full-width five-row Ice
   floor in a 260×150 world. Its start climate is −10 °C, 35% humidity, and 10%
   illumination, with a −15 °C dewpoint and calm wind. The player receives 500
-  Dry Mud and one Banana Seed. Four cumulative, one-time objectives track
+  Dry Mud and five Banana Seeds for retries. Four cumulative, one-time objectives track
   Ice-to-Water, the authored climate target (30 °C / 95% humidity / 85%
   illumination), Dry Mud-to-Wet Mud, and Banana seed germination. Banana Plant
   defines temperature and humidity ideals but no ideal illumination; 85% is
@@ -214,6 +214,38 @@ rule based on the surface of connected liquid, not a Navier–Stokes solution.
   Ambient Light sliders and distinguishes the Banana ideals from that light
   target. The editor validates and saves `environmentTargets` with
   environment-target objectives.
+- Mission 3, **The Basin in Three States**, uses a finite budget of 8,000 Cloud
+  after the player places 500 cells each of Sand, Dry Mud, and Ash. Placing
+  500 Cloud unlocks the Humidity and Dewpoint controls; 95% Humidity and 20 C
+  Dewpoint form the rain stage for the existing 150-cell wet/dry objectives.
+  The later Glass and Lava stages and any-order drying progression remain
+  unchanged.
+- Mission 4, **The Meltwater Garden**, starts with a Dry Mud floor, 500 Snow,
+  and five Red Tulip Seeds for retries, with no Water supply. It melts 150 Snow
+  into Water, wets 100 Dry Mud into Wet Mud, and counts one mature Red Tulip
+  growth. The world initializes at −10 °C even when entering from a hotter
+  mission; Temperature is capped at 8 °C.
+- Mission 5, **Moisture in Motion**, restores a captured unrestricted Sandbox
+  scenario with a 150-cell Wet Sand source over Sand, 95% local and Base
+  Humidity, and no water-cycle supply. It dries 100 Wet Sand, condenses 75
+  naturally formed Cloud into Snow after the open air cools at the −10 C target
+  and 20 C Dewpoint, melts 60 Snow into Water at the 8 C target, then wets 50
+  Sand. Cloud is absent from the snapshot and player budget. The UI decodes the
+  snapshot arrays before physics restoration while preserving active Campaign
+  state.
+- Mission 6, **A Controlled Burn**, restores a captured Wood bridge with two
+  supporting legs, an overhead span, and open space beneath. No Fire or Water
+  starts placed. The player has 10 Fire placements; after Fire is placed at
+  the exposed top of the span, Water unlocks after 60 active simulation steps.
+  The mission provides unlimited Water and selects the largest Brush so the
+  player can pour over the structure. One Water-caused Fire-to-Smoke conversion
+  satisfies the quench objective; completion also requires surviving Wood and
+  no active Fire. Outline-only Missions 7–15 have revised supply headroom
+  documented in `CAMPAIGN_MISSIONS.md`; they are not yet implemented campaign
+  missions.
+- Mission 8's Water-to-Steam transformation is the byproduct of the Lava
+  quench. It remains a quench lesson and is separate from weather Cloud
+  formation.
 - `campaign.js` owns active-run objective and event state. On completion,
   `ui.js` pauses play and opens a recap with resource-use counts. **OK** dismisses
   the recap; **ADVANCE** to an installed successor writes a checkpoint with
@@ -227,6 +259,11 @@ rule based on the surface of connected liquid, not a Navier–Stokes solution.
   expansion state. Campaign Save/export and Autosave remain disabled, while
   usable system actions remain available. Sandbox retains its full catalog,
   saves, and normal category controls.
+- Campaign objective, completion, save/load, autosave, checkpoint, and other
+  notices share `showMissionToast`; each stays visible for five seconds and
+  sits 50 px higher than the former position. Disabled material and tool
+  tooltips hide when the pointer leaves their trigger, while machine-owned
+  hover tooltips remain on the machine hover path.
 - Campaign Editor starts an unrestricted Sandbox authoring session and keeps
   the canvas live beside its docked side panel. Drafts and compressed captured
   Sandbox starting saves persist under

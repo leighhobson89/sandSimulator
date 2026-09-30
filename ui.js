@@ -30,7 +30,7 @@ import {
     captureBlueprint, stampBlueprint, stampBlueprintAt, BLUEPRINT_SLOT_COUNT, renderWorld
 } from './game.js';
 import {
-    getDefinitions, setAmbientTarget, getAmbientTarget,
+    getDefinitions, setAmbientTarget, setAmbientTargetImmediately, getAmbientTarget,
     setAmbientIlluminationTarget, getAmbientIlluminationTarget,
     setAmbientHumidityTarget, getAmbientHumidityTarget, setDewpointTarget, getDewpointTarget,
     setAmbientWindOn, getAmbientWindOn, restoreSimulationState,
@@ -50,6 +50,7 @@ import {
 import { loadSavedTheme, buildThemeSwatches, buildThemeSelect } from './themes.js';
 import {
     hasAutosave, createSaveString, parseSaveString, restoreSavePayload, restoreAutosave,
+    decodeSaveSimulation,
     stopAutosave, replaceAutosaveWithCurrentGame, setSavingListener, setBlueprintSaveHandlers,
     setAutosaveErrorListener, writeAutosave, isAutosaveEnabled, startAutosave,
     suspendAutosaveWrites, resumeAutosaveWrites,
@@ -189,6 +190,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         highlightSelectedParticle();
     });
     window.addEventListener('campaign-objective-complete', event => {
+        applyCampaignObjectiveToolUnlock(event.detail?.objectiveId);
         updateCampaignUi();
         showMissionToast(`Objective complete — ${event.detail?.label || 'Mission objective completed.'}`);
     });
@@ -719,11 +721,14 @@ function prepareCampaignMissionWorld(mission) {
     setGridRows(150);
     setGridCols(mission.world.cols);
     setGridRows(mission.world.rows);
+    if (Number.isFinite(Number(mission.environment?.temperature))) {
+        setAmbientTargetImmediately(mission.environment.temperature);
+    }
     initializeWorld();
     if (mission.startingSave) {
         const payload = parseSaveString(mission.startingSave);
         if (payload.mode !== 'sandbox' || payload.campaign) throw new Error('Mission scenario must be an unrestricted Sandbox save.');
-        restoreSimulationState(payload.simulation);
+        restoreSimulationState(decodeSaveSimulation(payload));
     } else if (mission.startingLayout?.type === 'floor') {
         const id = getDefinitions().findIndex(definition => definition?.name === mission.startingLayout.material);
         const rows = Math.max(1, Math.min(mission.world.rows, Math.floor(mission.startingLayout.rows || 1)));
@@ -769,9 +774,11 @@ function showMissionBriefing(mission) {
     elements.missionIntroGuidance.hidden = !mission.guidance;
     const availableMaterials = Object.entries(mission.resourceBudgets.materials || {})
         .map(([name, count]) => `${count} ${name}`);
+    const unlimitedMaterials = (mission.unlimitedMaterials || [])
+        .map(name => `${name} (unlimited after unlock)`);
     const availableMachines = Object.entries(mission.resourceBudgets.machines || {})
         .map(([name, count]) => `${count} ${titleCase(name)}`);
-    elements.missionIntroResources.textContent = `Available: ${[...availableMaterials, ...availableMachines].join(' · ')}`;
+    elements.missionIntroResources.textContent = `Available: ${[...availableMaterials, ...unlimitedMaterials, ...availableMachines].join(' · ')}`;
     elements.missionIntroObjectives.replaceChildren(...mission.objectives.map(objective => {
         const item = document.createElement('li');
         item.textContent = objective.label;
@@ -908,7 +915,7 @@ function showMissionToast(message) {
             missionToastTimer = null;
             missionToastFadeTimer = null;
         }, 350);
-    }, 10000);
+    }, 5000);
 }
 
 function showGameLoadedToast(payload) {
@@ -1005,7 +1012,10 @@ function updateCampaignUi() {
             const row = document.createElement('div');
             row.className = 'mission-resource-row';
             const label = document.createElement('span'); label.textContent = name;
-            const count = document.createElement('span'); count.textContent = `${resource.used} / ${resource.limit}`;
+            const count = document.createElement('span');
+            count.textContent = resource.unlimited
+                ? (resource.unlocked ? `${resource.used} / Unlimited` : 'Locked · Unlimited after unlock')
+                : `${resource.used} / ${resource.limit}`;
             row.append(label, count); return row;
         });
         const machineRows = Object.entries(campaign.resources.machines).map(([name, resource]) => {
@@ -1037,6 +1047,15 @@ function updateCampaignUi() {
     syncCampaignCatalog(campaign);
 }
 
+function applyCampaignObjectiveToolUnlock(objectiveId) {
+    if (getCurrentMission()?.id !== 'controlled-burn' || objectiveId !== 'water-unlock-delay') return;
+    const waterId = getDefinitions().findIndex(definition => definition?.name === 'Water');
+    if (waterId > 0) selectParticleType(waterId);
+    selectDrawingMode('brush');
+    setBrushSize(31);
+    synchroniseRestoredControls();
+}
+
 function syncCampaignCatalog(campaign) {
     const container = getElements().particleButtons;
     if (!container) return;
@@ -1056,7 +1075,7 @@ function syncCampaignCatalog(campaign) {
             const resource = definition.machine
                 ? campaign.resources.machines[definition.machine]
                 : campaign.resources.materials[definition.name];
-            available = !!resource && resource.remaining > 0 && !definition.tool;
+            available = !!resource && (resource.unlimited ? resource.unlocked : resource.remaining > 0) && !definition.tool;
             if (!definition.machine && !definition.tool) available &&= isCampaignMaterialAvailable(definition.name);
         }
         wrapper.hidden = !!campaign && !available;
@@ -1066,7 +1085,9 @@ function syncCampaignCatalog(campaign) {
             const resource = definition.machine
                 ? campaign.resources.machines[definition.machine]
                 : campaign.resources.materials[definition.name];
-            button.dataset.tooltip = `${definition.name}: ${resource.remaining} of ${resource.limit} remaining`;
+            button.dataset.tooltip = resource.unlimited
+                ? `${definition.name}: Unlimited remaining`
+                : `${definition.name}: ${resource.remaining} of ${resource.limit} remaining`;
         } else button.dataset.tooltip = formatMaterialTooltip(definition);
     });
 
@@ -1140,7 +1161,9 @@ function renderMissionCompletionStats(container, campaign, mission) {
             const label = category === 'machines'
                 ? getDefinitions().find(definition => definition?.machine === name)?.name || titleCase(name)
                 : name;
-            row.textContent = `${label}: ${resource.used} / ${resource.limit} used / total, ${resource.remaining} remaining`;
+            row.textContent = resource.unlimited
+                ? `${label}: ${resource.used} used / Unlimited total`
+                : `${label}: ${resource.used} / ${resource.limit} used / total, ${resource.remaining} remaining`;
             budgets.appendChild(row);
         }
     }

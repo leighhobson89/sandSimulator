@@ -244,10 +244,10 @@ export function validateCampaignMission(mission, { missions = getMissionDefiniti
         mission.visualizationModes.some(mode => !VISUALIZATION_MODES.includes(mode))) errors.push('Choose valid visualization modes.');
     if ((mission.id === 'first-daffodil' || mission.number === 1) &&
         (mission.resourceBudgets?.materials?.Water !== 1000 || mission.resourceBudgets?.materials?.['Dry Mud'] !== 100 ||
-            mission.resourceBudgets?.materials?.['Daffodil Seeds'] !== 1 || Object.keys(budgets || {}).length !== 3 ||
+            mission.resourceBudgets?.materials?.['Daffodil Seeds'] !== 5 || Object.keys(budgets || {}).length !== 3 ||
             !['Water', 'Dry Mud', 'Daffodil Seeds'].every(name => Object.hasOwn(budgets || {}, name)) ||
             Object.keys(machines || {}).length > 0)) {
-        errors.push('Mission 1 must have 1,000 Water, 100 Dry Mud, one Daffodil Seed, and no machine allotment.');
+        errors.push('Mission 1 must have 1,000 Water, 100 Dry Mud, five Daffodil Seeds for retries, and no machine allotment.');
     }
     if (mission.id === 'first-daffodil' || mission.number === 1) {
         const ideal = { temperature: 14, humidity: 68, illumination: 65, dewpoint: 10, ambientWindOn: false, windStrength: 0, gustWindStrength: 0 };

@@ -129,6 +129,7 @@ let dewpointTarget = 10;
 let frameCount = 0;
 let materialTransitionListener = () => {};
 let plantGrowthCompletionListener = () => {};
+let simulationStepListener = () => {};
 let pendingPlantGrowthCompletions = [];
 let humidityCursor = 0;
 let cloudCursor = 0;
@@ -855,6 +856,12 @@ export function setDebugFeatureEnabled(name, enabled) {
 // towards it a little each frame, so turning the dial down feels like a cold
 // front rolling in rather than a switch being thrown.
 export function setAmbientTarget(value) { ambientTarget = value; }
+export function setAmbientTargetImmediately(value) {
+    const temperature = Number(value);
+    if (!Number.isFinite(temperature)) return;
+    AMBIENT = temperature;
+    ambientTarget = temperature;
+}
 export function getAmbientTarget() { return ambientTarget; }
 export function setAmbientHumidityTarget(value) {
     if (!Number.isFinite(Number(value))) return;
@@ -3972,7 +3979,7 @@ export function setCell(x, y, id, keepTemp) {
 // Replaces what is in a cell but leaves the cell temperature alone. Every state
 // change (melting, freezing, burning) goes through here, because a material
 // changing state does not change how hot that spot is.
-function transform(i, id, life, residue) {
+function transform(i, id, life, residue, transitionContext) {
     const def = DEFS[id];
     const previousDef = DEFS[world.type[i]];
     const previousType = world.type[i];
@@ -4017,7 +4024,8 @@ function transform(i, id, life, residue) {
     if (previousType !== id) {
         const plantGrowthPending = previousDef?.isSeed && def?.isPlant && def.growHeight > 0;
         try {
-            materialTransitionListener(previousType, id, plantGrowthPending ? { plantGrowthPending: true } : undefined);
+            materialTransitionListener(previousType, id, transitionContext ||
+                (plantGrowthPending ? { plantGrowthPending: true } : undefined));
         }
         catch (error) { console.error('Campaign material transition handler failed:', error); }
         if (plantGrowthPending) {
@@ -4037,6 +4045,10 @@ export function setMaterialTransitionListener(listener) {
 
 export function setPlantGrowthCompletionListener(listener) {
     plantGrowthCompletionListener = typeof listener === 'function' ? listener : () => {};
+}
+
+export function setSimulationStepListener(listener) {
+    simulationStepListener = typeof listener === 'function' ? listener : () => {};
 }
 
 function defaultBulkInsulation(category) {
@@ -5395,6 +5407,8 @@ export function stepSimulation() {
     flushAmbientPendingChanges();
     processAmbientIlluminationWork();
     processMaturePlantGrowthCandidates();
+    try { simulationStepListener(); }
+    catch (error) { console.error('Campaign simulation-step handler failed:', error); }
     if (recorder) {
         recorder.record('stepSimulation', performance.now() - startedAt, {
             worldCells: world.type.length
@@ -6130,7 +6144,8 @@ function applyReactions(x, y, i, def) {
             const ny = y + (d === 2 ? -1 : d === 3 ? 1 : 0);
             const n = typeAt(nx, ny);
             if (n === water || n === steam) {
-                transform(i, idOf('Smoke'));
+                transform(i, idOf('Smoke'), undefined, undefined,
+                    n === water ? { cause: 'water' } : { cause: 'steam' });
                 world.temp[i] = Math.min(world.temp[i], 120);
                 return true;
             }
@@ -6148,7 +6163,8 @@ function applyReactions(x, y, i, def) {
             const n = typeAt(nx, ny);
             if (n > 0 && DEFS[n].emit > 0 && DEFS[n].category === 'gas') {
                 const ni = ny * COLS + nx;
-                transform(ni, idOf('Smoke'));
+                transform(ni, idOf('Smoke'), undefined, undefined,
+                    world.type[i] === idOf('Water') ? { cause: 'water' } : { cause: 'steam' });
                 world.temp[ni] = Math.min(world.temp[ni], 120);
             }
         }
@@ -7391,7 +7407,8 @@ function fallDown(x, y, i, def) {
         // Water landing on a flame puts it out there and then, instead of
         // dropping straight through it.
         if (def.douses && isFlame(below)) {
-            transform(ci + COLS, idOf('Smoke'));
+            transform(ci + COLS, idOf('Smoke'), undefined, undefined,
+                def.name === 'Water' ? { cause: 'water' } : { cause: 'steam' });
             world.temp[ci + COLS] = Math.min(world.temp[ci + COLS], 120);
             break;
         }

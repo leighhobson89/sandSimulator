@@ -1277,6 +1277,7 @@ input[type="range"]::-moz-range-thumb {
     animation: tooltip-in 0.14s ease both;
 }
 .tool-tooltip:has(.tool-tooltip-disabled) { display: grid; gap: 0.16rem; border-color: color-mix(in srgb, #ef5151 70%, var(--line-bright)); }
+.tool-tooltip[hidden] { display: none; }
 .tool-tooltip-disabled { color: #ff5555; font-weight: 800; letter-spacing: 0.06em; }
 .tool-tooltip-reason { color: var(--text); }
 .machine-sensor-tooltip,
@@ -2538,7 +2539,7 @@ body[data-theme="terminal"] .menu-title {
     position: fixed;
     z-index: 1201;
     right: 1rem;
-    bottom: calc(4.75rem + env(safe-area-inset-bottom, 0px));
+    bottom: calc(4.75rem + 50px + env(safe-area-inset-bottom, 0px));
     width: max-content;
     max-width: min(30rem, calc(100vw - 2rem));
     padding: 0.7rem 0.9rem;

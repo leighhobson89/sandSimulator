@@ -128,8 +128,7 @@ test('Mission 3 stages rain, drying, Glass, and the 2,000C Lava limit', async ({
             blank: physics.getWorld().type.every(type => type === 0),
             dryPlacements: ['Sand', 'Dry Mud', 'Ash'].map(material =>
                 objectives.find(objective => objective.type === 'material-placement' && objective.material === material)),
-            steamPlacement: objectives.find(objective =>
-                objective.type === 'material-placement' && objective.material === 'Steam'),
+            cloudPlacement: objectives.find(objective => objective.id === 'place-steam'),
             rainObjective: objectives.find(objective => objective.type === 'environment-target' &&
                 Number.isFinite(objective.targetValues?.humidity) && Number.isFinite(objective.targetValues?.dewpoint)),
             wetObjectives: [['Sand', 'Wet Sand'], ['Dry Mud', 'Wet Mud'], ['Ash', 'Wet Ash']].map(([from, to]) =>
@@ -144,6 +143,8 @@ test('Mission 3 stages rain, drying, Glass, and the 2,000C Lava limit', async ({
                 objective.from === 'Sand' && objective.to === 'Glass'),
             highHeatObjective: objectives.find(objective => objective.type === 'environment-target' &&
                 objective.targetValues?.temperature === 2000),
+            lavaObjectives: [['Glass', 'Lava'], ['Dry Mud', 'Lava'], ['Ash', 'Lava']].map(([from, to]) =>
+                objectives.find(objective => objective.type === 'transformation' && objective.from === from && objective.to === to)),
             dryMudDefinition: physics.getDefinitions().find(definition => definition?.name === 'Dry Mud'),
             definitions: physics.getDefinitions()
         };
@@ -153,12 +154,16 @@ test('Mission 3 stages rain, drying, Glass, and the 2,000C Lava limit', async ({
     expect(authoredMission.mission.startingLayout).toEqual({ type: 'blank' });
     expect(authoredMission.blank).toBe(true);
     expect(authoredMission.mission.resourceBudgets.materials).toEqual({
-        Sand: 5000, 'Dry Mud': 5000, Ash: 5000, Steam: 8000
+        Sand: 5000, 'Dry Mud': 5000, Ash: 5000, Cloud: 8000
     });
     expect(authoredMission.dryPlacements.map(objective => objective?.target)).toEqual([500, 500, 500]);
-    expect(authoredMission.steamPlacement?.target).toBe(500);
-    expect(authoredMission.steamPlacement.requires).toEqual(expect.arrayContaining(
+    expect(authoredMission.cloudPlacement).toMatchObject({
+        id: 'place-steam', type: 'material-placement', material: 'Cloud', target: 500
+    });
+    expect(authoredMission.cloudPlacement.requires).toEqual(expect.arrayContaining(
         authoredMission.dryPlacements.map(objective => objective.id)));
+    expect(authoredMission.mission.objectives.some(objective =>
+        objective.type === 'material-placement' && objective.material === 'Steam')).toBe(false);
     expect(authoredMission.rainObjective?.targetValues).toEqual({ humidity: 95, dewpoint: 20 });
     expect(authoredMission.dryingHeatObjective?.targetValues).toEqual({ temperature: 150 });
     expect(authoredMission.wetObjectives.map(objective => objective?.target)).toEqual([150, 150, 150]);
@@ -166,19 +171,22 @@ test('Mission 3 stages rain, drying, Glass, and the 2,000C Lava limit', async ({
     expect(authoredMission.mission.guidance).toMatch(/rain/i);
     expect(authoredMission.mission.guidance).toMatch(/150.*wet|wet.*150/i);
     expect(authoredMission.mission.guidance).toMatch(/dry|heat/i);
+    expect(authoredMission.mission.guidance).toMatch(/any order/i);
     expect(authoredMission.wetObjectives.every(objective => objective?.requires?.includes(authoredMission.rainObjective.id))).toBe(true);
     expect(authoredMission.dryObjectives.map(objective => objective?.from)).toEqual(['Wet Sand', 'Wet Mud', 'Wet Ash']);
-    expect(authoredMission.dryObjectives[2].requires).toEqual(expect.arrayContaining([
-        authoredMission.dryObjectives[0].id,
-        authoredMission.dryObjectives[1].id,
-        authoredMission.dryingHeatObjective.id
-    ]));
+    expect(authoredMission.dryObjectives.every((objective, index) =>
+        objective.requires?.includes(authoredMission.wetObjectives[index].id) &&
+        objective.requires?.includes(authoredMission.dryingHeatObjective.id) &&
+        !objective.requires.some(id => authoredMission.dryObjectives.some((other, otherIndex) =>
+            otherIndex !== index && other.id === id)))).toBe(true);
     expect(authoredMission.dryObjectives[2].unlocks.controlLimits.temperature.max).toBe(350);
     expect(authoredMission.glassHeatObjective.targetValues).toEqual({ temperature: 350 });
     expect(authoredMission.sandGlassObjective.target).toBe(200);
     expect(authoredMission.sandGlassObjective.unlocks.controlLimits.temperature.max).toBe(2000);
     expect(authoredMission.highHeatObjective.requires).toContain(authoredMission.sandGlassObjective.id);
     expect(authoredMission.highHeatObjective?.targetValues).toEqual({ temperature: 2000 });
+    expect(authoredMission.lavaObjectives.map(objective => objective?.target)).toEqual([150, 150, 150]);
+    expect(authoredMission.lavaObjectives.every(objective => objective.requires?.includes(authoredMission.highHeatObjective.id))).toBe(true);
     expect(authoredMission.dryMudDefinition?.meltPoint).toBe(1200);
     expect(authoredMission.definitions[authoredMission.dryMudDefinition.meltsInto]?.name).toBe('Lava');
 
@@ -186,6 +194,7 @@ test('Mission 3 stages rain, drying, Glass, and the 2,000C Lava limit', async ({
     await expect(page.locator('#airTempValue')).toHaveAttribute('max', '150');
     await expect(page.locator('#baseHumidity')).toBeDisabled();
     await expect(page.locator('#dewpoint')).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Cloud', exact: true })).toBeHidden();
     await expect(page.getByRole('button', { name: 'Steam', exact: true })).toBeHidden();
 
     await paintPlacementBlock(page, 'Sand', 10);
@@ -201,25 +210,34 @@ test('Mission 3 stages rain, drying, Glass, and the 2,000C Lava limit', async ({
                 .map(objective => state.objectiveProgress[objective.id]),
             resources: Object.fromEntries(['Sand', 'Dry Mud', 'Ash'].map(name =>
                 [name, state.resources.materials[name]])),
+            canUseCloud: campaign.canUseMaterial('Cloud'),
             canUseSteam: campaign.canUseMaterial('Steam')
         };
     });
     expect(dryPileProgress.objectives).toEqual([500, 500, 500]);
     for (const resource of Object.values(dryPileProgress.resources)) expect(resource.used).toBe(500);
-    expect(dryPileProgress.canUseSteam).toBe(true);
-    await expect(page.getByRole('button', { name: 'Steam', exact: true })).toBeVisible();
+    expect(dryPileProgress.canUseCloud).toBe(true);
+    expect(dryPileProgress.canUseSteam).toBe(false);
+    await expect(page.getByRole('button', { name: 'Cloud', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Steam', exact: true })).toBeHidden();
     await expect(page.locator('#baseHumidity')).toBeDisabled();
     await expect(page.locator('#dewpoint')).toBeDisabled();
 
-    await paintPlacementBlock(page, 'Steam', 100);
-    const afterSteam = await page.evaluate(async () => {
+    await paintPlacementBlock(page, 'Cloud', 100);
+    const afterCloud = await page.evaluate(async () => {
         const campaign = await import('/campaign.js');
         const mission = campaign.getCurrentMission();
         const state = campaign.getCampaignState();
-        const objective = mission.objectives.find(item => item.type === 'material-placement' && item.material === 'Steam');
-        return { progress: state.objectiveProgress[objective.id], target: objective.target };
+        const objective = mission.objectives.find(item => item.id === 'place-steam');
+        return {
+            progress: state.objectiveProgress[objective.id], target: objective.target,
+            material: objective.material, resource: state.resources.materials.Cloud
+        };
     });
-    expect(afterSteam.progress).toBe(afterSteam.target);
+    expect(afterCloud).toMatchObject({
+        progress: 500, target: 500, material: 'Cloud',
+        resource: { limit: 8000, used: 500, remaining: 7500 }
+    });
     await expect(page.locator('#baseHumidity')).toBeEnabled();
     await expect(page.locator('#dewpoint')).toBeEnabled();
 
@@ -262,7 +280,7 @@ test('Mission 3 stages rain, drying, Glass, and the 2,000C Lava limit', async ({
     });
     expect(dryingHeatProgress).toBe(authoredMission.dryingHeatObjective.target);
     await recordMissionTransitions(page, [
-        ['Wet Sand', 'Sand'], ['Wet Mud', 'Dry Mud'], ['Wet Ash', 'Ash']
+        ['Wet Ash', 'Ash'], ['Wet Mud', 'Dry Mud'], ['Wet Sand', 'Sand']
     ]);
     await expect(page.locator('#airTemp')).toHaveAttribute('max', '350');
     await expect(page.locator('#airTempValue')).toHaveAttribute('max', '350');
@@ -297,4 +315,44 @@ test('Mission 3 stages rain, drying, Glass, and the 2,000C Lava limit', async ({
     const completion = await page.evaluate(async () => (await import('/campaign.js')).getCampaignState().missionCompleted);
     expect(completion).toBe(true);
     await expect(page.locator('#missionCompleteDialog')).toBeVisible();
+});
+
+test('Mission 3 restores a legacy Steam budget as Cloud without losing staged progress', async ({ page }) => {
+    await startMissionThree(page);
+    await page.locator('#pauseButton').click();
+    const migrated = await page.evaluate(async () => {
+        const campaign = await import('/campaign.js');
+        const legacy = structuredClone(campaign.getCampaignState());
+        for (const [objectiveId, material] of [
+            ['place-sand', 'Sand'], ['place-dry-mud', 'Dry Mud'], ['place-ash', 'Ash']
+        ]) {
+            legacy.objectiveProgress[objectiveId] = 500;
+            legacy.resources.materials[material].used = 500;
+            legacy.resources.materials[material].remaining = 4500;
+        }
+        delete legacy.resources.materials.Cloud;
+        legacy.resources.materials.Steam = { limit: 8000, used: 125, remaining: 7875 };
+        legacy.objectiveProgress['place-steam'] = 125;
+
+        const legacyValid = campaign.validateCampaignState(legacy);
+        const restored = campaign.restoreCampaignState(legacy);
+        return {
+            legacyValid,
+            valid: campaign.validateCampaignState(restored),
+            cloud: restored?.resources.materials.Cloud,
+            hasSteam: !!restored && Object.hasOwn(restored.resources.materials, 'Steam'),
+            placementProgress: restored?.objectiveProgress['place-steam'],
+            cloudUnlocked: campaign.isCampaignObjectiveUnlocked('place-steam'),
+            cloudAvailable: campaign.canUseMaterial('Cloud')
+        };
+    });
+    expect(migrated).toEqual({
+        legacyValid: true,
+        valid: true,
+        cloud: { limit: 8000, used: 125, remaining: 7875 },
+        hasSteam: false,
+        placementProgress: 125,
+        cloudUnlocked: true,
+        cloudAvailable: true
+    });
 });

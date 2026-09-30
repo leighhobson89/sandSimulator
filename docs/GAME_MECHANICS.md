@@ -24,8 +24,9 @@ actions. Theme-specific presentation keeps the menu centered in Terminal.
 The current first mission is **Mission 1: The First Daffodil**. It uses a
 260×150 world with a five-row Sand floor spanning the full width. The floor is
 the only material in the starting scene; Dry Mud and Daffodil Seeds are player
-supplies. The player can place 100 Dry Mud, 1,000 Water, and one Daffodil Seed,
-with no machine allowance. Mission data also fixes the ideal growing climate:
+supplies. The player can place 100 Dry Mud, 1,000 Water, and five Daffodil
+Seeds for retries, with no machine allowance. The growth objective still
+requires one mature Daffodil. Mission data also fixes the ideal growing climate:
 14 °C temperature, 68% humidity, 65% illumination, 10 °C dewpoint, and no wind.
 Climate controls are locked during play, while Normal, Heat, Humidity, and Wind
 visualizations remain available.
@@ -45,9 +46,10 @@ completion event fires once; objective counters and fired event IDs remain in
 the active session only. The mission briefing displays the mission number,
 title, briefing, objective, and available supplies before play. During play,
 the mission HUD stays at the bottom and shows one selected objective and each
-supply's used and total counts. Objective, event, save, and load messages use a
-separate bottom-right notification that fades after ten seconds and never takes
-a HUD row. The objective carousel sits at the bottom right and has
+supply's used and total counts. Objective, event, save/load, autosave,
+checkpoint, and other messages share a bottom-right notification. It fades after
+five seconds and sits 50 px higher than its previous position, preserving the
+safe-area inset; it never takes a HUD row. The objective carousel sits at the bottom right and has
 previous/next arrow buttons, one `N / total` counter at the left, and one
 objective row.
 Navigation stops at either end and includes locked objectives in the count; a
@@ -57,13 +59,14 @@ not auto-advance the carousel, and ordinary HUD rerenders preserve selection.
 Selection is transient and resets to the first objective when a mission starts,
 restarts, advances, or reloads. The arrow controls have accessible names and
 the current objective status is announced to assistive technology. Shared
-tooltips clear when the pointer leaves the catalog or tool column or enters
-the canvas or another area without a tooltip trigger.
+tooltips, including disabled-entry tooltips, hide when the pointer leaves the
+catalog or tool trigger or enters the canvas or another area without a tooltip
+trigger. The machine-owned hover tooltip remains controlled by machine hover.
 
 **Mission 2: The Icebound Grove** uses a 260×150 world with a full-width
 five-row Ice floor. The opening climate is −10 °C, 35% humidity, and 10%
 illumination, with a −15 °C dewpoint and calm wind. Player supplies are 500 Dry
-Mud and one Banana Seed; the Ice floor is part of the authored world, and
+Mud and five Banana Seeds for retries; the Ice floor is part of the authored world, and
 melting it creates Water through simulation. The authored climate objective is
 30 °C, 95% humidity, and 85% illumination. Banana Plant's material definition
 sets ideal temperature to 30 °C and ideal humidity to 95%; it has no
@@ -88,24 +91,60 @@ and numeric input; values above the cap are clamped. Sandbox retains the global
 4,000 C maximum.
 
 **Mission 3: The Basin in Three States** starts with a blank 260 x 150 world
-and budgets 5,000 each of Sand, Dry Mud, and Ash plus 8,000 Steam. The three
-500-cell pile objectives are active together. Steam becomes available only
-after all three piles are placed; placing 500 Steam unlocks the Humidity and
-Dewpoint controls. Setting Humidity to 95% and Dewpoint to 20 C enables the
-rain objective and three wetting milestones, each at 150 transformations.
+and budgets 5,000 each of Sand, Dry Mud, and Ash plus 8,000 Cloud. The three
+500-cell pile objectives are active together. The finite Cloud kit becomes
+available only after all three piles are placed; placing 500 Cloud unlocks the
+Humidity and Dewpoint controls. Setting Humidity to 95% and Dewpoint to 20 C
+enables the rain objective and three wetting milestones, each at 150
+transformations. This is player-placed Cloud from a limited mission budget.
 Once 150 cells of each pile are wet, the 150 C temperature cap gates three
-150-cell drying objectives. Completing the Ash-drying objective raises the
-maximum to 350 C for the Sand-to-Glass stage. Forming 200 Glass raises the
-maximum to 2,000 C for the Lava stage. Sand melts into Glass above 320 C,
-Glass melts into Lava above 375 C, Dry Mud melts directly into Lava above
-1,200 C, and Ash melts into Lava above 900 C. Mission-specific limits are
-resolved over the Sandbox maximum and do not change Sandbox controls.
+150-cell drying objectives. Each pile can dry independently in any order;
+drying Ash raises the maximum to 350 C even if Sand or Mud is still drying.
+Forming 200 Glass raises the maximum to 2,000 C for the Lava stage, which
+requires 150 Glass, 150 Dry Mud, and 150 Ash transformations into Lava. Sand
+melts into Glass above 320 C, Glass melts into Lava above 375 C, Dry Mud melts
+directly into Lava above 1,200 C, and Ash melts into Lava above 900 C.
+Mission-specific limits are resolved over the Sandbox maximum and do not
+change Sandbox controls.
 
 Steam particles begin within 6 C of their default temperature. A cooler
 particle has a higher dewpoint threshold and condenses first; a warmer particle
 has a lower threshold and waits until the local air cools further. This spreads
 condensation across a 12 C band instead of turning a whole group of Steam into
 rain at one shared air temperature.
+
+**Mission 4: The Meltwater Garden** uses a five-row Dry Mud floor and no Water
+supply. The player can place 500 Snow and five Red Tulip Seeds for retries;
+the objectives melt 150 Snow into Water, wet 100 Dry Mud into Wet Mud, and grow
+one mature Red Tulip. The world initializes at −10 °C even when entered from a
+hotter mission. Temperature is capped at 8 °C while Humidity (72%) and Ambient
+Light (70%) are fixed.
+
+**Mission 5: Moisture in Motion** uses a captured unrestricted 260×150 Sandbox
+scenario with four Sand floor rows and a 150-cell Wet Sand source directly
+above the Sand catch bed. Local and Base Humidity start at 95%. Dry 100 Wet Sand, then
+allow the open air to cool fully at the −10 C target with Dewpoint 20 C so
+natural Cloud nucleates and precipitates at least 75 Snow. Then warm to 8 C,
+melt 60 Snow into Water, and return 50 Water to the Sand catch bed. There is no
+preplaced Cloud or player Cloud supply; the weather system forms Cloud under
+the captured humid open-air conditions. The captured scenario supplies the
+moisture; no water-cycle materials are in the loadout. Its encoded simulation
+arrays are decoded before physics restore, preserving the active Campaign
+state. At the 8 C thaw target, the open-air profile is above freezing.
+
+**Mission 6: A Controlled Burn** restores a captured 260×150 Sandbox scene with
+a large overhead Wood bridge, two supporting legs, and open space beneath it.
+No Fire or Water is preplaced. The player has 10 Fire placements and starts the
+burn by placing Fire against the exposed top of the Wood span. After 60 active
+simulation steps, unlimited Water unlocks and the largest Brush is selected so
+the player can pour Water over the span. Paused frames do not advance this
+delay. One Fire-to-Smoke transformation caused by Water satisfies the quench
+objective; natural Fire expiry does not count. Mission success also requires
+some Wood to remain and no active Fire. Wood becomes Fire for 150 frames before
+leaving Ash, and spread timing varies with the simulation.
+
+Mission 8's Water-to-Steam conversion is a separate Lava-quench byproduct; it
+does not supply weather Cloud or replace any weather objective.
 
 Campaign catalogs hide unavailable materials, machines, and tools. Categories
 with available entries automatically expand in Campaign; empty categories are
@@ -119,7 +158,8 @@ the full catalog and its normal controls.
 Completing all mission objectives automatically opens a recap dialog with
 objective results and used, total, and remaining counts for each finite player
 supply while the simulation continues. A separate bottom-right notification
-fades after ten seconds. After clicking **OK**, the completed mission remains
+uses the shared Campaign toast, which fades after five seconds and sits 50 px
+above its former position. After clicking **OK**, the completed mission remains
 playable with its existing world and remaining supplies; the mission grants
 no new materials, and completed objectives cannot progress again. The
 **ADVANCE** button floats at the canvas top right after objectives complete and

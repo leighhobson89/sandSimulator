@@ -103,9 +103,16 @@ test('objective completion toast times out while the final advance status persis
     await expect(toast).toContainText(/objective complete/i);
     const toastBounds = await toast.evaluate(element => {
         const rect = element.getBoundingClientRect();
+        const baseline = document.createElement('div');
+        baseline.style.position = 'fixed';
+        baseline.style.bottom = 'calc(4.75rem + env(safe-area-inset-bottom, 0px))';
+        document.body.appendChild(baseline);
+        const baselineOffset = window.innerHeight - baseline.getBoundingClientRect().bottom;
+        baseline.remove();
         return {
             rightOffset: window.innerWidth - rect.right,
             bottomOffset: window.innerHeight - rect.bottom,
+            baselineOffset,
             left: rect.left,
             top: rect.top,
             position: getComputedStyle(element).position,
@@ -115,7 +122,9 @@ test('objective completion toast times out while the final advance status persis
     });
     expect(toastBounds.position).toBe('fixed');
     expect(toastBounds.rightOffset).toBeLessThanOrEqual(32);
-    expect(toastBounds.bottomOffset).toBeLessThanOrEqual(160);
+    expect(toastBounds.bottomOffset).toBeGreaterThanOrEqual(120);
+    expect(toastBounds.bottomOffset).toBeLessThanOrEqual(135);
+    expect(toastBounds.bottomOffset - toastBounds.baselineOffset).toBeCloseTo(50, 0);
     expect(toastBounds.left).toBeGreaterThan(0.5 * toastBounds.viewportWidth);
     expect(toastBounds.top).toBeGreaterThan(0.5 * toastBounds.viewportHeight);
 
@@ -123,9 +132,11 @@ test('objective completion toast times out while the final advance status persis
     await expect(page.locator('#missionAdvance')).toBeVisible();
     await expect(page.locator('#missionAdvance')).toBeEnabled();
     await expect(page.locator('#missionAdvance')).toHaveText('ADVANCE');
-    await page.clock.fastForward(9000);
+    await page.clock.fastForward(4999);
     await expect(toast).toBeVisible();
-    await page.clock.fastForward(2000);
+    await page.clock.fastForward(1);
+    await expect(toast).toHaveClass(/is-fading/);
+    await page.clock.fastForward(350);
     await expect(toast).toBeHidden();
     await expect(page.locator('#missionPassedBar')).toBeHidden();
     await expect(page.locator('#missionAdvance')).toBeVisible();
@@ -173,7 +184,7 @@ test('Mission 1 supplies an authored seed habitat, ideal climate, finite budgets
         type: 'transformation', from: 'Daffodil Seeds', to: 'Daffodil', target: 1
     }));
     expect(mission.resourceBudgets.materials).toEqual({
-        'Dry Mud': 100, Water: 1000, 'Daffodil Seeds': 1
+        'Dry Mud': 100, Water: 1000, 'Daffodil Seeds': 5
     });
     expect(mission.resourceBudgets.machines).toEqual({});
     expect(mission.environment).toEqual({
@@ -239,19 +250,18 @@ test('Mission 1 supplies an authored seed habitat, ideal climate, finite budgets
         const physics = await import('/physics.js');
         const world = physics.getWorld();
         const cells = [];
-        for (let y = 8; y < world.rows - 12 && cells.length < 3; y++) {
-            for (let x = 8; x < world.cols - 8 && cells.length < 3; x++) {
+        for (let y = 8; y < world.rows - 12 && cells.length < 6; y++) {
+            for (let x = 8; x < world.cols - 8 && cells.length < 6; x++) {
                 if (world.type[y * world.cols + x] === 0) cells.push({ x, y });
             }
         }
         return cells;
     });
-    expect(emptyCells).toHaveLength(3);
+    expect(emptyCells).toHaveLength(6);
     await page.getByRole('button', { name: 'Dry Mud', exact: true }).click();
     await clickCanvasCell(page, emptyCells[0]);
     await page.getByRole('button', { name: 'Daffodil Seeds', exact: true }).click();
-    await clickCanvasCell(page, emptyCells[1]);
-    await clickCanvasCell(page, emptyCells[2]);
+    for (const cell of emptyCells.slice(1)) await clickCanvasCell(page, cell);
 
     const afterSeed = await page.evaluate(async () => {
         const campaign = await import('/campaign.js');
@@ -275,12 +285,12 @@ test('Mission 1 supplies an authored seed habitat, ideal climate, finite budgets
     expect(afterSeed.canPlaceOneMore).toBe(false);
     expect(afterSeed.dryMudResource.used).toBe(1);
     expect(afterSeed.dryMudResource.remaining).toBe(99);
-    expect(afterSeed.seedBudget).toBe(1);
+    expect(afterSeed.seedBudget).toBe(5);
     const live = await page.evaluate(async () => window.__GAME_INSTANCE__.inspect());
-    expect(live.typeCounts[String(afterSeed.seedId)]).toBe(1);
+    expect(live.typeCounts[String(afterSeed.seedId)]).toBe(5);
     expect(live.typeCounts[String(afterSeed.dryMudId)]).toBe(1);
     await expect(page.getByRole('button', { name: 'Daffodil Seeds', exact: true })).toBeHidden();
     await expect(page.locator('#missionHud')).toContainText('1 / 100');
-    await expect(page.locator('#missionHud')).toContainText('1 / 1');
+    await expect(page.locator('#missionHud')).toContainText('5 / 5');
     await expect(page.locator('#missionHud')).toContainText('0 / 1000');
 });
